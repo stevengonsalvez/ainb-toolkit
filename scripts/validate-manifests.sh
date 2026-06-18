@@ -133,19 +133,19 @@ main() {
     log_info "Validating SKILL.md files..."
     while IFS= read -r -d '' file; do
         validate_manifest "$file" "SKILL" || true
-    done < <(find "$ROOT_DIR/packages/skills" -name "SKILL.md" -print0 2>/dev/null)
+    done < <(find "$ROOT_DIR/skills" -name "SKILL.md" -print0 2>/dev/null)
 
     # Validate Workflows
     log_info "Validating WORKFLOW.md files..."
     while IFS= read -r -d '' file; do
         validate_manifest "$file" "WORKFLOW" || true
-    done < <(find "$ROOT_DIR/packages/workflows" -name "WORKFLOW.md" -print0 2>/dev/null)
+    done < <(find "$ROOT_DIR/workflows" -name "WORKFLOW.md" -print0 2>/dev/null)
 
     # Validate Agents
     log_info "Validating AGENT.md files..."
     while IFS= read -r -d '' file; do
         validate_manifest "$file" "AGENT" || true
-    done < <(find "$ROOT_DIR/packages/agents" -name "AGENT.md" -print0 2>/dev/null)
+    done < <(find "$ROOT_DIR/agents" -name "AGENT.md" -print0 2>/dev/null)
 
     # Summary
     echo ""

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Update all external skills/plugins tracked in toolkit/external-dependencies.yaml.
+# Update all external skills/plugins tracked in external-dependencies.yaml.
 # Pulls latest from each upstream source so ~/.claude/skills/ matches manifest.
 #
 # Categories handled:

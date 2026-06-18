@@ -1,16 +1,16 @@
 # AUTO-GENERATED — do not edit by hand.
 # Source of truth: filesystem. Regenerate with:
-#   bash toolkit/bin/generate-catalog.sh
+#   bash bin/generate-catalog.sh
 #
 # This file lists everything THIS REPO owns (the "internal" set). Anything
 # installed into ~/.{claude,codex,copilot}/skills/ that does not appear here
 # is external (plugin / nanoclaw / npx / personal). External installation
-# reproducibility lives in toolkit/external-dependencies.yaml.
+# reproducibility lives in external-dependencies.yaml.
 #
 apiVersion: catalog/v1
 metadata:
-  name: agents-in-a-box
-  description: Filesystem-derived manifest of toolkit-owned skills, plugins, agents, workflows, and utilities
+  name: ainb-toolkit
+  description: Filesystem-derived manifest of ainb-toolkit-owned skills, agents, workflows, and utilities
   generator: bin/generate-catalog.sh
 
 components:

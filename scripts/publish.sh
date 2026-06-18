@@ -123,20 +123,20 @@ publish() {
         local found=false
 
         # Check skills
-        if [[ -d "$ROOT_DIR/packages/skills/$COMPONENT" ]]; then
-            package_component "skill" "$ROOT_DIR/packages/skills/$COMPONENT"
+        if [[ -d "$ROOT_DIR/skills/$COMPONENT" ]]; then
+            package_component "skill" "$ROOT_DIR/skills/$COMPONENT"
             found=true
         fi
 
         # Check workflows
-        if [[ -d "$ROOT_DIR/packages/workflows/$COMPONENT" ]]; then
-            package_component "workflow" "$ROOT_DIR/packages/workflows/$COMPONENT"
+        if [[ -d "$ROOT_DIR/workflows/$COMPONENT" ]]; then
+            package_component "workflow" "$ROOT_DIR/workflows/$COMPONENT"
             found=true
         fi
 
         # Check agents (need to search recursively)
         local agent_path
-        agent_path=$(find "$ROOT_DIR/packages/agents" -type d -name "$COMPONENT" 2>/dev/null | head -1)
+        agent_path=$(find "$ROOT_DIR/agents" -type d -name "$COMPONENT" 2>/dev/null | head -1)
         if [[ -n "$agent_path" && -d "$agent_path" ]]; then
             package_component "agent" "$agent_path"
             found=true
@@ -151,12 +151,12 @@ publish() {
         log_info "Publishing all components..."
 
         # Skills
-        for skill in "$ROOT_DIR/packages/skills"/*; do
+        for skill in "$ROOT_DIR/skills"/*; do
             [[ -d "$skill" ]] && package_component "skill" "$skill"
         done
 
         # Workflows
-        for workflow in "$ROOT_DIR/packages/workflows"/*; do
+        for workflow in "$ROOT_DIR/workflows"/*; do
             [[ -d "$workflow" ]] && package_component "workflow" "$workflow"
         done
 
