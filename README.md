@@ -43,6 +43,23 @@ See the agents-in-a-box repo for `ainb` install (homebrew tap or
 
 ---
 
+## Nix
+
+The flattened `skills/` and `agents/` trees are exposed as Nix packages:
+
+```nix
+inputs.ainb-toolkit.url = "github:stevengonsalvez/ainb-toolkit";
+# ...
+skillsPkg = ainb-toolkit.packages.${system}.skills;   # $out/skills/<name>/...
+agentsPkg = ainb-toolkit.packages.${system}.agents;   # $out/agents/<cat>/...
+```
+
+```bash
+nix build github:stevengonsalvez/ainb-toolkit#skills
+```
+
+---
+
 ## Quick start (legacy `bootstrap.js`)
 
 The node installer still works and deploys the full tree to a tool home:
