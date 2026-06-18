@@ -2,7 +2,7 @@
 
 Hook scripts wired into Claude Code via `~/.claude/settings.json`. They run as separate `uv run` processes around lifecycle events (notifications, tool use, stop, session start, etc.) and produce side effects: notification logging, cost tracking, optional Langfuse traces, optional TTS announcements.
 
-These files live canonically here in `toolkit/packages/utilities/hooks/` and are synced to `~/.claude/hooks/` on user machines.
+These files live canonically here in `utilities/hooks/` and are synced to `~/.claude/hooks/` on user machines.
 
 ## Files
 
