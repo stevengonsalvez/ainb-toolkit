@@ -28,7 +28,7 @@ Extend `toolkit/bootstrap.js` to deploy toolkit skills to hermes-agent and nanoc
 ### In Scope
 - New `hermes-agent` entry in `TOOL_CONFIG` with skills-only mapping
 - New `nanoclaw` entry in `TOOL_CONFIG` (shares `{{HOME_TOOL_DIR}}/` with claude-code-4.5)
-- Audit of `toolkit/packages/skills/**` for hardcoded `{{HOME_TOOL_DIR}}/` paths
+- Audit of `skills/**` for hardcoded `{{HOME_TOOL_DIR}}/` paths
 - Replace hardcoded paths with `{{HOME_TOOL_DIR}}` template placeholders
 - Add `TOOLKIT_RUNTIME` env var export in bootstrap (written to a wrapper script or activated in shell profile hint)
 - Update `webapp-testing/SKILL.md` (20+ hardcoded refs) and `tmux-monitor/scripts/monitor.sh` (line 95)
@@ -152,7 +152,7 @@ esac
 ```bash
 # Find all hardcoded references
 grep -rn '~/\.claude\|$HOME/\.claude\|/Users/[^/]*/\.claude' \
-  toolkit/packages/skills/ \
+  skills/ \
   --include='*.md' --include='*.sh' --include='*.py' --include='*.js' --include='*.ts'
 ```
 
@@ -168,7 +168,7 @@ grep -rn '~/\.claude\|$HOME/\.claude\|/Users/[^/]*/\.claude' \
 
 1. **First-time hermes bootstrap**
    - User: `node bootstrap.js --tool=hermes-agent`
-   - Skill: copies `toolkit/packages/skills/` to `~/.hermes/skills/` with template substitutions
+   - Skill: copies `skills/` to `~/.hermes/skills/` with template substitutions
    - Output: "✓ Skills copied to ~/.hermes/skills/ (N files)"
    - User verifies: `ls ~/.hermes/skills/reflect/SKILL.md`
 
@@ -255,7 +255,7 @@ grep -rn '~/\.claude\|$HOME/\.claude\|/Users/[^/]*/\.claude' \
 ### Priority Order
 
 1. **Add `TOOLKIT_RUNTIME` to existing template substitutions** for all tools (single source of truth)
-2. **Grep audit** — find all hardcoded `{{HOME_TOOL_DIR}}/` references in `toolkit/packages/skills/`
+2. **Grep audit** — find all hardcoded `{{HOME_TOOL_DIR}}/` references in `skills/`
 3. **Fix webapp-testing** — replace `{{HOME_TOOL_DIR}}/` with `{{HOME_TOOL_DIR}}` in SKILL.md
 4. **Fix tmux-monitor** — replace with `${TOOLKIT_HOME:-/.claude}` in monitor.sh
 5. **Fix reflect and any others** found in audit

@@ -641,7 +641,7 @@ When health reaches 🟡, proactively:
 
 0.⁠ ⁠*Always run multiple Task invocations in a SINGLE message when sensible* - Maximize parallelism for better performance.
 
-1.⁠ ⁠*Aggressively use specialized agents* - Custom agent definitions in ⁠ {{HOME_TOOL_DIR}}/agents/ ⁠ (available in this repo under `toolkit/packages/agents/`):
+1.⁠ ⁠*Aggressively use specialized agents* - Custom agent definitions in ⁠ {{HOME_TOOL_DIR}}/agents/ ⁠ (available in this repo under `agents/`):
    - ⁠ distinguished-engineer ⁠ - Drive system design and high‑leverage tradeoffs
    - ⁠ web-search-researcher ⁠ - Research modern information from the web
    - ⁠ universal/ ⁠
@@ -664,7 +664,7 @@ When health reaches 🟡, proactively:
    - ⁠ meta/ ⁠
      - agentmaker – Create and refine new agents
 
-2.⁠ ⁠*Use skills for structured workflows* - Skills in ⁠ {{HOME_TOOL_DIR}}/skills/ ⁠ (available in this repo under `toolkit/packages/skills/`):
+2.⁠ ⁠*Use skills for structured workflows* - Skills in ⁠ {{HOME_TOOL_DIR}}/skills/ ⁠ (available in this repo under `skills/`):
    - ⁠ /prime ⁠ - Prime session with working context
    - ⁠ /health-check ⁠ - Run session health check
    - ⁠ /session-metrics ⁠ - Show session metrics
