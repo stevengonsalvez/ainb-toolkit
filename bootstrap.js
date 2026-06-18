@@ -33,7 +33,7 @@ const TOOL_CONFIG = {
         targetSubdir: '.claude/rules',
     },
     'claude-code-4.5': {
-        ruleDir: 'packages',
+        ruleDir: '.',
         targetSubdir: '.claude',
         usePackagesStructure: true,
         externalDepTypes: ['claude-plugins', 'npx-skills', 'agent-skills'],
@@ -197,7 +197,7 @@ const TOOL_CONFIG = {
         }
     },
     'hermes-agent': {
-        ruleDir: 'packages',
+        ruleDir: '.',
         targetSubdir: '.hermes',
         usePackagesStructure: true,
         forceHomeInstall: true,
@@ -230,7 +230,7 @@ const TOOL_CONFIG = {
         }
     },
     nanoclaw: {
-        ruleDir: 'packages',
+        ruleDir: '.',
         targetSubdir: '.claude',  // SHARED target with claude-code-4.5 (nanoclaw is a claude-code fork)
         usePackagesStructure: true,
         forceHomeInstall: true,
@@ -257,7 +257,7 @@ const TOOL_CONFIG = {
         }
     },
     'packages': {
-        ruleDir: 'packages',
+        ruleDir: '.',
         targetSubdir: '.claude',
         copyEntireFolder: true,
         usePackagesStructure: true,
@@ -446,7 +446,7 @@ function discoverPackages(packagesDir) {
     };
 
     // Read external dependencies manifest
-    const manifestPath = path.join(path.dirname(packagesDir), 'external-dependencies.yaml');
+    const manifestPath = path.join(packagesDir, 'external-dependencies.yaml');
     if (fs.existsSync(manifestPath)) {
         try {
             const manifestContent = fs.readFileSync(manifestPath, 'utf8');
@@ -1086,10 +1086,16 @@ async function installReflectKb(tool, options = {}) {
         result.warnings.push(`no reflect adapter for tool '${tool}'; skipping adapter step`);
         return result;
     }
-    // Plugin moved to root-level plugins/ in the monorepo. __dirname is
-    // toolkit/, so go one level up to find the plugin tree.
+    // The reflect plugin stays in the agents-in-a-box monorepo at
+    // plugins/reflect/ — it is NOT mirrored into ainb-toolkit (this repo).
+    // resolveReflectKbSource() already clones the monorepo to fetch reflect-kb,
+    // so source the adapter from that same checkout. For an env-path override,
+    // the monorepo root is the parent of the supplied reflect-kb dir.
+    const monorepoRoot = sourceInfo.kind === 'env-path'
+        ? path.dirname(sourceInfo.dir)
+        : REFLECT_KB_CACHE_DIR;
     const adapterScript = path.join(
-        path.dirname(__dirname),
+        monorepoRoot,
         'plugins', 'reflect', 'adapters', adapterSlug, `${adapterSlug}_adapter.py`
     );
     if (!fs.existsSync(adapterScript)) {
@@ -1262,7 +1268,10 @@ async function handlePackagesStructureCopy(tool, config, overrideHomeDir = null,
         displayPath = `~/${config.targetSubdir}`;
     }
 
-    const packagesDir = path.join(__dirname, 'packages');
+    // Flattened layout: skills/agents/utilities/workflows live at the repo
+    // root in ainb-toolkit (the standalone home), so the package base IS
+    // __dirname — there is no nested `packages/` directory anymore.
+    const packagesDir = __dirname;
     let totalFilesCopied = 0;
 
     // Package selection for project installations (not home directory)
@@ -1375,7 +1384,7 @@ async function handlePackagesStructureCopy(tool, config, overrideHomeDir = null,
     }
     // Generate setup-external.sh for home directory installs (codex, copilot, claude-code-4.5)
     else if (shouldUseHome && config.externalDepTypes && config.externalDepTypes.length > 0) {
-        const manifestPath = path.join(path.dirname(packagesDir), 'external-dependencies.yaml');
+        const manifestPath = path.join(packagesDir, 'external-dependencies.yaml');
         if (fs.existsSync(manifestPath)) {
             try {
                 const manifestContent = fs.readFileSync(manifestPath, 'utf8');

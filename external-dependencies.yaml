@@ -16,8 +16,8 @@ version: "1.0.0"
 updated: "2026-05-08"
 
 # Internal toolkit components (skills, plugins, agents, workflows, utilities)
-# are catalogued in toolkit/catalog.yaml — auto-generated from filesystem
-# by `bash toolkit/bin/generate-catalog.sh`. This file tracks ONLY external
+# are catalogued in catalog.yaml — auto-generated from filesystem
+# by `bash bin/generate-catalog.sh`. This file tracks ONLY external
 # dependencies (plugins, npx skills, nanoclaw skills, MCP servers).
 # The legacy `bundled-skills:` section below is kept as install metadata
 # for skills with non-trivial setup (e.g. media-processing's apt deps);
@@ -43,7 +43,7 @@ external-packages:
     features:
       - Vector + GraphRAG hybrid retrieval over the global learnings cache
       - Cross-harness CLI (Claude / Codex / Copilot share the same `reflect` binary)
-      - Per-harness adapters (toolkit/packages/plugins/reflect/adapters/) wire
+      - Per-harness adapters (plugins/reflect/adapters/) wire
         pointer SKILL.md files into ~/.{claude,codex,copilot}/skills/
       - SessionStart hook integration on Claude (reflect-kb/adapters/claude)
     overrides:
@@ -51,13 +51,13 @@ external-packages:
     docs: "https://github.com/stevengonsalvez/reflect-kb"
 
 # =============================================================================
-# BUNDLED SKILLS (included in toolkit/packages/skills/)
+# BUNDLED SKILLS (included in skills/)
 # =============================================================================
 # These are built-in skills that come with the toolkit. No installation needed.
 # They are automatically available when the toolkit is installed.
 bundled-skills:
   - name: coding-agent
-    path: packages/skills/coding-agent
+    path: skills/coding-agent
     purpose: "Delegate coding tasks to Codex, Claude Code, OpenCode, Pi, or GitHub Copilot via tmux sessions"
     features:
       - Pure tmux execution model (PTY automatic, one lifecycle)
@@ -68,7 +68,7 @@ bundled-skills:
       - References /cloud-coding-agent for long-running cloud tasks
 
   - name: agentmail
-    path: packages/skills/agentmail
+    path: skills/agentmail
     purpose: "Disposable email inboxes via myagentinbox.com for tests, signup/OTP/magic-link capture (REST-first, no MCP)"
     features:
       - 24h-lifetime disposable inboxes via plain REST
@@ -77,7 +77,7 @@ bundled-skills:
       - Tool-neutral state file under .agents/agentmail/
 
   - name: webapp-testing
-    path: packages/skills/webapp-testing
+    path: skills/webapp-testing
     purpose: "Playwright-based web app testing and browser automation"
     features:
       - Browser screenshot capture
@@ -85,7 +85,7 @@ bundled-skills:
       - End-to-end testing workflows
 
   - name: crypto-research
-    path: packages/skills/crypto-research
+    path: skills/crypto-research
     purpose: "Multi-agent cryptocurrency market analysis"
     features:
       - Market data analysis
@@ -93,7 +93,7 @@ bundled-skills:
       - News sentiment analysis
 
   - name: frontend-design
-    path: packages/skills/frontend-design
+    path: skills/frontend-design
     purpose: "Production-grade UI/UX generation"
     features:
       - Distinctive interface designs
@@ -101,7 +101,7 @@ bundled-skills:
       - Modern styling patterns
 
   - name: tmux-monitor
-    path: packages/skills/tmux-monitor
+    path: skills/tmux-monitor
     purpose: "tmux session monitoring and management"
     features:
       - Session status reporting
@@ -109,7 +109,7 @@ bundled-skills:
       - Development environment tracking
 
   - name: retro-pdf
-    path: packages/skills/retro-pdf
+    path: skills/retro-pdf
     purpose: "Markdown to LaTeX PDF conversion"
     features:
       - Professional PDF generation
@@ -117,7 +117,7 @@ bundled-skills:
       - Custom styling options
 
   - name: interview
-    path: packages/skills/interview
+    path: skills/interview
     purpose: "Plan interview and specification generation"
     features:
       - Systematic interviewing about plans
@@ -125,32 +125,8 @@ bundled-skills:
       - Comprehensive specification output
       - Works with Claude Code and Codex
 
-  - name: reflect
-    path: packages/plugins/reflect
-    plugin-version: "3.1.0"
-    purpose: "Self-improvement + retrieval plugin (v3, colon-namespaced sub-skills + SessionStart hook)"
-    multi-skill: true
-    skills:
-      - reflect: "Extract learnings from corrections + success patterns; encode into agent definitions"
-      - "reflect:consolidate": "Merge orphaned worktree memory dirs into project .agents/MEMORY.md"
-      - "reflect:ingest": "Index memories into GraphRAG + QMD knowledge base"
-      - recall: "Hybrid vector+graph retrieval over the global learnings KB; auto-injected at SessionStart"
-      - reflect-status: "Read-only metrics, pending reviews, sidecar coverage, GraphRAG health; approve/reject low-confidence items"
-    install: "python3 toolkit/packages/plugins/reflect/adapters/claude/claude_adapter.py install --force"
-    config:
-      - "toolkit/packages/plugins/reflect/reflect.toml (plugin default)"
-      - "~/.reflect/reflect.toml (user override)"
-      - ".reflect.toml (project override)"
-    requires:
-      - "reflect-kb (uv tool install — see external-packages above)"
-    features:
-      - Extract learnings on correction or success-pattern signal
-      - Auto-injected recall preamble at SessionStart via hook
-      - Multi-tool memory discovery (claude / codex / gemini / copilot)
-      - Pointer-style sub-skill install (cheap to redeploy)
-
   - name: remotion-best-practices
-    path: packages/skills/remotion-best-practices
+    path: skills/remotion-best-practices
     purpose: "Best practices for Remotion - Video creation in React"
     features:
       - 3D content with Three.js and React Three Fiber
@@ -160,7 +136,7 @@ bundled-skills:
       - Chart and data visualization patterns
 
   - name: media-processing
-    path: packages/skills/media-processing
+    path: skills/media-processing
     source: "https://github.com/mrgoonie/claudekit-skills/tree/main/.claude/skills/media-processing"
     purpose: "FFmpeg and ImageMagick multimedia processing"
     features:
@@ -448,7 +424,7 @@ claude-plugins:
       - Background drainer processes queued reflections without blocking the agent
       - Sub-skills: reflect, reflect:consolidate, reflect:ingest, reflect:recall, reflect-status
     in-repo-marketplace: ".claude-plugin/marketplace.json (at the root of stevengonsalvez/agents-in-a-box)"
-    plugin-source: "toolkit/packages/plugins/reflect/.claude-plugin/plugin.json"
+    plugin-source: "plugins/reflect/.claude-plugin/plugin.json"
 
   - name: dev-browser
     marketplace: sawyerhood/dev-browser
