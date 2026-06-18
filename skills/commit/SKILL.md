@@ -585,3 +585,5 @@ git reset HEAD file.js
 ```
 
 Remember: You have the full context of what was done in this session. Use that knowledge to create meaningful, well-organized commits that tell the story of what was accomplished.
+
+<!-- ainb-toolkit external-provider dogfood: synced edit 20260618-010408 -->
