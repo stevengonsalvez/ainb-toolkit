@@ -6,28 +6,28 @@ user-invocable: true
 
 # Sync Learnings
 
-Bidirectional sync between `{{HOME_TOOL_DIR}}/` (user-level) and toolkit `packages/` (canonical source).
+Bidirectional sync between `{{HOME_TOOL_DIR}}/` (user-level) and the **ainb-toolkit** repo root (canonical source). Skills/agents/workflows/utilities live flattened at the repo root.
 
 ## Purpose
 
 When working on projects, learnings get captured in user-level agent files via `/reflect`. This command syncs improvements bidirectionally:
-- **TO_REPO**: New/updated files in {{HOME_TOOL_DIR}} -> packages/ (canonical)
-- **TO_HOME**: Newer files in packages/ -> {{HOME_TOOL_DIR}}
+- **TO_REPO**: New/updated files in {{HOME_TOOL_DIR}} -> ainb-toolkit repo root (canonical)
+- **TO_HOME**: Newer files in ainb-toolkit repo root -> {{HOME_TOOL_DIR}}
 
 ## Architecture
 
 ```
-{{HOME_TOOL_DIR}}/  <--sync-->  packages/  --generates-->  claude-code-4.5/ (thin layer)
+{{HOME_TOOL_DIR}}/  <--sync-->  <repo root>  --generates-->  claude-code-4.5/ (thin layer)
                              |
                     create-rule.js installs
 ```
 
-**packages/** is the canonical source. **claude-code-4.5/CLAUDE.md** is the canonical agent instructions file; codex and copilot symlink their AGENTS.md to it.
+The **repo root** (`skills/`, `agents/`, `workflows/`, `utilities/`) is the canonical source. **claude-code-4.5/CLAUDE.md** is the canonical agent instructions file; codex and copilot symlink their AGENTS.md to it.
 
 ## Workflow
 
 1. **Assess**: Compare directories and categorize differences
-2. **Reverse Scan**: Enumerate all items in {{HOME_TOOL_DIR}}/ and flag orphans missing from packages/
+2. **Reverse Scan**: Enumerate all items in {{HOME_TOOL_DIR}}/ and flag orphans missing from the canonical `skills/` + `agents/` tree
 3. **Plugin Audit**: Cross-check installed plugins against external-dependencies.yaml manifest
 4. **Route**: Determine target package directory for each file
 5. **Plan**: Generate sync plan table with actions and rationale
@@ -38,15 +38,15 @@ When working on projects, learnings get captured in user-level agent files via `
 
 ### Agents (direct mapping)
 
-| Source (user-level) | Target (packages) |
+| Source (user-level) | Target (repo) |
 |---------------------|-------------------|
-| `{{HOME_TOOL_DIR}}/agents/engineering/` | `packages/agents/engineering/` |
-| `{{HOME_TOOL_DIR}}/agents/universal/` | `packages/agents/universal/` |
-| `{{HOME_TOOL_DIR}}/agents/orchestrators/` | `packages/agents/orchestrators/` |
-| `{{HOME_TOOL_DIR}}/agents/design/` | `packages/agents/design/` |
-| `{{HOME_TOOL_DIR}}/agents/meta/` | `packages/agents/meta/` |
-| `{{HOME_TOOL_DIR}}/agents/swarm/` | `packages/agents/swarm/` |
-| `{{HOME_TOOL_DIR}}/agents/*.md` (root) | `packages/agents/` |
+| `{{HOME_TOOL_DIR}}/agents/engineering/` | `agents/engineering/` |
+| `{{HOME_TOOL_DIR}}/agents/universal/` | `agents/universal/` |
+| `{{HOME_TOOL_DIR}}/agents/orchestrators/` | `agents/orchestrators/` |
+| `{{HOME_TOOL_DIR}}/agents/design/` | `agents/design/` |
+| `{{HOME_TOOL_DIR}}/agents/meta/` | `agents/meta/` |
+| `{{HOME_TOOL_DIR}}/agents/swarm/` | `agents/swarm/` |
+| `{{HOME_TOOL_DIR}}/agents/*.md` (root) | `agents/` |
 
 ### Commands (routed by type)
 
@@ -54,27 +54,27 @@ Commands are routed based on their purpose:
 
 | Command Pattern | Target |
 |-----------------|--------|
-| `m-*` (m-plan, m-implement, m-monitor, m-workflow) | `packages/workflows/multi-agent/commands/` |
-| `swarm-*` (swarm-create, swarm-status, swarm-inbox, swarm-join, swarm-shutdown) | `packages/workflows/multi-agent/commands/` |
-| `spawn-agent`, `*-agent-worktree`, `merge-agent-work`, `recover-sessions` | `packages/workflows/multi-agent/commands/` |
-| `plan`, `implement`, `validate`, `research`, `workflow` | `packages/workflows/single-agent/commands/` |
-| All other commands | `packages/utilities/commands/` |
+| `m-*` (m-plan, m-implement, m-monitor, m-workflow) | `workflows/multi-agent/commands/` |
+| `swarm-*` (swarm-create, swarm-status, swarm-inbox, swarm-join, swarm-shutdown) | `workflows/multi-agent/commands/` |
+| `spawn-agent`, `*-agent-worktree`, `merge-agent-work`, `recover-sessions` | `workflows/multi-agent/commands/` |
+| `plan`, `implement`, `validate`, `research`, `workflow` | `workflows/single-agent/commands/` |
+| All other commands | `utilities/commands/` |
 
 ### Utils (shell libraries)
 
-| Source (user-level) | Target (packages) |
+| Source (user-level) | Target (repo) |
 |---------------------|-------------------|
-| `{{HOME_TOOL_DIR}}/utils/` | `packages/utilities/utils/` |
+| `{{HOME_TOOL_DIR}}/utils/` | `utilities/utils/` |
 
 ### Tool-Specific Config Files
 
-These are NOT in `packages/` — they live in per-tool directories:
+These are NOT in the synced skill/agent tree — they live in per-tool directories:
 
 | Source (user-level) | Target (toolkit source) |
 |---------------------|------------------------|
-| `{{HOME_TOOL_DIR}}/CLAUDE.md` | `toolkit/claude-code-4.5/CLAUDE.md` |
-| `{{HOME_TOOL_DIR}}/settings.json` | `toolkit/claude-code-4.5/settings.json` |
-| `{{HOME_TOOL_DIR}}/statusline.sh` | `toolkit/claude-code-4.5/statusline.sh` (+x preserved) |
+| `{{HOME_TOOL_DIR}}/CLAUDE.md` | `claude-code-4.5/CLAUDE.md` |
+| `{{HOME_TOOL_DIR}}/settings.json` | `claude-code-4.5/settings.json` |
+| `{{HOME_TOOL_DIR}}/statusline.sh` | `claude-code-4.5/statusline.sh` (+x preserved) |
 
 **CLAUDE.md sync requires reverse template interpolation** — when copying TO_REPO,
 replace interpolated paths back to template placeholders:
@@ -83,12 +83,12 @@ replace interpolated paths back to template placeholders:
 
 ### Other Files
 
-| Source (user-level) | Target (packages) |
+| Source (user-level) | Target (repo) |
 |---------------------|-------------------|
-| `{{HOME_TOOL_DIR}}/skills/` | `packages/skills/` |
-| `{{HOME_TOOL_DIR}}/templates/` | `packages/utilities/templates/` |
-| `{{HOME_TOOL_DIR}}/hooks/` | `packages/utilities/hooks/` |
-| `{{HOME_TOOL_DIR}}/output-styles/` | `packages/utilities/output-styles/` |
+| `{{HOME_TOOL_DIR}}/skills/` | `skills/` |
+| `{{HOME_TOOL_DIR}}/templates/` | `utilities/templates/` |
+| `{{HOME_TOOL_DIR}}/hooks/` | `utilities/hooks/` |
+| `{{HOME_TOOL_DIR}}/output-styles/` | `utilities/output-styles/` |
 
 ## Command Routing Logic
 
@@ -98,16 +98,16 @@ route_command() {
   local cmd="$1"
   case "$cmd" in
     m-*|swarm-*)
-      echo "packages/workflows/multi-agent/commands/"
+      echo "workflows/multi-agent/commands/"
       ;;
     spawn-agent.md|*-agent-worktree.md|merge-agent-work.md|recover-sessions.md)
-      echo "packages/workflows/multi-agent/commands/"
+      echo "workflows/multi-agent/commands/"
       ;;
     plan.md|implement.md|validate.md|research.md|workflow.md)
-      echo "packages/workflows/single-agent/commands/"
+      echo "workflows/single-agent/commands/"
       ;;
     *)
-      echo "packages/utilities/commands/"
+      echo "utilities/commands/"
       ;;
   esac
 }
@@ -143,7 +143,7 @@ interpolate paths when copying TO repo. See "Tool-Specific Config Files" above.
 Content managed by external plugins (installed via `claude plugin install`):
 - `plugins/` - Plugin cache and state
 - Skills/commands provided by plugins (e.g., Beads provides its own skill in `plugins/cache/`)
-- These are tracked in `external-dependencies.yaml`, NOT in `packages/`
+- These are tracked in `external-dependencies.yaml`, NOT in the synced `skills/`+`agents/` tree
 
 ### Category 5b: Bundled vs Pulled — presence in the manifest is NOT "external"
 
@@ -153,7 +153,7 @@ CRITICAL (a misclassification cost real cycles 2026-06-05): a skill appearing in
 
 | Manifest shape | Meaning | Sync? |
 |----------------|---------|-------|
-| `bundled-skills:` entry with `path: packages/skills/<name>` | committed in repo, deployed **FROM** repo by bootstrap | **YES — sync both directions** |
+| `bundled-skills:` entry with `path: skills/<name>` | committed in repo, deployed **FROM** repo by bootstrap | **YES — sync both directions** |
 | `agent-skills:` entry with `repo:` + `multi-subpath:` | git-cloned into `~/.{tool}/skills` at bootstrap | NO — external; update via update-externals |
 | `nanoclaw-skills:` entry | synced from the nanoclaw fork (`container/skills/`) | NO — external; edit in the fork |
 
@@ -163,7 +163,7 @@ CRITICAL (a misclassification cost real cycles 2026-06-05): a skill appearing in
 - The discriminator is **`path:` (bundled → sync) vs `repo:`/`multi-subpath:`
   (cloned at bootstrap → skip)**.
 - Before dropping a *common* skill (one that exists in BOTH `~/.claude` and
-  `packages/`) as "external", grep its manifest entry and confirm whether it
+  the repo's `skills/`) as "external", grep its manifest entry and confirm whether it
   has `path:`. If it does, it is bundled — sync it.
 
 ## Reverse Scan Phase (Orphan Detection)
@@ -173,23 +173,33 @@ CRITICAL: Before comparing files, enumerate items in {{HOME_TOOL_DIR}}/ that are
 **Internal set definition (filesystem-derived):**
 
 The internal set is everything this repo owns. It is the union of:
-- `toolkit/packages/skills/*/` — bundled skills
-- `toolkit/packages/plugins/*/skills/*/` — plugin sub-skills (e.g. reflect ships 5)
-- `toolkit/packages/agents/**/*.md` — agents (root + categorized)
+- `skills/*/` — bundled skills
+- `agents/**/*.md` — agents (root + categorized)
 
-A snapshot of this set lives in `toolkit/catalog.yaml`, regenerated by `bash toolkit/bin/generate-catalog.sh`. **Run the generator first** so the snapshot reflects HEAD before scanning.
+> NOTE: the **reflect** plugin (and its sub-skills: `reflect`, `recall`,
+> `reflect:consolidate`, `reflect:ingest`, `reflect-status`) lives in the
+> **agents-in-a-box** monorepo at `plugins/reflect/`, NOT in this repo. Those
+> sub-skills are deployed to `{{HOME_TOOL_DIR}}/skills/` by the reflect plugin's
+> own lifecycle, so they are EXTERNAL here and are excluded from orphan
+> detection below (see `REFLECT_SUBSKILLS`).
+
+A snapshot of this set lives in `catalog.yaml`, regenerated by `bash bin/generate-catalog.sh`. **Run the generator first** so the snapshot reflects HEAD before scanning.
 
 Anything in `{{HOME_TOOL_DIR}}/skills/` that is NOT in the internal set is EXTERNAL by construction — installed by a plugin (caveman, beads, reflect runtime, etc.), via `npx skills add`, by nanoclaw's native-runner sync, or as a personal CLI wrapper. These should be silently filtered, not classified by hand each run.
 
 ```bash
 # Refresh the internal manifest first
-bash toolkit/bin/generate-catalog.sh
+bash bin/generate-catalog.sh
+
+# reflect plugin sub-skills live in agents-in-a-box (plugins/reflect/), not here.
+# They deploy to ~/.claude/skills/ via the plugin, so treat them as external.
+REFLECT_SUBSKILLS=$'reflect\nrecall\nconsolidate\ningest\nreflect-status'
 
 # Build the internal skill set from filesystem (authoritative)
 internal_skills=$(
   {
-    find toolkit/packages/skills -mindepth 1 -maxdepth 1 -type d -exec basename {} \;
-    find toolkit/packages/plugins/*/skills -mindepth 1 -maxdepth 1 -type d -exec basename {} \; 2>/dev/null
+    find skills -mindepth 1 -maxdepth 1 -type d -exec basename {} \;
+    echo "$REFLECT_SUBSKILLS"
   } | sort -u
 )
 
@@ -204,7 +214,7 @@ for skill_dir in $HOME/.claude/skills/*/; do
 
   # External (tracked)? Skip silently — install reproducibility lives in external-dependencies.yaml.
   if grep -q "^[[:space:]]*-[[:space:]]*name:[[:space:]]*$skill_name\b\|^[[:space:]]*-[[:space:]]*$skill_name:" \
-     toolkit/external-dependencies.yaml 2>/dev/null; then continue; fi
+     external-dependencies.yaml 2>/dev/null; then continue; fi
 
   # Genuine orphan — surface for classification.
   echo "ORPHAN: skills/$skill_name (not internal, not tracked in external-dependencies.yaml)"
@@ -213,14 +223,14 @@ done
 echo "=== Orphan Detection: Agents ==="
 for agent_file in $HOME/.claude/agents/**/*.md; do
   rel_path="${agent_file#$HOME/.claude/}"
-  if [ ! -f "toolkit/packages/$rel_path" ]; then
-    echo "ORPHAN: $rel_path (in $HOME/.claude only, missing from toolkit/packages/)"
+  if [ ! -f "$rel_path" ]; then
+    echo "ORPHAN: $rel_path (in $HOME/.claude only, missing from the repo)"
   fi
 done
 ```
 
 Genuine orphans (those that survive the filter) should be classified as:
-- **SYNC TO REPO** — Generic, reusable skill/agent → copy to `toolkit/packages/`, then re-run the catalog generator.
+- **SYNC TO REPO** — Generic, reusable skill/agent → copy to the matching `skills/`/`agents/` dir, then re-run the catalog generator.
 - **EXTERNAL (untracked)** — Real external skill that's missing from `external-dependencies.yaml` → add an entry there.
 - **PERSONAL** — User-specific tooling that shouldn't be shared → ignore.
 - **DEPRECATED** — No longer needed → candidate for removal from `{{HOME_TOOL_DIR}}/`.
@@ -230,7 +240,7 @@ Genuine orphans (those that survive the filter) should be classified as:
 Cross-check installed plugins and external skills against `external-dependencies.yaml`:
 
 ```bash
-MANIFEST="toolkit/external-dependencies.yaml"
+MANIFEST="external-dependencies.yaml"
 
 # 1. Check installed claude plugins vs manifest
 echo "=== Plugin Audit ==="
@@ -246,7 +256,7 @@ done
 
 # 3. Check skills that reference external CLIs
 echo "=== Dependency Cross-Check ==="
-for skill_dir in packages/skills/*/; do
+for skill_dir in skills/*/; do
   skill_file="$skill_dir/SKILL.md"
   [ -f "$skill_file" ] || continue
 
@@ -270,7 +280,7 @@ The audit report should include:
 | beads plugin | Installed v0.49.0, tracked in manifest | OK |
 | debug-bridge plugin | Installed v0.2.0, tracked in manifest | OK |
 | swarm-create skill | References `bd` CLI → beads tracked | OK |
-| mystery-skill | In {{HOME_TOOL_DIR}} only, not in packages | SYNC or EXCLUDE |
+| mystery-skill | In {{HOME_TOOL_DIR}} only, not in repo | SYNC or EXCLUDE |
 ```
 
 ## Assessment Phase — Tidied Output Contract
@@ -310,9 +320,9 @@ blocks or always-on summary tables.
 
 | dir   | file                                | target                           | note    |
 |-------|-------------------------------------|----------------------------------|---------|
-| →repo | skills/foo/SKILL.md                 | packages/skills/foo/             | new     |
-| →repo | agents/engineering/bar.md           | packages/agents/engineering/     | updated |
-| →home | packages/skills/baz/SKILL.md        | ~/.claude/skills/baz/            | newer   |
+| →repo | skills/foo/SKILL.md                 | skills/foo/             | new     |
+| →repo | agents/engineering/bar.md           | agents/engineering/     | updated |
+| →home | skills/baz/SKILL.md        | ~/.claude/skills/baz/            | newer   |
 
 Proceed? [Y/n]
 
@@ -345,7 +355,7 @@ Receipt:
 
 ### Reverse Template Interpolation (TO_REPO direction — CRITICAL)
 
-**When copying FROM user-level TO packages/toolkit, REVERSE the interpolation.**
+**When copying FROM user-level TO toolkit, REVERSE the interpolation.**
 User-level files have resolved paths (`{{HOME_TOOL_DIR}}/`, `/.claude/`, `.claude/`).
 These MUST be converted back to template placeholders before writing to the repo.
 
@@ -360,15 +370,15 @@ These MUST be converted back to template placeholders before writing to the repo
 > pass — restore it from git history.
 
 ```bash
-# Reverse interpolation: user-level → packages/toolkit source
+# Reverse interpolation: user-level → toolkit source
 # For .md files (documentation references use ~/ form):
 perl -pe 's|~/\.claude|\{\{HOME_TOOL_DIR\}\}|g' \
-  "$HOME/.claude/CLAUDE.md" > toolkit/claude-code-4.5/CLAUDE.md
+  "$HOME/.claude/CLAUDE.md" > claude-code-4.5/CLAUDE.md
 
 # For .sh/.py files (bash code uses $HOME form):
 perl -pe 's|\$HOME/\.claude\b|\$HOME/\{\{TOOL_DIR\}\}|g; s|~/\.claude\b|\{\{HOME_TOOL_DIR\}\}|g' \
   "$HOME/.claude/skills/some-skill/scripts/script.sh" \
-  > toolkit/packages/skills/some-skill/scripts/script.sh
+  > skills/some-skill/scripts/script.sh
 
 # For mixed files (both doc text AND bash code blocks — like CLAUDE.md):
 # Order matters: $HOME first (most specific), then ~/, then bare .claude/
@@ -385,8 +395,8 @@ hits in the toolkit-side file (except inside intentional examples / quoted
 docs, which is why we use `\b` word-boundary in the regex above):
 
 ```bash
-grep -nE '~/\.claude\b|\$HOME/\.claude\b' toolkit/claude-code-4.5/CLAUDE.md
-grep -nE '~/\.claude\b|\$HOME/\.claude\b' toolkit/packages/skills/<skill>/SKILL.md
+grep -nE '~/\.claude\b|\$HOME/\.claude\b' claude-code-4.5/CLAUDE.md
+grep -nE '~/\.claude\b|\$HOME/\.claude\b' skills/<skill>/SKILL.md
 ```
 
 **Bulk fixup** (when a sync regression slipped in and many files lost their
@@ -398,7 +408,7 @@ placeholders — e.g. PR #70):
 perl -i -pe '
   s|\$HOME/\.claude\b|\$HOME/\{\{TOOL_DIR\}\}|g;
   s|~/\.claude\b|\{\{HOME_TOOL_DIR\}\}|g;
-' toolkit/packages/skills/*/SKILL.md toolkit/packages/skills/*/scripts/*.sh
+' skills/*/SKILL.md skills/*/scripts/*.sh
 ```
 
 **Do NOT reverse-interpolate**:
@@ -407,7 +417,7 @@ perl -i -pe '
 
 ### Template Interpolation (TO_HOME direction — CRITICAL)
 
-**Packages files use `{{HOME_TOOL_DIR}}` as a cross-tool placeholder.** When syncing
+**Repo files use `{{HOME_TOOL_DIR}}` as a cross-tool placeholder.** When syncing
 TO `{{HOME_TOOL_DIR}}` (or any tool's home dir), these MUST be substituted before the file is
 written — never leave them as literal strings.
 
@@ -419,7 +429,7 @@ written — never leave them as literal strings.
 Use `perl` for safe substitution (avoids shell expansion issues with `~`):
 
 ```bash
-# After copying FROM packages TO /.claude, interpolate templates:
+# After copying FROM repo TO /.claude, interpolate templates:
 perl -pi -e 's/\{\{HOME_TOOL_DIR\}\}/$ENV{HOME}\/.claude/g; s/\{\{TOOL_DIR\}\}/.claude/g' /.claude/path/to/SKILL.md
 
 # Or with explicit paths:
@@ -442,24 +452,24 @@ Many shells alias `cp` to `cp -i`. Always use `\cp` to bypass:
 
 ```bash
 # Agent sync (direct)
-\cp /.claude/agents/engineering/new-agent.md packages/agents/engineering/
+\cp /.claude/agents/engineering/new-agent.md agents/engineering/
 
 # Command sync (routed)
-\cp /.claude/commands/m-plan.md packages/workflows/multi-agent/commands/
-\cp /.claude/commands/plan.md packages/workflows/single-agent/commands/
-\cp /.claude/commands/session-info.md packages/utilities/commands/
+\cp /.claude/commands/m-plan.md workflows/multi-agent/commands/
+\cp /.claude/commands/plan.md workflows/single-agent/commands/
+\cp /.claude/commands/session-info.md utilities/commands/
 
 # Skill sync
-\cp -R /.claude/skills/new-skill/ packages/skills/
+\cp -R /.claude/skills/new-skill/ skills/
 
 # Template sync
-\cp /.claude/templates/new-template.md packages/utilities/templates/
+\cp /.claude/templates/new-template.md utilities/templates/
 ```
 
 ### Commit Format
 
 ```
-chore: sync learnings to packages
+chore: sync learnings to repo
 
 - Add [new-file]: [brief description]
 - Update [updated-file]: [what changed]
@@ -487,47 +497,47 @@ canon() { perl -pe '
 # inspect/merge, never blind-overwrite (see Safety Checks).
 
 # CLAUDE.md diff (tool-specific config file) — uses the canon() helper above
-diff <(canon toolkit/claude-code-4.5/CLAUDE.md) <(canon /.claude/CLAUDE.md)
+diff <(canon claude-code-4.5/CLAUDE.md) <(canon /.claude/CLAUDE.md)
 
 # settings.json diff (Claude Code harness config)
 # Fails if repo has drifted from /.claude — sync TO_REPO if live has newer keys
-diff toolkit/claude-code-4.5/settings.json /.claude/settings.json
+diff claude-code-4.5/settings.json /.claude/settings.json
 
 # statusline.sh diff (rich statusline script shipped as tool-specific file)
-diff toolkit/claude-code-4.5/statusline.sh /.claude/statusline.sh
+diff claude-code-4.5/statusline.sh /.claude/statusline.sh
 
 # Find all differences (agents)
-diff -rq /.claude/agents/ packages/agents/ 2>/dev/null
+diff -rq /.claude/agents/ agents/ 2>/dev/null
 
 # Find all differences (commands - check all locations)
-for dir in packages/utilities/commands packages/workflows/*/commands; do
+for dir in utilities/commands workflows/*/commands; do
   diff -rq /.claude/commands/ "$dir" 2>/dev/null | head -5
 done
 
 # Find files only in /.claude (candidates for TO_REPO)
-diff -rq /.claude/agents/ packages/agents/ 2>/dev/null | grep "Only in /Users"
+diff -rq /.claude/agents/ agents/ 2>/dev/null | grep "Only in /Users"
 
 # Show actual diff for a specific file
-diff /.claude/agents/engineering/example.md packages/agents/engineering/example.md
+diff /.claude/agents/engineering/example.md agents/engineering/example.md
 
 # REVERSE SCAN: Find orphaned skills (in /.claude but not in packages)
 comm -23 \
   <(ls -1 /.claude/skills/ 2>/dev/null | sort) \
-  <(ls -1 packages/skills/ 2>/dev/null | sort)
+  <(ls -1 skills/ 2>/dev/null | sort)
 
 # REVERSE SCAN: Find orphaned agents
 comm -23 \
   <(find /.claude/agents/ -name '*.md' -exec basename {} \; 2>/dev/null | sort) \
-  <(find packages/agents/ -name '*.md' -exec basename {} \; 2>/dev/null | sort)
+  <(find agents/ -name '*.md' -exec basename {} \; 2>/dev/null | sort)
 
 # PLUGIN AUDIT: List installed plugins not in manifest
 for d in /.claude/plugins/cache/*/; do
   name=$(basename "$d" | sed 's/-marketplace$//')
-  grep -q "name: $name" toolkit/external-dependencies.yaml 2>/dev/null || echo "UNTRACKED: $name"
+  grep -q "name: $name" external-dependencies.yaml 2>/dev/null || echo "UNTRACKED: $name"
 done
 
 # DEPENDENCY CHECK: Skills that reference 'bd' (Beads)
-grep -rl '\bbd\b' packages/skills/*/SKILL.md 2>/dev/null
+grep -rl '\bbd\b' skills/*/SKILL.md 2>/dev/null
 ```
 
 ## Safety Checks
@@ -569,9 +579,9 @@ Claude:
 
 | dir   | file                                       | target                              | note    |
 |-------|--------------------------------------------|-------------------------------------|---------|
-| →repo | agents/engineering/new-validator.md        | packages/agents/engineering/        | new     |
-| →repo | commands/custom-workflow.md                | packages/utilities/commands/        | new     |
-| →home | packages/utilities/commands/sync-learnings.md | {{HOME_TOOL_DIR}}/commands/      | newer   |
+| →repo | agents/engineering/new-validator.md        | agents/engineering/        | new     |
+| →repo | commands/custom-workflow.md                | utilities/commands/        | new     |
+| →home | utilities/commands/sync-learnings.md | {{HOME_TOOL_DIR}}/commands/      | newer   |
 
 Proceed? [Y/n]
 
@@ -596,7 +606,7 @@ the plan table — still one row per item, no nested bullets.
 
 | dir   | file                       | target                          | note    |
 |-------|----------------------------|---------------------------------|---------|
-| →repo | skills/new-helper/SKILL.md | packages/skills/new-helper/     | new     |
+| →repo | skills/new-helper/SKILL.md | skills/new-helper/     | new     |
 
 ## Orphans (need classification)
 
@@ -613,8 +623,8 @@ Add to session start hook for automatic detection:
 
 ```bash
 # In hooks/session-start
-DIFF_COUNT=$(diff -rq /.claude/agents/ packages/agents/ 2>/dev/null | grep "differ" | wc -l)
+DIFF_COUNT=$(diff -rq /.claude/agents/ agents/ 2>/dev/null | grep "differ" | wc -l)
 if [ "$DIFF_COUNT" -gt 0 ]; then
-  echo "  $DIFF_COUNT agent files differ from packages. Run /sync-learnings to sync."
+  echo "  $DIFF_COUNT agent files differ from the repo. Run /sync-learnings to sync."
 fi
 ```
