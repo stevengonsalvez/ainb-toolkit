@@ -2442,6 +2442,13 @@ async function handleVerify(tool, overrideHomeDir) {
 
 async function main() {
     const args = process.argv.slice(2);
+    // Diagnostic: dump the canonical TOOL_CONFIG as JSON and exit. The test
+    // suite reads this (via execSync) so it asserts against the SINGLE source
+    // of truth instead of a hand-copied map that drifts.
+    if (args.includes('--dump-config')) {
+        process.stdout.write(JSON.stringify(TOOL_CONFIG));
+        return;
+    }
     const toolArg = args.find(arg => arg.startsWith('--tool='));
     const targetFolderArg = args.find(arg => arg.startsWith('--targetFolder='));
     const homeDirArg = args.find(arg => arg.startsWith('--homeDir='));
@@ -2646,10 +2653,18 @@ async function main() {
     console.log(`Files copied to: ${destDir}`);
 }
 
-main().catch((err) => {
-    console.error(err);
-    process.exit(1);
-});
+// Only run the installer when executed directly (`node bootstrap.js …`),
+// NOT when imported (e.g. the jest suite imports TOOL_CONFIG below).
+if (process.argv[1] && path.resolve(process.argv[1]) === __filename) {
+    main().catch((err) => {
+        console.error(err);
+        process.exit(1);
+    });
+}
+
+// Exported for tests so the suite asserts against the SINGLE source of truth
+// instead of a hand-copied TOOL_CONFIG that silently drifts.
+export { TOOL_CONFIG };
 
 // --- Spec Kit integration: clone-on-demand, then copy ---
 import { execSync } from 'child_process';
