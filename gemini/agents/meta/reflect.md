@@ -1,18 +1,18 @@
 ---
 name: reflect
 description: |
-  DEPRECATED: Use the portable skill at toolkit/packages/skills/reflect/ instead.
+  DEPRECATED: Use the portable skill at the reflect plugin (plugins/reflect/) in the agents-in-a-box repo instead.
   This agent file is retained for backwards compatibility during transition.
   See /reflect command for skill-based implementation.
 tools: read_file, grep_search, glob, replace, write_file, run_shell_command
 deprecated: true
-superseded_by: toolkit/packages/skills/reflect/SKILL.md
+superseded_by: the reflect plugin (plugins/reflect/) in the agents-in-a-box repo
 ---
 
 # Reflect - Self-Improvement Agent
 
 > **DEPRECATED**: This agent has been consolidated into a portable skill.
-> Use the skill at `toolkit/packages/skills/reflect/SKILL.md` instead.
+> Use the skill at `the reflect plugin (plugins/reflect/) in the agents-in-a-box repo` instead.
 > This file is retained for backwards compatibility during the transition period.
 
 ## Mission

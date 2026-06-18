@@ -41,7 +41,7 @@ a closed-loop system: skills enter from any tool, get canonicalized, and deploy 
                      │
                      ▼
          ┌───────────────────────┐
-         │   packages/skills/    │     ◄── CANONICAL SOURCE (git-tracked)
+         │   skills/    │     ◄── CANONICAL SOURCE (git-tracked)
          │   (toolkit repo)      │
          └───────────┬───────────┘
                      │
@@ -71,7 +71,7 @@ a closed-loop system: skills enter from any tool, get canonicalized, and deploy 
     │ (we own it)      │ (3rd-party git repo)│ (tool-native)        │
     ├─────────────────┼────────────────────┼──────────────────────┤
     │ Lives in         │ SKILL.md stub in   │ Tracked in manifest  │
-    │ packages/skills/ │ packages/skills/   │ only (not in repo)   │
+    │ skills/ │ skills/   │ only (not in repo)   │
     │                  │ + external-source  │                      │
     │ Deployed by      │ Deployed by        │ Installed by         │
     │ bootstrap copy   │ setup-external.sh  │ tool-native command  │
@@ -83,7 +83,7 @@ a closed-loop system: skills enter from any tool, get canonicalized, and deploy 
                      ===========
 
     1. Install skill via ANY tool ──► lands in ~/.{tool}/skills/
-    2. /sync-learnings ──────────────► copies to packages/skills/ (canonical)
+    2. /sync-learnings ──────────────► copies to skills/ (canonical)
     3. /plugins sync ────────────────► updates external-dependencies.yaml
     4. bootstrap.js ─────────────────► deploys to ALL tools universally
     5. Repeat from any tool
@@ -105,8 +105,8 @@ When adding a new skill, determine its type:
 |--------|----------|--------|
 | Claude Plugins | `{{HOME_TOOL_DIR}}/plugins/installed_plugins.json` | JSON |
 | Marketplaces | `{{HOME_TOOL_DIR}}/plugins/known_marketplaces.json` | JSON |
-| Bundled Skills | `packages/skills/*/SKILL.md` | Markdown |
-| Unified Manifest | `toolkit/external-dependencies.yaml` | YAML |
+| Bundled Skills | `skills/*/SKILL.md` | Markdown |
+| Unified Manifest | `external-dependencies.yaml` | YAML |
 
 ## /plugins list
 
@@ -120,11 +120,11 @@ Display all installed extensions grouped by category.
 ## Bundled Skills (5)
 | Name | Path | Purpose |
 |------|------|---------|
-| webapp-testing | packages/skills/webapp-testing | Playwright-based testing |
-| crypto-research | packages/skills/crypto-research | Cryptocurrency analysis |
-| frontend-design | packages/skills/frontend-design | UI/UX generation |
-| tmux-monitor | packages/skills/tmux-monitor | Session monitoring |
-| retro-pdf | packages/skills/retro-pdf | Markdown to PDF |
+| webapp-testing | skills/webapp-testing | Playwright-based testing |
+| crypto-research | skills/crypto-research | Cryptocurrency analysis |
+| frontend-design | skills/frontend-design | UI/UX generation |
+| tmux-monitor | skills/tmux-monitor | Session monitoring |
+| retro-pdf | skills/retro-pdf | Markdown to PDF |
 
 ## Claude Plugins (4)
 | Name | Marketplace | Version | Installed |
@@ -158,7 +158,7 @@ jq -r 'to_entries[] | "\(.key): \(.value.source.repo)"' \
   /.claude/plugins/known_marketplaces.json
 
 # Read bundled skills
-for skill in packages/skills/*/SKILL.md; do
+for skill in skills/*/SKILL.md; do
   dirname "$skill" | xargs basename
 done
 ```
@@ -209,14 +209,14 @@ SKILL_FILE="<source>/SKILL.md"
 
 **Bundled skill** (we own it — copy into repo):
 
-1. Copy skill directory to `packages/skills/<name>/`
+1. Copy skill directory to `skills/<name>/`
 2. Add entry to `external-dependencies.yaml` under `bundled-skills`
 3. Re-run `node toolkit/bootstrap.js` for each tool
 4. Verify skill appears in `~/.{tool}/skills/<name>/`
 
 **Agent-skill** (external git repo):
 
-1. Create stub `packages/skills/<name>/SKILL.md` with `external-source:` frontmatter
+1. Create stub `skills/<name>/SKILL.md` with `external-source:` frontmatter
 2. Add entry to `external-dependencies.yaml` under `agent-skills` with repo URL
 3. Re-run `node toolkit/bootstrap.js` for each tool
 4. Run `setup-external.sh` for each tool (or just git clone directly)
@@ -248,7 +248,7 @@ Run `/plugins status` to verify.
 ```bash
 # Skill discovered in /.claude/skills/ during /plugins list drift check
 /plugins add remotion-best-practices
-# → Detects in /.claude/skills/, no .git → copies to packages/skills/ as bundled
+# → Detects in /.claude/skills/, no .git → copies to skills/ as bundled
 
 # Skill from a public git repo
 /plugins add ui-ux-pro-max --from https://github.com/nextlevelbuilder/ui-ux-pro-max-skill
@@ -261,14 +261,14 @@ Run `/plugins status` to verify.
 
 ## /plugins sync
 
-Update `toolkit/external-dependencies.yaml` from current installed state.
+Update `external-dependencies.yaml` from current installed state.
 
 ### Workflow
 
 1. **Read Current State**
    - Parse `{{HOME_TOOL_DIR}}/plugins/installed_plugins.json`
    - Parse `{{HOME_TOOL_DIR}}/plugins/known_marketplaces.json`
-   - Scan `packages/skills/*/SKILL.md`
+   - Scan `skills/*/SKILL.md`
 
 2. **Compare with Manifest**
    - Identify new installations
@@ -301,7 +301,7 @@ Update `toolkit/external-dependencies.yaml` from current installed state.
 #!/bin/bash
 # Sync Claude plugins to manifest
 
-MANIFEST="toolkit/external-dependencies.yaml"
+MANIFEST="external-dependencies.yaml"
 PLUGINS_JSON="/.claude/plugins/installed_plugins.json"
 MARKETPLACES_JSON="/.claude/plugins/known_marketplaces.json"
 
@@ -350,7 +350,7 @@ claude plugin install code-review
 echo "Plugin installation complete!"
 echo ""
 echo "Note: MCP servers must be configured manually in claude_desktop_config.json"
-echo "Note: Bundled skills are included in toolkit/packages/skills/"
+echo "Note: Bundled skills are included in skills/"
 ```
 
 ### Usage
@@ -395,7 +395,7 @@ All extensions are in sync.
 
 ```bash
 # Compare manifest versions with installed
-yq '.claude-plugins[] | "\(.name)=\(.version)"' toolkit/external-dependencies.yaml > /tmp/manifest_versions
+yq '.claude-plugins[] | "\(.name)=\(.version)"' external-dependencies.yaml > /tmp/manifest_versions
 
 jq -r '.plugins | to_entries[] | "\(.key | split("@")[0])=\(.value[0].version)"' \
   /.claude/plugins/installed_plugins.json > /tmp/installed_versions
@@ -420,10 +420,10 @@ If plugin changes detected:
 
 | File | Purpose |
 |------|---------|
-| `toolkit/external-dependencies.yaml` | Unified manifest (versioned) |
+| `external-dependencies.yaml` | Unified manifest (versioned) |
 | `{{HOME_TOOL_DIR}}/plugins/installed_plugins.json` | Claude's plugin state |
 | `{{HOME_TOOL_DIR}}/plugins/known_marketplaces.json` | Registered marketplaces |
-| `packages/skills/*/SKILL.md` | Bundled skill definitions |
+| `skills/*/SKILL.md` | Bundled skill definitions |
 
 ## Best Practices
 
@@ -462,5 +462,5 @@ Claude: # Installed Extensions
 | context7 | Documentation lookup |
 
 Total: 10 extensions tracked
-Manifest: toolkit/external-dependencies.yaml (last updated: 2026-01-24)
+Manifest: external-dependencies.yaml (last updated: 2026-01-24)
 ```

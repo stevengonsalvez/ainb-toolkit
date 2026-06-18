@@ -1,38 +1,53 @@
-# Toolkit — Portable AI-Agent Skills & Configs
+# ainb-toolkit — Portable AI-Agent Skills & Configs
 
-One canonical source. Many AI tools. Write a skill once, install it into Claude Code, Codex, Copilot, Gemini, Hermes, nanoclaw, Amazon Q, Cursor, Cline, Roo, or Clawdhub.
+One canonical source. Many AI tools. Write a skill once, install it into
+Claude Code, Codex, Copilot, Gemini, Hermes, nanoclaw, Amazon Q, Cursor,
+Cline, Roo, or Clawdhub.
 
-> **← [Back to main README](../README.md)**
+This repository is the **sole canonical home** for the skills, the legacy
+`bootstrap.js` installer, and the catalog. It is consumed as an external
+source by [`ainb`](https://github.com/stevengonsalvez/agents-in-a-box)
+(the Rust unit manager) and is installable directly by any SKILL.md-aware
+agent harness.
 
----
+## Related repositories
 
-> **Migration notice — `ainb` is the new deploy surface (May 2026).**
->
-> `bootstrap.js`, `update-externals.sh`, and `external-dependencies.yaml`
-> have been retired in favour of [`ainb`](../ainb-tui/), the Rust-based
-> unit manager. The new install / update / sync / migrate flow lives in
-> the spec at [`ainb-tui/plans/skill-manager/spec.md`](../ainb-tui/plans/skill-manager/spec.md).
->
-> Day-1 path for existing users:
->
-> ```bash
-> cargo install --path ainb-tui                       # one-time
-> ainb migrate --from-bootstrap --toolkit-root .      # seed manifest
-> ainb migrate --check                                # preview wipe
-> ainb migrate --clean --backup --yes                 # apply
-> ainb skill list                                     # verify
-> ```
->
-> Sections below describe the legacy `bootstrap.js` workflow and remain
-> for historical reference; the engine itself no longer ships in this
-> repo. New users should skip directly to `ainb`.
+| Repo | What it holds |
+|---|---|
+| **stevengonsalvez/ainb-toolkit** (this repo) | Canonical skills (`skills/`), agents (`agents/`), workflows, utilities, the `external-dependencies.yaml` manifest, the `bootstrap.js` legacy installer, and the generated `catalog.yaml`. |
+| [stevengonsalvez/agents-in-a-box](https://github.com/stevengonsalvez/agents-in-a-box) | The `ainb` TUI/CLI unit manager (Rust). Installs/browses skills from this repo as a pinned external source, generates the enriched `catalog-index.json` release asset, and ships the `reflect` plugin + `reflect-kb` retrieval CLI. |
 
 ---
 
-## Quick start (legacy — retired, see migration notice above)
+## Install with `ainb` (recommended)
+
+`ainb` (from the agents-in-a-box repo) treats this repo as an external
+skill provider and handles install / update / sync / drift across tool
+home dirs:
 
 ```bash
-cd toolkit
+# Browse this repo's curated catalog
+ainb skill browse "" --catalog ainb
+
+# Add this repo as a source, then install any skill
+ainb source add gh:stevengonsalvez/ainb-toolkit
+ainb skill install gh:stevengonsalvez/ainb-toolkit@main/skills/<name> --targets claude --yes
+
+# Verify + sync changes back to this repo
+ainb skill check
+ainb skill sync --to-repo
+```
+
+See the agents-in-a-box repo for `ainb` install (homebrew tap or
+`cargo install`).
+
+---
+
+## Quick start (legacy `bootstrap.js`)
+
+The node installer still works and deploys the full tree to a tool home:
+
+```bash
 npm install
 
 # Interactive (picks tool from menu)
@@ -43,8 +58,6 @@ node bootstrap.js --tool=claude-code-4.5
 node bootstrap.js --tool=codex
 node bootstrap.js --tool=copilot
 node bootstrap.js --tool=gemini
-node bootstrap.js --tool=hermes-agent
-node bootstrap.js --tool=nanoclaw
 
 # Verify everything landed (read-only)
 node bootstrap.js --tool=claude-code-4.5 --verify
@@ -53,44 +66,52 @@ node bootstrap.js --tool=claude-code-4.5 --verify
 bash ~/.claude/setup-external.sh
 ```
 
-**Repeat for each target tool.** Each tool gets its own home directory population (`~/.claude/`, `~/.codex/`, …). Hermes is special — it reads from `~/.claude/skills/` via `skills.external_dirs`, so installing for Claude transitively covers Hermes.
+**Repeat for each target tool.** Each tool gets its own home directory
+population (`~/.claude/`, `~/.codex/`, …). Hermes is special — it reads
+from `~/.claude/skills/` via `skills.external_dirs`, so installing for
+Claude transitively covers Hermes.
 
 ---
 
-## What's in `packages/`
+## Repository layout
 
-The canonical source tree. Everything under `packages/` gets distributed to tool home dirs on `bootstrap`.
+This repo is **flattened**: the canonical source trees live directly at
+the repo root (there is no `packages/` wrapper). Everything here gets
+distributed to tool home dirs on `bootstrap` (or installed individually
+by `ainb`).
 
 ```
-packages/
-├── skills/              91 skills — agent-invokable SKILL.md bundles
-├── agents/              37 agents across 6 categories
-│   ├── design/          UI/UX designers
-│   ├── engineering/     backend, frontend, security, perf, code-review
-│   ├── meta/            agentmaker (create new agents)
-│   ├── orchestrators/   tech-lead, project-analyst, team-configurator
-│   ├── swarm/           worker/leader primitives for multi-agent work
-│   └── universal/       backend-developer, frontend-developer, superstar-engineer
-├── utilities/
-│   ├── config/          Shared tool config templates
-│   ├── hooks/           Event hooks (session-start, pre-commit, etc.)
-│   ├── output-styles/   Custom output formatters
-│   ├── reflections/     Session reflection templates
-│   └── utils/           Shell utility libraries
-├── workflows/
-│   └── single-agent/    Guided plan → implement → validate flows
-└── knowledge/
-    └── docs-solutions-template/
+skills/                 91 skills — agent-invokable SKILL.md bundles
+agents/                 37 agents across 6 categories
+├── design/             UI/UX designers
+├── engineering/        backend, frontend, security, perf, code-review
+├── meta/               agentmaker (create new agents)
+├── orchestrators/      tech-lead, project-analyst, team-configurator
+├── swarm/              worker/leader primitives for multi-agent work
+└── universal/          backend-developer, frontend-developer, superstar-engineer
+utilities/
+├── config/             Shared tool config templates
+├── hooks/              Event hooks (session-start, pre-commit, etc.)
+├── output-styles/      Custom output formatters
+├── reflections/        Session reflection templates
+└── utils/              Shell utility libraries
+workflows/
+├── single-agent/       Guided plan → implement → validate flows
+└── multi-agent/        Swarm/DAG orchestration commands
+knowledge/
+└── docs-solutions-template/
 ```
 
-The reflect Claude Code plugin lives at root-level
-[`plugins/reflect/`](../plugins/reflect/) (moved out of
-`toolkit/packages/plugins/` to sit beside its companion library).
-The reflect/recall knowledge base CLI lives at root-level
-[`reflect-kb/`](../reflect-kb/) in this same monorepo and is installed
-via `uv tool install` by `bootstrap.js` (from the
-`git+https://github.com/stevengonsalvez/agents-in-a-box.git#subdirectory=reflect-kb`
-URL). See the bootstrap's `installReflectKb()` function for details.
+Per-tool config trees (`claude-code-4.5/`, `codex/`, `copilot/`,
+`gemini/`, `amazonq/`, `cursor/`, `cline/`, `roo/`, `clawdhub/`, …) and
+the shared `general-rules/` also live at the repo root.
+
+> The **reflect** Claude Code plugin and the **reflect-kb** retrieval CLI
+> are NOT in this repo — they live in the
+> [agents-in-a-box](https://github.com/stevengonsalvez/agents-in-a-box)
+> monorepo (`plugins/reflect/` and `reflect-kb/`). `bootstrap.js` installs
+> reflect-kb via `uv tool install` by cloning that monorepo; see the
+> `installReflectKb()` function for details.
 
 ### Skills at a glance (91 total, grouped by purpose)
 
@@ -164,11 +185,12 @@ URL). See the bootstrap's `installReflectKb()` function for details.
 
 ## External dependencies (`external-dependencies.yaml`)
 
-Skills and plugins authored elsewhere, installed by bootstrap into each tool's home dir. Sections in the manifest:
+Skills and plugins authored elsewhere, installed by bootstrap into each
+tool's home dir. Sections in the manifest:
 
 | Section | Install mechanism | Target |
 |---|---|---|
-| `bundled-skills` | (included in `packages/skills/`) | copied by bootstrap |
+| `bundled-skills` | (included in `skills/`) | copied by bootstrap |
 | `agent-skills` | `git clone <repo>` | `~/.TOOL/skills/<name>/` |
 | `claude-plugins` | `claude plugin marketplace install` | Claude plugin cache |
 | `npx-skills` | `npx skills add <pkg> --yes` | `~/.agents/skills/` (then symlinked into tool dirs) |
@@ -203,7 +225,6 @@ Run `bootstrap.js` with `--tool=<X>`:
 | `codex` | `~/.codex/` | AGENTS.md symlinked to claude-code-4.5/CLAUDE.md |
 | `copilot` | `~/.copilot/` | GitHub Copilot CLI |
 | `gemini` | `~/.gemini/` | Gemini CLI, project-scoped |
-| `hermes-agent` | `~/.hermes/` | Reads from `~/.claude/skills/` via `external_dirs` — no direct external installs needed |
 | `nanoclaw` | `~/.claude/` (shared) | Successor to OpenClaw, uses same Claude dir |
 | `amazonq` | `PROJECT/.amazonq/rules/` | Project-scoped |
 | `cursor` `cline` `roo` | `PROJECT/.<tool>/rules/` | Project-scoped rule files |
@@ -213,19 +234,24 @@ Run `bootstrap.js` with `--tool=<X>`:
 
 ## Workflow: add a new skill end-to-end
 
-1. **Author** — create `packages/skills/<name>/SKILL.md` with frontmatter `name`, `description`, and a matching body.
+1. **Author** — create `skills/<name>/SKILL.md` with frontmatter `name`, `description`, and a matching body.
 2. **Test locally** — copy to `~/.claude/skills/<name>/` and invoke via the skill harness. (Or just run `node bootstrap.js --tool=claude-code-4.5 --homeDir=$HOME` to reinstall.)
-3. **Propagate** — `node bootstrap.js --tool=<each-target>` for every tool you care about. Or drive all of them in a loop.
+3. **Propagate** — `node bootstrap.js --tool=<each-target>` for every tool you care about. Or use `ainb skill install` per tool.
 4. **Verify** — `node bootstrap.js --tool=<X> --verify` should report the skill present on every tool in its applies-to.
-5. **Commit** — canonical changes go in `toolkit/packages/skills/<name>/` (note: `.gitignore` has a broad `skills/` rule — use `git add -f` for new skill dirs).
+5. **Regenerate the catalog** — `bash bin/generate-catalog.sh` to refresh `catalog.yaml`.
+6. **Commit** — canonical changes go in `skills/<name>/`.
 
-For **externally-authored** skills (git clones), add an entry to `external-dependencies.yaml` under `agent-skills:` and set `applies-to` appropriately. Bootstrap will generate the `git clone` in each tool's `setup-external.sh`.
+For **externally-authored** skills (git clones), add an entry to
+`external-dependencies.yaml` under `agent-skills:` and set `applies-to`
+appropriately. Bootstrap will generate the `git clone` in each tool's
+`setup-external.sh`.
 
 ---
 
 ## Spec-Driven Development (SDD)
 
-Spec Kit integration — drives a spec → plan → tasks workflow via slash commands in Claude Code.
+Spec Kit integration — drives a spec → plan → tasks workflow via slash
+commands in Claude Code.
 
 ```bash
 # Install SDD assets into a project (clones Spec Kit to a temp folder)
@@ -243,24 +269,9 @@ node bootstrap.js --sdd --targetFolder=<project>
 
 ---
 
-## Rule registry (legacy, for non-frontmatter-aware tools)
-
-For tools that can't parse frontmatter (Claude Desktop, Goose, etc.), bootstrap generates a `rule-registry.json` listing each rule's path, globs, and `alwaysApply` status.
-
-```json
-{
-  "rulestore-rule": { "path": ".amazonq/rules/rulestore-rule.md", "globs": ["*-rule.md"], "alwaysApply": true }
-}
-```
-
-Frontmatter-native tools (Cursor, AmazonQ, Claude Code) use the frontmatter directly and ignore the registry.
-
----
-
 ## References
 
 - **Manifest**: [`external-dependencies.yaml`](external-dependencies.yaml)
-- **Internal catalog**: [`catalog.yaml`](catalog.yaml) — auto-generated filesystem-derived manifest of every toolkit-owned skill, plugin, agent, workflow, and utility (the "internal" set; anything installed but not listed here is external). Regenerate with `bash toolkit/bin/generate-catalog.sh`.
+- **Internal catalog**: [`catalog.yaml`](catalog.yaml) — auto-generated filesystem-derived manifest of every skill, agent, workflow, and utility this repo owns (the "internal" set; anything installed but not listed here is external). Regenerate with `bash bin/generate-catalog.sh`.
 - **Bootstrap source**: [`bootstrap.js`](bootstrap.js)
-- **Parity regression test**: [`test-bootstrap-parity.sh`](test-bootstrap-parity.sh)
-- **Main project README**: [`../README.md`](../README.md)
+- **Unit manager (`ainb`)**: [stevengonsalvez/agents-in-a-box](https://github.com/stevengonsalvez/agents-in-a-box)

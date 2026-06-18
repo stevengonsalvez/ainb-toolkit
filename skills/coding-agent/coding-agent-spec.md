@@ -26,7 +26,7 @@ Refactor the existing `coding-agent` skill from its clawdbot/OpenClaw-specific o
 ## Scope
 
 ### In Scope
-- Rewrite of `SKILL.md` under `packages/skills/coding-agent/`
+- Rewrite of `SKILL.md` under `skills/coding-agent/`
 - Mapping of old `bash pty:true` + `process` tool references to pure tmux commands
 - GitHub Copilot integration (using `copilot` CLI from GitHub)
 - Pointer to `/cloud-coding-agent` for cloud use cases
@@ -293,7 +293,7 @@ branch is checked out.
 8. **Generalize workspace safety guardrail**
 9. **Update rules list** (drop rules 8 and 9 which are OpenClaw-specific)
 10. **Update learnings section** (remove clawdbot-specific anecdotes)
-11. **Sync to `~/.claude/skills/coding-agent/SKILL.md`** after edits to `packages/skills/coding-agent/SKILL.md`
+11. **Sync to `~/.claude/skills/coding-agent/SKILL.md`** after edits to `skills/coding-agent/SKILL.md`
 
 ### Technical Debt Accepted
 - Tmux socket hygiene is not addressed (macOS `/tmp` cleanup issue we hit earlier) — users should know about `TMUX_TMPDIR` but skill won't enforce

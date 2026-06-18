@@ -6,7 +6,7 @@ ClawdHub-ready skill packages. Each subdirectory here is a published (or publish
 
 | Skill | Purpose |
 |-------|---------|
-| `reflect/` | The reflect plugin packaged for ClawdHub distribution (mirror of `../packages/plugins/reflect/`) |
+| `reflect/` | The reflect plugin packaged for ClawdHub distribution (mirror of the agents-in-a-box repo's `plugins/reflect/`) |
 
 ## Adding a skill
 
