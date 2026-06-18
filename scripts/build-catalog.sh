@@ -74,13 +74,13 @@ components:
 EOF
 
     # Add skills
-    for skill_dir in "$ROOT_DIR/packages/skills"/*; do
+    for skill_dir in "$ROOT_DIR/skills"/*; do
         if [[ -d "$skill_dir" && -f "$skill_dir/SKILL.md" ]]; then
             local name version desc path
             name=$(get_name "$skill_dir/SKILL.md")
             version=$(get_version "$skill_dir/SKILL.md")
             desc=$(get_description "$skill_dir/SKILL.md")
-            path="packages/skills/$(basename "$skill_dir")"
+            path="skills/$(basename "$skill_dir")"
 
             cat >> "$tmp_file" << EOF
     - name: $name
@@ -98,13 +98,13 @@ EOF
   workflows:
 EOF
 
-    for workflow_dir in "$ROOT_DIR/packages/workflows"/*; do
+    for workflow_dir in "$ROOT_DIR/workflows"/*; do
         if [[ -d "$workflow_dir" && -f "$workflow_dir/WORKFLOW.md" ]]; then
             local name version desc path
             name=$(get_name "$workflow_dir/WORKFLOW.md")
             version=$(get_version "$workflow_dir/WORKFLOW.md")
             desc=$(get_description "$workflow_dir/WORKFLOW.md")
-            path="packages/workflows/$(basename "$workflow_dir")"
+            path="workflows/$(basename "$workflow_dir")"
 
             cat >> "$tmp_file" << EOF
     - name: $name
@@ -118,7 +118,7 @@ EOF
 
     # Count agents
     local agent_count
-    agent_count=$(find "$ROOT_DIR/packages/agents" -name "AGENT.md" | wc -l | tr -d ' ')
+    agent_count=$(find "$ROOT_DIR/agents" -name "AGENT.md" | wc -l | tr -d ' ')
 
     cat >> "$tmp_file" << EOF
 

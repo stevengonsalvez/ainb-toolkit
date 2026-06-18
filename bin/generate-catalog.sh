@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# generate-catalog.sh — regenerate toolkit/catalog.yaml from the filesystem.
+# generate-catalog.sh — regenerate catalog.yaml from the filesystem.
 #
 # catalog.yaml is the SOURCE OF TRUTH for "what this toolkit owns" — the
 # internal set. Anything in ~/.claude/skills/ (or other tool homes) that is
@@ -9,15 +9,15 @@
 # external-dependencies.yaml continues to track installation reproducibility
 # for external plugins/skills; it does NOT define the internal set.
 #
-# Usage:  bash toolkit/bin/generate-catalog.sh
-#         (run from any cwd; the script resolves toolkit/ from its own path)
+# Usage:  bash bin/generate-catalog.sh
+#         (run from any cwd; the script resolves the repo root from its own path)
 #
 # The output is deterministic and byte-stable across runs (everything sorted),
 # so re-running with no source changes produces no git diff.
 
 set -euo pipefail
 
-# Resolve the toolkit/ root from this script's location.
+# Resolve the repo root from this script's location.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TOOLKIT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 OUT="$TOOLKIT_ROOT/catalog.yaml"
@@ -59,17 +59,17 @@ emit_list() {
 cat > "$OUT" <<'EOF'
 # AUTO-GENERATED — do not edit by hand.
 # Source of truth: filesystem. Regenerate with:
-#   bash toolkit/bin/generate-catalog.sh
+#   bash bin/generate-catalog.sh
 #
 # This file lists everything THIS REPO owns (the "internal" set). Anything
 # installed into ~/.{claude,codex,copilot}/skills/ that does not appear here
 # is external (plugin / nanoclaw / npx / personal). External installation
-# reproducibility lives in toolkit/external-dependencies.yaml.
+# reproducibility lives in external-dependencies.yaml.
 #
 apiVersion: catalog/v1
 metadata:
-  name: agents-in-a-box
-  description: Filesystem-derived manifest of toolkit-owned skills, plugins, agents, workflows, and utilities
+  name: ainb-toolkit
+  description: Filesystem-derived manifest of ainb-toolkit-owned skills, agents, workflows, and utilities
   generator: bin/generate-catalog.sh
 
 EOF
@@ -79,20 +79,20 @@ EOF
 {
     echo "components:"
     echo ""
-    list_dirs "packages/skills" | emit_list "  skills:"
+    list_dirs "skills" | emit_list "  skills:"
 } >> "$OUT"
 
 # ---- plugins (with sub-skills) ---------------------------------------------
 
-if [ -d "packages/plugins" ]; then
-    plugins=$(list_dirs "packages/plugins")
+if [ -d "plugins" ]; then
+    plugins=$(list_dirs "plugins")
     if [ -n "$plugins" ]; then
         echo "" >> "$OUT"
         echo "  plugins:" >> "$OUT"
         while IFS= read -r plugin; do
             [ -z "$plugin" ] && continue
             echo "    - name: $plugin" >> "$OUT"
-            subskills=$(list_dirs "packages/plugins/$plugin/skills")
+            subskills=$(list_dirs "plugins/$plugin/skills")
             if [ -n "$subskills" ]; then
                 echo "      skills:" >> "$OUT"
                 while IFS= read -r ss; do
@@ -105,15 +105,15 @@ fi
 
 # ---- workflows --------------------------------------------------------------
 
-if [ -d "packages/workflows" ]; then
-    wfs=$(list_dirs "packages/workflows")
+if [ -d "workflows" ]; then
+    wfs=$(list_dirs "workflows")
     if [ -n "$wfs" ]; then
         echo "" >> "$OUT"
         echo "  workflows:" >> "$OUT"
         while IFS= read -r wf; do
             [ -z "$wf" ] && continue
             echo "    - name: $wf" >> "$OUT"
-            cmds=$(list_files_basename "packages/workflows/$wf/commands" "*.md")
+            cmds=$(list_files_basename "workflows/$wf/commands" "*.md")
             if [ -n "$cmds" ]; then
                 echo "      commands:" >> "$OUT"
                 while IFS= read -r c; do
@@ -126,12 +126,12 @@ fi
 
 # ---- agents -----------------------------------------------------------------
 
-if [ -d "packages/agents" ]; then
+if [ -d "agents" ]; then
     echo "" >> "$OUT"
     echo "  agents:" >> "$OUT"
 
-    # Root-level agents (.md files directly under packages/agents/)
-    root_agents=$(list_files_basename "packages/agents" "*.md")
+    # Root-level agents (.md files directly under agents/)
+    root_agents=$(list_files_basename "agents" "*.md")
     if [ -n "$root_agents" ]; then
         echo "    root:" >> "$OUT"
         while IFS= read -r a; do
@@ -140,7 +140,7 @@ if [ -d "packages/agents" ]; then
     fi
 
     # Categorized agents (subdirs containing .md files)
-    for category_dir in packages/agents/*/; do
+    for category_dir in agents/*/; do
         [ -d "$category_dir" ] || continue
         category=$(basename "$category_dir")
         agents=$(list_files_basename "$category_dir" "*.md")
@@ -155,12 +155,12 @@ fi
 
 # ---- utilities (commands, hooks, templates, output-styles, utils) ----------
 
-if [ -d "packages/utilities" ]; then
+if [ -d "utilities" ]; then
     echo "" >> "$OUT"
     echo "  utilities:" >> "$OUT"
 
     for sub in commands hooks output-styles utils; do
-        dir="packages/utilities/$sub"
+        dir="utilities/$sub"
         [ -d "$dir" ] || continue
         # Items can be either flat files or subdirs (commands/ has subdirs).
         files=$(list_files_basename "$dir" "*.md" 2>/dev/null || true)
@@ -197,14 +197,14 @@ fi
 
 # ---- summary ---------------------------------------------------------------
 
-skill_count=$(list_dirs "packages/skills" | wc -l | tr -d ' ')
+skill_count=$(list_dirs "skills" | wc -l | tr -d ' ')
 plugin_skill_count=0
-if [ -d "packages/plugins" ]; then
+if [ -d "plugins" ]; then
     while IFS= read -r p; do
         [ -z "$p" ] && continue
-        n=$(list_dirs "packages/plugins/$p/skills" | wc -l | tr -d ' ')
+        n=$(list_dirs "plugins/$p/skills" | wc -l | tr -d ' ')
         plugin_skill_count=$((plugin_skill_count + n))
-    done < <(list_dirs "packages/plugins")
+    done < <(list_dirs "plugins")
 fi
 
 echo "" >&2

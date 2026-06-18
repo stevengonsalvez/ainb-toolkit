@@ -6,7 +6,7 @@
     "name": "Steven Gonsalvez",
     "url": "https://github.com/stevengonsalvez"
   },
-  "repository": "https://github.com/stevengonsalvez/ai-coder-rules",
+  "repository": "https://github.com/stevengonsalvez/ainb-toolkit",
   "license": "Apache-2.0",
   "keywords": [
     "skills",
@@ -27,11 +27,11 @@
     "claude-code": ">=1.0.0"
   },
   "paths": {
-    "skills": "./packages/skills",
-    "workflows": "./packages/workflows",
-    "agents": "./packages/agents",
-    "commands": "./packages/utilities/commands",
-    "hooks": "./packages/utilities/hooks"
+    "skills": "./skills",
+    "workflows": "./workflows",
+    "agents": "./agents",
+    "commands": "./utilities/commands",
+    "hooks": "./utilities/hooks"
   },
   "entry": {
     "catalog": "./catalog.yaml"
