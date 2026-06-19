@@ -63,7 +63,6 @@ components:
     - plan-gh
     - plan-tdd
     - plugins
-    - popa-illustration
     - posthog-replay-analysis
     - prime
     - react-components
