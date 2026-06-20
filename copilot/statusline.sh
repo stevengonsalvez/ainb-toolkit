@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ~/.copilot/statusline.sh — GitHub Copilot CLI rich single-line statusline
 #
-# A copilot-native port of toolkit/claude-code-4.5/statusline.sh. Renders ONE
+# A copilot-native port of claude-code-4.5/statusline.sh. Renders ONE
 # powerline line (Copilot only renders the first line of stdout):
 #
 #   cwd › git branch+ahead/behind+dirty › model+ctx bar › duration › remote

@@ -45,7 +45,7 @@ When the `/research` command discovers external repositories:
 ### View Cache Statistics
 
 ```bash
-bash toolkit/claude-code-4.5/utils/repo-analysis-cache.sh stats
+bash {{HOME_TOOL_DIR}}/utils/repo-analysis-cache.sh stats
 ```
 
 **Output**:
@@ -72,10 +72,10 @@ Configuration:
 
 ```bash
 # List valid entries only
-bash toolkit/claude-code-4.5/utils/repo-analysis-cache.sh list
+bash {{HOME_TOOL_DIR}}/utils/repo-analysis-cache.sh list
 
 # Include expired entries
-bash toolkit/claude-code-4.5/utils/repo-analysis-cache.sh list --expired
+bash {{HOME_TOOL_DIR}}/utils/repo-analysis-cache.sh list --expired
 ```
 
 **Output**:
@@ -93,10 +93,10 @@ golang-go-i7j8k9l              EXPIRED         2025-12-20T09:15:00  3c1e5f2a
 
 ```bash
 # Purge only expired entries (older than max age)
-bash toolkit/claude-code-4.5/utils/repo-analysis-cache.sh purge
+bash {{HOME_TOOL_DIR}}/utils/repo-analysis-cache.sh purge
 
 # Force purge all entries
-bash toolkit/claude-code-4.5/utils/repo-analysis-cache.sh purge --force
+bash {{HOME_TOOL_DIR}}/utils/repo-analysis-cache.sh purge --force
 ```
 
 **Output**:
@@ -114,7 +114,7 @@ Purge Summary:
 ```bash
 # Get path to cached analysis
 CACHE_KEY="facebook-react-a1b2c3d"
-ANALYSIS_PATH=$(bash toolkit/claude-code-4.5/utils/repo-analysis-cache.sh get "$CACHE_KEY")
+ANALYSIS_PATH=$(bash {{HOME_TOOL_DIR}}/utils/repo-analysis-cache.sh get "$CACHE_KEY")
 
 if [ $? -eq 0 ]; then
     echo "Found cached analysis: $ANALYSIS_PATH"
@@ -129,7 +129,7 @@ fi
 ```bash
 # Check if cache entry exists
 CACHE_KEY="facebook-react-a1b2c3d"
-if bash toolkit/claude-code-4.5/utils/repo-analysis-cache.sh exists "$CACHE_KEY"; then
+if bash {{HOME_TOOL_DIR}}/utils/repo-analysis-cache.sh exists "$CACHE_KEY"; then
     echo "Cache hit: $CACHE_KEY"
 else
     echo "Cache miss: $CACHE_KEY"
@@ -137,7 +137,7 @@ fi
 
 # Check with query hash matching
 QUERY_HASH="f3a8c91e"
-if bash toolkit/claude-code-4.5/utils/repo-analysis-cache.sh exists "$CACHE_KEY" "$QUERY_HASH"; then
+if bash {{HOME_TOOL_DIR}}/utils/repo-analysis-cache.sh exists "$CACHE_KEY" "$QUERY_HASH"; then
     echo "Cache hit with matching query"
 else
     echo "Cache miss or query mismatch"
@@ -151,7 +151,7 @@ fi
 REPO_URL="https://github.com/facebook/react"
 COMMIT_HASH="a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0"
 
-CACHE_KEY=$(bash toolkit/claude-code-4.5/utils/repo-analysis-cache.sh key "$REPO_URL" "$COMMIT_HASH")
+CACHE_KEY=$(bash {{HOME_TOOL_DIR}}/utils/repo-analysis-cache.sh key "$REPO_URL" "$COMMIT_HASH")
 echo "Cache key: $CACHE_KEY"
 # Output: facebook-react-a1b2c3d
 ```
@@ -196,16 +196,16 @@ Cache entries are automatically invalidated when:
 
 ```bash
 # View what's cached
-bash toolkit/claude-code-4.5/utils/repo-analysis-cache.sh list
+bash {{HOME_TOOL_DIR}}/utils/repo-analysis-cache.sh list
 
 # Check stats before purging
-bash toolkit/claude-code-4.5/utils/repo-analysis-cache.sh stats
+bash {{HOME_TOOL_DIR}}/utils/repo-analysis-cache.sh stats
 
 # Purge expired only
-bash toolkit/claude-code-4.5/utils/repo-analysis-cache.sh purge
+bash {{HOME_TOOL_DIR}}/utils/repo-analysis-cache.sh purge
 
 # Force clean slate
-bash toolkit/claude-code-4.5/utils/repo-analysis-cache.sh purge --force
+bash {{HOME_TOOL_DIR}}/utils/repo-analysis-cache.sh purge --force
 ```
 
 ## Configuration
@@ -221,7 +221,7 @@ export CLAUDE_RESEARCH_CACHE="/custom/cache/path"
 
 ### Cache Settings
 
-Edit `toolkit/claude-code-4.5/utils/repo-analysis-cache.sh`:
+Edit `{{HOME_TOOL_DIR}}/utils/repo-analysis-cache.sh`:
 
 ```bash
 # Cache TTL in seconds (7 days)
@@ -240,10 +240,10 @@ MAX_CACHE_AGE=$((30 * 24 * 60 * 60))
 **Check**:
 ```bash
 # Verify cache exists
-bash toolkit/claude-code-4.5/utils/repo-analysis-cache.sh stats
+bash {{HOME_TOOL_DIR}}/utils/repo-analysis-cache.sh stats
 
 # Check if entry is valid
-bash toolkit/claude-code-4.5/utils/repo-analysis-cache.sh exists <cache-key>
+bash {{HOME_TOOL_DIR}}/utils/repo-analysis-cache.sh exists <cache-key>
 ```
 
 **Fix**:
@@ -258,16 +258,16 @@ bash toolkit/claude-code-4.5/utils/repo-analysis-cache.sh exists <cache-key>
 **Check**:
 ```bash
 # View cache size
-bash toolkit/claude-code-4.5/utils/repo-analysis-cache.sh stats
+bash {{HOME_TOOL_DIR}}/utils/repo-analysis-cache.sh stats
 ```
 
 **Fix**:
 ```bash
 # Purge expired entries
-bash toolkit/claude-code-4.5/utils/repo-analysis-cache.sh purge
+bash {{HOME_TOOL_DIR}}/utils/repo-analysis-cache.sh purge
 
 # Or force purge all
-bash toolkit/claude-code-4.5/utils/repo-analysis-cache.sh purge --force
+bash {{HOME_TOOL_DIR}}/utils/repo-analysis-cache.sh purge --force
 ```
 
 ### Corrupted Cache Entry
@@ -280,7 +280,7 @@ bash toolkit/claude-code-4.5/utils/repo-analysis-cache.sh purge --force
 rm -rf {{HOME_TOOL_DIR}}/research-cache/<cache-key>
 
 # Reinitialize cache
-bash toolkit/claude-code-4.5/utils/repo-analysis-cache.sh init
+bash {{HOME_TOOL_DIR}}/utils/repo-analysis-cache.sh init
 ```
 
 ## Integration with /research Command
@@ -327,7 +327,7 @@ done
 
 ```bash
 # Export to JSON
-bash toolkit/claude-code-4.5/utils/repo-analysis-cache.sh stats > cache-stats.txt
+bash {{HOME_TOOL_DIR}}/utils/repo-analysis-cache.sh stats > cache-stats.txt
 
 # Parse for monitoring
 grep "Total:" cache-stats.txt
@@ -347,4 +347,4 @@ find {{HOME_TOOL_DIR}}/research-cache -name "metadata.json" -mtime -7 -exec jq -
 
 - `/research` - Main research command that uses cache
 - `focused-repository-analyzer` - Agent that generates cached analyses
-- `toolkit/claude-code-4.5/utils/repo-analysis-cache.sh` - Cache utility script
+- `{{HOME_TOOL_DIR}}/utils/repo-analysis-cache.sh` - Cache utility script
