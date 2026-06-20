@@ -1,6 +1,6 @@
 ---
 name: sync-learnings
-description: Sync user-level agent config changes back to toolkit repository (works for Claude, Codex, Copilot)
+description: Sync user-level agent config changes back to the ainb-toolkit repo (works for Claude, Codex, Copilot)
 user-invocable: true
 ---
 
@@ -17,19 +17,30 @@ When working on projects, learnings get captured in user-level agent files via `
 ## Architecture
 
 ```
-{{HOME_TOOL_DIR}}/  <--sync-->  <repo root>  --generates-->  claude-code-4.5/ (thin layer)
-                             |
-                    create-rule.js installs
+{{HOME_TOOL_DIR}}/  <--sync-->  ainb-toolkit repo root  --bootstrap.js deploys-->  {{HOME_TOOL_DIR}}/
+  (deployed copy)               (canonical: skills/ agents/ utilities/ + claude-code-4.5/)
 ```
 
-The **repo root** (`skills/`, `agents/`, `workflows/`, `utilities/`) is the canonical source. **claude-code-4.5/CLAUDE.md** is the canonical agent instructions file; codex and copilot symlink their AGENTS.md to it.
+The **ainb-toolkit repo root** (`skills/`, `agents/`, `workflows/`, `utilities/`) is the canonical source — a SEPARATE sibling checkout, NOT a subdir of the project you're in. `bootstrap.js` deploys it back into `{{HOME_TOOL_DIR}}/` (substituting `{{TOOL_DIR}}`/`{{HOME_TOOL_DIR}}` placeholders per tool). **claude-code-4.5/CLAUDE.md** is the canonical agent instructions file; codex and copilot symlink their AGENTS.md to it.
+
+## Repo Location
+
+`skills/`, `agents/`, `utilities/`, `claude-code-4.5/` etc. are RELATIVE to the ainb-toolkit checkout — a separate sibling repo, NOT a subdir of the current project. Resolve it once and `cd` there before any sync/diff/git command below:
+
+```bash
+TOOLKIT_REPO="${AINB_TOOLKIT_DIR:-$HOME/d/git/ainb-toolkit}"
+[ -d "$TOOLKIT_REPO/.git" ] || { echo "ainb-toolkit not found at $TOOLKIT_REPO — set AINB_TOOLKIT_DIR"; exit 1; }
+cd "$TOOLKIT_REPO"
+```
+
+Every repo-relative path here assumes `cd "$TOOLKIT_REPO"` ran. TO_REPO commits land in THIS repo (`git -C "$TOOLKIT_REPO" ...`); the `{{HOME_TOOL_DIR}}/` side is not a git repo. Ship changes via branch → PR → merge on ainb-toolkit `main` (ainb consumes it as a pinned source), then redeploy with `node "$TOOLKIT_REPO/bootstrap.js"`.
 
 ## Workflow
 
 1. **Assess**: Compare directories and categorize differences
 2. **Reverse Scan**: Enumerate all items in {{HOME_TOOL_DIR}}/ and flag orphans missing from the canonical `skills/` + `agents/` tree
 3. **Plugin Audit**: Cross-check installed plugins against external-dependencies.yaml manifest
-4. **Route**: Determine target package directory for each file
+4. **Route**: Map each file to its target dir in the repo (`agents/`, `skills/`, `utilities/`)
 5. **Plan**: Generate sync plan table with actions and rationale
 6. **Execute**: Copy files in parallel where possible
 7. **Commit**: Single commit for TO_REPO changes
@@ -48,17 +59,9 @@ The **repo root** (`skills/`, `agents/`, `workflows/`, `utilities/`) is the cano
 | `{{HOME_TOOL_DIR}}/agents/swarm/` | `agents/swarm/` |
 | `{{HOME_TOOL_DIR}}/agents/*.md` (root) | `agents/` |
 
-### Commands (routed by type)
+### Commands — NOT a synced category
 
-Commands are routed based on their purpose:
-
-| Command Pattern | Target |
-|-----------------|--------|
-| `m-*` (m-plan, m-implement, m-monitor, m-workflow) | `workflows/multi-agent/commands/` |
-| `swarm-*` (swarm-create, swarm-status, swarm-inbox, swarm-join, swarm-shutdown) | `workflows/multi-agent/commands/` |
-| `spawn-agent`, `*-agent-worktree`, `merge-agent-work`, `recover-sessions` | `workflows/multi-agent/commands/` |
-| `plan`, `implement`, `validate`, `research`, `workflow` | `workflows/single-agent/commands/` |
-| All other commands | `utilities/commands/` |
+Claude Code commands migrated to skills; ainb-toolkit has no `commands/`, `workflows/*/commands/`, or `utilities/commands/` directory. User-level `{{HOME_TOOL_DIR}}/commands/` (if any) are personal/legacy and are NOT synced. Workflows are now single files at `workflows/<name>/WORKFLOW.md`.
 
 ### Utils (shell libraries)
 
@@ -86,32 +89,10 @@ replace interpolated paths back to template placeholders:
 | Source (user-level) | Target (repo) |
 |---------------------|-------------------|
 | `{{HOME_TOOL_DIR}}/skills/` | `skills/` |
-| `{{HOME_TOOL_DIR}}/templates/` | `utilities/templates/` |
 | `{{HOME_TOOL_DIR}}/hooks/` | `utilities/hooks/` |
 | `{{HOME_TOOL_DIR}}/output-styles/` | `utilities/output-styles/` |
 
-## Command Routing Logic
-
-```bash
-# Determine target directory for a command
-route_command() {
-  local cmd="$1"
-  case "$cmd" in
-    m-*|swarm-*)
-      echo "workflows/multi-agent/commands/"
-      ;;
-    spawn-agent.md|*-agent-worktree.md|merge-agent-work.md|recover-sessions.md)
-      echo "workflows/multi-agent/commands/"
-      ;;
-    plan.md|implement.md|validate.md|research.md|workflow.md)
-      echo "workflows/single-agent/commands/"
-      ;;
-    *)
-      echo "utilities/commands/"
-      ;;
-  esac
-}
-```
+(No `utilities/templates/` dir — skill-owned templates live inside the skill, e.g. `skills/explain-to-me/assets/templates/`, and sync as part of that skill.)
 
 ## Exclusion Categories (Never Sync)
 
@@ -454,16 +435,11 @@ Many shells alias `cp` to `cp -i`. Always use `\cp` to bypass:
 # Agent sync (direct)
 \cp /.claude/agents/engineering/new-agent.md agents/engineering/
 
-# Command sync (routed)
-\cp /.claude/commands/m-plan.md workflows/multi-agent/commands/
-\cp /.claude/commands/plan.md workflows/single-agent/commands/
-\cp /.claude/commands/session-info.md utilities/commands/
-
 # Skill sync
 \cp -R /.claude/skills/new-skill/ skills/
 
-# Template sync
-\cp /.claude/templates/new-template.md utilities/templates/
+# Utility / hook sync
+\cp /.claude/hooks/new-hook.py utilities/hooks/
 ```
 
 ### Commit Format
@@ -509,10 +485,8 @@ diff claude-code-4.5/statusline.sh /.claude/statusline.sh
 # Find all differences (agents)
 diff -rq /.claude/agents/ agents/ 2>/dev/null
 
-# Find all differences (commands - check all locations)
-for dir in utilities/commands workflows/*/commands; do
-  diff -rq /.claude/commands/ "$dir" 2>/dev/null | head -5
-done
+# Find all differences (skills)
+diff -rq /.claude/skills/ skills/ 2>/dev/null | head -20
 
 # Find files only in /.claude (candidates for TO_REPO)
 diff -rq /.claude/agents/ agents/ 2>/dev/null | grep "Only in /Users"
@@ -566,7 +540,7 @@ grep -rl '\bbd\b' skills/*/SKILL.md 2>/dev/null
 - **Skip binaries** and non-text files (never run `perl -i` interpolation on a
   compiled binary — copy it raw)
 - **Validate** markdown frontmatter before copying agent files
-- **Route commands** to correct package directory
+- **Route** each file to its matching repo dir (`agents/`, `skills/`, `utilities/`)
 - **Exclude** files matching exclusion categories
 
 ## Example Session (tidied format)
@@ -580,8 +554,8 @@ Claude:
 | dir   | file                                       | target                              | note    |
 |-------|--------------------------------------------|-------------------------------------|---------|
 | →repo | agents/engineering/new-validator.md        | agents/engineering/        | new     |
-| →repo | commands/custom-workflow.md                | utilities/commands/        | new     |
-| →home | utilities/commands/sync-learnings.md | {{HOME_TOOL_DIR}}/commands/      | newer   |
+| →repo | skills/new-helper/SKILL.md                 | skills/new-helper/         | new     |
+| →home | skills/sync-learnings/SKILL.md       | {{HOME_TOOL_DIR}}/skills/sync-learnings/ | newer   |
 
 Proceed? [Y/n]
 
