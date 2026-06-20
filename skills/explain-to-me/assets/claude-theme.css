@@ -39,12 +39,6 @@ h1, h2, h3 {
   letter-spacing: -0.012em;
 }
 
-.eyebrow::after {
-  content: " · explained by claude";
-  color: var(--clay);
-  letter-spacing: 0.08em;
-}
-
 :focus-visible {
   outline: 2px solid var(--clay);
   outline-offset: 2px;
