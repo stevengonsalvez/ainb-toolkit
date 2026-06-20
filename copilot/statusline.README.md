@@ -1,7 +1,7 @@
 # Copilot CLI rich statusline
 
 A copilot-native port of the Claude Code rich statusline
-(`toolkit/claude-code-4.5/statusline.sh`). GitHub Copilot CLI grew a
+(`claude-code-4.5/statusline.sh`). GitHub Copilot CLI grew a
 Claude-shaped command-driven status line (experimental, ~May 2026, copilot
 `v1.0.62`+) using the **same `statusLine.command` shape as Claude** — it spawns
 the command after each response and pipes a session JSON object on stdin, then
