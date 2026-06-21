@@ -370,3 +370,9 @@ After testing the skill, users may request improvements. Often this happens righ
 2. Notice struggles or inefficiencies
 3. Identify how SKILL.md or bundled resources should be updated
 4. Implement changes and test again
+
+**Review-pass rule:** User corrections about style, tone, format, legibility, verbosity, workflow order, or tool sequence are first-class skill signals. Patch the loaded/currently relevant skill first. If the correction is session-specific but reusable, add `references/<topic>.md` and point to it from `SKILL.md`. Do not leave preference updates only in memory.
+
+**Protocol guard:** If the local fleet requires an inbox for meta-work, create + ACK that item before `skill_manage`, memory writes, fact-store writes, or filesystem edits. Load the live inbox handshake skill first and use endpoint-specific payload keys (`inboxId`/`agentId` for ack/complete). Failed memory writes still count as a warning sign: after one capacity or ambiguous-match failure, switch substrate (fact_store/reference file), remove/replace a specific long entry, or add after freeing space; do not retry identical memory operations into a loop.
+
+For a concrete review-pass example, see `references/skill-review-pass-2026-06-05.md`: it captures a user correction where a skill availability check was misread as a request to include that skill in a repo deliverable.
