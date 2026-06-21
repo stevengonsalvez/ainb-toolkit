@@ -1,193 +1,239 @@
 ---
 name: cost-aware-pipeline
 description: |
-  Cost-aware LLM pipeline patterns for optimal model routing, narrow retry
-  strategies, and prompt caching. Reduces API costs 40-70% through intelligent
-  model selection, targeted retries, and cache-friendly prompt structures.
+  Intelligence-first model routing for LLM pipelines. Sonnet is the default.
+  Haiku is the exception, requiring positive justification. Opus for high-stakes
+  and complex reasoning. Protects answer quality while reducing cost 30-50% vs
+  defaulting everything to the session model.
 
-  Use when: (1) Building multi-model pipelines, (2) Optimizing API costs,
-  (3) Designing retry strategies for LLM calls, (4) Implementing prompt caching,
-  (5) Choosing between haiku/sonnet/opus for sub-tasks.
+  Use when: building multi-model pipelines, optimising API costs without
+  sacrificing quality, designing retry strategies, implementing prompt caching,
+  choosing models for sub-tasks.
 ---
 
-# Cost-Aware LLM Pipeline
+# Cost-Aware LLM Pipeline (Intelligence-First)
 
-## Model Routing Strategy
+## Routing Principle
 
-Route tasks to the cheapest model that can handle them reliably.
+**Sonnet is the default. Haiku is the exception. Opus is for high stakes.**
 
-### Pricing Reference (per 1M tokens, USD)
+Start cheap, escalate on failure is NOT safe for intelligence-first. Haiku fails
+silently — it returns confident, plausible, wrong answers that never trigger
+the retry escalation. The retry ladder protects the mechanism, not the answer quality.
 
-| Model | Input | Output | Relative Cost |
+Route DOWN to Haiku only when the task is verifiably mechanical. Route UP to
+Opus when consequence of error is high or when Sonnet has failed.
+
+## Routing Decision Tree
+
+```
+Is consequence of error HIGH?              → OPUS
+(security, data migration, architecture,
+ non-reversible actions)
+
+Is output UNVERIFIABLE (semantic)?         → SONNET minimum
+(can't mechanically check correctness)
+
+Is scope CROSS-FILE / CROSS-MODULE?        → SONNET minimum
+
+Does task require JUDGMENT not retrieval?  → SONNET minimum
+(ambiguous, requires weighing options)
+
+Is pattern NOVEL / DOMAIN-SPECIFIC?       → SONNET minimum
+(unusual architecture, custom DSL, rare idiom)
+
+Is context > 50K tokens?                  → SONNET minimum
+(Haiku degrades faster at long context)
+
+ALL OF THE ABOVE ARE NO?                  → HAIKU OK
+(pure extraction, single file,
+ mechanically verifiable, reversible,
+ ≤ 2 reasoning steps, well-known pattern)
+```
+
+## Routing Table
+
+| Model | Route when | Examples |
+|-------|-----------|---------|
+| **Haiku** | Pure retrieval, single-file, mechanically verifiable, reversible, ≤2 reasoning steps, well-known pattern | `grep` for literal string, list files, extract struct field name, convert well-known format |
+| **Sonnet** | **DEFAULT** — implementation, refactor, test writing, search-with-judgment, multi-file scope, code generation (see overrides below for named exceptions) | Writing tests, refactoring, non-architecture docs, dev-issue debugging (escalates), search needing semantic understanding |
+| **Opus** | High-consequence, multi-file synthesis, architecture, security, novel patterns, after Sonnet fails twice | System design, security audit, concurrency bugs, cross-codebase impact analysis |
+
+## Task-Specific Overrides (HARD RULES — override the table above)
+
+These named task classes have fixed routing regardless of line count or scope:
+
+| Task | Route | Notes |
+|------|-------|-------|
+| **Code review** | **Opus** | Always. Review quality is the safety net; do not cheap out on it |
+| **Adversarial reviews / verification** | **Opus** | Always. The whole point is catching what cheaper models miss |
+| **Final reviews** (pre-merge, pre-ship, gate) | **Opus** | Always. Last line of defence before commit/merge/deploy |
+| **Distinguished-engineer tasks** | **Opus** | Always. Highest judgment bar by definition |
+| **Architecture** (design + drawings + diagrams) | **Opus** | Cross-module reasoning; encodes system-wide decisions |
+| **Planning / preparation** (/plan, /plan-tdd, scoping) | **Opus** | Always. Plan errors propagate into every downstream implementation step |
+| **Making a goal** (/make-a-goal, goal prompts) | **Opus** | Always. The goal artifact drives an entire autonomous run |
+| **Creating a workflow** (authoring the script) | **Opus** | Always. Workflow structure decides what every phase + agent does |
+| **Workflow / swarm orchestration** (running it) | **Opus** | Always. The orchestrator's routing + sequencing decisions cascade to every worker |
+| **Other documentation** (READMEs, API docs, guides) | **Sonnet** | Generation, low consequence |
+| **Debugging — dev issues** | **Sonnet → Opus** | Start Sonnet, escalate to Opus on failure or if root cause is non-obvious |
+| **Debugging — production issues** | **Opus** | Always. Production consequence overrides cost |
+| **Security (any)** | **Opus** | Always |
+| **Data migration / non-reversible** | **Opus** | Always |
+
+## NEVER Use Haiku For
+
+1. **Security checks** — misses are catastrophic and silent
+2. **Output used for decisions** without mechanical verification
+3. **Cross-file symbol resolution** — wrong file/method/struct picked confidently
+4. **Constraint queries** — "usages that do NOT call X before Y" (negation handling weak)
+5. **Code or doc generation** — extraction only, never generation
+6. **Context > 50K tokens** — degradation accelerates and is silent
+7. **Non-reversible actions** — file deletions, migrations, config changes
+8. **Novel or domain-specific patterns** — pattern-matches to wrong training prior
+
+## Haiku Silent Failure Modes
+
+These NEVER trigger retry escalation — they look correct:
+
+- **Multi-hop collapse**: A→B→C reasoning becomes A→C; step B silently dropped
+- **Ambiguous symbol**: multiple structs with similar names → picks wrong one confidently
+- **Novelty interpolation**: domain-specific architecture → fills in what "usually" happens
+- **Negation inversion**: "NOT X before Y" constraint silently dropped or inverted
+- **Plausible paraphrase**: function summary is grammatically correct, semantically wrong
+
+## Advisor Mode (MANDATORY for Sonnet/Haiku subagents)
+
+Any subagent running on **Haiku or Sonnet** MUST have its output validated by an
+**Opus advisor** before the result is accepted. Scoped to that subagent's run only —
+the advisor pass fires when the cheap-model subagent returns, not session-wide.
+
+This closes the silent-failure gap. The retry ladder only fires on exceptions;
+it cannot catch plausible-but-wrong answers. The Opus advisor reads the cheap
+model's output adversarially and either accepts it or sends it back.
+
+```
+Sonnet/Haiku subagent runs task
+        │
+        ▼
+   produces output
+        │
+        ▼
+  Opus advisor reviews ──► reject → re-run (escalate model)
+        │ accept
+        ▼
+   output accepted
+```
+
+**Rules:**
+- Haiku subagent → Opus advisor pass, always
+- Sonnet subagent → Opus advisor pass, always
+- Opus subagent → no advisor (it IS the advisor tier)
+- Advisor prompt is adversarial: "find what's wrong with this output; default to
+  reject if you cannot verify correctness"
+- On reject: re-run the task one tier up (Haiku→Sonnet, Sonnet→Opus), not same model
+- Advisor scope = that subagent's output only, not the whole session
+
+**Cost note:** the advisor pass adds one Opus call per cheap-model subagent run.
+This is the price of intelligence-first. If the advisor cost approaches running
+the task on Opus directly, skip the cheap model and run Opus from the start.
+
+## Retry Ladder (Intelligence-First)
+
+Two ladders depending on task class:
+
+```
+HAIKU-ELIGIBLE TASKS (verifiably mechanical):
+  Attempt 1: Haiku
+  Attempt 2: Sonnet + "previous answer may be subtly wrong, re-examine carefully: {error}"
+  Attempt 3: Opus
+  → Escalate to human
+
+ALL OTHER TASKS (default):
+  Attempt 1: Sonnet
+  Attempt 2: Opus + error + examples
+  → Escalate to human
+```
+
+**Critical**: escalation trigger must include semantic validation where possible,
+not just exception detection. If output cannot be mechanically validated, do NOT
+start at Haiku.
+
+## Missing Routing Criteria (check these before routing)
+
+| Dimension | Question | If YES → upgrade |
+|-----------|----------|-----------------|
+| Reasoning depth | Multi-hop inference required? | Sonnet+ |
+| Ambiguity | Multiple plausible answers needing judgment? | Sonnet+ |
+| Cross-file scope | Spans files, modules, crates? | Sonnet+ |
+| Novelty | Outside mainstream patterns? | Sonnet+ |
+| Consequence | Wrong answer catastrophic? | Opus |
+| Output type | Generating (not extracting)? | Sonnet+ |
+| Reversibility | Action undoable? | If no → Sonnet+ |
+| Verifiability | Output mechanically checkable? | If no → Sonnet+ |
+| Context size | > 50K tokens in context? | Sonnet+ |
+
+## Prompt Caching Structure
+
+Front-load stable content for Anthropic's 90% cache read discount (5-min TTL):
+
+```
+┌─────────────────────────────────────┐
+│ STATIC: system prompt, CLAUDE.md    │  ← cached, rarely changes
+│ STATIC: tool definitions            │
+├─────────────────────────────────────┤
+│ SEMI-STATIC: file contents (task)   │  ← cached per-task
+│ SEMI-STATIC: docs, test results     │  ← DIRTY after write tool calls
+├─────────────────────────────────────┤
+│ DYNAMIC: user message, tool output  │  ← NOT cached, changes every turn
+└─────────────────────────────────────┘
+```
+
+**Cache invalidation**: after any write tool call, treat file content as dirty.
+Do not rely on cached file state after edits — re-read the file.
+
+## Pricing Reference (per 1M tokens, USD)
+
+| Model | Input | Output | Relative cost |
 |-------|-------|--------|---------------|
-| Haiku | $0.80 | $4.00 | 1x (baseline) |
-| Sonnet | $3.00 | $15.00 | ~4x |
-| Opus | $15.00 | $75.00 | ~19x |
+| Haiku | $0.80 | $4.00 | 1× (baseline) |
+| Sonnet | $3.00 | $15.00 | ~4× |
+| Opus | $15.00 | $75.00 | ~19× |
 
-### Routing Rules
+Cost saving from routing Haiku-eligible tasks to Haiku: real, but secondary.
+Never sacrifice quality for cost. A wrong Haiku answer costs more to debug than
+running Sonnet in the first place.
 
-| Task Complexity | Route To | Examples |
-|-----------------|----------|----------|
-| **Simple** (< 100 lines, clear pattern) | Haiku | File renaming, simple search, format conversion, status checks |
-| **Moderate** (100-500 lines, some judgment) | Sonnet | Code review, test writing, refactoring, documentation |
-| **Complex** (500+ lines, deep reasoning) | Opus | Architecture design, debugging subtle issues, multi-file refactoring |
-| **Creative** (open-ended, high quality bar) | Opus | System design, novel algorithms, critical security review |
-
-### Implementation with Claude Code Agent Tool
+## Implementation
 
 ```python
-# In agent orchestration, specify model based on task complexity
-def route_to_model(task_description: str, estimated_complexity: str) -> str:
-    """Return model parameter for Agent tool."""
-    routing = {
-        "simple": "haiku",
-        "moderate": "sonnet",
-        "complex": "opus",
-        "creative": "opus",
-    }
-    return routing.get(estimated_complexity, "sonnet")
+def route_to_model(task: str, complexity: str, criteria: dict) -> str:
+    # Hard overrides first
+    if criteria.get("high_consequence") or criteria.get("security"):
+        return "opus"
+    if criteria.get("non_reversible"):
+        return "sonnet"  # minimum
+
+    # Haiku only if ALL clear
+    haiku_eligible = (
+        not criteria.get("cross_file")
+        and not criteria.get("judgment_required")
+        and not criteria.get("novel_pattern")
+        and not criteria.get("generation")
+        and not criteria.get("unverifiable")
+        and criteria.get("context_tokens", 0) < 50_000
+        and complexity == "simple"
+    )
+
+    if haiku_eligible:
+        return "haiku"
+
+    if complexity in ("complex", "creative") or criteria.get("synthesis"):
+        return "opus"
+
+    return "sonnet"  # default
 ```
 
 When spawning sub-agents:
-- Use `model: "haiku"` for Explore agents doing simple file searches
-- Use `model: "sonnet"` (default) for most implementation work
-- Use `model: "opus"` only for architecture reviews, complex debugging, distinguished-engineer tasks
-
-### Cost Savings Examples
-
-| Scenario | Before (all Opus) | After (routed) | Savings |
-|----------|-------------------|----------------|---------|
-| 10 file searches | $0.15 | $0.008 (haiku) | 95% |
-| 5 code reviews | $0.75 | $0.20 (sonnet) | 73% |
-| 1 architecture review | $0.15 | $0.15 (opus) | 0% |
-| **Typical session** | **$1.05** | **$0.36** | **66%** |
-
-## Narrow Retry Strategy
-
-When an LLM call fails, retry intelligently — not blindly.
-
-### Principles
-
-1. **Retry the minimum scope** — Don't re-run the entire pipeline, retry only the failed step
-2. **Escalate model on retry** — If haiku fails, retry with sonnet, not haiku again
-3. **Add context on retry** — Include the error in the retry prompt
-4. **Max 2 retries** — If it fails 3 times, escalate to human
-
-### Retry Escalation Ladder
-
-```
-Attempt 1: haiku (cheapest)
-    | fail
-    v
-Attempt 2: sonnet + error context
-    | fail
-    v
-Attempt 3: opus + error context + examples
-    | fail
-    v
-Escalate to human
-```
-
-### Implementation
-
-```python
-RETRY_LADDER = [
-    {"model": "haiku", "extra_context": None},
-    {"model": "sonnet", "extra_context": "Previous attempt failed: {error}"},
-    {"model": "opus", "extra_context": "Two attempts failed. Errors: {errors}. Please reason carefully."},
-]
-
-async def call_with_retry(prompt: str, task: str) -> str:
-    errors = []
-
-    for attempt in RETRY_LADDER:
-        try:
-            result = await call_llm(
-                model=attempt["model"],
-                prompt=prompt,
-                extra_context=attempt["extra_context"].format(
-                    error=errors[-1] if errors else "",
-                    errors="; ".join(errors)
-                ) if attempt["extra_context"] and errors else prompt,
-            )
-            return result
-        except Exception as e:
-            errors.append(str(e))
-
-    raise EscalationNeeded(f"Failed after {len(RETRY_LADDER)} attempts: {errors}")
-```
-
-## Prompt Caching Strategies
-
-Structure prompts to maximize cache hits and reduce costs.
-
-### Cache-Friendly Prompt Structure
-
-```
-+-------------------------------------+
-| STATIC SYSTEM PROMPT (cached)       |  <- Rarely changes, high cache hit rate
-| - Agent instructions                |
-| - Tool definitions                  |
-| - Project context (CLAUDE.md)       |
-+-------------------------------------+
-| SEMI-STATIC CONTEXT (cached)        |  <- Changes per-task, not per-turn
-| - File contents being worked on     |
-| - Relevant documentation            |
-| - Test results                      |
-+-------------------------------------+
-| DYNAMIC CONTENT (not cached)        |  <- Changes every turn
-| - User message                      |
-| - Latest tool results               |
-| - Conversation tail                 |
-+-------------------------------------+
-```
-
-### Key Principles
-
-1. **Front-load static content** — Put rarely-changing content at the start of the prompt
-2. **Batch file reads** — Read all needed files at once, not one at a time
-3. **Minimize prompt churn** — Avoid reformatting the same content differently each turn
-4. **Use system prompts for stable context** — CLAUDE.md, agent definitions, skill bodies
-
-### Cost Impact of Caching
-
-With Anthropic's prompt caching:
-- Cached tokens cost 90% less on input
-- Cache write costs 25% more (one-time)
-- Cache TTL: 5 minutes (refreshed on use)
-
-**Strategy**: Keep system prompt + project context stable across turns. Only the user message and tool results should change.
-
-## Budget Planning
-
-### Estimating Session Costs
-
-| Session Type | Typical Tokens | Estimated Cost |
-|-------------|----------------|----------------|
-| Quick fix (5 min) | 50K in / 10K out | $0.15 - $0.90 |
-| Feature implementation (30 min) | 500K in / 100K out | $1.50 - $9.00 |
-| Deep debugging (1 hr) | 1M in / 200K out | $3.00 - $18.00 |
-| Multi-agent swarm (2 hr) | 5M in / 1M out | $15.00 - $90.00 |
-
-### Setting Budgets
-
-```bash
-# Per-session cost cap (used by agent-ops skill)
-export AGENT_COST_CAP=5.00
-
-# Per-agent cost cap for sub-agents
-export SUBAGENT_COST_CAP=1.00
-
-# Warning threshold (fraction of cap)
-export AGENT_COST_CAP_WARN=0.80
-```
-
-### Monitoring
-
-```bash
-# View today's costs
-grep "$(date +%Y-%m-%d)" "$HOME/{{TOOL_DIR}}/metrics/costs.jsonl" | \
-  python3 -c "import sys,json; rows=[json.loads(l) for l in sys.stdin]; \
-  print(f'Sessions: {len(set(r[\"session_id\"] for r in rows))}'); \
-  print(f'Total: \${sum(r[\"estimated_cost_usd\"] for r in rows):.4f}')"
-```
+- `model: "haiku"` — ONLY for pure retrieval (literal grep, file listing, known-format extraction)
+- `model: "sonnet"` — default for all implementation, review, search-with-understanding
+- `model: "opus"` — architecture, security, distinguished-engineer tasks, after sonnet fails
