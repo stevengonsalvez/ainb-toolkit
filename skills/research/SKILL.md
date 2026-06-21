@@ -58,6 +58,8 @@ Then wait for the user's research query.
 - Read these files yourself in the main context before spawning any sub-tasks
 - This ensures you have full context before decomposing the research
 
+**Exception: secret-bearing backups/configs.** If research touches backups, auth profiles, browser profiles, cron payloads, credentials, agent memory exports, or migration inventories, do not raw-read files into context. Use presence/shape-only summarization and redaction first. See `references/secret-bearing-backup-research.md`.
+
 ### Step 2: Analyze and Decompose
 
 - Break down the query into composable research areas
