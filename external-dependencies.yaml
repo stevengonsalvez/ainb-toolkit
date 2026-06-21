@@ -638,6 +638,25 @@ npx-skills:
     homepage: "https://summarize.sh"
     purpose: "Summarize or extract text/transcripts from URLs, podcasts, and local files"
 
+  - name: cloudflare-skills
+    repo: cloudflare/skills
+    ref: main
+    install: "npx skills add https://github.com/cloudflare/skills"
+    purpose: "Cloudflare's official platform skills — one repo, 11 skills under skills/; bias to live Cloudflare docs over pre-trained knowledge"
+    provides:
+      - cloudflare
+      - wrangler
+      - workers-best-practices
+      - durable-objects
+      - agents-sdk
+      - sandbox-sdk
+      - turnstile-spin
+      - web-perf
+      - cloudflare-one
+      - cloudflare-one-migrations
+      - cloudflare-email-service
+    docs: "https://github.com/cloudflare/skills"
+
 # =============================================================================
 # NANOCLAW SKILLS (qwibitai/nanoclaw container/skills/)
 # =============================================================================
