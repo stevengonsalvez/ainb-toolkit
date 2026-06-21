@@ -116,6 +116,64 @@ Explain how the UI handles layers. Describe the presence and quality of shadows 
 (Description of whitespace strategy, margins, and grid alignment.)
 ```
 
+## Multi-Surface Apps (Stitch-strict + per-surface YAML)
+
+When the app ships **multiple distinct UI surfaces** under one brand (e.g. an editorial hub, a data-dense dashboard, a commerce locker, an AI chat) whose fonts, spacing density, or voice legitimately diverge, do NOT fork into per-surface files and do NOT flatten to a lowest-common-denominator token set. Use this layout inside one canonical `DESIGN.md`:
+
+1. **YAML frontmatter** — global default tokens (colors, typography, rounded, spacing, elevation, components). Stitch / Claude Design read from here.
+2. Canonical body sections — Overview, Colors, Typography, Layout, Elevation, Shapes, Components, Do's and Don'ts.
+3. **§ Surfaces** — one subsection per surface. Each subsection contains a small **per-surface YAML override block** holding only the deltas (font stack, spacing scale, intentional pillar-color override), a **voice block** for tone, and component aliasing notes.
+4. **§ Voice & Tone matrix** — cross-surface comparison.
+5. **§ Roadmap / drift** — flag known divergences in the codebase that are *bugs* (e.g. an inverted pillar mapping in one surface) versus *intentional*. Bugs go here, NOT in per-surface overrides — promoting a bug to an override legitimizes it.
+6. **§ Agent prompt guide** — explicit rules for Stitch / Claude Design / Cursor on how to read the file.
+
+**Rule of thumb:** frontmatter holds *defaults*, Surfaces holds *deltas*. A token never appears in both.
+
+**Skill-as-pointer corollary:** if a project also has a "visual tokens" skill (`*-brand-ui/SKILL.md`), rewrite it as a thin pointer to DESIGN.md the same day DESIGN.md is canonicalized. The skill keeps code-application rules (CSS-var fallback patterns, framework caveats, anti-patterns like duplicate headers) but stops duplicating tokens. Duplicate tokens drift the moment they exist.
+
+**Anti-patterns specific to multi-surface DESIGN.md:**
+- ❌ Splitting into `DESIGN-pulse.md`, `DESIGN-perform.md`, etc. — breaks Stitch / Claude Design which expect one canonical file.
+- ❌ Flattening surfaces to one font stack / one spacing scale when product reality is divergent — loses surface character.
+- ❌ Encoding bugs as per-surface overrides (e.g. promoting an inverted pillar mapping to a legitimate override block).
+- ❌ Keeping the visual-tokens skill as source of truth and DESIGN.md as derivative — agents will prompt against one or the other inconsistently.
+
+## YAML Frontmatter Gotchas
+
+Field-tested while writing the SHOT Clubhouse DESIGN.md (PR #2667). All three issues failed bot review on first pass; encode here so future runs catch them at draft time.
+
+- **Numeric-led keys MUST be quoted.** `"2xl": ...` not `2xl: ...`. YAML 1.1 parses numeric-led tokens ambiguously; PyYAML strict and several agent parsers (Stitch's included) fail without quotes. Same risk for `"3xl"`, `"4xl"`, `"5xl"`, and any spacing key that starts with a digit (`"0"`, `"1"`, …). Verify the whole frontmatter parses cleanly before committing:
+  ```bash
+  python3 -c "import yaml,sys; yaml.safe_load(open('DESIGN.md').read().split('---')[1]); print('OK')"
+  ```
+
+- **Per-surface `fontFamily` overrides need map shape, not string.** When a surface overrides typography, declare the full map: `fontFamily: { heading: "...", body: "..." }`. Assigning a single string collapses the whole map and downstream resolvers bind incorrectly (the `heading` slot ends up holding the entire stack, `body` becomes undefined).
+
+- **Don't self-reference within an override block.** `{surface.pulse.foo}` referenced from inside Pulse's own override block is unresolvable — the override IS the surface block, you can't path back to yourself. Use the literal `inherit` marker (with an explanatory comment), a literal value, or a global token ref (e.g. `{typography.fontFamily.heading}`) that resolves against the frontmatter root.
+
+## Drift Enforcement (parity test pattern)
+
+A drift / roadmap section in DESIGN.md without an enforcing test is theatre — divergences accumulate silently between PRs. Ship one Vitest smoke test + standalone Node script (zero-dep, regex-based) alongside the spec:
+
+1. Regex-extract hex values from the YAML frontmatter (handle one- and two-level nesting; `^ {2}key: "#HEX"` and `^ {4}key: "#HEX"`).
+2. Regex-extract hex values from `tokens/*.ts` (single-line `key: '#HEX',` shape) and `--shot-*: #HEX;` from `styles/global-theme.css`.
+3. Maintain an `expectedDrift` allow-list mapping each known divergence to a `DRIFT.md` D-number.
+4. Fail on NEW drift; pass DOCUMENTED drift.
+5. Cross-validate that every allow-list entry has a real `### D<N> —` section in DRIFT.md (catches stale allow-list entries when drift is resolved).
+
+Reference implementation: `scripts/check-design-drift.mjs` + `scripts/check-design-drift.test.ts` in shotclubhouse PR #2667 (commit `76fefd81c`). Wire into `vitest.config.ts` `include` array so the normal test run picks it up.
+
+**DRIFT.md Resolved-entry template trick:** embed the entry template as an HTML comment in the Resolved section — invisible on GitHub render, visible to file-readers (agents + humans on first move). Prevents the first author-of-a-fix from inventing the format under pressure.
+
+## Skill-Trim Cross-Ref Sweep (extends Skill-as-pointer corollary)
+
+When you execute the skill-as-pointer corollary above (rewriting `*-brand-ui/SKILL.md` as a pointer to DESIGN.md), also sweep references in the **same PR**:
+
+1. `rg <skill-name>` across the repo + `{{HOME_TOOL_DIR}}/skills/` + project `docs/`
+2. For each hit, update the reference to point at the canonical DESIGN.md section AND keep the skill mention where it covers code-application
+3. Common ref sites: `AGENTS.md`, `CLAUDE.md`, `.clan/*`, `.impeccable.md`, project `docs/`, source files with `// See <skill-path>` comments, test files with `it('rule per <skill-name>')` names
+
+**Why same PR:** bot reviewers (claude-bot, gemini-code-assist) catch dangling refs in re-review and demand a follow-up commit anyway. Cheaper to sweep up-front. Field-discovered on shotclubhouse PR #2667 (8 references to a trimmed skill, all updated in one cross-ref-sweep commit).
+
 ## Usage Example
 
 To use this skill for the Furniture Collection project:

@@ -86,6 +86,23 @@ Full per-template detail lives in [`references/template-catalog.md`](references/
 Read it only when the topic doesn't cleanly match, or you need to know
 which interactive elements a template ships with.
 
+For sourced options papers comparing agent memory / learning architectures,
+load [`references/sourced-options-paper-memory-systems.md`](references/sourced-options-paper-memory-systems.md)
+and apply its required source pass: inspect local implementation, inspect
+external docs/integration code, include token economics, observability,
+correction, self-improvement, and a decision rule. Decision rule for Stevie:
+avoid recommending two active memory substrates unless one is explicitly
+being retired; split-brain memory is operational waste. Separate memory
+substrate from deterministic control plane/governance hooks.
+
+For architecture consolidation papers built from source inspection, load
+[`references/architecture-options-paper-from-source.md`](references/architecture-options-paper-from-source.md).
+It captures the proven shape: current A diagram, current B diagram,
+proposed consolidated diagram, explicit gap table, and first-section
+recommendation.
+
+### 1.5 Announce the choice
+
 ### 1.5 Announce the choice
 
 Before generating anything, tell Stevie which template you picked and
@@ -124,7 +141,6 @@ skill rather than hand-drawing SVG:
 |---|---|---|
 | Architecture · data flow · sequence · agent/memory · concept map | `/fireworks-tech-graph` | SVG + PNG (drop SVG inline) |
 | Knowledge graph from code/docs/papers — clustered, communities | `/graphify` | HTML / JSON / SVG |
-| Data-driven infographic — stats, comparisons, processes, timelines as a designed poster-style figure | `/infographic-creator` (AntV) | SVG (drop inline) |
 
 For small bespoke SVG (decorative icons, hero glyphs, simple
 illustrations) — author the inline SVG directly. You're capable of it
@@ -173,7 +189,7 @@ sketch-like to read at a glance.
 ### 5. Publish to here.now (default)
 
 Unless the user passed `--local`, publish the file via the `/here-now`
-skill (`~/.claude/skills/here-now/scripts/publish.sh`).
+skill (`{{HOME_TOOL_DIR}}/skills/here-now/scripts/publish.sh`).
 
 **Critical: you do not get to choose the URL on a first publish.**
 The `publish.sh --slug <slug>` flag means *"update an existing publish
@@ -187,7 +203,7 @@ Procedure:
 
 1. Invoke `publish.sh` with the file path and **no `--slug` flag**:
    ```
-   bash ~/.claude/skills/here-now/scripts/publish.sh \
+   bash {{HOME_TOOL_DIR}}/skills/here-now/scripts/publish.sh \
      ./explainers/<slug>.html \
      --title "<page title>" \
      --description "<one-line summary>" \
@@ -199,9 +215,11 @@ Procedure:
    re-invoke `publish.sh --slug <new-slug> --claim-token <token>` to
    rename. Most users don't care; don't volunteer this dance unless
    asked.
-4. If `/here-now` is unavailable in the current environment, fall
-   back to local-only mode and surface the path. Tell Stevie what
-   happened — don't pretend you published.
+If `/here-now` is unavailable in the current environment, fall
+back to local-only mode and surface the path. Tell Stevie what
+happened — don't pretend you published.
+
+If updating a previous here.now URL with `--slug` returns `Unauthorized. Provide claimToken to update anonymous site`, stop retrying that slug. Either use the claim token if you actually have it, or publish a fresh URL without `--slug` and report the replacement link.
 
 ### 6. Hand off
 
@@ -248,15 +266,18 @@ can rename it — but don't do it automatically.
   so explicitly. Don't return only a local path when Stevie expected
   a URL.
 - **Passing `--slug` on a first publish.** That flag means *update an
-  existing publish at this slug*, not *choose a URL*. The server
-  returns `Not found` and the agent often misreads it as a real
-  failure. → Omit `--slug` on first publish; let the server assign a
-  three-word slug. Only use `--slug` together with `--claim-token`
-  for a deliberate rename.
+existing publish at this slug*, not *choose a URL*. The server
+returns `Not found` and the agent often misreads it as a real
+failure. → Omit `--slug` on first publish; let the server assign a
+three-word slug. Only use `--slug` together with `--claim-token`
+for a deliberate rename. If the update returns `Unauthorized. Provide claimToken to update anonymous site`, you are not authorized to update that slug; create a new publish without `--slug` unless you have the claim token.
 - **Hand-drawing a complex SVG architecture diagram** when
   `/fireworks-tech-graph` could produce a cleaner one. → Delegate.
+- **Verifying a here.now page with `curl URL | python3 - <<'PY'`.** The heredoc consumes stdin, so Python sees empty page content and can report false failure. → `curl -o "$tmp" URL`, then have Python read the temp file.
 - **Putting the output inside the toolkit repo.** Always write to the
   user's current working directory under `./explainers/`.
+- **Treating this skill as a deliverable because Stevie asked whether it is available.**
+  A capability check means use `/explain-to-me` to explain the topic, not copy the skill into the repo or canonicalize it. Only move/install this skill when the user explicitly asks for skill packaging or consolidation.
 
 ## Output location
 

@@ -105,6 +105,8 @@ Pick the tool in this order — first match wins:
 3. **Cursor / Windsurf / other coding agents**: their built-in user-question primitive (typically `request_input`, `ask`, or similar).
 4. **Generic LLMs / no native tool**: only as last resort, fall back to a clearly-formatted plaintext block (`### Question 1: ...` / `### Question 2: ...`) and ask the user to answer inline.
 
+If the host exposes a likely prompt tool but the call fails as unavailable, treat that as "no native tool" for this run and immediately fall back to plaintext. Do not spend another turn asking how to ask.
+
 Why this is forced: free-form plaintext questioning is unreliable across runs — agents skip the structured tool when given an "or equivalent" out, which produces lower-quality interviews and bad follow-up. The tool produces typed answers the agent can branch on; plaintext does not.
 
 #### Format preferences for chat outputs and spec content
