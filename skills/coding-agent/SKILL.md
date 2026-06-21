@@ -10,17 +10,18 @@ user-invocable: true
 
 # /coding-agent — Delegate Coding Work
 
-Delegate coding tasks to subagents or run Claude Code/Codex in separate tmux sessions on the host. Choose the right pattern for the job.
+Delegate coding tasks to subagents or run Claude Code/Codex through AINB-managed sessions on the host. For Stevie/fleet managed repos, AINB is the session manager; raw tmux is fallback only. Choose the right pattern for the job.
 
 ## When to use each pattern
 
 | Situation | Pattern |
 |-----------|---------|
 | Bounded task with clear spec (fix bug, implement feature, write tests) | Task tool (subagent) |
-| Long-running interactive session, needs persistence | tmux + `claude --dangerously-skip-permissions` |
-| PR review — checkout and inspect | tmux + clone to `/tmp` |
-| Multiple independent fixes in parallel | tmux + git worktrees |
-| Claude Code capped or erroring | tmux + Codex fallback |
+| Stevie/fleet managed repo coding session | `HOME=$HOME ainb run --repo <repo-or-worktree> --tool claude --name <session> -p "$(cat task.md)"` |
+| Long-running interactive session, needs persistence, non-AINB context | raw tmux + `claude --dangerously-skip-permissions` |
+| PR review — checkout and inspect | AINB or tmux in `/tmp` isolated clone |
+| Multiple independent fixes in parallel | AINB worktrees or git worktrees |
+| Claude Code capped or erroring | AINB/Codex fallback |
 
 ---
 
@@ -96,7 +97,27 @@ Task({ description: "Integration test for auth + config", prompt: "..." })
 
 ---
 
-## Pattern 2: tmux — Long-running Claude Code Session
+## Pattern 2: AINB — Managed Claude/Codex Session for Fleet Repos
+
+For Stevie/fleet managed repo work, use AINB so the session lands under the correct workspace, gets the right HOME/config, and is visible in `ainb` TUI/status.
+
+```bash
+HOME=$HOME ainb run \
+  --repo /path/to/actual/repo-or-task-worktree \
+  --tool claude \
+  --model opus \
+  --dangerously-skip-permissions \
+  --name reflect-memory-kh79 \
+  -p "$(cat task.md)"
+```
+
+If a task worktree already exists, pass that worktree as `--repo` and do **not** add `--worktree` again. If starting from a clean repo root, use `--worktree --create-branch <branch>`.
+
+Do not launch raw `tmux new-session ... claude -p` for AINB/fleet repo coding. It bypasses AINB workspace placement and cleanup.
+
+---
+
+## Pattern 3: tmux — Long-running Claude Code Session
 
 For interactive, open-ended, or very long coding sessions that would exhaust context in a subagent. Claude Code runs on the host with full filesystem access and persistent terminal state.
 
@@ -161,14 +182,19 @@ TIMESTAMP=$(date +%s)
 SESSION="agent-${TIMESTAMP}"
 WORK_DIR="/path/to/repo"
 LOG="/tmp/agent-${TIMESTAMP}.log"
+PROMPT_FILE="/tmp/agent-${TIMESTAMP}-prompt.md"
+cat > "$PROMPT_FILE" <<'EOF'
+Your full task prompt here.
+EOF
 
-tmux new-session -d -s "$SESSION" -c "$WORK_DIR"
-tmux send-keys -t "$SESSION" \
-  "claude -p 'Your full task prompt here' --dangerously-skip-permissions 2>&1 | tee $LOG" C-m
+tmux new-session -d -s "$SESSION" -c "$WORK_DIR" \
+  "claude -p \"\$(cat '$PROMPT_FILE')\" --dangerously-skip-permissions --max-turns 80 2>&1 | tee '$LOG'"
 
 echo "Output logged to: $LOG"
 echo "Monitor: tmux attach -t $SESSION"
 ```
+
+**Quoting rule:** do not inline long Markdown prompts with backticks, `$`, env var names, or code fences inside outer double quotes. The shell can expand/mangle them before Claude starts. Use a prompt file plus literal `$(cat file)` in the tmux command, or `tmux send-keys -l` with escaped command substitution.
 
 ---
 
