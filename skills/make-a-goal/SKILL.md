@@ -121,6 +121,8 @@ Caveman mode by default. Address as **Stevie**.
 ## Non-goals
 
 - **Do not execute the goal.** This skill only produces the artifact.
+- **Do not turn prerequisite access/setup into the goal.** If Stevie gives secrets, tokens, project IDs, repo state, or provisioning context, treat those as context/constraints for the mega-prompt. The goal line should stay at the outcome/options level; Claude Code works out steps and phases.
+- **Do not create mini-goals by default.** When Stevie says the ultimate goal came from another agent/person, recover that outcome and render one autonomous goal unless he explicitly asks to split it.
 - **Do not commit `.agents/goals/`.** Leave that decision to Stevie —
   the directory may or may not be gitignored per repo.
 - **Do not edit the Operating Rules / Quality Bar / Final Deliverable
