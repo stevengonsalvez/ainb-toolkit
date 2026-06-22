@@ -591,6 +591,27 @@ if [[ -n "$WEEK_BAR" ]]; then
 fi
 [[ -n "$COST_DISPLAY" ]] && L2+=" ${SEP} ${FG_GREEN}${COST_DISPLAY}${RESET}"
 
+# ── Headroom routing badge ──────────────────────────────────────────────────
+# A rounded "pill" button on line 2 when this session's CLI routes through the
+# local Headroom proxy: green = proxy live, grey = routed-but-proxy-down.
+# Reflects ACTUAL routing — reads the base-URL env this process inherited (ainb
+# injects ANTHROPIC_BASE_URL / OPENAI_BASE_URL when a session opts into
+# Headroom). Absent when not routed. Localhost TCP connect is instant (kernel
+# RST/accept, no network wait) so no timeout wrapper is needed.
+_HR_PORT="${AINB_HEADROOM_PORT:-8787}"
+_HR_URLS="${ANTHROPIC_BASE_URL}${OPENAI_BASE_URL}"
+if [[ "$_HR_URLS" == *"127.0.0.1:${_HR_PORT}"* || "$_HR_URLS" == *"localhost:${_HR_PORT}"* ]]; then
+  if (exec 3<>"/dev/tcp/127.0.0.1/${_HR_PORT}") 2>/dev/null; then
+    _hr_bg="$C_GREEN"; _hr_fg="$C_BLACK"   # live → green button
+  else
+    _hr_bg="$C_GREY";  _hr_fg="$C_WHITE"   # routed but proxy down → grey button
+  fi
+  # Powerline half-circle caps (U+E0B6 / U+E0B4) filled in the badge colour turn
+  # it into a rounded pill so it reads as a button, not more text.
+  _hr_capL=$'\ue0b6'; _hr_capR=$'\ue0b4'
+  L2+=" \033[38;2;${_hr_bg}m${_hr_capL}\033[48;2;${_hr_bg}m\033[38;2;${_hr_fg}m HR ${RESET}\033[38;2;${_hr_bg}m${_hr_capR}${RESET}"
+fi
+
 # ── Output ────────────────────────────────────────────────────────────────────
 printf '%b\n %b' "$L1" "$L2"
 
