@@ -146,7 +146,6 @@ components:
       - test-writer-fixer
     meta:
       - agentmaker
-      - reflect
     orchestrators:
       - project-analyst
       - team-configurator
