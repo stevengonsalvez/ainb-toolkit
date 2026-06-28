@@ -126,13 +126,14 @@ Good: `### Beads`
 
 Ranked-and-capped beats long-and-flat. Blocked beads cap at 5 + `_(+ N more 🔴 — see bd blocked)_`. Inputs cap at 10. Next cap at 5. If a list would run longer, it gets capped and the overflow noted, never dumped.
 
-## Section order (fixed — 4 tables + optional decision block)
+## Section order (fixed — 5 tables + optional decision block)
 
 1. **Summary** — 1-row counts table: shipped / next / pending / blocked / inputs, each prefixed with its status ball.
 2. **Beads** — the ONE unified table (rule 2). Columns: `id | title | status | PR`. PR column: `#NNNN → merged|open|draft` for shipped, `—` otherwise.
 3. **PRs raised in this worktree** — one table: `# | title | state | CI | labels | when`. State ball: 🟢 merged · 🟡 open · ⚫ draft · 🔴 closed-unmerged.
 4. **Active swarms / coding-agents / subagents** — one table: `name | source | working on | last activity | status`. Status ball: 🟢 running · 🟡 idle (>5min) · 🔴 stuck. "working on" shows the actual bead/task, never just the session name (Fact 3).
-5. **Inputs needed from Stevie 🔴** — THE headline section (Fact 2). Surface aggressively, build even when everything else is empty.
+5. **Work in flight (deploy pipeline)** — ASCII box-and-arrow diagram of any in-flight ship: merged PR(s) → prod web build → OTA publish+promote → device reload, with `DONE | IN FLIGHT | NOT YET` under each box (output rule 5). Only render when something is mid-ship; skip when nothing is deploying. This is the "what's moving right now" section.
+6. **Inputs needed from Stevie 🔴** — THE headline section (Fact 2). Surface aggressively, build even when everything else is empty.
 
 Close with: `Anything else, Stevie?`
 
@@ -305,7 +306,43 @@ Render ONE table:
 
 The **`working on` column is load-bearing** (Fact 3). If empty for a row, mark it `?` and surface in the Inputs section as a "session running with unknown scope" input. If the whole section is empty, render `_(none active)_` rather than skipping.
 
-### 6. Inputs needed from Stevie 🔴 (Fact 2)
+### 5.5 Work in flight (deploy pipeline)
+
+Render an ASCII box-and-arrow pipeline ONLY when a ship is mid-flight in this worktree — i.e. a PR merged to main in the last ~2h with a prod deploy and/or OTA still moving. If nothing is deploying, skip this section entirely (no empty box).
+
+Detect + state each stage:
+
+```bash
+# Merged-to-main PRs from this branch's recent work (the thing being shipped)
+# (caller usually already knows the PR numbers; else derive from recent merges)
+
+# Prod web deploy: latest tag-push run on deploy-production.yml
+PROD=$(gh run list --workflow=deploy-production.yml --event=push --limit=1 \
+  --json status,conclusion,headBranch --jq '{ref:.[0].headBranch, status:.[0].status, conclusion:.[0].conclusion}')
+
+# OTA: latest deploy-ota.yml run (publish/promote)
+OTA=$(gh run list --workflow=deploy-ota.yml --limit=1 \
+  --json status,conclusion,displayTitle --jq '{status:.[0].status, conclusion:.[0].conclusion, title:.[0].displayTitle}')
+```
+
+Map each stage to one of three labels, left-aligned under its box:
+- `DONE` — stage completed success (PR merged / prod run conclusion=success / OTA promote success).
+- `IN FLIGHT` — stage `in_progress` (or queued).
+- `NOT YET` — stage not started (e.g. OTA before prod tag lands; device reload always `NOT YET` until OTA promote is success — the installed app only picks it up on next reload).
+
+**Render** (output rule 5 — one diagram, ≤80 chars wide, caveman inside boxes):
+
+```
+┌─────────┐   ┌─────────┐   ┌──────────┐   ┌─────────────┐   ┌──────────┐
+│ #NNNN   │──▶│ merged  │──▶│ prod web │──▶│ OTA publish │──▶│ device   │
+│ +tag    │   │ to main │   │ vX.Y.Z   │   │ +promote    │   │ reloads  │
+└─────────┘   └─────────┘   └──────────┘   └─────────────┘   └──────────┘
+   DONE          DONE        IN FLIGHT        NOT YET           NOT YET
+```
+
+Box-1 label is the PR number(s) being shipped; box-3 carries the version tag; the device box is `DONE` only after the user has reloaded (standup can't know that — cap at `NOT YET` once OTA is `DONE`, with a one-line note `_(applies on next app reload)_`). If a stage is `failure`, mark it `🔴 FAILED` and surface it in the Inputs section.
+
+### 7. Inputs needed from Stevie 🔴 (Fact 2)
 
 THIS is the highest-signal section. Build the table even if every other section is empty.
 
@@ -368,7 +405,7 @@ f. **Explicit `// @stevie:` markers in branch diff**:
 
 Sort by priority (high first), cap at 10 rows. If a row needs a multi-faceted decision, follow output rules 4 + 5 + 6 (option block → diagram → `/interview`). If empty, render: `Stevie — nothing waiting on you. Carry on.`
 
-### 7. Persist state (Fact 4)
+### 8. Persist state (Fact 4)
 
 After successful render:
 
@@ -411,6 +448,16 @@ Where `$BRIEF_SUMMARY` is one line like `shipped=1 next=5 pending=0 blocked=22 i
 |---|---|---|---|---|
 | swarm-1778… | tmux | shotclubhouse-ag-z0nc | 2m ago | 🟢 running |
 *(or `_(none active)_`)*
+
+### Work in flight
+```
+┌─────────┐   ┌─────────┐   ┌──────────┐   ┌─────────────┐   ┌──────────┐
+│ #2891   │──▶│ merged  │──▶│ prod web │──▶│ OTA publish │──▶│ device   │
+│ +M1/M2  │   │ to main │   │ v1.2.56  │   │ +promote    │   │ reloads  │
+└─────────┘   └─────────┘   └──────────┘   └─────────────┘   └──────────┘
+   DONE          DONE        IN FLIGHT        NOT YET           NOT YET
+```
+*(omit entirely when nothing is mid-ship)*
 
 ### Inputs needed from Stevie 🔴
 | source | item | action | priority |
