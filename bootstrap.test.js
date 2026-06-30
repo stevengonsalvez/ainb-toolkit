@@ -186,7 +186,7 @@ printf '{"FEATURE_SPEC":"%s","IMPL_PLAN":"%s","SPECS_DIR":"%s","BRANCH":"%s"}\n'
         const command = `node bootstrap.js --tool=${tool} --targetFolder=${target}`;
         execSync(command, {
             stdio: 'pipe',
-            env: { ...process.env },
+            env: { ...process.env, BOOTSTRAP_SKIP_REFLECT_KB: '1' },
         });
 
         const destDir = path.join(target, config.targetSubdir);
@@ -208,7 +208,7 @@ printf '{"FEATURE_SPEC":"%s","IMPL_PLAN":"%s","SPECS_DIR":"%s","BRANCH":"%s"}\n'
         const command = `node bootstrap.js --tool=${tool} --targetFolder=${target}`;
         execSync(command, {
             stdio: 'pipe',
-            env: { ...process.env },
+            env: { ...process.env, BOOTSTRAP_SKIP_REFLECT_KB: '1' },
         });
 
         const destDir = path.join(target, config.targetSubdir);
@@ -251,7 +251,7 @@ printf '{"FEATURE_SPEC":"%s","IMPL_PLAN":"%s","SPECS_DIR":"%s","BRANCH":"%s"}\n'
         const command = `node bootstrap.js --tool=${tool} --targetFolder=${target}`;
         execSync(command, {
             stdio: 'pipe',
-            env: { ...process.env },
+            env: { ...process.env, BOOTSTRAP_SKIP_REFLECT_KB: '1' },
         });
 
         // Check rules directory
@@ -307,7 +307,7 @@ printf '{"FEATURE_SPEC":"%s","IMPL_PLAN":"%s","SPECS_DIR":"%s","BRANCH":"%s"}\n'
         const command = `node bootstrap.js --tool=${tool} --homeDir=${mockHomeDir}`;
         execSync(command, {
             stdio: 'pipe',
-            env: { ...process.env },
+            env: { ...process.env, BOOTSTRAP_SKIP_REFLECT_KB: '1' },
         });
 
         expect(fs.existsSync(destDir)).toBe(true);
@@ -329,6 +329,39 @@ printf '{"FEATURE_SPEC":"%s","IMPL_PLAN":"%s","SPECS_DIR":"%s","BRANCH":"%s"}\n'
         expect(fs.existsSync(path.join(destDir, 'settings.local.json'))).toBe(false);
     });
 
+    // codex config.toml is a live, user-owned runtime config (model/effort/OTEL +
+    // codex-managed trust state). The toolSpecificFiles copy must be write-if-absent:
+    // seed it on a fresh machine, but NEVER overwrite an existing one.
+    it('codex seeds config.toml on a fresh install but preserves an existing one', () => {
+        const tool = 'codex';
+        const config = TOOL_CONFIG[tool];
+        const subdir = config.targetSubdir; // .codex
+
+        // (a) Fresh dest → config.toml is created from the repo stub.
+        const freshHome = path.join(tempDir, 'codex-fresh-home');
+        fs.mkdirSync(freshHome, { recursive: true });
+        execSync(`node bootstrap.js --tool=${tool} --homeDir=${freshHome}`, {
+            stdio: 'pipe',
+            env: { ...process.env, BOOTSTRAP_SKIP_REFLECT_KB: '1' },
+        });
+        const freshConfig = path.join(freshHome, subdir, 'config.toml');
+        expect(fs.existsSync(freshConfig)).toBe(true);
+        // Seeded from the repo stub (carries its sentinel key).
+        expect(fs.readFileSync(freshConfig, 'utf8')).toContain('project_doc_fallback_filenames');
+
+        // (b) Existing dest → the user's config.toml is left byte-for-byte UNCHANGED.
+        const userHome = path.join(tempDir, 'codex-user-home');
+        fs.mkdirSync(path.join(userHome, subdir), { recursive: true });
+        const userConfig = path.join(userHome, subdir, 'config.toml');
+        const SENTINEL = '# USER CONFIG\nmodel = "gpt-5"\nreasoning_effort = "high"\n';
+        fs.writeFileSync(userConfig, SENTINEL);
+        execSync(`node bootstrap.js --tool=${tool} --homeDir=${userHome}`, {
+            stdio: 'pipe',
+            env: { ...process.env, BOOTSTRAP_SKIP_REFLECT_KB: '1' },
+        });
+        expect(fs.readFileSync(userConfig, 'utf8')).toBe(SENTINEL);
+    });
+
     // SKIP(stale): the "only claude-code deploys agents" invariant is gone — the
     // packages-structure installer now deploys agents to amazonq (and others)
     // too, so the negative assertions no longer hold.
@@ -343,7 +376,7 @@ printf '{"FEATURE_SPEC":"%s","IMPL_PLAN":"%s","SPECS_DIR":"%s","BRANCH":"%s"}\n'
         const claudeCodeCommand = `node bootstrap.js --tool=${claudeCodeTool} --homeDir=${claudeCodeMockHomeDir}`;
         execSync(claudeCodeCommand, {
             stdio: 'pipe',
-            env: { ...process.env },
+            env: { ...process.env, BOOTSTRAP_SKIP_REFLECT_KB: '1' },
         });
 
         // claude-code SHOULD have agents folder
@@ -360,7 +393,7 @@ printf '{"FEATURE_SPEC":"%s","IMPL_PLAN":"%s","SPECS_DIR":"%s","BRANCH":"%s"}\n'
         const geminiCommand = `node bootstrap.js --tool=${geminiTool} --targetFolder=${geminiTarget}`;
         execSync(geminiCommand, {
             stdio: 'pipe',
-            env: { ...process.env },
+            env: { ...process.env, BOOTSTRAP_SKIP_REFLECT_KB: '1' },
         });
 
         const geminiDestDir = path.join(geminiTarget, geminiConfig.targetSubdir);
@@ -376,7 +409,7 @@ printf '{"FEATURE_SPEC":"%s","IMPL_PLAN":"%s","SPECS_DIR":"%s","BRANCH":"%s"}\n'
         const amazonqCommand = `node bootstrap.js --tool=${amazonqTool} --targetFolder=${amazonqTarget}`;
         execSync(amazonqCommand, {
             stdio: 'pipe',
-            env: { ...process.env },
+            env: { ...process.env, BOOTSTRAP_SKIP_REFLECT_KB: '1' },
         });
 
         const amazonqDestDir = path.join(amazonqTarget, amazonqConfig.targetSubdir);
