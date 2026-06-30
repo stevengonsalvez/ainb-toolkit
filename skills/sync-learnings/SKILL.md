@@ -78,11 +78,50 @@ These are NOT in the synced skill/agent tree — they live in per-tool directori
 | `{{HOME_TOOL_DIR}}/CLAUDE.md` | `claude-code-4.5/CLAUDE.md` |
 | `{{HOME_TOOL_DIR}}/settings.json` | `claude-code-4.5/settings.json` |
 | `{{HOME_TOOL_DIR}}/statusline.sh` | `claude-code-4.5/statusline.sh` (+x preserved) |
+| `~/.codex/config.toml` | `codex/config.toml` |
 
 **CLAUDE.md sync requires reverse template interpolation** — when copying TO_REPO,
 replace interpolated paths back to template placeholders:
 - `{{HOME_TOOL_DIR}}/` or `/.claude/` → `{{HOME_TOOL_DIR}}/`
 - `.claude/` (in path context) → `.claude/`
+
+**config.toml sync requires stripping machine-managed sections** — `config.toml`
+sync is CODEX-ONLY today. `bootstrap.js`'s `TOOL_CONFIG.copilot` has no
+`toolSpecificFiles` entry, so copilot never gets a `config.toml` seeded or
+expected — don't sync a copilot `~/.copilot/config.toml` into `codex/config.toml`,
+that would silently mix two different CLI tools' config schemas into one shared
+file. (claude has no `config.toml` either.) If copilot ever grows its own
+`config.toml` support in `bootstrap.js`, it needs its own `copilot/config.toml`
+repo target, not this one. When copying TO_REPO, strip TWO classes of
+content before committing.
+
+**(1) Machine-managed** — leaks private repo/checkout names, auto-regenerated
+by the tool per machine, never portable:
+- `[projects."..."]` (+ nested `trust_level`/`trusted_hash`)
+- bare `trust_level`/`trusted_hash` entries
+- `[hooks.state...]`
+- `[notice]`, `[notice.model_migrations]`
+- `[tui]`, `[tui.model_availability_nux]`
+
+**(2) Personal / security-sensitive** — safe on your own machine, UNSAFE as a
+shared default (this repo is public and seeds every fresh install, so anything
+here ships ON to everyone):
+- `[otel]` + any `*_exporter`/`environment` telemetry config — ships an
+  observability pipeline ON; a local OTLP collector would silently ingest
+  codex traffic (data-exfil risk, especially combined with prompt logging)
+- `log_user_prompt` — ships full user-prompt logging ON to everyone
+- `hide_full_access_warning` — disables codex's full-access safety warning
+- any other approve-by-default / warning-suppression / logging toggle
+
+Only genuinely-safe, non-personal keys sync to the repo: `model`,
+`model_reasoning_effort`, `personality`, `approvals_reviewer` (keep — it
+enforces human review), `status_line`/`status_line_use_colors`, `memories`,
+`project_doc_*`. After stripping, grep the result for `/Users/`, known repo
+names, `trust_level`, `trusted_hash`, `hooks.state`, `[projects`, `[notice`,
+`[tui`, `[otel`, `log_user_prompt`, `hide_full_access_warning` — it must
+return nothing before committing. Note `trust_level` alone (not just
+`trusted_hash`) — a bare top-level `trust_level = "trusted"` line is also
+machine-managed state and won't be caught by the `trusted_hash` pattern.
 
 ### Other Files
 
@@ -119,6 +158,11 @@ Per-host user overrides (not shared):
 
 NOTE: `settings.json` IS synced — it's the canonical shared config. Reverse-
 interpolate paths when copying TO repo. See "Tool-Specific Config Files" above.
+
+NOTE: `config.toml` (codex-only — see scope note above) is the same pattern —
+synced, but only after stripping its machine-managed AND security-sensitive
+sections. See "config.toml sync requires stripping machine-managed sections"
+under "Tool-Specific Config Files" above.
 
 ### Category 5: Plugin-Managed Content
 Content managed by external plugins (installed via `claude plugin install`):

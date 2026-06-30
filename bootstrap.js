@@ -105,6 +105,12 @@ const TOOL_CONFIG = {
         },
         projectRootCopies: ['AGENTS.md'],
         toolSpecificFiles: ['codex/config.toml'],
+        // config.toml is a live, user-owned runtime config: it holds the user's
+        // model/reasoning-effort/personality/status_line/OTEL choices plus
+        // codex-auto-managed trust + hooks state. Seed it on a fresh machine,
+        // but NEVER overwrite an existing one (unlike claude/gemini/amazonq
+        // toolSpecificFiles, which are toolkit-managed and refresh on re-run).
+        toolSpecificFilesWriteIfAbsent: true,
         templateSubstitutions: {
             '**/*.md': {
                 'TOOL_DIR': '.codex',
@@ -1719,12 +1725,25 @@ async function handlePackagesStructureCopy(tool, config, overrideHomeDir = null,
     if (config.toolSpecificFiles) {
         showProgress('Copying tool-specific files');
         let toolFilesCopied = 0;
+        const preservedFiles = [];
         for (const toolFile of config.toolSpecificFiles) {
             const sourcePath = path.join(__dirname, toolFile);
             const fileName = path.basename(toolFile);
             const destPath = path.join(destDir, fileName);
 
             if (fs.existsSync(sourcePath)) {
+                // Write-if-absent: for tools that flag their tool-specific files
+                // as user-owned runtime config (e.g. codex config.toml), seed on
+                // a fresh machine but never clobber an existing user file.
+                // Deferred (not console.log'd here) — the spinner line opened by
+                // showProgress above has no trailing newline yet, so logging
+                // mid-loop corrupts it; report preserved files in the single
+                // completeProgress summary below instead.
+                if (config.toolSpecificFilesWriteIfAbsent && fs.existsSync(destPath)) {
+                    preservedFiles.push(fileName);
+                    continue;
+                }
+
                 const substitutions = (config.templateSubstitutions || {})[fileName] ||
                     (fileName.endsWith('.md') ? (config.templateSubstitutions || {})['**/*.md'] : null);
 
@@ -1738,7 +1757,10 @@ async function handlePackagesStructureCopy(tool, config, overrideHomeDir = null,
                 toolFilesCopied++;
             }
         }
-        completeProgress(`Copied ${toolFilesCopied} tool-specific files`);
+        const preservedNote = preservedFiles.length > 0
+            ? ` (preserved existing: ${preservedFiles.join(', ')})`
+            : '';
+        completeProgress(`Copied ${toolFilesCopied} tool-specific files${preservedNote}`);
     }
 
     if (config.projectRootCopies) {
@@ -1789,7 +1811,13 @@ async function handlePackagesStructureCopy(tool, config, overrideHomeDir = null,
     // dir. Runs on every home-scoped tool install; idempotent (skips reinstall
     // if `reflect --version` already responds, and the adapter has its own
     // managed_by sentinel that refuses to clobber hand-edited files).
-    if (shouldUseHome) {
+    //
+    // installReflectKb mutates REAL machine-global state (uv tool install,
+    // ~/.cache, ~/.zshrc/.bashrc) regardless of --homeDir — it installs one
+    // shared CLI, not a per-tool-home artifact. BOOTSTRAP_SKIP_REFLECT_KB
+    // lets test runs (or any isolated/dry install) opt out without touching
+    // production behavior.
+    if (shouldUseHome && !process.env.BOOTSTRAP_SKIP_REFLECT_KB) {
         showProgress('Installing reflect-kb (universal retrieval CLI)');
         const reflectResult = await installReflectKb(tool);
         if (reflectResult.errors.length > 0) {
@@ -1962,7 +1990,7 @@ async function handleFullDirectoryCopy(tool, config, overrideHomeDir = null, tar
             const sourcePath = path.join(__dirname, toolFile);
             const fileName = path.basename(toolFile);
             const destPath = path.join(destDir, fileName);
-            
+
             if (fs.existsSync(sourcePath)) {
                 fs.copyFileSync(sourcePath, destPath);
                 toolFilesCopied++;
