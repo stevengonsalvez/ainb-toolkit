@@ -612,6 +612,20 @@ if [[ "$_HR_URLS" == *"127.0.0.1:${_HR_PORT}"* || "$_HR_URLS" == *"localhost:${_
   L2+=" \033[38;2;${_hr_bg}m${_hr_capL}\033[48;2;${_hr_bg}m\033[38;2;${_hr_fg}m HR ${RESET}\033[38;2;${_hr_bg}m${_hr_capR}${RESET}"
 fi
 
+# ── RTK badge ───────────────────────────────────────────────────────────────
+# Rounded pill on line 2 when this session's Claude Code has the RTK (Rust
+# Token Killer) PreToolUse hook wired. ainb wires it project-locally into
+# <project_dir>/.claude/settings.json; `rtk init -g` wires it globally into
+# ~/.claude/settings.json. Cheap literal grep for the hook command — no rtk
+# subprocess. Reflects ACTUAL wiring, mirroring the HR badge above.
+_RTK_DIR=$(_jq '.workspace.project_dir // .workspace.current_dir')
+[[ -z "$_RTK_DIR" ]] && _RTK_DIR="$CWD"
+if grep -qsF 'rtk hook claude' "${_RTK_DIR}/.claude/settings.json" 2>/dev/null \
+   || grep -qsF 'rtk hook claude' "$HOME/.claude/settings.json" 2>/dev/null; then
+  _rtk_capL=$'\ue0b6'; _rtk_capR=$'\ue0b4'
+  L2+=" \033[38;2;${C_GREEN}m${_rtk_capL}\033[48;2;${C_GREEN}m\033[38;2;${C_BLACK}m RTK ${RESET}\033[38;2;${C_GREEN}m${_rtk_capR}${RESET}"
+fi
+
 # ── Output ────────────────────────────────────────────────────────────────────
 printf '%b\n %b' "$L1" "$L2"
 
