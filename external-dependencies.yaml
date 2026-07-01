@@ -657,6 +657,26 @@ npx-skills:
       - cloudflare-email-service
     docs: "https://github.com/cloudflare/skills"
 
+  - name: higgsfield-skills
+    repo: higgsfield-ai/skills
+    version: "0.3.0"
+    install: "npx skills add higgsfield-ai/skills --global --agent claude-code --agent codex --skill '*' --yes"
+    applies-to: [claude, codex]
+    purpose: "Higgsfield AI generative-media skill family — image/video/3D/audio generation, product & marketplace photoshoots, Soul Character (face identity) training, and full-stack website build/deploy. Wraps the `higgsfield` CLI."
+    multi-skill: true
+    install-layout: "Source of truth ~/.agents/skills/; symlinked into ~/.claude/skills/ and ~/.codex/skills/ (codex links added manually — the CLI's 'universal: Codex' step does not populate ~/.codex/skills/)."
+    skills:
+      - higgsfield-generate: "Generate images/videos/3D/audio (GPT Image 2, Seedance 2.0, Nano Banana, Seed Audio), Marketing Studio ads, image-to-3D, and Virality Predictor scoring"
+      - higgsfield-product-photoshoot: "Brand-quality product images (studio/lifestyle/hero/ad-creative/virtual-try-on) via product-photoshoot prompt enhancement on GPT Image 2"
+      - higgsfield-marketplace-cards: "Marketplace listing image cards — compliant main image, secondary product images, A+ content modules"
+      - higgsfield-soul-id: "Train a Soul Character (personalized face model) for identity-faithful generation; chains into higgsfield-generate via --soul-id"
+      - higgsfield-websites: "Build/edit/deploy full-stack React 19 + TanStack Start sites as a single Cloudflare Worker (D1/R2/KV/DO) via `higgsfield website …`"
+    requires:
+      - "higgsfield CLI: curl -fsSL https://raw.githubusercontent.com/higgsfield-ai/cli/main/install.sh | sh"
+      - "higgsfield auth login (interactive; account-gated, paid generation credits)"
+    security-note: "skills.sh install-time scan: Snyk Critical Risk on 4 of 5 skills (generate, marketplace-cards, product-photoshoot, soul-id), Medium on websites; Socket 0 alerts across all; Gen column High Risk on marketplace-cards & product-photoshoot. Skills run with full agent permissions and shell out to a curl|sh-installed CLI — review before use. Scan detail: https://skills.sh/higgsfield-ai/skills"
+    docs: "https://skills.sh/higgsfield-ai/skills"
+
 # =============================================================================
 # NANOCLAW SKILLS (qwibitai/nanoclaw container/skills/)
 # =============================================================================
