@@ -6,27 +6,32 @@ user-invocable: true
 
 # Critique Command
 
-Use this command to get a Distinguished Engineer level technical critique of the current approach and implementation.
+Brutally honest, constructive Distinguished-Engineer critique of an approach/implementation. Output: a structured JSON verdict in one `<output>` block, then saved to disk.
+
+## When NOT to use
+
+| Situation | Use instead |
+|-----------|-------------|
+| UI/UX, cognitive-load, or usability review of a frontend | `impeccable` skill |
+| Line-level bug/correctness review of a diff | `code-review` skill |
+| Hunt over-engineering only, one line per finding | `ponytail-review` skill |
+| Critique a plan/approach with a verdict score | this skill (correct) |
 
 <!-- recall:begin -->
 
-## Step 0: Prior-art check (MANDATORY)
+## Step 0: Prior-art check (MANDATORY, run first)
 
-Before critiquing, recall prior learnings from the global knowledge base so we don't re-learn or re-decide something already captured:
+Build `<QUERY>` = short summary of the approach + domain keywords (e.g. `event-sourced migration rollback strategy`). Run:
 
 ```bash
-uv run "{{HOME_TOOL_DIR}}/skills/recall/scripts/recall.py" \
-  "<QUERY>" \
-  --limit 5 --format markdown
+uv run "{{HOME_TOOL_DIR}}/skills/recall/scripts/recall.py" "<QUERY>" --limit 5 --format markdown
 ```
 
-**Query construction for `/critique`**: a short summary of the approach/code being critiqued + relevant domain keywords (e.g. `"event-sourced migration rollback strategy"`).
-
-**What to do with results:**
-
-- If a returned learning names a constraint, anti-pattern, or prior decision directly relevant to the task — surface it to the user BEFORE proceeding with this skill's main flow.
-- If nothing relevant returns — proceed silently, no need to mention the check.
-- Never block on recall failure. Empty output / non-zero exit is expected when the KB is absent or the subprocess errors — treat it as "no prior art found", not as an error.
+| recall result | Do this |
+|--------|---------|
+| Names a constraint / anti-pattern / prior decision relevant to the task | Surface it to the user BEFORE the main critique |
+| Nothing relevant | Proceed silently, don't mention the check |
+| Empty output OR non-zero exit | Treat as "no prior art" — never block, never call it an error (KB may be absent) |
 
 <!-- recall:end -->
 
@@ -36,103 +41,54 @@ uv run "{{HOME_TOOL_DIR}}/skills/recall/scripts/recall.py" \
 /critique [type] "context"
 ```
 
-## Types
+`type` defaults to `general`. Example: `/critique cost "Kubernetes for a static website"`.
 
-- `general` - Overall technical review (default)
-- `architecture` - System design and patterns review
-- `performance` - Performance and scalability analysis
-- `security` - Security implications assessment
-- `cost` - Total cost of ownership analysis
-- `complexity` - Overengineering assessment
-- `all` - Comprehensive review covering all aspects
+| type | Focus |
+|------|-------|
+| `general` | Overall technical review (default) |
+| `architecture` | System design and patterns |
+| `performance` | Performance and scalability |
+| `security` | Security implications |
+| `cost` | Total cost of ownership |
+| `complexity` | Overengineering assessment |
+| `all` | All of the above |
 
-## Description
+## Runbook
 
-This command provides brutally honest, constructive critique with 25+ years of Distinguished Engineer experience perspective. The review prevents costly mistakes while not crushing innovation. The critique will be displayed in a clear <output> block for review and response.
+1. **Extract context** from the conversation: recent technical decisions, files created/modified this session, relevant snippets, stated trade-offs and constraints.
+2. **Analyze** from a 25+-year Distinguished Engineer lens: name anti-patterns and overengineering, weigh complexity vs. problem size, list simpler alternatives, evaluate long-term implications. Every concern MUST cite concrete evidence from the code/decision — never a generic worry.
+3. **Score the verdict** — pick exactly one:
 
-## Examples
+   | Verdict | Meaning |
+   |---------|---------|
+   | `APPROVE` | Sound; proceed |
+   | `CAUTION` | Proceed but fix named concerns first |
+   | `RECONSIDER` | Serious doubts; a listed alternative is likely better |
+   | `REJECT` | Do not proceed as-is |
 
-```
-/critique architecture "Using microservices for a 3-user internal tool"
-/critique cost "Kubernetes for a static website"
-/critique all "Redux for state management in a todo app"
-/critique "Using 5 different databases in a startup MVP"
-```
+4. **Emit** the critique as JSON inside one `<output>`…`</output>` block (schema below).
+5. **Save** to `{{HOME_TOOL_DIR}}/critiques/critique_[TIMESTAMP]_[TYPE].json` — `[TIMESTAMP]` = `date +%Y%m%dT%H%M%S`, `[TYPE]` = requested type. Run `mkdir -p {{HOME_TOOL_DIR}}/critiques` first.
 
-## Output Format
+## Output schema (JSON inside `<output>` block)
 
-The critique provides a structured JSON report containing:
+Include every key; omit a section only when the requested `type` makes it irrelevant.
 
-- **Summary**: Verdict (APPROVE/CAUTION/RECONSIDER/REJECT), one-liner, confidence score
-- **Strengths**: 2-3 genuine strengths of the approach
-- **Concerns**: Critical, major, and minor issues with impact analysis
-- **Alternatives**: Better approaches with pros/cons
-- **Cost Analysis**: Initial, operational, hidden costs, and 3-year TCO
-- **Complexity Assessment**: Overengineering score and simplification suggestions
-- **Team Impact**: Learning curve, hiring difficulty, maintenance burden
-- **Future Proofing**: Scalability limits, migration difficulty, tech debt
-- **Recommendation**: Should proceed or not with conditions
-- **Wisdom**: Pattern recognition, war stories, and principles
+- `summary`: `{ verdict, one_liner, confidence }` (confidence 0.0–1.0)
+- `strengths`: 2–3 genuine strengths
+- `concerns`: `{ critical[], major[], minor[] }`, each item `{ issue, impact }`
+- `alternatives`: `[ { approach, pros, cons } ]`
+- `cost_analysis`: `{ initial, operational, hidden, tco_3yr }`
+- `complexity`: `{ overengineering_score, simplifications[] }` (score 0–10)
+- `team_impact`: `{ learning_curve, hiring_difficulty, maintenance_burden }`
+- `future_proofing`: `{ scalability_limits, migration_difficulty, tech_debt }`
+- `recommendation`: `{ proceed: bool, conditions[] }`
+- `wisdom`: pattern recognition, war stories, principles
 
-## Implementation
+Voice: brutally honest but constructive, data-driven with real examples. Advisory, not prescriptive — challenge assumptions, weigh context. Prevent expensive mistakes without crushing innovation.
 
-When this command is invoked:
+## Response protocol (after critique is shown)
 
-1. **Context Extraction**:
-   - Identify what needs critique from the current conversation
-   - Gather recent technical decisions and implementation details
-   - List files created or modified in this session
-   - Extract relevant code snippets
-   - Note any trade-offs or constraints mentioned
-
-2. **Analysis Phase**:
-   - Apply Distinguished Engineer perspective (25+ years experience)
-   - Identify anti-patterns and overengineering
-   - Assess complexity vs problem size
-   - Consider simpler alternatives
-   - Evaluate long-term implications
-
-3. **Generate Critique** with structured output:
-   - Verdict (APPROVE/CAUTION/RECONSIDER/REJECT)
-   - Critical concerns with evidence
-   - Alternative approaches with trade-offs
-   - Overengineering score
-   - Clear recommendations
-
-4. **Display Output** in formatted <output> block:
-   - Color-coded verdict
-   - Highlighted critical concerns
-   - Alternative recommendations table
-   - Action items
-
-5. **Save the critique** to `{{HOME_TOOL_DIR}}/critiques/critique_[TIMESTAMP]_[TYPE].json`
-
-## Critique Perspective
-
-The Distinguished Engineer perspective includes:
-- 25+ years seeing technologies rise and fall
-- Experience with architectures that succeeded and failed
-- Understanding of team dynamics and organizational impact
-- Battle scars from real-world production systems
-
-The critique should be:
-- Brutally honest but constructive
-- Data-driven with real examples
-- Focused on preventing expensive mistakes
-- Balanced between innovation and pragmatism
-
-## Response Protocol
-
-After receiving the critique:
-1. Review and acknowledge each critique point
-2. Provide rationale or agreement with concerns
-3. Propose adjustments based on valid points
-4. Update implementation if significant issues identified
-
-## Notes
-
-- The critique is advisory, not prescriptive
-- Consider context and constraints when evaluating recommendations
-- Perfect is the enemy of good, but good enough today often becomes tomorrow's technical debt
-- The goal is to make informed decisions, not to achieve perfection
-- Each critique should challenge assumptions and prevent costly mistakes
+1. Acknowledge each concern point.
+2. Agree, or give rationale against it.
+3. Propose concrete adjustments for valid points.
+4. Update the implementation if significant issues surfaced.
