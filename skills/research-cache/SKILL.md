@@ -30,7 +30,7 @@ When the `/research` command discovers external repositories:
 
 1. **Detection**: URLs extracted from web research results (Step 3.5)
 2. **Cache Check**: Before analysis, check if commit already analyzed
-3. **Analysis**: If not cached, spawn `focused-repository-analyzer` agent
+3. **Analysis**: If not cached, spawn `code-archaeologist` agent
 4. **Save**: Analysis saved to cache with metadata
 5. **Reuse**: Future research queries use cached results
 
@@ -346,5 +346,5 @@ find {{HOME_TOOL_DIR}}/research-cache -name "metadata.json" -mtime -7 -exec jq -
 ## See Also
 
 - `/research` - Main research command that uses cache
-- `focused-repository-analyzer` - Agent that generates cached analyses
+- `code-archaeologist` - Agent that generates cached analyses
 - `{{HOME_TOOL_DIR}}/utils/repo-analysis-cache.sh` - Cache utility script
