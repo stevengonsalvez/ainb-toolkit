@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# build-analyzer-prompt.sh - Build context-aware prompt for focused-repository-analyzer
+# build-analyzer-prompt.sh - Build context-aware prompt for code-archaeologist
 #
 # Usage: build_analyzer_prompt <repo_path> <repo_url> <research_query> <context>
 #
