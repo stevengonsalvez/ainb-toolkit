@@ -56,8 +56,8 @@ LOW_CONFIDENCE_PATTERNS = [
 # Agent file mapping based on learning category
 AGENT_MAPPINGS = {
     'code_style': ['code-reviewer', 'superstar-engineer'],
-    'architecture': ['solution-architect', 'architecture-reviewer'],
-    'testing': ['test-writer-fixer', 'integration-tests'],
+    'architecture': ['distinguished-engineer', 'deep-reasoner'],
+    'testing': ['test-engineer'],
     'security': ['security-agent', 'code-reviewer'],
     'performance': ['performance-optimizer'],
     'documentation': ['documentation-specialist'],
