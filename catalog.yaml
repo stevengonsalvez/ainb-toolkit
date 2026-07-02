@@ -117,44 +117,22 @@ components:
     root:
       - distinguished-engineer
       - web-search-researcher
-    design:
-      - ui-designer
     engineering:
-      - api-architect
-      - architecture-reviewer
       - code-archaeologist
       - code-reviewer
-      - dev-cleanup-wizard
-      - devops-automator
       - documentation-specialist
-      - focused-repository-analyzer
-      - gatekeeper
-      - integration-tests
-      - lead-orchestrator
-      - migration
       - performance-optimizer
-      - planner
-      - playwright-test-validator
-      - property-mutation
-      - release-manager
       - security-agent
-      - service-codegen
-      - solution-architect
-      - supabase-security-reviewer
-      - tailwind-css-expert
-      - test-analyser
-      - test-writer-fixer
+      - test-engineer
     meta:
       - agentmaker
-    orchestrators:
-      - project-analyst
-      - team-configurator
-      - tech-lead-orchestrator
     swarm:
       - leader
       - worker
     universal:
       - backend-developer
+      - deep-reasoner
+      - fast-worker
       - frontend-developer
       - superstar-engineer
 
