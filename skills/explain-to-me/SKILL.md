@@ -9,15 +9,17 @@ description: |
   with real content, augments with inline diagrams via sister skills
   (/fireworks-tech-graph for architecture / flow / sequence diagrams,
   /graphify for knowledge graphs), applies a Claude-brand polish layer,
-  and publishes to
-  here.now at a topic-slug URL so the link is shareable immediately.
+  and publishes it: by default onto the configured here.now custom
+  domain (path mount + searchable categorised index + password lock
+  per the config's protect rule, driven by ~/.herenow/explainers.json),
+  or a plain here.now URL, or a GitHub gist (--gist / --gist --public).
   Local-only output is available with --local. Use when Stevie says
   "/explain-to-me", "explain-to-me X", "make me an explainer for X",
   "give me an HTML explainer", "render this as a webpage", "ADR for X",
   "options paper for X", or asks for a rich visual writeup. The skill
   picks the template, names the choice up-front, and reaches for
   diagrams whenever the content shape needs them.
-argument-hint: "[topic — e.g. 'how rate limiting works in our api'] [--local]"
+argument-hint: "[topic — e.g. 'how rate limiting works in our api'] [--local] [--gist [--public]]"
 ---
 
 # /explain-to-me — rich HTML explainers
@@ -36,8 +38,9 @@ brand badge.
 
 ## Trigger
 
-- `/explain-to-me <topic>` — primary
-- `/explain-to-me <topic> --local` — skip the here.now publish, just write the file
+- `/explain-to-me <topic>` — primary (publishes per `~/.herenow/explainers.json`)
+- `/explain-to-me <topic> --local` — skip publishing, just write the file
+- `/explain-to-me <topic> --gist [--public]` — publish as gist (secret by default)
 - `/explain-to-me` (no args) — ask the user what to explain
 - Natural language: "explain X to me as a webpage", "make an HTML
   explainer for X", "render this concept as HTML", "ADR for choosing X",
@@ -99,7 +102,19 @@ For architecture consolidation papers built from source inspection, load
 [`references/architecture-options-paper-from-source.md`](references/architecture-options-paper-from-source.md).
 It captures the proven shape: current A diagram, current B diagram,
 proposed consolidated diagram, explicit gap table, and first-section
-recommendation.
+recommendation. For agent memory/governance consolidation specifically,
+apply the Reflect/Fleet plane split: storage/retrieval hooks consolidate
+into the memory substrate; governance/control hooks remain deterministic
+law.
+
+For Reflect/Fleet/BANK explainers or updates, also load
+[`references/reflect-fleet-bank-deep-dive.md`](references/reflect-fleet-bank-deep-dive.md).
+Do a full artifact inventory, not only the slogan. Cover corrections,
+pending correction debt, patterns, discoveries, archives, strikes/HOT
+promotion, journals, skills, inbox state, ACP/loop control,
+manifest/worktree gates, and sleep-cycle policy. If the user asks for
+"new tab", "deep dive", or "more comprehensive", add a hash-linkable
+HTML tab plus coverage matrix and migration/acceptance gates.
 
 ### 1.5 Announce the choice
 
@@ -186,40 +201,46 @@ sketch-like to read at a glance.
 6. **Preserve** every `<script>` block verbatim unless changing the
    demo's data shape.
 
-### 5. Publish to here.now (default)
+### 5. Publish (config-driven)
 
-Unless the user passed `--local`, publish the file via the `/here-now`
-skill (`{{HOME_TOOL_DIR}}/skills/here-now/scripts/publish.sh`).
+Three targets — the flag picks; the local file is written in all cases:
 
-**Critical: you do not get to choose the URL on a first publish.**
-The `publish.sh --slug <slug>` flag means *"update an existing publish
-at this slug"*, not *"create a new publish with this URL"*. If you
-pass `--slug` on a first publish, the server returns `Not found`
-because there's nothing at that slug to update yet. Server-assigned
-three-word slugs (e.g. `woody-mortar-9dmd`) are the only path for new
-publishes via this CLI.
+1. `--local` → stop after writing the file.
+2. `--gist` (optionally `--public`) → gist.
+3. Default → **here.now**:
+   - `~/.herenow/explainers.json` exists → domain mode: publish +
+     password-lock per its protect rule + mount on the custom domain +
+     append to the searchable index.
+   - no config → plain 3-word URL, then offer the one-time config
+     setup (bootstrap flow in the reference; template ships at
+     `assets/explainers.template.json`). Ask once per session, drop it
+     if declined.
 
-Procedure:
+**Load [`references/publishing.md`](references/publishing.md) before
+publishing** — it has the config schema, per-target pipelines, the
+bootstrap flow, and troubleshooting.
 
-1. Invoke `publish.sh` with the file path and **no `--slug` flag**:
-   ```
-   bash {{HOME_TOOL_DIR}}/skills/here-now/scripts/publish.sh \
-     ./explainers/<slug>.html \
-     --title "<page title>" \
-     --description "<one-line summary>" \
-     --client claude-code
-   ```
-2. Capture the returned URL (a server-assigned three-word subdomain).
-3. If the user explicitly asks for a custom-URL publish, do the
-   sequence: publish first to get the auto-slug + claim token, then
-   re-invoke `publish.sh --slug <new-slug> --claim-token <token>` to
-   rename. Most users don't care; don't volunteer this dance unless
-   asked.
-If `/here-now` is unavailable in the current environment, fall
-back to local-only mode and surface the path. Tell Stevie what
-happened — don't pretend you published.
+For `herenow-domain`, the whole pipeline is one tested script:
 
-If updating a previous here.now URL with `--slug` returns `Unauthorized. Provide claimToken to update anonymous site`, stop retrying that slug. Either use the claim token if you actually have it, or publish a fresh URL without `--slug` and report the replacement link.
+```
+python3 scripts/publish_explainer.py ./explainers/<slug>.html \
+  --path <mount-path-≤30-chars> --title "<title>" --desc "<one-liner>" \
+  --category <key-from-config> [--lock]
+```
+
+Judgment stays with you: pick `--path` and `--category`, and evaluate
+the config's `protect_rule` against the content to decide `--lock`
+(when ambiguous: lock and say so — unlocking is one PATCH). The script
+handles mechanics: publish, password, mount/repoint, and **append-only
+upsert** into the live index's `data.json` — it never clobbers other
+entries.
+
+For the no-config here.now flow and gist details (including
+`publish.sh` slug semantics and gist rendered-preview links), see the
+reference.
+
+If publishing fails, fall back to local-only and surface the path.
+Tell Stevie what happened — don't pretend you published.
 
 ### 6. Hand off
 
@@ -228,13 +249,12 @@ Report to Stevie in this exact shape:
 > **Explainer ready.**
 > - Template: `21-adr.html` — *why this one*
 > - Local: `./explainers/<slug>.html`
-> - Live: `https://<server-slug>.here.now`  *(or "skipped, --local")*
+> - Live: `https://<domain>/<path>/`  *(or `https://<slug>.here.now`, gist link, or "skipped, --local")*
+> - Index: added under `<category>` · locked/open  *(herenow-domain only)*
 > - Diagrams: from /fireworks-tech-graph  *(omit line if none)*
 
-If the returned URL is a three-word auto-slug (e.g.
-`woody-mortar-9dmd.here.now`) and the topic would benefit from a
-memorable URL, mention that a re-publish with `--slug` + claim token
-can rename it — but don't do it automatically.
+On `herenow-domain`, always state whether the page was locked and why
+(the `protect_rule` clause that matched, or "no rule matched — open").
 
 ## Customisation rules
 
@@ -271,6 +291,16 @@ returns `Not found` and the agent often misreads it as a real
 failure. → Omit `--slug` on first publish; let the server assign a
 three-word slug. Only use `--slug` together with `--claim-token`
 for a deliberate rename. If the update returns `Unauthorized. Provide claimToken to update anonymous site`, you are not authorized to update that slug; create a new publish without `--slug` unless you have the claim token.
+- **Regenerating or hand-editing the domain index page.** The index is
+  data-driven (`data.json`); `publish_explainer.py` upserts entries.
+  Rebuilding index.html from scratch loses the other 80+ entries. →
+  Only ever touch the index through the script.
+- **Pasting the here.now token into chat or config.** Token lives in
+  `~/.herenow/credentials` (0600) only. If Stevie pastes one, save it
+  there and don't echo it.
+- **Skipping the lock decision.** Every herenow-domain publish must
+  evaluate the config `protect_rule` — silence is how sensitive pages
+  end up public. State the verdict in the hand-off.
 - **Hand-drawing a complex SVG architecture diagram** when
   `/fireworks-tech-graph` could produce a cleaner one. → Delegate.
 - **Verifying a here.now page with `curl URL | python3 - <<'PY'`.** The heredoc consumes stdin, so Python sees empty page content and can report false failure. → `curl -o "$tmp" URL`, then have Python read the temp file.

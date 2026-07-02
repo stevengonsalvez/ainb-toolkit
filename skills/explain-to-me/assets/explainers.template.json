@@ -1,0 +1,12 @@
+{
+  "domain": "explainers.example.com",
+  "index_slug": "SET-AFTER-FIRST-INDEX-PUBLISH",
+  "password": "choose-a-password",
+  "protect_rule": "Prose rule the agent evaluates per explainer to decide locking. Example: lock anything about <product X> or client work; own open-source tooling stays public. Leave empty string for never-lock.",
+  "categories": {
+    "projecta": "Project A — what belongs here",
+    "decision": "Decision docs & options papers",
+    "other": "Other — everything else"
+  },
+  "gist_index_id": null
+}
