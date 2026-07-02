@@ -9,55 +9,44 @@ description: |
   with real content, augments with inline diagrams via sister skills
   (/fireworks-tech-graph for architecture / flow / sequence diagrams,
   /graphify for knowledge graphs), applies a Claude-brand polish layer,
-  and publishes to
-  here.now at a topic-slug URL so the link is shareable immediately.
+  and publishes it: by default onto the configured here.now custom
+  domain (path mount + searchable categorised index + password lock
+  per the config's protect rule, driven by ~/.herenow/explainers.json),
+  or a plain here.now URL, or a GitHub gist (--gist / --gist --public).
   Local-only output is available with --local. Use when Stevie says
   "/explain-to-me", "explain-to-me X", "make me an explainer for X",
   "give me an HTML explainer", "render this as a webpage", "ADR for X",
   "options paper for X", or asks for a rich visual writeup. The skill
   picks the template, names the choice up-front, and reaches for
   diagrams whenever the content shape needs them.
-argument-hint: "[topic — e.g. 'how rate limiting works in our api'] [--local]"
+argument-hint: "[topic — e.g. 'how rate limiting works in our api'] [--local] [--gist [--public]]"
 ---
 
 # /explain-to-me — rich HTML explainers
 
-## What it does
+Turn a topic into ONE self-contained HTML file, Claude-branded, using the
+best-fit bundled template, then publish it and return a shareable URL.
 
-Takes a topic (a feature, a concept, a decision, a plan, an incident, …)
-and produces a single self-contained HTML file styled in Claude's brand,
-using whichever bundled template best fits the topic's shape. By default
-it then publishes the file via `/here-now` and returns the shareable URL.
+**Fixed constraints (do not violate):**
+- Palette is fixed: `#FAF9F5` ivory, `#141413` slate, `#D97757` clay, `#E3DACC` oat, `#788C5D` olive. Do not rewrite CSS variables unless the user explicitly asks for a different look.
+- ONE template per output. Never merge two templates.
+- Static HTML only — inline `<style>` + inline `<script>`. No framework, no build. (User wants React → that's `frontend-engineer`, not this skill.)
+- Strip regions you can't fill with real content. A 3-section real explainer beats a 7-section half-fake one.
+- Never invent file paths, line numbers, or commit hashes to fill a citation region — drop the region instead.
 
-All 22 templates use Claude's palette (`#FAF9F5` ivory, `#141413` slate,
-`#D97757` clay, `#E3DACC` oat, `#788C5D` olive). The skill applies
-[`assets/claude-theme.css`](assets/claude-theme.css) on top for typography +
-brand badge.
+## When NOT to use
 
-## Trigger
+- User asks whether this skill *exists* / is available → that is a capability check. Use `/explain-to-me` to explain the requested topic. Do NOT copy, move, install, or canonicalize the skill into the repo. Only package/consolidate the skill when the user explicitly asks for skill packaging.
+- User wants a React/component app → use `frontend-engineer`.
 
-- `/explain-to-me <topic>` — primary
-- `/explain-to-me <topic> --local` — skip the here.now publish, just write the file
-- `/explain-to-me` (no args) — ask the user what to explain
-- Natural language: "explain X to me as a webpage", "make an HTML
-  explainer for X", "render this concept as HTML", "ADR for choosing X",
-  "options paper on Y", "give me a visual writeup of Z"
+## Runbook
 
-## Flow
+### 1. Lock topic + template
 
-### 1. Lock the topic and intent
+1. Topic = `$ARGUMENTS` if non-empty. Else ask ONE `AskUserQuestion`: "What should I explain? One line."
+2. Classify the topic against the table below and pick EXACTLY ONE template. `★` = visual-first; when two fit, prefer `★` unless the topic is intrinsically prose-heavy.
 
-If `$ARGUMENTS` is non-empty, use it as the topic. Otherwise ask one
-question via `AskUserQuestion`: "What should I explain? One line."
-
-Then classify the topic against this table — this drives template
-choice. **Pick exactly one template; do not merge.**
-
-Templates are tagged **★** when they are visual-first (diagrams, charts,
-SVG flows). When two templates fit, prefer the **★** one unless the
-topic is intrinsically prose-heavy.
-
-| Topic shape | Template | Visual |
+| Topic shape | Template (in `assets/templates/`) | Visual |
 |---|---|---|
 | Architecture / design decision with options + rationale | `21-adr.html` | ★ |
 | Options paper / trade-off analysis (no decision yet) | `22-options-paper.html` | ★ |
@@ -82,210 +71,98 @@ topic is intrinsically prose-heavy.
 | Feature flag editor | `19-editor-feature-flags.html` | |
 | Prompt template tuner | `20-editor-prompt-tuner.html` | |
 
-Full per-template detail lives in [`references/template-catalog.md`](references/template-catalog.md).
-Read it only when the topic doesn't cleanly match, or you need to know
-which interactive elements a template ships with.
+If the topic doesn't cleanly match, or you need each template's interactive elements → read [`references/template-catalog.md`](references/template-catalog.md).
 
-For sourced options papers comparing agent memory / learning architectures,
-load [`references/sourced-options-paper-memory-systems.md`](references/sourced-options-paper-memory-systems.md)
-and apply its required source pass: inspect local implementation, inspect
-external docs/integration code, include token economics, observability,
-correction, self-improvement, and a decision rule. Decision rule for Stevie:
-avoid recommending two active memory substrates unless one is explicitly
-being retired; split-brain memory is operational waste. Separate memory
-substrate from deterministic control plane/governance hooks.
+**Extra source-pass references — load only when the topic matches:**
 
-For architecture consolidation papers built from source inspection, load
-[`references/architecture-options-paper-from-source.md`](references/architecture-options-paper-from-source.md).
-It captures the proven shape: current A diagram, current B diagram,
-proposed consolidated diagram, explicit gap table, and first-section
-recommendation.
+| Topic | Load |
+|---|---|
+| Sourced options paper on agent memory / learning architectures | [`references/sourced-options-paper-memory-systems.md`](references/sourced-options-paper-memory-systems.md) |
+| Architecture consolidation paper built from source inspection | [`references/architecture-options-paper-from-source.md`](references/architecture-options-paper-from-source.md) |
+| Reflect / Fleet / BANK explainer or deep dive | [`references/reflect-fleet-bank-deep-dive.md`](references/reflect-fleet-bank-deep-dive.md) |
 
-### 1.5 Announce the choice
+Decision rule for memory-architecture papers: do NOT recommend two active memory substrates unless one is explicitly being retired (split-brain memory = operational waste). Keep the memory substrate separate from the deterministic control/governance plane.
 
-### 1.5 Announce the choice
+### 2. Announce the choice (one line, before generating)
 
-Before generating anything, tell Stevie which template you picked and
-why, in one line:
+Tell Stevie the template and why, so a wrong pick can be redirected before you spend tokens. Format:
 
-> Picking `21-adr.html` — you described a decision with options and
-> rationale; this template gives you status badge, options cards with
-> pros/cons + score bars, decision callout, and resulting architecture
-> diagram.
+> Picking `21-adr.html` — you described a decision with options and rationale; this template gives status badge, options cards with pros/cons + score bars, decision callout, and resulting architecture diagram.
 
-This is a transparency step. If the choice is wrong, Stevie can redirect
-before you spend tokens generating content.
+### 3. Gather real content
 
-### 2. Gather content
+Treat the template as the SHAPE. For each named region (TL;DR, steps, options, scores, FAQ, glossary, timeline, consequences…), fill with real content from: current repo files → prior conversation → your own knowledge. Drop any region you can't fill honestly.
 
-Treat the template as the *shape* of the answer. For each named region
-in the template (TL;DR, steps, options, scores, FAQ, glossary, timeline,
-consequences, etc.), produce real content for the user's topic. Pull
-from:
+### 4. Augment with diagrams (only when load-bearing)
 
-- Files in the current repo (for code/feature/PR/ADR templates)
-- The user's prior conversation
-- Your own knowledge of the concept
+If a template has a big-diagram slot and the diagram carries real weight, generate it via a sister skill instead of hand-drawing SVG:
 
-Do not invent file paths or commit hashes. If a region of the template
-expects a concrete artifact you don't have, drop the region rather
-than fake it.
-
-### 3. Augment with visual sister skills
-
-Many templates have a *big diagram* slot. If the topic is technical and
-the diagram would carry real weight, generate one inline via a sister
-skill rather than hand-drawing SVG:
-
-| Diagram need | Reach for | Output |
+| Diagram need | Skill | Output |
 |---|---|---|
 | Architecture · data flow · sequence · agent/memory · concept map | `/fireworks-tech-graph` | SVG + PNG (drop SVG inline) |
-| Knowledge graph from code/docs/papers — clustered, communities | `/graphify` | HTML / JSON / SVG |
+| Knowledge graph from code/docs/papers (clustered) | `/graphify` | HTML / JSON / SVG |
 
-For small bespoke SVG (decorative icons, hero glyphs, simple
-illustrations) — author the inline SVG directly. You're capable of it
-and it keeps the file self-contained.
+Steps: (1) pick the region needing the diagram; (2) invoke the skill with a tight prompt (boxes, arrows, labels) asking for inlineable SVG; (3) replace the placeholder SVG, keeping the outer `<svg>` `viewBox`/sizing so layout holds; (4) cite the generator at the section bottom.
 
-Workflow:
+Do NOT delegate small bespoke SVG (icons, hero glyphs) — author inline. Do NOT replace the intentionally sketch-like mini-architecture SVGs in ADR option cards.
 
-1. Decide which template region needs the diagram (e.g. ADR step 04
-   "Resulting architecture"; concept-explainer's hero figure;
-   implementation-plan's data-flow block).
-2. Invoke the sister skill with a tight prompt describing exactly the
-   diagram you want (boxes, arrows, labels). Tell it to return an
-   inlineable SVG when possible.
-3. Replace the template's placeholder SVG with the generated one.
-   Keep the `viewBox` and outer `<svg>` wrapper sizing so the layout
-   doesn't shift.
-4. Cite the generator at the bottom of the section (e.g. "diagram
-   generated via /fireworks-tech-graph").
+### 5. Render
 
-Use this only when the diagram is load-bearing. Don't replace the small
-mini-architecture SVGs in ADR option cards — those are intentionally
-sketch-like to read at a glance.
-
-### 4. Render
-
-1. **Copy** the chosen template to `./explainers/<slug>.html` (create
-   `./explainers/` if missing). `<slug>` is hyphen-case of the topic
-   and identifies the *local file only*. The here.now URL is
-   server-assigned (see §5) — they do not match.
-2. **Update** the `<title>`, the `.eyebrow` text, and the `h1`.
-3. **Replace** placeholder content (acme/*, ADR-0023, PR #247, "rate
-   limiting" strings, sample names) with the user's real topic.
-4. **Strip** any region that you couldn't fill — better to ship a
-   shorter explainer than a fake one. Don't invent file paths to fill
-   the nav rail; if there are none, delete the `nav .files` block.
-5. **Inject the Claude theme** by running
-   `scripts/inject_theme.py <output.html>` from the skill directory.
-   The script inserts `assets/claude-theme.css` as a second `<style>`
-   block (marked `data-claude-theme="injected"`) right after the
-   template's existing `</style>`, and is idempotent on re-runs. The
-   overlay only touches typography, focus states, and adds the brand
-   badge — layout untouched.
-6. **Preserve** every `<script>` block verbatim unless changing the
-   demo's data shape.
-
-### 5. Publish to here.now (default)
-
-Unless the user passed `--local`, publish the file via the `/here-now`
-skill (`{{HOME_TOOL_DIR}}/skills/here-now/scripts/publish.sh`).
-
-**Critical: you do not get to choose the URL on a first publish.**
-The `publish.sh --slug <slug>` flag means *"update an existing publish
-at this slug"*, not *"create a new publish with this URL"*. If you
-pass `--slug` on a first publish, the server returns `Not found`
-because there's nothing at that slug to update yet. Server-assigned
-three-word slugs (e.g. `woody-mortar-9dmd`) are the only path for new
-publishes via this CLI.
-
-Procedure:
-
-1. Invoke `publish.sh` with the file path and **no `--slug` flag**:
+1. Copy the chosen template from `assets/templates/<name>.html` to `./explainers/<slug>.html` (create `./explainers/` if missing). `<slug>` = hyphen-case of the topic; it names the LOCAL file only — the here.now URL is server-assigned and will differ.
+2. Update `<title>`, `.eyebrow` text, and `h1`.
+3. Replace all placeholder content (acme/*, ADR-0023, PR #247, "rate limiting" strings, sample names) with the real topic.
+4. Strip regions you couldn't fill. No file paths for the nav rail → delete the `nav .files` block.
+5. Inject the Claude theme — from the skill directory run:
    ```
-   bash {{HOME_TOOL_DIR}}/skills/here-now/scripts/publish.sh \
-     ./explainers/<slug>.html \
-     --title "<page title>" \
-     --description "<one-line summary>" \
-     --client claude-code
+   python3 scripts/inject_theme.py ./explainers/<slug>.html
    ```
-2. Capture the returned URL (a server-assigned three-word subdomain).
-3. If the user explicitly asks for a custom-URL publish, do the
-   sequence: publish first to get the auto-slug + claim token, then
-   re-invoke `publish.sh --slug <new-slug> --claim-token <token>` to
-   rename. Most users don't care; don't volunteer this dance unless
-   asked.
-If `/here-now` is unavailable in the current environment, fall
-back to local-only mode and surface the path. Tell Stevie what
-happened — don't pretend you published.
+   Inserts `assets/claude-theme.css` as a second `<style>` block (`data-claude-theme="injected"`) after the template's `</style>`. Idempotent; touches only typography, focus states, and the brand badge — layout untouched.
+6. Preserve every `<script>` block verbatim unless you're changing the demo's data shape.
 
-If updating a previous here.now URL with `--slug` returns `Unauthorized. Provide claimToken to update anonymous site`, stop retrying that slug. Either use the claim token if you actually have it, or publish a fresh URL without `--slug` and report the replacement link.
+Expected: valid HTML at `./explainers/<slug>.html` with the injected theme block. If `./explainers/` can't be written (read-only cwd) → write to `$CLAUDE_JOB_DIR` (or `/tmp`) and report the absolute path.
 
-### 6. Hand off
+### 6. Publish
 
-Report to Stevie in this exact shape:
+The local file is always written. The flag picks the target:
+
+| Flag | Target |
+|---|---|
+| `--local` | Stop after writing the file. |
+| `--gist` (opt `--public`) | GitHub gist (secret by default). See publishing reference. |
+| (none, config present) | here.now domain mode — publish + password-lock per `protect_rule` + mount on custom domain + append to searchable index. |
+| (none, no config) | Plain 3-word here.now URL, then offer one-time config setup once per session (template: `assets/explainers.template.json`); drop it if declined. |
+
+**Read [`references/publishing.md`](references/publishing.md) before publishing** — config schema, per-target pipelines, bootstrap flow, troubleshooting.
+
+For here.now domain mode, the whole pipeline is one script:
+
+```
+python3 scripts/publish_explainer.py ./explainers/<slug>.html \
+  --path <mount-path-≤30-chars> --title "<title>" --desc "<one-liner>" \
+  --category <key-from-config> [--lock]
+```
+
+Your judgment: pick `--path` and `--category`; evaluate the config's `protect_rule` against the content to decide `--lock`. When ambiguous → lock and say so (unlocking is one PATCH). The script handles publish, password, mount/repoint, and append-only upsert into the live index `data.json` (never clobbers other entries).
+
+**Publish failure branches:**
+- Any publish error → fall back to local-only, surface the path, tell Stevie what happened. Never claim you published when you didn't.
+- `Not found` after passing `--slug` on a FIRST publish → `--slug` means *update existing slug*, not *choose a URL*. Omit `--slug` on first publish; let the server assign one. Use `--slug` only with `--claim-token` for a deliberate rename.
+- `Unauthorized. Provide claimToken to update anonymous site` → you can't update that slug. Create a new publish without `--slug` unless you hold the claim token.
+
+### 7. Hand off — report in this EXACT shape
 
 > **Explainer ready.**
 > - Template: `21-adr.html` — *why this one*
 > - Local: `./explainers/<slug>.html`
-> - Live: `https://<server-slug>.here.now`  *(or "skipped, --local")*
+> - Live: `https://<domain>/<path>/`  *(or `https://<slug>.here.now`, gist link, or "skipped, --local")*
+> - Index: added under `<category>` · locked/open  *(herenow-domain only)*
 > - Diagrams: from /fireworks-tech-graph  *(omit line if none)*
 
-If the returned URL is a three-word auto-slug (e.g.
-`woody-mortar-9dmd.here.now`) and the topic would benefit from a
-memorable URL, mention that a re-publish with `--slug` + claim token
-can rename it — but don't do it automatically.
+On herenow-domain, ALWAYS state whether the page was locked and the `protect_rule` clause that matched (or "no rule matched — open"). Silence is how sensitive pages leak public.
 
-## Customisation rules
+## Gotchas
 
-- **Palette is fixed.** The templates *are* the Claude theme. Don't
-  rewrite the CSS variables unless the user explicitly asks for a
-  different look.
-- **One template per output.** Do not merge two templates into one
-  page; pick the better fit and commit.
-- **No framework, no build.** Static HTML + inline `<style>` +
-  inline `<script>`. If the user wants React, that's a different
-  skill (`frontend-engineer`).
-- **Strip, don't pad.** A 3-section explainer that's all real beats
-  a 7-section one that's half fake.
-- **Visual over textual.** When the topic admits a diagram, generate
-  one via a sister skill rather than describing the architecture in
-  prose.
-
-## Anti-patterns (and the fix)
-
-- **Picking a template by aesthetic, not by topic shape.** The reader
-  gets a pretty page that doesn't fit the content. → Re-read the
-  selection table and pick the closest shape; the styling is identical
-  across all 22 anyway.
-- **Inventing file paths / line numbers / commit hashes** to fill
-  citations the template expects. → Drop the citation region.
-- **Skipping the theme overlay** because "it already looks Claude-y".
-  The overlay adds the brand badge and the focus ring — keep it.
-- **Skipping the publish step** silently. → If `/here-now` fails, say
-  so explicitly. Don't return only a local path when Stevie expected
-  a URL.
-- **Passing `--slug` on a first publish.** That flag means *update an
-existing publish at this slug*, not *choose a URL*. The server
-returns `Not found` and the agent often misreads it as a real
-failure. → Omit `--slug` on first publish; let the server assign a
-three-word slug. Only use `--slug` together with `--claim-token`
-for a deliberate rename. If the update returns `Unauthorized. Provide claimToken to update anonymous site`, you are not authorized to update that slug; create a new publish without `--slug` unless you have the claim token.
-- **Hand-drawing a complex SVG architecture diagram** when
-  `/fireworks-tech-graph` could produce a cleaner one. → Delegate.
-- **Verifying a here.now page with `curl URL | python3 - <<'PY'`.** The heredoc consumes stdin, so Python sees empty page content and can report false failure. → `curl -o "$tmp" URL`, then have Python read the temp file.
-- **Putting the output inside the toolkit repo.** Always write to the
-  user's current working directory under `./explainers/`.
-- **Treating this skill as a deliverable because Stevie asked whether it is available.**
-  A capability check means use `/explain-to-me` to explain the topic, not copy the skill into the repo or canonicalize it. Only move/install this skill when the user explicitly asks for skill packaging or consolidation.
-
-## Output location
-
-- Default: `./explainers/<slug>.html` relative to the user's cwd
-  (where `<slug>` is the local file slug). Published to a
-  server-assigned URL `https://<three-word-slug>.here.now/` — not
-  derived from the local filename.
-- `--local`: skip the publish; just leave the file at the path above.
-- If `./explainers/` is awkward (e.g. the cwd is read-only), put the
-  file in `$CLAUDE_JOB_DIR` (or `/tmp`) and tell the user the
-  absolute path.
+- **Verifying a here.now page:** never `curl URL | python3 - <<'PY'` — the heredoc eats stdin so Python sees an empty page and reports a false failure. Instead `curl -o "$tmp" URL`, then read `$tmp` in Python.
+- **Never regenerate/hand-edit the domain index page.** It's data-driven; `publish_explainer.py` upserts into `data.json`. Rebuilding index.html loses the other 80+ entries.
+- **Never paste the here.now token into chat or config.** It lives only in `~/.herenow/credentials` (0600). If Stevie pastes one, save it there and don't echo it.
+- **Output goes in the user's cwd `./explainers/`, never inside the toolkit repo.**
