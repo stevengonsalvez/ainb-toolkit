@@ -6,63 +6,41 @@ user-invocable: true
 
 # /handover - Generate Session Handover Document
 
-Generate a handover document for transferring work to another developer or spawning an async agent.
+Snapshot session state (git, todos, next steps) into a markdown file so another human, a resumed session, or a spawned agent can continue without re-deriving context.
+
+## When NOT to use
+
+| Want | Use instead |
+|------|-------------|
+| Current health / message count only | `/health-check` |
+| Narrative recap of work done | `/session-summary` |
+| Raw session stats | `/session-metrics` |
+| To actually launch the agent now | `/spawn-agent` (it calls this — Step 5) |
 
 ## Usage
 
 ```bash
-/handover                              # Standard handover
-/handover "notes about current work"   # With notes
-/handover --agent-spawn "task desc"    # For spawning agent
+/handover                              # Standard (human / resume-later)
+/handover "notes about current work"   # Standard + notes appended
+/handover --agent-spawn "task desc"    # Agent-spawn (task-focused)
 ```
 
-## Modes
+## Step 1 — Parse mode, set variables
 
-### Standard Handover (default)
-
-For transferring work to another human or resuming later:
-- Current session health
-- Task progress and todos
-- Technical context
-- Resumption instructions
-
-### Agent Spawn Mode (`--agent-spawn`)
-
-For passing context to spawned agents:
-- Focused on task context
-- Technical stack details
-- Success criteria
-- Files to modify
-
-## Implementation
-
-### Detect Mode
+`{{TOOL_DIR}}` is substituted at deploy time by bootstrap.js to the project-relative tool dir (`.claude`) — NOT `~/.claude` (that is `{{HOME_TOOL_DIR}}`). Leave both tokens literal — never replace by hand. Then route: `standard` → Step 2, `agent` → Step 3.
 
 ```bash
-MODE="standard"
-AGENT_TASK=""
-NOTES="${1:-}"
-
-if [[ "$1" == "--agent-spawn" ]]; then
-    MODE="agent"
-    AGENT_TASK="${2:-}"
-    shift 2
-fi
-```
-
-### Generate Timestamp
-
-```bash
-TIMESTAMP=$(date +"%Y-%m-%d-%H-%M-%S")
+MODE="standard"; AGENT_TASK=""; NOTES="${1:-}"
+if [[ "$1" == "--agent-spawn" ]]; then MODE="agent"; AGENT_TASK="${2:-}"; NOTES=""; fi
 DISPLAY_TIME=$(date +"%Y-%m-%d %H:%M:%S")
-FILENAME="handover-${TIMESTAMP}.md"
-PRIMARY_LOCATION="{{TOOL_DIR}}/session/${FILENAME}"
-BACKUP_LOCATION="./${FILENAME}"
-
+FILENAME="handover-$(date +"%Y-%m-%d-%H-%M-%S").md"
+PRIMARY_LOCATION="{{TOOL_DIR}}/session/${FILENAME}"; BACKUP_LOCATION="./${FILENAME}"
 mkdir -p "{{TOOL_DIR}}/session"
 ```
 
-### Standard Handover Content
+## Step 2 — Standard handover content
+
+Build `$CONTENT` from this template. Fill every `[bracketed]` slot from the live session (your todo list, what you were doing) — no brackets may remain. Shell `$(...)` runs at generation time.
 
 ```markdown
 # Handover Document
@@ -72,11 +50,11 @@ mkdir -p "{{TOOL_DIR}}/session"
 
 ## Current Work
 
-[Describe what you're working on]
+[What you're working on — 1-3 sentences]
 
 ## Task Progress
 
-[List todos and completion status]
+[Todo list with status: completed / in-progress / pending]
 
 ## Technical Context
 
@@ -96,7 +74,11 @@ $(git status --short)
 ${NOTES}
 ```
 
-### Agent Spawn Handover Content
+Cold-handover variant: if a human picks this up days later and needs health status / JIRA ID / phase / progress %, copy `assets/template.md` and fill its `{{...}}` placeholders instead. Then go to Step 4.
+
+## Step 3 — Agent-spawn handover content
+
+Task-focused; omit session-health fields (a spawned agent starts fresh). Fill every `[bracketed]` slot.
 
 ```markdown
 # Agent Handover - ${AGENT_TASK}
@@ -116,8 +98,7 @@ ${NOTES}
 **Agent Mission**: ${AGENT_TASK}
 
 **Requirements**:
-- [List specific requirements]
-- [What needs to be done]
+- [Specific requirements / what needs doing]
 
 **Success Criteria**:
 - [How to know when done]
@@ -145,49 +126,29 @@ $(git log --name-only -5 --oneline)
 **Related Work**: [Related PRs/issues]
 ```
 
-### Save Document
+## Step 4 — Write both files
+
+The cwd backup survives if `{{TOOL_DIR}}` is on another volume or gets cleaned.
 
 ```bash
-# Generate appropriate content based on MODE
-if [ "$MODE" = "agent" ]; then
-    # Generate agent handover content
-    CONTENT="[Agent handover content from above]"
-else
-    # Generate standard handover content
-    CONTENT="[Standard handover content from above]"
-fi
-
-# Save to primary location
-echo "$CONTENT" > "$PRIMARY_LOCATION"
-
-# Save backup
-echo "$CONTENT" > "$BACKUP_LOCATION"
-
-echo "✅ Handover document generated"
-echo ""
-echo "Primary: $PRIMARY_LOCATION"
-echo "Backup: $BACKUP_LOCATION"
-echo ""
+printf '%s\n' "$CONTENT" > "$PRIMARY_LOCATION"
+printf '%s\n' "$CONTENT" > "$BACKUP_LOCATION"
+echo "Handover -> $PRIMARY_LOCATION (backup: $BACKUP_LOCATION)"
 ```
 
-## Output Location
+Gate — expect both files non-empty.
+- `git branch --show-current` empty → detached HEAD / not a repo. Leave Branch blank, continue (do NOT abort).
+- Write fails / file empty → confirm `{{TOOL_DIR}}/session` exists (Step 1 `mkdir`) and disk is writable, then retry.
 
-**Primary**: `{{TOOL_DIR}}/session/handover-{timestamp}.md`
-**Backup**: `./handover-{timestamp}.md`
+**Output location (contract)**: primary `{{TOOL_DIR}}/session/handover-{timestamp}.md`, backup `./handover-{timestamp}.md`.
 
-## Integration with spawn-agent
+## Step 5 — Integration with spawn-agent (contract — do not change)
 
-The `/spawn-agent` command automatically calls `/handover --agent-spawn` when `--with-handover` flag is used:
+`/spawn-agent ... --with-handover` calls this skill in agent mode and copies the result into the agent worktree as `.agent-handover.md`:
 
 ```bash
 /spawn-agent codex "refactor auth" --with-handover
 # Internally calls: /handover --agent-spawn "refactor auth"
-# Copies handover to agent worktree as .agent-handover.md
 ```
 
-## Notes
-
-- Always uses programmatic timestamps (never manual)
-- Saves to both primary and backup locations
-- Agent mode focuses on task context, not session health
-- Standard mode includes full session state
+Keep the `--agent-spawn "<task>"` argument shape exactly — spawn-agent depends on it.
