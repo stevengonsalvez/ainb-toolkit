@@ -45,7 +45,7 @@ Apply this table to each file found:
 
 Add gitignore patterns when needed:
 ```bash
-printf '.env*\n*.env\n' >> .gitignore
+printf '.env*\n*.env\nenv.*\n' >> .gitignore   # env.* covers env.local-style names the scan surfaces
 ```
 
 If any cleanup is required, present the list and wait for a yes before deleting:
@@ -125,6 +125,12 @@ Hard rules:
 - NEVER `git add -A` or `git add .` — stage only the named paths for this commit. Why: bulk-add drags agent scratch into the commit.
 - NEVER add Claude/AI attribution, "Generated with", or `Co-Authored-By`. Commit as if the user wrote it; match the repo's existing commit tone.
 - Do not stage debug code, secrets, or temp files.
+- Verify the code works before committing (run the relevant tests/build if not already run this session).
+
+Work in progress — if the session's implementation is incomplete, ask the user which they want before committing:
+1. Commit the completed parts with a clear message.
+2. Create a WIP commit to save progress.
+3. Wait until the feature is complete.
 
 Verify after each commit:
 ```bash
