@@ -4,21 +4,58 @@ description: Turn an idea into an approved design spec. Brainstorm is the orches
 user-invocable: true
 ---
 
-Brainstorm idea: `$ARGUMENTS`. Output is an approved spec doc, not code. **Brainstorm is the orchestrator; `/interview` runs the actual Q&A.**
+Brainstorm idea: `$ARGUMENTS`. Deliverable = an approved spec doc, NOT code. **You orchestrate; `/interview` runs the Q&A.**
 
 <HARD-GATE>
-Do NOT write code, scaffold a project, run install/build commands, or invoke any implementation skill (`/plan`, `/implement`, `/plan-tdd`, framework codegen) until a written spec exists in `.agents/specs/` AND the user has explicitly approved it via the user-review gate (Step 10). Once both conditions are satisfied, Step 12 (`/plan` handoff) is the intended terminal action. Applies to every project regardless of perceived simplicity.
+Do NOT write code, scaffold, run install/build, or invoke any implementation skill (`/plan`, `/implement`, `/plan-tdd`, framework codegen) until a written spec exists in `.agents/specs/` AND the user explicitly approved it (Step 10). Then Step 12 (`/plan` handoff) is the only terminal action. Applies to every project regardless of perceived simplicity.
 </HARD-GATE>
 
-## Anti-pattern: "too simple to need a design"
+**Every brainstorm produces a spec** — todo list, single util, config change, all of them. Spec may be 10 lines for trivial work, but it must exist and be approved. "Simple" is where unexamined assumptions bite hardest.
 
-Every brainstorm produces a spec. Todo list, single-function util, config change - all of them. "Simple" is where unexamined assumptions bite hardest. Spec can be 10 lines for trivial work, but it must exist and be approved.
+## When NOT to use
+
+| Situation | Use instead |
+|-----------|-------------|
+| Spec already exists + approved | `/plan` directly |
+| Running the actual Q&A loop | `/interview` (brainstorm delegates to it — don't duplicate) |
+| Idea already fully specified, no design questions | `/plan` directly |
+
+## Division of labour
+
+| Skill | Owns |
+|-------|------|
+| `/brainstorm` | Recall, project scan, subject-type detection, stub scaffolding w/ ASCII previews, self-review, user-review gate, `/plan` handoff |
+| `/interview` | The iterative AskUserQuestion Q&A loop that populates the spec file |
+
+You write ONE rich stub file, hand off, read the result back. Terminal state = `/plan` invocation. Never invoke `/implement` or codegen directly.
+
+```
+Recall+scan ─▶ detect type ─▶ scaffold stub ─▶ INVOKE /interview
+                                                     │ (writes <stub>-spec.md)
+                                                     ▼
+/plan handoff ◀─ user gate ◀─ self-review ◀─ read back spec
+```
+
+## Checklist (track via TaskCreate)
+
+1. Recall prior learnings (Step 1)
+2. Scan project context (Step 2)
+3. Decompose if too large (Step 3)
+4. Detect subject type (Step 4)
+5. Pre-stub clarifier — optional, ≤1 question (Step 5)
+6. Scaffold `.agents/specs/YYYY-MM-DD-<topic>-stub.md` (Step 6)
+7. Invoke `/interview <stub-path>` (Step 7)
+8. Read back `<stub>-spec.md` (Step 8)
+9. Self-review spec (Step 9)
+10. User-review gate — explicit approval (Step 10)
+11. Rename + commit final spec (Step 11)
+12. Handoff to `/plan` (Step 12)
 
 <!-- recall:begin -->
 
 ## Step 1: Prior-art check (MANDATORY)
 
-Recall prior learnings from the global knowledge base before brainstorming so we don't re-decide something already captured:
+Recall prior learnings before brainstorming so you don't re-decide something already captured:
 
 ```bash
 uv run "{{HOME_TOOL_DIR}}/skills/recall/scripts/recall.py" \
@@ -26,119 +63,68 @@ uv run "{{HOME_TOOL_DIR}}/skills/recall/scripts/recall.py" \
   --limit 5 --format markdown
 ```
 
-**Query construction**: topic + constraint hints (e.g. `"caching strategy mobile offline"`).
+**Query** = topic + constraint hints (e.g. `"caching strategy mobile offline"`).
 
-**What to do with results:**
-- If a returned learning names a constraint, anti-pattern, or prior decision directly relevant - surface it to the user BEFORE proceeding.
-- If nothing relevant returns - proceed silently.
-- Never block on recall failure. Empty output / non-zero exit = "no prior art found", not error.
+| Result | Action |
+|--------|--------|
+| A learning names a relevant constraint/anti-pattern/prior decision | Surface it to the user BEFORE proceeding |
+| Nothing relevant | Proceed silently |
+| Empty output / non-zero exit | Treat as "no prior art" — NOT an error. Never block on recall failure |
 
 <!-- recall:end -->
 
-## Process flow
-
-```
-┌──────────────┐   ┌─────────────┐   ┌──────────────┐   ┌──────────────┐
-│ Recall +     │──▶│ Detect      │──▶│ Scaffold     │──▶│ INVOKE       │
-│ Project scan │   │ subject type│   │ topic-stub   │   │ /interview   │
-└──────────────┘   └─────────────┘   └──────────────┘   └──────┬───────┘
-                                                               │
-                            /interview runs the Q&A,           │
-                            uses ASCII previews from stub,     │
-                            writes <stub>-spec.md              │
-                                                               ▼
-┌──────────────┐   ┌─────────────┐   ┌──────────────┐   ┌──────────────┐
-│ /plan        │◀──│ User review │◀──│ Self-review  │◀──│ Read back    │
-│ handoff      │   │ gate        │   │ spec         │   │ spec from    │
-│              │   │             │   │              │   │ /interview   │
-└──────────────┘   └─────────────┘   └──────────────┘   └──────────────┘
-```
-
-Terminal state = `/plan` invocation. Never invoke `/implement` or framework codegen direct from brainstorm.
-
-## Division of labour
-
-| Skill         | Role                                                            |
-|---------------|-----------------------------------------------------------------|
-| `/brainstorm` | Recall, project context, subject-type detection, stub scaffolding with ASCII previews, self-review, user-review gate, `/plan` handoff |
-| `/interview`  | The actual iterative AskUserQuestion-based Q&A loop, populating the spec file |
-
-Brainstorm is the orchestration layer. It writes one rich stub file, hands off, reads the result. The interview skill is the Q&A engine.
-
-## Checklist (track via TaskCreate)
-
-1. **Recall** prior learnings - Step 1 below
-2. **Scan project context** - files, docs, recent commits, existing patterns
-3. **Decompose if too large** - flag and split before refining details
-4. **Detect subject type** - drives which ASCII preview library slice to embed
-5. **Pre-stub clarifier (optional, ≤ 1 question)** - only if subject type / scope is ambiguous
-6. **Scaffold topic-stub.md** - `.agents/specs/YYYY-MM-DD-<topic>-stub.md` with hypotheses, ASCII slice, instructions, output template
-7. **Invoke `/interview <stub-path>`** via Skill tool - it runs the Q&A and writes `<stub>-spec.md`
-8. **Read back spec** - at `.agents/specs/YYYY-MM-DD-<topic>-stub-spec.md`
-9. **Self-review spec** - placeholder / contradiction / ambiguity / scope / YAGNI sweep
-10. **User-review gate** - explicit approval before handoff
-11. **Rename + commit** - move final spec to `.agents/specs/YYYY-MM-DD-<topic>.md`
-12. **Handoff** - invoke `/plan` skill with spec path
-
 ## Step 2: Project context
 
-Before drafting the stub:
-- `git log --oneline -20` for recent direction
+- `git log --oneline -20` — recent direction
 - `ls` repo root + relevant subdirs
-- Read existing `docs/`, `README.md`, `AGENTS.md`, `CLAUDE.md`
+- Read `docs/`, `README.md`, `AGENTS.md`, `CLAUDE.md`
 - Note existing patterns to follow
 
 ## Step 3: Decompose check
 
-Before refining details, assess scope. If the request names multiple independent subsystems ("platform with chat + file storage + billing + analytics"), STOP and decompose:
+If the request names multiple independent subsystems ("platform with chat + file storage + billing + analytics"), STOP and decompose:
 
 ```
-┌─ Original idea ────────────────────┐
-│ "Build platform with X, Y, Z"      │
-└─────────────────┬──────────────────┘
-                  │
-        ┌─────────┼─────────┐
-        ▼         ▼         ▼
-    ┌───────┐ ┌───────┐ ┌───────┐
-    │ Sub-X │ │ Sub-Y │ │ Sub-Z │
-    └───────┘ └───────┘ └───────┘
-   spec→plan  spec→plan  spec→plan
-   (each runs its own brainstorm cycle)
+"Build platform with X, Y, Z"
+        ├────────┬────────┐
+        ▼        ▼        ▼
+     Sub-X    Sub-Y    Sub-Z
+   (each its own /brainstorm cycle later)
 ```
 
-Pick the first sub-project. Brainstorm THAT. Other sub-projects each get their own `/brainstorm` cycle later.
+Pick the FIRST sub-project. Brainstorm THAT only. Others get their own cycle later.
 
 ## Step 4: Detect subject type
 
-Infer from `$ARGUMENTS` + project context. If ambiguous, ask ONE AskUserQuestion (Step 5). Often a single brainstorm spans 2-3 types (e.g. API + data model + CLI) - include the ASCII library slice for each.
+Infer from `$ARGUMENTS` + project context. Ambiguous → ask ONE question (Step 5). A brainstorm often spans 2-3 types (e.g. API + data model + CLI) — include the ASCII library slice for EACH.
 
-| Subject     | Preview shape                                  |
-|-------------|------------------------------------------------|
+| Subject | Preview shape |
+|---------|---------------|
 | UI (web/mobile) | ASCII wireframe (header / sections / buttons) |
-| TUI         | ASCII screen mock (panes / status bar / keys) |
-| API         | endpoint + request/response JSON snippet      |
-| Data model  | entity box + relationship arrows              |
-| Architecture | component box + dataflow arrows              |
-| CLI         | command syntax + sample stdout               |
-| Config      | YAML/JSON snippet                            |
-| State machine | state node + transition arrows              |
-| Pure concept | (no preview - text description only)         |
+| TUI | ASCII screen mock (panes / status bar / keys) |
+| API | endpoint + request/response JSON snippet |
+| Data model | entity box + relationship arrows |
+| Architecture | component box + dataflow arrows |
+| CLI | command syntax + sample stdout |
+| Config | YAML/JSON snippet |
+| State machine | state node + transition arrows |
+| Pure concept | no preview — text description only |
 
-## Step 5: Pre-stub clarifier (optional, ≤ 1 question)
+## Step 5: Pre-stub clarifier (optional, ≤1 question)
 
 Only if subject type or core scope is unclear. Use AskUserQuestion. Examples:
-- "What kind of artifact is this?" with options { Web UI, Mobile UI, TUI, API, CLI, library, mixed }
-- "Hard constraint?" with options { has deadline, no constraints, needs perf target }
+- "What kind of artifact?" → { Web UI, Mobile UI, TUI, API, CLI, library, mixed }
+- "Hard constraint?" → { has deadline, no constraints, needs perf target }
 
-If you have enough context from `$ARGUMENTS` + project scan, **skip this step** and go straight to stub scaffolding. The point is to give `/interview` enough to run with, not to do its job for it.
+Enough context from `$ARGUMENTS` + Step 2 → **skip this step**, go straight to Step 6. Goal is to give `/interview` enough to run — not to do its job.
 
 ## Step 6: Scaffold the topic-stub
 
-**Read the ASCII library first**: `{{HOME_TOOL_DIR}}/skills/brainstorm/assets/ascii-library.md`. It has 8 subject-keyed sections (UI / TUI / API / Data model / Architecture / CLI / Config / State machine). Copy the matching slice(s) into the stub's `## ASCII preview library` section.
+1. **Read the ASCII library**: `{{HOME_TOOL_DIR}}/skills/brainstorm/assets/ascii-library.md` (8 subject-keyed sections). Copy the matching slice(s) into the stub's `## ASCII preview library` section.
+2. **Resolve every `<placeholder>` from $ARGUMENTS + Step 2 BEFORE writing.** On-disk stub must contain no angle-bracket placeholders, no `TBD`, no `TODO`. A placeholder-laden stub wastes /interview's first round on re-derivation.
+3. Write to `.agents/specs/YYYY-MM-DD-<topic-slug>-stub.md`.
 
-**Resolve every `<placeholder>` from $ARGUMENTS + Step 2 context BEFORE writing the file.** The on-disk stub must contain no angle-bracket placeholders, no `TBD`, no `TODO` (per Stevie's `<paste_ready_artifacts>` rule). A placeholder-laden stub wastes /interview's first round on re-derivation.
-
-Write to `.agents/specs/YYYY-MM-DD-<topic-slug>-stub.md`. The stub IS the contract with `/interview` - it must contain EXACTLY these headings (interview matches them exactly):
+**The stub IS the contract with `/interview`.** It must contain EXACTLY these headings — no em-dash suffixes, no rewording (interview string-matches them):
 
 - `## Idea`
 - `## Project context (inferred)`
@@ -148,7 +134,7 @@ Write to `.agents/specs/YYYY-MM-DD-<topic-slug>-stub.md`. The stub IS the contra
 - `## For /interview`
 - `## Output Spec Template`
 
-Template body:
+Template body (fill it, keep the two contract sections — `## For /interview` and `## Output Spec Template` — verbatim in structure):
 
 ````markdown
 # Brainstorm topic stub: <title>
@@ -332,54 +318,56 @@ Edge cases:
 ```
 ````
 
-After writing the stub, **DO NOT** answer the questions yourself. Hand off to `/interview`.
+After writing the stub, **DO NOT answer the questions yourself.** Hand off to `/interview`.
 
 ## Step 7: Invoke /interview
 
-**Filename contract (used in Steps 8-11):** `/interview` writes its output as `<input-basename>-spec.md` next to the input file. So given `<topic>-stub.md` as input, the output is `<topic>-stub-spec.md`. Every path reference in this skill depends on this contract — if `/interview`'s output suffix ever changes, update Steps 8-11.
-
-Invoke:
+**Filename contract (used in Steps 8-11):** `/interview` writes `<input-basename>-spec.md` next to the input. Given `<topic>-stub.md`, output is `<topic>-stub-spec.md`. Every path below depends on this — if the suffix ever changes, update Steps 8-11.
 
 ```
 Skill(skill: "interview", args: ".agents/specs/YYYY-MM-DD-<topic>-stub.md")
 ```
 
-`/interview` will:
-- Read the stub
-- Detect the embedded `## Output Spec Template` section and use it (NOT the default template)
-- Detect `## Initial hypotheses`, `## ASCII preview library`, `## For /interview` sections and honor them
-- Run AskUserQuestion rounds — starting with the three approach hypotheses, then drilling into design
-- Write the spec to `.agents/specs/YYYY-MM-DD-<topic>-stub-spec.md`
+`/interview` will: read the stub → use its embedded `## Output Spec Template` (NOT the default) → honor `## Initial hypotheses` / `## ASCII preview library` / `## For /interview` → run AskUserQuestion rounds (hypotheses first, then design) → write `.agents/specs/YYYY-MM-DD-<topic>-stub-spec.md`.
 
-Wait for `/interview` to complete and return control.
+Wait for `/interview` to return control.
 
 ## Step 8: Read back the spec
 
-Read `.agents/specs/YYYY-MM-DD-<topic>-stub-spec.md`. Confirm it exists and is non-trivial.
+Read `.agents/specs/YYYY-MM-DD-<topic>-stub-spec.md`.
+
+| Result | Branch |
+|--------|--------|
+| File exists, non-trivial | Proceed to Step 9 |
+| File missing or near-empty | `/interview` did not complete — re-invoke Step 7 or ask user; do NOT fabricate the spec yourself |
 
 ## Step 9: Spec self-review
 
-Fresh-eyes pass with these gates. Fix inline; don't re-loop.
+Fresh-eyes pass. Fix inline; don't re-loop. Only flag issues that would cause real planning problems — leave minor wording/style alone.
 
-| Gate         | What to look for                                                |
-|--------------|-----------------------------------------------------------------|
-| Placeholder  | `TBD`, `TODO`, `<...>`, empty sections                          |
-| Consistency  | sections contradicting each other; arch ≠ behavior              |
-| Ambiguity    | requirements interpretable two ways - pick one, make explicit   |
-| Scope        | still one project, or did it bloat? if bloated, decompose again |
-| YAGNI        | unrequested features creeping in - strip                        |
-
-Only flag issues that would cause real planning problems. Minor wording, stylistic preferences - leave alone.
+| Gate | Look for |
+|------|----------|
+| Placeholder | `TBD`, `TODO`, `<...>`, empty sections |
+| Consistency | sections contradicting each other; arch ≠ behavior |
+| Ambiguity | requirement readable two ways → pick one, make explicit |
+| Scope | still one project, or bloated? if bloated → decompose again (Step 3) |
+| YAGNI | unrequested features creeping in → strip |
 
 ## Step 10: User-review gate
 
+Post verbatim:
+
 > "Spec written to `.agents/specs/YYYY-MM-DD-<topic>-stub-spec.md`. Review it. Changes welcome before we finalize + move to `/plan`."
 
-Wait for explicit approval. If changes requested → fix → re-run self-review → re-ask.
+| User response | Branch |
+|---------------|--------|
+| Explicit approval | Proceed to Step 11 |
+| Changes requested | Fix → re-run Step 9 → re-ask. Do NOT proceed |
+| No response yet | Wait. Never auto-proceed to `/plan` (HARD-GATE) |
 
 ## Step 11: Rename + commit
 
-After approval. The stub and stub-spec files were created by `Write` (untracked by git), so use plain `mv` / `rm`, NOT `git mv` / `git rm` (which require tracked files):
+Stub files were created by `Write` (untracked), so use plain `mv`/`rm`, NOT `git mv`/`git rm` (those need tracked files):
 
 ```bash
 mv .agents/specs/YYYY-MM-DD-<topic>-stub-spec.md .agents/specs/YYYY-MM-DD-<topic>.md
@@ -392,38 +380,17 @@ One atomic commit; only the final spec lands in history (stub was scaffolding).
 
 ## Step 12: Handoff to /plan
 
-Invoke `/plan` (via Skill tool) with the final spec path. Do NOT invoke `/implement`, framework codegen, or anything else.
+Invoke `/plan` (Skill tool) with the final spec path. Do NOT invoke `/implement`, framework codegen, or anything else. This is the terminal action.
 
-## ASCII Preview Library
+## Anti-patterns (each maps to a rule above)
 
-The library lives in a sibling file:
-
-```
-{{HOME_TOOL_DIR}}/skills/brainstorm/assets/ascii-library.md
-```
-
-**Read this file before scaffolding the stub (Step 6).** Embed the matching subject-type slice(s) inline in the stub's `## ASCII preview library` section so `/interview` has the templates available in-context.
-
-Subjects covered: UI / TUI / API / Data model / Architecture / CLI / Config / State machine.
-
-## Key principles
-
-- **Brainstorm orchestrates, /interview runs the Q&A** - don't duplicate Q&A logic
-- **The stub is the contract** - put everything /interview needs in there (hypotheses, ASCII library slice, output template, instructions)
-- **Heading exact-match** - stub headings (`## Initial hypotheses`, `## ASCII preview library`, `## For /interview`, `## Output Spec Template`) must EXACTLY match what /interview scans for. No em-dash suffixes, no rewording.
-- **AskUserQuestion mandatory** for any A/B/C decision (per CLAUDE.md `<option_presentation>`) — applies to both skills
-- **ASCII preview per option** when shapes are being compared
-- **Multi-choice preferred** over open-ended
-- **YAGNI ruthlessly** - strip unrequested features at every gate
-- **Spec is the deliverable**, not code
-- **Decompose before stub-ing** for large projects
-
-## Anti-patterns to avoid
-
-- Doing the Q&A inside `/brainstorm` instead of delegating → defeats the integration
-- Writing a thin stub that doesn't give `/interview` enough → it will ask shallow questions
-- Plaintext markdown option tables in stub or interview → AskUserQuestion only
-- HTML / browser companions → terminal + ASCII only
-- Writing a stub with unresolved `<placeholders>` → wastes /interview's first round (see HARD-GATE + Step 6)
-- Auto-running `/plan` without user-review gate → wait for explicit approval (HARD-GATE)
-- Renaming stub-spec with `git mv` instead of plain `mv` → fails on untracked files
+| Anti-pattern | Correct |
+|--------------|---------|
+| Doing the Q&A inside `/brainstorm` | Delegate to `/interview` (Step 7) |
+| Thin stub → shallow questions | Put everything /interview needs in the stub (Step 6) |
+| Plaintext option tables | AskUserQuestion only (per CLAUDE.md `<option_presentation>`) |
+| HTML / browser companions | Terminal + ASCII only |
+| Stub with unresolved `<placeholders>` | Resolve all before writing (Step 6) |
+| Auto-running `/plan` without approval | Wait for explicit yes (Step 10, HARD-GATE) |
+| Renaming stub-spec with `git mv` | Plain `mv` — files are untracked (Step 11) |
+| Em-dash suffix / reworded stub headings | Exact-match the 7 headings (Step 6) |
