@@ -68,7 +68,7 @@ Map each signal to the appropriate target:
 | Category | Target Files |
 |----------|--------------|
 | Code Style | `code-reviewer`, `backend-developer`, `frontend-developer` |
-| Architecture | `solution-architect`, `api-architect`, `architecture-reviewer` |
+| Architecture | `distinguished-engineer`, `deep-reasoner` |
 | Process | `CLAUDE.md`, orchestrator agents |
 | Domain | Domain-specific agents, `CLAUDE.md` |
 | Tools | `CLAUDE.md`, relevant specialists |
