@@ -96,7 +96,7 @@ Load when the project uses Supabase or Postgres-with-RLS. Hard-won checklist —
 - Channel authorization restricts access; broadcast payloads don't leak sensitive fields; presence data is intentionally public only.
 
 **Auth Config**
-- Email confirmation required for sensitive operations; strong password requirements; rate limiting on auth endpoints; reasonable magic-link/OTP expiry; OAuth providers correctly configured (redirect allowlist).
+- Email confirmation required for sensitive operations; strong password requirements; rate limiting on auth endpoints; short magic-link/OTP expiry (minutes, not hours — flag anything ≥1h); OAuth providers correctly configured (redirect allowlist).
 
 **API / PostgREST**
 - `anon` key reaches only intended resources; no admin endpoints public; request filters cannot bypass RLS; aggregate/embedded queries don't leak rows across tenants.
