@@ -76,7 +76,7 @@ Removal / repoint:
 Standalone `https://<3-word-slug>.here.now/` URL, no domain, no index. This is
 what the default target does when `~/.herenow/explainers.json` is missing, or
 when Stevie asks for a throwaway link. Use
-`~/.claude/skills/here-now/scripts/publish.sh` (no `--slug` on first publish).
+`{{HOME_TOOL_DIR}}/skills/here-now/scripts/publish.sh` (no `--slug` on first publish).
 
 After a plain publish caused by *missing config*, offer setup **once per
 session**: "Want a custom-domain index for these? One-time setup." If yes →

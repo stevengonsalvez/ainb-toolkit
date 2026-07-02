@@ -16,8 +16,9 @@ Use when `/explain-to-me` is asked to compare two implemented systems and produc
    - current architecture B
    - proposed consolidated architecture
 5. **Separate substrate from governance.** In agent memory/learning comparisons, distinguish:
-   - capture/retrieval substrate: transcript reflection, episodic store, recall ranking
-   - control/governance plane: inbox, correction enforcement, ACP, manifest rules, promotion policy
+   - storage/retrieval hooks: capture, normalize/write, store, index, retrieve, and inject advisory context
+   - deterministic governance/control hooks: inbox lifecycle, standing orders/session rules, manifest/worktree law, correction debt enforcement, ACP metrics/routing, BANK promotion policy, discovery gossip, and sleep-cycle governance
+   - boundary rule: memory systems may index governance artifacts as sourced context, but must not enforce governance; live governance law wins over recalled memory
 6. **State recommendation in first section.** Stevie wants the call up front. Use later sections for evidence.
 7. **Gap table must be actionable.** For each gap: name owner system, risk if missing, preserve/port action.
 8. **Publish and verify.** Publish via here.now, then `curl -o tmp` and assert key text exists in live HTML. Do not pipe curl output directly into `python3 - <<'PY'`; stdin conflict makes verification lie.
