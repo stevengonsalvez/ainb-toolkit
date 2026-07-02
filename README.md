@@ -99,13 +99,12 @@ by `ainb`).
 
 ```
 skills/                 91 skills — agent-invokable SKILL.md bundles
-agents/                 37 agents across 6 categories
-├── design/             UI/UX designers
-├── engineering/        backend, frontend, security, perf, code-review
+agents/                 16 agents across 5 categories
+├── (root)              distinguished-engineer, web-search-researcher
+├── engineering/        code-archaeologist, code-reviewer, docs, perf, security, test-engineer
 ├── meta/               agentmaker (create new agents)
-├── orchestrators/      tech-lead, project-analyst, team-configurator
-├── swarm/              worker/leader primitives for multi-agent work
-└── universal/          backend-developer, frontend-developer, superstar-engineer
+├── swarm/              leader/worker primitives for multi-agent work
+└── universal/          backend, frontend, superstar, deep-reasoner, fast-worker
 utilities/
 ├── config/             Shared tool config templates
 ├── hooks/              Event hooks (session-start, pre-commit, etc.)

@@ -6,22 +6,24 @@ Maps learning categories to target agent files for updating.
 
 ```
 ~/.claude/agents/
+├── distinguished-engineer.md
+├── web-search-researcher.md
+├── engineering/
+│   ├── code-archaeologist.md
+│   ├── code-reviewer.md
+│   ├── documentation-specialist.md
+│   ├── performance-optimizer.md
+│   ├── security-agent.md
+│   └── test-engineer.md
 ├── universal/
 │   ├── backend-developer.md
 │   ├── frontend-developer.md
-│   └── superstar-engineer.md
-├── engineering/
-│   ├── api-architect.md
-│   ├── architecture-reviewer.md
-│   ├── code-reviewer.md
-│   ├── security-agent.md
-│   ├── test-writer-fixer.md
-│   └── ...
-├── design/
-│   └── ui-designer.md
-├── orchestrators/
-│   ├── tech-lead-orchestrator.md
-│   └── ...
+│   ├── superstar-engineer.md
+│   ├── deep-reasoner.md
+│   └── fast-worker.md
+├── swarm/
+│   ├── leader.md
+│   └── worker.md
 └── meta/
     └── agentmaker.md
 ```
@@ -50,11 +52,11 @@ Maps learning categories to target agent files for updating.
 
 | Learning Type | Primary Agent | Secondary Agents |
 |--------------|---------------|------------------|
-| Design patterns | `solution-architect` | `architecture-reviewer` |
-| API design | `api-architect` | `backend-developer` |
-| Database patterns | `backend-developer` | `migration` |
-| Frontend patterns | `frontend-developer` | `architecture-reviewer` |
-| System structure | `solution-architect` | `tech-lead-orchestrator` |
+| Design patterns | `distinguished-engineer` | `deep-reasoner` |
+| API design | `backend-developer` | `distinguished-engineer` |
+| Database patterns | `backend-developer` | `code-reviewer` |
+| Frontend patterns | `frontend-developer` | `distinguished-engineer` |
+| System structure | `distinguished-engineer` | `deep-reasoner` |
 
 **Section in Agent File:**
 ```markdown
@@ -68,10 +70,10 @@ Maps learning categories to target agent files for updating.
 | Learning Type | Primary Agent | Global Config |
 |--------------|---------------|---------------|
 | Git workflow | `CLAUDE.md` | Commit hygiene section |
-| CI/CD | `devops-automator` | Pipeline config |
+| CI/CD | `superstar-engineer` | Pipeline config |
 | Code review | `code-reviewer` | Review checklist |
-| Testing workflow | `test-writer-fixer` | Testing philosophy |
-| Deployment | `release-manager` | Release process |
+| Testing workflow | `test-engineer` | Testing philosophy |
+| Deployment | `superstar-engineer` | Release process |
 
 **Section in Agent File:**
 ```markdown
@@ -102,7 +104,7 @@ Maps learning categories to target agent files for updating.
 |--------------|----------------|-------|
 | CLI preferences | `CLAUDE.md` | Tool usage section |
 | Editor config | `.editorconfig` | Format settings |
-| Docker usage | `devops-automator` | Container settings |
+| Docker usage | `superstar-engineer` | Container settings |
 | Git settings | `CLAUDE.md` | Commit hygiene |
 
 **Section in Agent File:**
@@ -117,7 +119,7 @@ Maps learning categories to target agent files for updating.
 | Learning Type | Primary Agent | Secondary Agents |
 |--------------|---------------|------------------|
 | Input validation | `security-agent` | `code-reviewer` |
-| Authentication | `security-agent` | `api-architect` |
+| Authentication | `security-agent` | `backend-developer` |
 | Authorization | `security-agent` | `backend-developer` |
 | Encryption | `security-agent` | `backend-developer` |
 | OWASP rules | `security-agent` | `code-reviewer` |
@@ -195,14 +197,12 @@ Before adding a new rule, check for conflicts:
 ### Global Agents (User-level)
 
 ```
+~/.claude/agents/distinguished-engineer.md
 ~/.claude/agents/universal/backend-developer.md
 ~/.claude/agents/universal/frontend-developer.md
 ~/.claude/agents/engineering/code-reviewer.md
-~/.claude/agents/engineering/api-architect.md
-~/.claude/agents/engineering/solution-architect.md
 ~/.claude/agents/engineering/security-agent.md
-~/.claude/agents/engineering/test-writer-fixer.md
-~/.claude/agents/design/ui-designer.md
+~/.claude/agents/engineering/test-engineer.md
 ```
 
 ### Project Agents (Project-level)
@@ -257,7 +257,7 @@ Decide whether to create a new skill or update an agent:
 **Category**: Architecture
 
 **Mapping**:
-- Primary: `~/.claude/agents/engineering/api-architect.md`
+- Primary: `~/.claude/agents/universal/backend-developer.md`
 - Section: `## Design Patterns`
 - Addition: `* Prefer cursor-based pagination over offset-based for large datasets`
 

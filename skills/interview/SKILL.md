@@ -34,181 +34,111 @@ allowed-tools:
 
 # Interview Skill
 
-Conduct a detailed interview about a plan to extract comprehensive requirements and produce a specification.
+Runbook: interview the plan author with a structured question tool, then write a spec file. Input = a plan file path in `$ARGUMENTS` (`$1`).
 
-## Purpose
+## When NOT to use
 
-Plans often contain assumptions, ambiguities, and unexplored edge cases. This skill systematically interviews the user to:
+- No plan file exists yet, or the idea is still raw → run `/brainstorm` first; it scaffolds the stub and calls this skill for you.
+- User wants an implementation plan, not requirements clarification → use `/plan`.
 
-1. **Clarify ambiguities** - What did you really mean?
-2. **Uncover assumptions** - What are you taking for granted?
-3. **Explore edge cases** - What happens when X goes wrong?
-4. **Validate priorities** - What's truly important vs nice-to-have?
-5. **Surface constraints** - What are the real limitations?
-
-## Usage
-
-```
-/interview path/to/plan.md
-```
-
-Or invoke directly:
-```
-interview path/to/plan.md
-```
-
-## Interview Process
+## Flow
 
 ```
 ┌────────┐   ┌──────────────┐   ┌──────────────┐   ┌────────────┐
 │ Read   │──▶│ Detect       │──▶│ AskUser-     │──▶│ Write      │
 │ input  │   │ embedded     │   │ Question     │   │ spec.md    │
-│ file   │   │ sections     │   │ rounds 1..N  │   │ (template) │
-└────────┘   └──────────────┘   └──────┬───────┘   └────────────┘
-                                       │
-                              previews from input
-                              ASCII library section
+│ file   │   │ sections     │   │ rounds 1..N  │   │            │
+└────────┘   └──────────────┘   └──────────────┘   └────────────┘
 ```
 
-### Step 1: Read and Analyze the Plan
+## Step 1 — Read and analyze the plan
 
-Read the plan file provided as `$ARGUMENTS` (or `$1`):
+1. `Read` the file at `$ARGUMENTS`. If the path is missing or unreadable → stop and ask the user for a valid plan file path.
+2. Extract: core objectives, technical components, user-facing aspects, dependencies, and gaps (underspecified areas — these become questions).
 
-```
-Read the plan file at: $ARGUMENTS
-```
+### Scan for `/brainstorm` handoff sections
 
-Analyze the plan for:
-- **Core objectives** - What is this trying to achieve?
-- **Technical components** - What systems/technologies are involved?
-- **User-facing aspects** - What will users see/interact with?
-- **Dependencies** - What does this rely on?
-- **Gaps** - What's missing or underspecified?
+These sections may be embedded in the input file. They are `/brainstorm`'s handoff contract — honor each verbatim:
 
-**Also scan for these embedded sections (used by `/brainstorm` topic stubs):**
+| Section (if present in input)   | Do this                                                                                                  |
+|---------------------------------|----------------------------------------------------------------------------------------------------------|
+| `## For /interview`             | Follow verbatim. Dictates first-round question shape, ASCII preview usage, topic coverage.                |
+| `## Initial hypotheses`         | Pre-populated A/B/C approaches. Your FIRST AskUserQuestion round MUST present these as options, each option's ASCII code-block embedded in its `preview` field. |
+| `## ASCII preview library`      | Reusable preview snippets keyed by subject type. Use in later rounds' `preview` fields when comparing concrete shapes (mockups, schemas, diagrams). |
+| `## Output Spec Template`        | Literal markdown template for the spec output. Use verbatim in Step 5 instead of the default template.    |
+| `### Format preferences` (nested inside `## For /interview`)         | Dictates chat + spec output shape. Honor it; overrides the default convention below.                      |
 
-- `## For /interview` — explicit instructions from the upstream skill. Follow these verbatim; they typically dictate first-round question shape, ASCII preview usage, and topic coverage.
-- `## Initial hypotheses` — pre-populated A/B/C approach options. If present, your **first** AskUserQuestion round MUST present these as the options, with each option's ASCII code-block embedded in the `preview` field.
-- `## ASCII preview library` — reusable preview snippets keyed to subject type. Use these in subsequent AskUserQuestion `preview` fields whenever you compare concrete shapes (mockups, schemas, diagrams).
-- `## Output Spec Template` — a literal markdown template for the spec file output. If present, **use this template verbatim** for the spec instead of the default in Step 5.
+## Step 2 — Conduct the interview
 
-These sections are how `/brainstorm` hands off the design context. Honor them.
+MANDATORY: use a structured user-prompt tool. NEVER dump questions as plaintext chat unless every structured option below is unavailable.
 
-### Step 2: Conduct the Interview
+Why forced: an "or equivalent" out makes agents skip the structured tool, producing lower-quality interviews. Typed answers can be branched on; plaintext cannot.
 
-**MANDATORY: use a structured user-prompt tool. Do NOT dump questions in plaintext chat.**
+Pick the tool — first match wins:
 
-Pick the tool in this order — first match wins:
+| Host                                  | Tool                                                                    |
+|---------------------------------------|-------------------------------------------------------------------------|
+| Claude Code                           | `AskUserQuestion` (questions array, `multiSelect: true` when multi-pick) |
+| Codex / OpenAI Agents SDK             | native prompt primitive: `user_prompt` / `prompt_user` / `ask_user` / `Prompt` — pick whichever is in your tool list |
+| Cursor / Windsurf / other agents      | built-in user-question primitive (`request_input`, `ask`, etc.)         |
+| Generic LLM, no native tool           | LAST RESORT: plaintext block `### Question 1:` / `### Question 2:`, ask user to answer inline |
 
-1. **Claude Code**: `AskUserQuestion` (questions array, supports `multiSelect`).
-2. **Codex / OpenAI Agents SDK**: `user_prompt` / `prompt_user` / `Prompt` / `ask_user` — whichever the host harness exposes natively. Codex CLI calls this differently across versions; use the version present in your tool list.
-3. **Cursor / Windsurf / other coding agents**: their built-in user-question primitive (typically `request_input`, `ask`, or similar).
-4. **Generic LLMs / no native tool**: only as last resort, fall back to a clearly-formatted plaintext block (`### Question 1: ...` / `### Question 2: ...`) and ask the user to answer inline.
+Branch: if a likely prompt tool exists but the call fails as unavailable → treat as "no native tool", fall back to plaintext immediately. Do NOT spend a turn asking how to ask.
 
-If the host exposes a likely prompt tool but the call fails as unavailable, treat that as "no native tool" for this run and immediately fall back to plaintext. Do not spend another turn asking how to ask.
+### Output shape convention (default — `### Format preferences` (nested inside `## For /interview`) overrides)
 
-Why this is forced: free-form plaintext questioning is unreliable across runs — agents skip the structured tool when given an "or equivalent" out, which produces lower-quality interviews and bad follow-up. The tool produces typed answers the agent can branch on; plaintext does not.
+| Content shape                            | Use                                        |
+|------------------------------------------|--------------------------------------------|
+| Flow / sequence / relationships / state  | ASCII box+arrow diagram (`┌─┐ │ └─┘ ─▶ ▼`)  |
+| Tabular DATA (rows × columns of facts)   | markdown pipe table                        |
+| Discrete items, no ordering              | bullet list                                |
+| Picks / open questions                   | `- [ ]` checklist                          |
+| Prose / narrative paragraphs             | AVOID — convert to one of the above        |
 
-#### Format preferences for chat outputs and spec content
+Rules: diagram FIRST, table SECOND when both apply. Diagram width ≤ 80 chars, caveman terms inside boxes. No prose-only sections in the spec. AskUserQuestion `preview` fields follow the same convention.
 
-When invoked from `/brainstorm`, the input stub contains a "Format preferences" section that dictates output shape. Honor it. The default convention (matching Stevie's CLAUDE.md `<flow_diagrams>` rule):
+### Question quality gate
 
-| Content shape                                | Use                                              |
-|----------------------------------------------|--------------------------------------------------|
-| Flow / sequence / relationships / state      | ASCII box+arrow diagram (`┌─┐ │ └─┘ ─▶ ▼`)        |
-| Tabular DATA (rows × columns of facts)       | markdown pipe table                              |
-| Discrete items, no ordering                  | bullet list                                      |
-| Picks / open questions                       | `- [ ]` checklist                                |
-| Prose / narrative paragraphs                 | AVOID — break into one of the above              |
+| Ask questions that are          | Do NOT ask questions that are        |
+|---------------------------------|--------------------------------------|
+| Specific and actionable         | Already answered in the plan         |
+| Non-obvious (not in the plan)   | Yes/no with no follow-up             |
+| Exploratory of edge cases       | Too abstract to be actionable        |
+| Challenging to assumptions      | Trivial or obvious                   |
+| Focused on trade-offs/priorities |                                     |
 
-Rules:
-- **Diagram FIRST, table SECOND** when both apply.
-- Diagram width ≤ 80 chars. Caveman inside boxes.
-- No prose-only sections in the produced spec. Every section = diagram + table + bullets.
-- AskUserQuestion `preview` fields should follow the same convention.
+Cover these categories across rounds (skip any that don't apply):
+- **Technical:** architecture trade-offs, performance, security, error handling, integration points.
+- **UI/UX:** user flows, interaction edge cases, accessibility, responsive/mobile.
+- **Business/Product:** success metrics, feature priority, MVP vs future scope, stakeholders.
+- **Risks:** known risks + mitigations, external dependencies, timeline, technical debt.
+- **Trade-offs:** what to sacrifice for speed, what's non-negotiable, build vs buy.
 
-Interview categories:
+## Step 3 — Iterate
 
-#### Technical Implementation
-- Architecture choices and trade-offs
-- Performance requirements and constraints
-- Security considerations
-- Error handling strategies
-- Integration points
+1. MANDATORY: batch 2–4 questions per AskUserQuestion call. NEVER one question per round — except the final yes/no approval gate. Use `multiSelect: true` when multiple answers are valid.
+2. Read answers, pick follow-up threads on the highest-uncertainty areas, go deeper.
+3. Continue until ALL of these are true (completion gate):
+   - Core technical decisions clarified
+   - Edge cases identified and addressed
+   - Priorities established
+   - Constraints documented
+   - No remaining scope ambiguity
 
-#### UI & UX (if applicable)
-- User flows and journeys
-- Edge cases in user interaction
-- Accessibility requirements
-- Responsive/mobile considerations
+If the gate is not met after a round → run another round. If met → go to Step 4.
 
-#### Business & Product
-- Success metrics
-- Priority of features
-- MVP vs future scope
-- Stakeholder concerns
+## Step 4 — Generate the spec
 
-#### Concerns & Risks
-- Known risks and mitigations
-- Dependencies on external systems/teams
-- Timeline constraints
-- Technical debt considerations
+Output path: same directory as the plan, named `{plan-basename}-spec.md`.
+Example: `project-plan.md` → `project-plan-spec.md`.
 
-#### Trade-offs
-- What would you sacrifice for speed?
-- What's non-negotiable?
-- Build vs buy decisions
-- Complexity vs maintainability
+Template selection:
+- Input had `## Output Spec Template` → use it verbatim, fill placeholders from interview answers, do NOT mix in the default template.
+- Otherwise → use the Default Specification Template below.
 
-### Step 3: Question Guidelines
+`Write` the completed spec to the output path.
 
-**DO ask questions that are:**
-- Specific and actionable
-- Non-obvious (not answerable by reading the plan)
-- Exploratory of edge cases
-- Challenging to assumptions
-- Focused on trade-offs and priorities
-
-**DON'T ask questions that are:**
-- Already answered in the plan
-- Yes/no without follow-up
-- Too abstract to be actionable
-- Trivial or obvious
-
-### Step 4: Iterative Deep-Dive
-
-Continue the interview iteratively:
-
-1. **MANDATORY: Always batch 2-4 questions per AskUserQuestion call.** NEVER send a single question per round unless it is the final yes/no approval gate. Filling the question budget reduces round-trips and respects the user's time. Use `multiSelect: true` when the user can pick multiple valid answers.
-2. Analyze responses for follow-up opportunities
-3. Go deeper on areas of uncertainty or complexity
-4. Continue until all major areas are covered
-
-**Completion Criteria:**
-- All core technical decisions clarified
-- Edge cases identified and addressed
-- Priorities clearly established
-- Constraints documented
-- No remaining ambiguities in scope
-
-### Step 5: Generate Specification
-
-Once the interview is complete, write a comprehensive specification to the same directory as the plan:
-
-**Output file:** `{plan-file-basename}-spec.md`
-
-Example: `project-plan.md` → `project-plan-spec.md`
-
-#### Template selection
-
-**If the input file contained an `## Output Spec Template` section** (typically present when invoked by `/brainstorm`):
-- Use that template verbatim for the output spec
-- Fill its placeholders from the interview answers
-- Do NOT mix in sections from the default template below
-
-**Otherwise**, use the default Specification Template below.
-
-#### Default Specification Template
+### Default Specification Template
 
 ```markdown
 # Specification: {Project/Feature Name}
@@ -235,11 +165,9 @@ Example: `project-plan.md` → `project-plan-spec.md`
 
 ### In Scope
 - {Item 1}
-- {Item 2}
 
 ### Out of Scope
 - {Item 1}
-- {Item 2}
 
 ### Future Considerations
 - {Item 1}
@@ -318,37 +246,19 @@ Example: `project-plan.md` → `project-plan-spec.md`
 *This specification was generated through systematic interview of the plan author.*
 ```
 
-## Example Session
+## Example (single best case)
 
-**Plan excerpt:**
-> "Build a user authentication system with OAuth support"
+Plan excerpt: *"Build a user authentication system with OAuth support."*
 
-**Interview questions:**
-1. "Which OAuth providers need to be supported? (Google, GitHub, Apple, etc.) Are there any that are must-haves vs nice-to-haves?"
-2. "What should happen if a user tries to link an OAuth account that's already connected to a different user? Should accounts be mergeable?"
-3. "Are there specific session timeout requirements? Should sessions persist across browser restarts?"
-4. "What level of audit logging is required for authentication events? Compliance requirements?"
+Good round-1 questions (batched, specific, non-obvious):
+1. Which OAuth providers are must-have vs nice-to-have (Google, GitHub, Apple)?
+2. If a user links an OAuth account already tied to another user — merge, block, or error?
+3. Session timeout requirements? Persist across browser restarts?
+4. Audit logging level for auth events? Any compliance requirements?
 
-## Portability Notes
+## Portability notes
 
-The skill enforces a **structured user-prompt tool** (see Step 2 for the priority order). Detailed per-host notes:
-
-### Claude Code
-Use `AskUserQuestion` with a `questions` array. Set `multiSelect: true` when the user can pick multiple options. 2–4 questions per round.
-
-### Codex (OpenAI Agents SDK / Codex CLI)
-Use whichever native user-prompt primitive the harness exposes. The exact name has shifted across Codex CLI versions (`user_prompt`, `prompt_user`, `ask_user`, `Prompt`). Check the available tool list at runtime and pick the one whose schema matches "ask the user a question and wait for an answer". Do **not** simulate it via plaintext output — Codex agents have a real one.
-
-### Cursor / Windsurf / Aider / other coding agents
-Each agent has its own user-input primitive (`request_input`, `ask`, etc.). Use whichever is available; do not fall through to plaintext if a structured one exists.
-
-### Generic LLMs (no native questioning tool)
-Last-resort fallback only. Format questions as a numbered list with clear "Question N:" headers and explicit "please answer inline before continuing" instructions. Do not interleave questions with other content.
-
-## Tips for Best Results
-
-1. **Provide a detailed plan** - The more context in the plan, the better the questions
-2. **Answer thoroughly** - Detailed answers lead to better follow-up questions
-3. **Flag uncertainty** - Say "I'm not sure" and the interview will explore that area
-4. **Mention constraints early** - Timeline, budget, team size affect many decisions
-5. **Be honest about scope** - Clearly distinguish MVP from future phases
+- **Claude Code:** `AskUserQuestion`, `questions` array, `multiSelect: true` for multi-pick, 2–4 per round.
+- **Codex (Agents SDK / CLI):** use the native prompt primitive present at runtime (name varies by version: `user_prompt`, `prompt_user`, `ask_user`, `Prompt`). Codex has a real one — do NOT simulate via plaintext.
+- **Cursor / Windsurf / Aider:** use the agent's own input primitive (`request_input`, `ask`). Do not fall through to plaintext if a structured one exists.
+- **Generic LLM:** last resort only. Numbered `Question N:` headers, explicit "answer inline before continuing", no interleaved content.
