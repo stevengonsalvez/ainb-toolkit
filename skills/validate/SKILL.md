@@ -68,17 +68,19 @@ Skip a Task if the plan has no work in that category (e.g. no DB changes → dro
 
 For each command under the plan's "Automated Verification", run it and record pass/fail. If the plan lists none, run the matching stack commands:
 
+Run each command SEPARATELY and record its own pass/fail — never `&&`-chain them (a chain short-circuits on first failure and skips the remaining checks, violating the do-not-stop rule below):
+
 ```bash
 # JS/TS
-npm test && npm run lint && npm run typecheck && npm run build
+npm test; npm run lint; npm run typecheck; npm run build
 # Python
-pytest && flake8 && mypy .
+pytest; flake8; mypy .
 # Go
-go test ./... && go vet ./... && golangci-lint run
+go test ./...; go vet ./...; golangci-lint run
 # Rust
-cargo test && cargo clippy && cargo fmt --check
+cargo test; cargo clippy; cargo fmt --check
 # Generic
-make test && make check && make lint
+make test; make check; make lint
 ```
 
 Branch on outcome:
@@ -200,3 +202,5 @@ After presenting the report, ask the user (single message):
 - A green test suite with a STUB or MISSING truth is still a FAIL — Goal-Backward wins over checkmarks.
 - Report deviations from the plan even when they're improvements (say so, mark Impact positive).
 - Be constructive: every gap ships with a fix or an approach.
+- Check documentation as a validation dimension: README/API docs/inline docs updated where the change requires it.
+- Close the loop into the plan: for each Blocker/Important gap, append an unchecked `- [ ]` fix item to the source plan under the affected phase and note the phase needs rework, so `/implement` can resume from it.

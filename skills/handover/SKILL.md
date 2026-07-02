@@ -131,6 +131,14 @@ $(git log --name-only -5 --oneline)
 The cwd backup survives if `{{TOOL_DIR}}` is on another volume or gets cleaned.
 
 ```bash
+# Bind the filled template for the active mode into CONTENT first — printf on an
+# unset CONTENT writes empty files.
+if [ "$MODE" = "agent" ]; then
+    CONTENT="<the filled Step 3 agent-spawn handover content>"
+else
+    CONTENT="<the filled Step 2 standard handover content>"
+fi
+
 printf '%s\n' "$CONTENT" > "$PRIMARY_LOCATION"
 printf '%s\n' "$CONTENT" > "$BACKUP_LOCATION"
 echo "Handover -> $PRIMARY_LOCATION (backup: $BACKUP_LOCATION)"

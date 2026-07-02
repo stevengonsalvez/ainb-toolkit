@@ -66,7 +66,7 @@ These sections may be embedded in the input file. They are `/brainstorm`'s hando
 | `## Initial hypotheses`         | Pre-populated A/B/C approaches. Your FIRST AskUserQuestion round MUST present these as options, each option's ASCII code-block embedded in its `preview` field. |
 | `## ASCII preview library`      | Reusable preview snippets keyed by subject type. Use in later rounds' `preview` fields when comparing concrete shapes (mockups, schemas, diagrams). |
 | `## Output Spec Template`        | Literal markdown template for the spec output. Use verbatim in Step 5 instead of the default template.    |
-| `## Format preferences`         | Dictates chat + spec output shape. Honor it; overrides the default convention below.                      |
+| `### Format preferences` (nested inside `## For /interview`)         | Dictates chat + spec output shape. Honor it; overrides the default convention below.                      |
 
 ## Step 2 — Conduct the interview
 
@@ -85,7 +85,7 @@ Pick the tool — first match wins:
 
 Branch: if a likely prompt tool exists but the call fails as unavailable → treat as "no native tool", fall back to plaintext immediately. Do NOT spend a turn asking how to ask.
 
-### Output shape convention (default — `## Format preferences` overrides)
+### Output shape convention (default — `### Format preferences` (nested inside `## For /interview`) overrides)
 
 | Content shape                            | Use                                        |
 |------------------------------------------|--------------------------------------------|

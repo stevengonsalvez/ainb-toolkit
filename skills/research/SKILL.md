@@ -76,10 +76,25 @@ Run 3-6 focused Task agents concurrently in ONE message. Each gets a specific go
 
 Pick task types by what the query needs:
 
-**A. Codebase (ALWAYS spawn at least one):**
-- "Find all files related to [topic]" → return file:line references for source, configs, tests.
-- "Analyze how [feature] works" → trace data flow + dependencies, return explanation with code refs.
-- "Find similar implementations of [pattern]" → reusable components + test patterns to model after.
+**A. Codebase (ALWAYS spawn at least one). Copy-paste these Task prompts, filling [topic]:**
+```
+Task: "Find all files related to [topic]"
+- Search for relevant source files, configs, tests
+- Identify main implementation files
+- Find usage examples and patterns
+- Return specific file:line references
+
+Task: "Analyze how [system/feature] works"
+- Understand current implementation
+- Trace data flow and dependencies
+- Identify conventions and patterns
+- Return detailed explanations with code references
+
+Task: "Find similar implementations of [pattern]"
+- Look for existing examples to model after
+- Identify reusable components
+- Find test patterns to follow
+```
 
 **B. Documentation (if the repo has docs):**
 - "Find existing docs / API docs / inline notes for [topic]" → return locations + key decisions and rationale.
@@ -102,6 +117,7 @@ Never pass a raw HTML URL to `WebFetch`. Convert first:
 | 1st (default) | `WebFetch(url: "https://markdown.new/<target-url>", prompt: "<extraction question>")` | all web pages |
 | 2nd (fallback) | `WebFetch(url: "https://r.jina.ai/<target-url>", prompt: "<extraction question>")` | markdown.new fails or returns empty |
 | 3rd (last resort) | `WebFetch(url: "<target-url>", prompt: "<extraction question>")` | JSON/API endpoints or authenticated URLs only |
+| GitHub | `gh` CLI | Always use `gh api`, `gh pr view`, etc. for GitHub — never scrape github.com HTML |
 
 ### Anti-bot / paywall escalation (scrapling)
 
@@ -158,6 +174,8 @@ If a value is unavailable, write "n/a" — never leave a `[placeholder]` in the 
 ## Step 6: Write the research document
 
 Wait for ALL sub-agents to finish, then write this exact structure. Save to `research/YYYY-MM-DD_HH-MM-SS_topic.md`.
+
+When sources conflict, prioritize live-codebase findings as the primary source of truth over docs/web — docs drift, code doesn't lie.
 
 ```markdown
 # Research: [User's Question/Topic]
