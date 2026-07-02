@@ -223,7 +223,7 @@ async def process_payment(amount: int, customer_id: str):
 - `@implement` + **frontend-developer**: UI/UX implementations
 - `@implement` + **superstar-engineer**: Cross-stack features requiring coordination
 - `@docs` + **web-search-researcher**: Deep documentation exploration and research
-- `@docs` + **api-architect**: API design based on external specifications
+- `@docs` + **backend-developer**: API design based on external specifications
 - `@docs` + **documentation-specialist**: Comprehensive documentation generation
 
 ## Best Practices
@@ -649,25 +649,24 @@ When health reaches 🟡, proactively:
 0.⁠ ⁠*Always run multiple Task invocations in a SINGLE message when sensible* - Maximize parallelism for better performance.
 
 1.⁠ ⁠*Aggressively use specialized agents* - Custom agent definitions in ⁠ {{HOME_TOOL_DIR}}/agents/ ⁠ (available in this repo under `agents/`):
-   - ⁠ distinguished-engineer ⁠ - Drive system design and high‑leverage tradeoffs
-   - ⁠ web-search-researcher ⁠ - Research modern information from the web
+   - ⁠ distinguished-engineer ⁠ - Distinguished‑Engineer critiques, architecture reviews, build‑vs‑buy and TCO verdicts
+   - ⁠ web-search-researcher ⁠ - Research modern/web‑only info with sourced, dated, confidence‑rated claims
+   - ⁠ engineering/ ⁠
+     - code-archaeologist – Explore and map unfamiliar, legacy, or external codebases (read‑only)
+     - code-reviewer – Rigorous security‑aware review before merge (read‑only report)
+     - documentation-specialist – Write, restructure, and audit docs against the real repo
+     - performance-optimizer – Profile, isolate the true bottleneck, fix one thing, prove the win
+     - security-agent – Defensive security review of auth, input, secrets, access control, Supabase/BaaS
+     - test-engineer – Write, run, fix, and validate tests; prove a green suite is telling the truth
    - ⁠ universal/ ⁠
      - backend-developer – Deliver backend features end‑to‑end
      - frontend-developer – Deliver frontend features end‑to‑end
-     - superstar-engineer – Unblock and accelerate across the stack
-   - ⁠ orchestrators/ ⁠
-     - tech-lead-orchestrator – Coordinate multi‑agent delivery
-     - project-analyst – Surface scope, risks, and dependencies
-     - team-configurator – Configure team roles and workflows
-   - ⁠ engineering/ ⁠
-     - api-architect, architecture-reviewer, code-archaeologist, code-reviewer
-     - dev-cleanup-wizard, devops-automator, documentation-specialist, gatekeeper
-     - integration-tests, lead-orchestrator, migration, performance-optimizer
-     - planner, playwright-test-validator, property-mutation, release-manager
-     - security-agent, service-codegen, solution-architect, tailwind-css-expert
-     - test-analyser, test-writer-fixer
-   - ⁠ design/ ⁠
-     - ui-designer – Craft UI aligned with brand and UX goals
+     - superstar-engineer – End‑to‑end implementation that plans, builds, and runs the result
+     - deep-reasoner – Reasoning‑heavy phases: architecture, tricky debugging, concurrency, trade‑offs (Opus)
+     - fast-worker – Mechanical, well‑specified execution: boilerplate, renames, config, applied fixes (Sonnet)
+   - ⁠ swarm/ ⁠
+     - leader – Coordinate worker agents, assign tasks, monitor progress
+     - worker – Execute assigned tasks, report progress, collaborate with the team
    - ⁠ meta/ ⁠
      - agentmaker – Create and refine new agents
 
