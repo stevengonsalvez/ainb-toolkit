@@ -43,7 +43,7 @@ When the repo uses Tailwind, stay utility-first and HTML-driven:
 - Pair responsive breakpoints with container queries (`@container` + `@min-*`/`@max-*`) so components adapt to parent width, not just viewport.
 - Expose design tokens as CSS variables. Tailwind v4: define theme in CSS via `@theme { --color-primary: … }` — CSS-first theming, no JS config needed for tokens.
 - Prefer the modern color system (OKLCH) and `color-mix()` for accessible, P3-capable palettes and derived hover/active shades.
-- Keep class order consistent (Prettier Tailwind plugin ordering). Audit output CSS size even though purge is automatic; split critical CSS for above-the-fold when it matters.
+- Keep class order consistent (Prettier Tailwind plugin ordering). Audit output CSS size even though purge is automatic; default to relying on automatic purge, and split out/inline above-the-fold critical CSS only when Lighthouse flags render-blocking CSS delaying first paint.
 - Dark mode via dual-theme tokens + `color-scheme`, not duplicated markup.
 
 Reference patterns:
