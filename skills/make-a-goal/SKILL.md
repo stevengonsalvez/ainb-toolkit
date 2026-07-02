@@ -14,129 +14,83 @@ argument-hint: "[the final outcome — one line, optional]"
 
 # /make-a-goal — autonomous-run mega-prompt builder
 
-## What it does
+Interview for missing context, then write a filled mega-prompt to
+`.agents/goals/<slug>.md`. Stevie runs it later by pasting that file into a
+fresh session. This skill produces the artifact ONLY — never executes the run.
+Caveman mode by default. Address user as **Stevie**.
 
-`/make-a-goal [outcome line]` interviews Stevie for the operating context
-an autonomous coding agent needs, then writes a filled mega-prompt to
-`.agents/goals/<slug>.md`. Stevie runs the goal by pasting the file
-contents into a fresh session — this skill never executes the run.
+## When NOT to use
 
-The mega-prompt template lives at `assets/mega-prompt.md.tmpl`. The stub
-plan handed to `/interview` lives at `assets/stub-plan.md.tmpl`.
-
-## Trigger
-
-- `/make-a-goal` — no args, interview asks for the outcome line too
-- `/make-a-goal <outcome>` — outcome line pre-fills `{{OUTCOME}}`,
-  interview gathers the rest
-- Natural language: "make a goal", "set a goal", "build me a goal prompt"
-
-## Flow
-
-### 1. Capture the outcome line
-
-If `$ARGUMENTS` is non-empty, treat it as the final-outcome line and
-slugify it. Else, use `AskUserQuestion` with a single open question:
-"What does done look like — in one line?"
-
-The outcome line is the most important field. Push back on vague answers
-("ship the app") and demand specificity ("deploy v1 of the dashboard at
-dashboard.example.com with login + 3 charts working"). One sentence,
-present-tense, observable.
-
-### 2. Generate slug + paths
-
-- Slug: kebab-case the outcome line, strip stopwords, truncate to 50
-  chars. Example: "deploy v1 of the dashboard with login" →
-  `deploy-v1-dashboard-with-login`.
-- Plan path: `.agents/goals/<slug>.plan.md`
-- Spec path: `.agents/goals/<slug>.plan-spec.md` (what `/interview` writes)
-- Goal path: `.agents/goals/<slug>.md` (the final mega-prompt)
-
-Create `.agents/goals/` if missing. If `<slug>.md` already exists,
-append a numeric suffix (`<slug>-2.md`).
-
-### 3. Write the stub plan
-
-Read `assets/stub-plan.md.tmpl`, substitute `{{OUTCOME}}`, and write to
-the plan path. The stub is deliberately prescriptive — it tells
-`/interview` exactly which fields to extract so the resulting spec maps
-back to the mega-prompt without guesswork.
-
-### 4. Delegate to /interview
-
-Invoke the `/interview` skill against `<slug>.plan.md`. `/interview`
-will use its mandatory structured-user-prompt tool (`AskUserQuestion` on
-Claude Code) and produce the spec at `<slug>.plan-spec.md`.
-
-Per `/interview`'s contract, it runs iteratively until "all major areas
-are covered". Trust it.
-
-### 5. Map spec → mega-prompt fields, fill gaps
-
-Read `<slug>.plan-spec.md`. Extract:
-
-| Mega-prompt field | Likely spec source |
+| Situation | Route to |
 |---|---|
-| `{{PROJECT}}` | Executive Summary · Objectives → Primary Goals |
-| `{{STACK}}` | Technical Requirements → Components / Architecture |
-| `{{CURRENT_STATE}}` | Implementation Notes · context paragraphs |
-| `{{WORKING_DIR}}` | Constraints section · or not present |
-| `{{CONSTRAINTS}}` | Constraints & Dependencies → Technical / Timeline |
-| `{{AUDIENCE}}` | User Experience intro · or not present |
-| `{{SUCCESS_1..3}}` | Objectives → Success Metrics |
+| Stevie wants the goal EXECUTED now | Not this skill; paste an existing `.agents/goals/*.md` into a fresh session |
+| Turn a plan into a spec, no autonomous run | `/plan` or `/interview` |
+| Split one outcome into sub-goals | Only if explicitly asked; default is ONE goal |
 
-Fields not reliably in `/interview`'s spec template:
-**working dir**, **audience**, **current state**. If those are missing
-or thin in the spec, run one `AskUserQuestion` round with only the
-unfilled fields. Don't re-ask anything the spec already answers.
+## Bundled files (both must exist)
 
-If the spec produced more than three success metrics, ask Stevie which
-three are the hard-gates for "done". If it produced fewer than three,
-ask for the remainder — three is the minimum the template needs.
+- `assets/mega-prompt.md.tmpl` — output template. Tokens: `{{OUTCOME}}`,
+  `{{PROJECT}}`, `{{STACK}}`, `{{CURRENT_STATE}}`, `{{WORKING_DIR}}`,
+  `{{CONSTRAINTS}}`, `{{AUDIENCE}}`, `{{SUCCESS_1}}`, `{{SUCCESS_2}}`, `{{SUCCESS_3}}`.
+- `assets/stub-plan.md.tmpl` — stub handed to `/interview`. Token: `{{OUTCOME}}`.
 
-### 6. Render the mega-prompt
+## Runbook
 
-Read `assets/mega-prompt.md.tmpl`. Substitute every `{{FIELD}}` token
-with the gathered value. Multi-line values: keep them single-line where
-the template uses a single line (Context block) — join with `; ` if
-needed. The Operating Rules / Quality Bar / Final Deliverable blocks
-are verbatim — never edit them.
+1. **Get the outcome line.** If `$ARGUMENTS` non-empty, that IS the line → step 2.
+   Else `AskUserQuestion`: "What does done look like — in one line?" Requirements:
+   one sentence, present-tense, observable. Vague ("ship the app") → push back for
+   specifics. Multi-sentence → ask Stevie to compress to one line first.
 
-Write to `<slug>.md`.
+2. **Slug + paths.** Slug = kebab-case the outcome, strip stopwords, ≤50 chars
+   (e.g. "deploy v1 of the dashboard with login" → `deploy-v1-dashboard-with-login`).
+   `mkdir -p .agents/goals`. Paths: plan `<slug>.plan.md`, spec `<slug>.plan-spec.md`,
+   goal `<slug>.md`. If `<slug>.md` exists → suffix `-2`, `-3`, ….
 
-### 7. Report back
+3. **Write stub plan.** Read `assets/stub-plan.md.tmpl`, sub `{{OUTCOME}}`, write to
+   plan path. Leave it prescriptive — it tells `/interview` which fields to extract.
 
-Tell Stevie:
+4. **Interview.**
+   - `/interview` available → invoke it on `<slug>.plan.md`. It loops via
+     `AskUserQuestion` until covered and writes `<slug>.plan-spec.md`. Do not re-drive its loop.
+   - `/interview` NOT available → ask the field set (from `stub-plan.md.tmpl`)
+     directly via `AskUserQuestion`, skip the spec artifact, jump to step 6.
 
-- where the goal file landed (absolute path)
-- where the spec landed (in case he wants to revise context without
-  re-interviewing)
-- one-line instruction to run it: paste the contents of `<slug>.md`
-  into a fresh Claude Code or Codex session
-- the slug (so he can refer to it later)
+5. **Map spec → fields, fill gaps.** Read `<slug>.plan-spec.md`, extract:
 
-Caveman mode by default. Address as **Stevie**.
+   | Field | Spec source |
+   |---|---|
+   | `{{PROJECT}}` | Objectives → Primary Goals |
+   | `{{STACK}}` | Technical Requirements → Components / Architecture |
+   | `{{CURRENT_STATE}}` | Implementation Notes · context paragraphs |
+   | `{{WORKING_DIR}}` | Constraints · often absent |
+   | `{{CONSTRAINTS}}` | Constraints & Dependencies |
+   | `{{AUDIENCE}}` | User Experience intro · often absent |
+   | `{{SUCCESS_1..3}}` | Objectives → Success Metrics |
+
+   Then at most ONE more `AskUserQuestion` round for unfilled fields:
+
+   | Condition | Action |
+   |---|---|
+   | `WORKING_DIR`/`AUDIENCE`/`CURRENT_STATE` thin | Ask only those; never re-ask what spec answered |
+   | Working dir = "this repo" | Substitute absolute `$PWD`, not the literal string |
+   | >3 success metrics | Ask which 3 are the hard-gates for "done" |
+   | <3 success metrics | Ask for the rest — 3 is the template minimum |
+
+6. **Render.** Read `assets/mega-prompt.md.tmpl`, sub every `{{FIELD}}`. Multi-line
+   values into single-line slots → join with `; `. Write to `<slug>.md`.
+   DO NOT touch the **Operating Rules / Quality Bar / Final Deliverable** blocks —
+   verbatim, non-negotiable across every run.
+
+7. **Report.** Give Stevie: absolute goal path, absolute spec path (to revise
+   context without re-interviewing), the run instruction ("paste `<slug>.md` into
+   a fresh Claude Code or Codex session"), and the slug.
 
 ## Non-goals
 
-- **Do not execute the goal.** This skill only produces the artifact.
-- **Do not turn prerequisite access/setup into the goal.** If Stevie gives secrets, tokens, project IDs, repo state, or provisioning context, treat those as context/constraints for the mega-prompt. The goal line should stay at the outcome/options level; Claude Code works out steps and phases.
-- **Do not create mini-goals by default.** When Stevie says the ultimate goal came from another agent/person, recover that outcome and render one autonomous goal unless he explicitly asks to split it.
-- **Do not commit `.agents/goals/`.** Leave that decision to Stevie —
-  the directory may or may not be gitignored per repo.
-- **Do not edit the Operating Rules / Quality Bar / Final Deliverable
-  blocks** in the template. They're intentionally non-negotiable across
-  every run.
-
-## Edge cases
-
-- **No `/interview` skill available** (e.g. a host without it deployed):
-  fall back to running the question set directly via `AskUserQuestion`
-  using the field list from `assets/stub-plan.md.tmpl`. Skip the spec
-  artifact in this mode and render straight to the mega-prompt.
-- **Outcome line is multi-sentence**: ask Stevie to compress to one
-  line before slugging. The mega-prompt's first line is the contract.
-- **Existing goal with same slug**: append `-2`, `-3`, …
-- **Working dir is "this repo"**: capture the absolute path of `$PWD`
-  at goal-generation time, not the literal string "this repo".
+- **No execution.** Artifact only.
+- **No setup-as-goal.** Secrets, tokens, IDs, provisioning → context/constraints.
+  Goal line stays at outcome level; the executing agent works out steps.
+- **No mini-goals by default.** If the outcome came from another agent/person,
+  recover it and render ONE goal unless Stevie asks to split.
+- **No committing `.agents/goals/`** — leave to Stevie.
+- **No editing the verbatim template blocks.**

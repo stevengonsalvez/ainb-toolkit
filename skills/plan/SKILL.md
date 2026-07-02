@@ -6,13 +6,18 @@ user-invocable: true
 
 # Create Plan
 
-You are tasked with creating detailed implementation plans through an interactive, iterative process. You should be skeptical, thorough, and work collaboratively with the user to produce high-quality technical specifications.
+Produce a phased, file-level implementation plan through interactive research and iteration. Be skeptical: verify every requirement against actual code before writing it into the plan. Output is a `plans/*.md` file that `/implement` consumes directly.
+
+**When NOT to use / route elsewhere:**
+- Requirements still fuzzy, no clear task yet → run `/interview` first, then return here.
+- No codebase understanding yet, need to explore what exists → run `/research` first (it searches learnings + codebase); its output feeds Step 1 here.
+- Test-first workflow wanted → use `/plan-tdd` instead.
 
 <!-- recall:begin -->
 
-## Step 0: Prior-art check (MANDATORY)
+## Step 0: Prior-art check (MANDATORY, run first)
 
-Before planning, recall prior learnings from the global knowledge base so we don't re-learn or re-decide something already captured:
+Recall prior learnings so you don't re-decide something already captured:
 
 ```bash
 uv run "{{HOME_TOOL_DIR}}/skills/recall/scripts/recall.py" \
@@ -20,27 +25,17 @@ uv run "{{HOME_TOOL_DIR}}/skills/recall/scripts/recall.py" \
   --limit 5 --format markdown
 ```
 
-**Query construction for `/plan`**: concatenate the user's task description + any file paths + domain keywords (e.g. `"user auth OAuth migration"`).
-
-**What to do with results:**
-
-- If a returned learning names a constraint, anti-pattern, or prior decision directly relevant to the task — surface it to the user BEFORE proceeding with this skill's main flow.
-- If nothing relevant returns — proceed silently, no need to mention the check.
-- Never block on recall failure. Empty output / non-zero exit is expected when the KB is absent or the subprocess errors — treat it as "no prior art found", not as an error.
+- `<QUERY>` = user task description + any file paths + domain keywords (e.g. `"user auth OAuth migration"`).
+- Result names a constraint / anti-pattern / prior decision relevant to the task → surface it to the user BEFORE the main flow.
+- Empty output or non-zero exit → treat as "no prior art", proceed silently. Never block on recall failure.
 
 <!-- recall:end -->
 
-## Initial Response
+## Step 1: Intake
 
-When this command is invoked:
+1. Parameters (file path or task description) provided → skip the greeting, read provided files FULLY (Read tool, no `limit`/`offset`), go to Step 2.
+2. No parameters → print exactly this, then wait:
 
-1. **Check if parameters were provided**:
-   - If a file path or task description was provided, skip the default message
-   - Check for existing research documents in `research/` directory
-   - Immediately read any provided files FULLY
-   - Begin the research process
-
-2. **If no parameters provided**, respond with:
 ```
 I'll help you create a detailed implementation plan. Let me start by understanding what we're building.
 
@@ -52,180 +47,103 @@ Please provide:
 I can also check for existing research documents if you've already run /research on this topic.
 ```
 
-Then wait for the user's input.
+## Step 2: Context gathering
 
-## Planning Process
+Do these in order. Read every file FULLY before spawning any sub-task.
 
-### Step 1: Context Gathering & Initial Analysis
+| Source | Action |
+|--------|--------|
+| `research/` dir | Relevant file exists → read it as the plan's foundation. None → run `/research`, then continue. |
+| `.planning/ROADMAP.md` | Exists → read; use its phases as the plan's phase structure. |
+| `.planning/STATE.md` | Exists → read current position + blockers. |
+| `.planning/**/CONTEXT.md` | Exists → read locked decisions; **the plan MUST honor these**. |
+| Any file the user mentioned | Read FULLY yourself before delegating. |
 
-1. **Check for existing research**:
-   - Look for relevant files in `research/` directory
-   - If found, read them to understand what's already been discovered
-   - If NOT found, run `/research` which will search learnings first
-   - Use this as foundation for the plan
+Then spawn **general-purpose** sub-agents in parallel (one message, multiple Task calls) to: (a) find all files related to the task, (b) map the current implementation, (c) find existing docs. Each returns explanations with `file:line` references. Wait for all, then read every file they identified FULLY.
 
-2. **Check for project state** (`.planning/` directory):
-   - If `.planning/ROADMAP.md` exists: Read it to understand phase structure
-   - If `.planning/STATE.md` exists: Read current position and blockers
-   - If phase-specific `CONTEXT.md` exists: Read locked decisions -- plan MUST honor these
-   - Use roadmap phases as the plan's phase structure when available
+Cross-reference requirements against the real code. Note discrepancies and assumptions needing verification.
 
-3. **Read all mentioned files immediately and FULLY**:
-   - Requirements documents
-   - Research documents from `research/` directory
-   - Related implementation plans from `plans/` directory
-   - Any data files mentioned
-   - **IMPORTANT**: Use the Read tool WITHOUT limit/offset parameters
-   - **CRITICAL**: DO NOT spawn sub-tasks before reading these files yourself
+Present understanding + only the questions research could not answer:
 
-3. **Spawn initial research tasks to gather context**:
-   Before asking questions, use agents to research in parallel:
+```
+Based on my research of the codebase, I understand we need to [accurate summary].
 
-   - Use **general-purpose** agents to find all files related to the task
-   - Use **general-purpose** agents to understand current implementation
-   - Use **general-purpose** agents to find any existing documentation
+I've found that:
+- [Current implementation detail with file:line reference]
+- [Relevant pattern or constraint discovered]
+- [Potential complexity or edge case identified]
 
-   These agents will:
-   - Find relevant source files, configs, and tests
-   - Trace data flow and key functions
-   - Return detailed explanations with file:line references
+Questions that my research couldn't answer:
+- [Specific technical question requiring human judgment]
+- [Business logic clarification]
+```
 
-4. **Read all files identified by research tasks**:
-   - After research completes, read ALL identified files FULLY
-   - This ensures complete understanding before proceeding
+## Step 3: Deep research & design options
 
-5. **Analyze and verify understanding**:
-   - Cross-reference requirements with actual code
-   - Identify any discrepancies or misunderstandings
-   - Note assumptions that need verification
-   - Determine true scope based on codebase reality
+- User corrects a misunderstanding → do NOT just accept it. Spawn a new research task / read the named files, verify the fact yourself, THEN proceed.
+- Track research tasks with TodoWrite.
+- Spawn parallel sub-tasks for: deeper file discovery, patterns/conventions to follow, integration points, similar features to model after, existing tests. Wait for ALL.
+- Present findings + design options and get the user to pick:
 
-6. **Present informed understanding and focused questions**:
-   ```
-   Based on my research of the codebase, I understand we need to [accurate summary].
+```
+Based on my research, here's what I found:
 
-   I've found that:
-   - [Current implementation detail with file:line reference]
-   - [Relevant pattern or constraint discovered]
-   - [Potential complexity or edge case identified]
+**Current State:**
+- [Key discovery about existing code]
 
-   Questions that my research couldn't answer:
-   - [Specific technical question requiring human judgment]
-   - [Business logic clarification]
-   - [Design preference that affects implementation]
-   ```
+**Design Options:**
+1. [Option A] - [pros/cons]
+2. [Option B] - [pros/cons]
 
-### Step 2: Research & Discovery
+Which approach aligns best with your vision?
+```
 
-After getting initial clarifications:
+## Step 4: Phase structure + wave dependencies
 
-1. **If the user corrects any misunderstanding**:
-   - DO NOT just accept the correction
-   - Spawn new research tasks to verify the correct information
-   - Read the specific files/directories they mention
-   - Only proceed once you've verified the facts yourself
+1. Propose phases (name + what each accomplishes). Confirm phasing with the user before writing details.
 
-2. **Create a research todo list** using TodoWrite
+2. Assign waves. **Wave** = a set of phases that can run in parallel.
 
-3. **Spawn parallel sub-tasks for comprehensive research**:
-   Create multiple Task agents to research different aspects:
+| Rule | Meaning |
+|------|---------|
+| No dependencies | Wave 1 |
+| Depends on a Wave N phase | Wave N+1 |
+| File appears in 2 phases of the SAME wave | NOT allowed — add an artificial dependency to serialize them |
 
-   **For deeper investigation:**
-   - Find more specific files and components
-   - Understand implementation details
-   - Find similar features to model after
+Present the dependency graph, e.g.:
 
-   **For patterns and conventions:**
-   - Identify existing patterns to follow
-   - Look for integration points and dependencies
-   - Find tests and examples
+```
+Phase 1: No dependencies (Wave 1)
+Phase 2: Depends on Phase 1 (Wave 2)
+Phase 3: No dependencies (Wave 1) -- parallel with Phase 1
+Phase 4: Depends on Phase 2, Phase 3 (Wave 3)
+```
 
-4. **Wait for ALL sub-tasks to complete**
+Get sign-off on structure before writing the full plan.
 
-5. **Present findings and design options**:
-   ```
-   Based on my research, here's what I found:
+## Step 5: Write the plan
 
-   **Current State:**
-   - [Key discovery about existing code]
-   - [Pattern or convention to follow]
-
-   **Design Options:**
-   1. [Option A] - [pros/cons]
-   2. [Option B] - [pros/cons]
-
-   **Open Questions:**
-   - [Technical uncertainty]
-   - [Design decision needed]
-
-   Which approach aligns best with your vision?
-   ```
-
-### Step 3: Plan Structure Development
-
-Once aligned on approach:
-
-1. **Create initial plan outline**:
-   ```
-   Here's my proposed plan structure:
-
-   ## Overview
-   [1-2 sentence summary]
-
-   ## Implementation Phases:
-   1. [Phase name] - [what it accomplishes]
-   2. [Phase name] - [what it accomplishes]
-   3. [Phase name] - [what it accomplishes]
-
-   Does this phasing make sense? Should I adjust the order or granularity?
-   ```
-
-3. **Analyze phase dependencies**:
-   For each phase, determine:
-   - Which other phases must complete before this one can start
-   - Which files this phase will modify (for ownership validation)
-   - Whether phases could run in parallel
-
-   Rules:
-   - Phase with no dependencies = Wave 1
-   - Phase depending on Wave N = Wave N+1
-   - A file MUST NOT appear in multiple phases of the same wave
-   - If file overlap within a wave: add artificial dependency to serialize
-
-   Present the dependency graph:
-   ```
-   Dependency Analysis:
-   Phase 1: No dependencies (Wave 1)
-   Phase 2: Depends on Phase 1 (Wave 2)
-   Phase 3: No dependencies (Wave 1) -- parallel with Phase 1
-   Phase 4: Depends on Phase 2, Phase 3 (Wave 3)
-   ```
-
-2. **Get feedback on structure** before writing details
-
-### Step 4: Detailed Plan Writing
-
-After structure approval, write the plan to `plans/{descriptive_name}.md`:
+Write to `plans/{descriptive_name}.md`. Use this exact skeleton — `/implement` parses the `<!-- wave: ... -->` comments and `[CHECKPOINT:*]` markers, so keep both formats verbatim:
 
 ```markdown
 # [Feature/Task Name] Implementation Plan
 
 ## Overview
-[Brief description of what we're implementing and why]
+[What we're implementing and why, 1-2 sentences]
 
 ## Current State Analysis
 [What exists now, what's missing, key constraints discovered]
 
 ## Desired End State
-[Specification of the desired end state and how to verify it]
+[The end state and how to verify it]
 
 ### Key Discoveries:
-- [Important finding with file:line reference]
+- [Finding with file:line reference]
 - [Pattern to follow]
 - [Constraint to work within]
 
 ## What We're NOT Doing
-[Explicitly list out-of-scope items to prevent scope creep]
+[Explicit out-of-scope items — prevents scope creep]
 
 ## Implementation Approach
 [High-level strategy and reasoning]
@@ -240,7 +158,7 @@ After structure approval, write the plan to `plans/{descriptive_name}.md`:
 
 #### 1. [Component/File Group]
 **File**: `path/to/file.ext`
-**Changes**: [Summary of changes]
+**Changes**: [Summary]
 
 ```[language]
 // Specific code to add/modify
@@ -249,66 +167,46 @@ After structure approval, write the plan to `plans/{descriptive_name}.md`:
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] Tests pass: `npm test` or appropriate command
+- [ ] Tests pass: `npm test`
 - [ ] Type checking passes: `npm run typecheck`
 - [ ] Linting passes: `npm run lint`
 - [ ] Build succeeds: `npm run build`
 
 #### Manual Verification:
 - [ ] Feature works as expected when tested
-- [ ] Performance is acceptable
 - [ ] Edge cases handled correctly
 - [ ] No regressions in related features
 
 ### Checkpoints (if applicable):
-
-Mark any stopping points with their type:
-
 - **`[CHECKPOINT:human-verify]`**: Review automated work before continuing
   - What was built: [description]
-  - How to verify: [numbered steps with expected outcomes]
+  - How to verify: [numbered steps + expected outcomes]
   - Resume: Type "approved" or describe issues
-
 - **`[CHECKPOINT:decision]`**: Choose between options
   - Options: [A vs B with trade-offs]
   - Impact: [what changes based on choice]
-
-- **`[CHECKPOINT:human-action]`**: Non-automatable step required
-  - What's needed: [specific action only a human can take]
-  - Example: "Click email verification link", "Approve OAuth app in dashboard"
-
-**Checkpoint rules**:
-- If Claude CAN do it via CLI/API/Bash, it MUST NOT be a checkpoint
-- Maximum 1 checkpoint per phase (prevents fatigue)
-- `human-verify` is most common (~90%) -- use for visual/UX review
-- `human-action` is rare (~1%) -- only for things Claude literally cannot do
+- **`[CHECKPOINT:human-action]`**: Non-automatable step (rare)
+  - What's needed: [action only a human can take, e.g. "Click email verification link"]
 
 ---
 
 ## Phase 2: [Descriptive Name]
-[Similar structure...]
+[Same structure]
 
 ---
 
 ## Testing Strategy
-
-### Unit Tests:
-- [What to test]
-- [Key edge cases]
-
-### Integration Tests:
-- [End-to-end scenarios]
-
+### Unit Tests: [what to test, key edge cases]
+### Integration Tests: [end-to-end scenarios]
 ### Manual Testing Steps:
-1. [Specific step to verify feature]
-2. [Another verification step]
-3. [Edge case to test manually]
+1. [Step to verify feature]
+2. [Edge case to test manually]
 
 ## Performance Considerations
-[Any performance implications or optimizations needed]
+[Implications or optimizations, if any]
 
 ## Migration Notes
-[If applicable, how to handle existing data/systems]
+[How to handle existing data/systems, if applicable]
 
 ## References
 - Original requirements: [location]
@@ -316,98 +214,38 @@ Mark any stopping points with their type:
 - Similar implementation: `[file:line]`
 ```
 
-**File Ownership Rule**: Each file may only be modified in ONE phase per wave. If two phases in the same wave need the same file, add a dependency between them. List all files each phase touches in the wave comment.
+**Hard rules for the written plan:**
 
-### Step 5: Review and Iterate
+| Rule | Detail |
+|------|--------|
+| File ownership | Each file may be modified in only ONE phase per wave. Overlap within a wave → add a dependency between those phases. List every file a phase touches in its `files:` wave comment. |
+| Checkpoint: automatable | If Claude CAN do it via CLI/API/Bash, it MUST NOT be a checkpoint. |
+| Checkpoint: budget | Max 1 checkpoint per phase (prevents fatigue). |
+| Checkpoint: mix | `human-verify` ≈ 90% (visual/UX review); `decision` occasional; `human-action` ≈ 1% (only what Claude literally cannot do). |
+| Success criteria | Always split into Automated (runnable commands, file existence, compile/typecheck/tests) vs Manual (UI/UX, real-world perf, hard-to-automate edge cases). |
+| No open questions | Every decision resolved before finalizing. Research or ask immediately — never leave unresolved questions in the final plan. |
 
-1. **Present the draft plan location**:
-   ```
-   I've created the initial implementation plan at:
-   `plans/[filename].md`
+## Step 6: Review & iterate
 
-   Please review it and let me know:
-   - Are the phases properly scoped?
-   - Are the success criteria specific enough?
-   - Any technical details that need adjustment?
-   - Missing edge cases or considerations?
-   ```
+Tell the user the plan location and ask for review:
 
-2. **Iterate based on feedback** - be ready to:
-   - Add missing phases
-   - Adjust technical approach
-   - Clarify success criteria
-   - Add/remove scope items
+```
+I've created the initial implementation plan at:
+`plans/[filename].md`
 
-3. **Continue refining** until the user is satisfied
+Please review it and let me know:
+- Are the phases properly scoped?
+- Are the success criteria specific enough?
+- Any technical details that need adjustment?
+- Missing edge cases or considerations?
+```
 
-## Important Guidelines
+Iterate on feedback (add/remove phases, adjust approach, sharpen criteria, adjust scope) until the user is satisfied.
 
-1. **Be Skeptical**:
-   - Question vague requirements
-   - Identify potential issues early
-   - Don't assume - verify with code
+## Phase-ordering patterns (pick by task type)
 
-2. **Be Interactive**:
-   - Don't write the full plan in one shot
-   - Get buy-in at each major step
-   - Allow course corrections
-
-3. **Be Thorough**:
-   - Read all context files COMPLETELY
-   - Research actual code patterns
-   - Include specific file paths and line numbers
-   - Write measurable success criteria
-
-4. **Be Practical**:
-   - Focus on incremental, testable changes
-   - Consider migration and rollback
-   - Think about edge cases
-   - Include "what we're NOT doing"
-
-5. **Track Progress**:
-   - Use TodoWrite to track planning tasks
-   - Update todos as you complete research
-   - Mark planning tasks complete when done
-
-6. **No Open Questions in Final Plan**:
-   - Research or ask for clarification immediately
-   - Do NOT write the plan with unresolved questions
-   - Every decision must be made before finalizing
-
-## Success Criteria Guidelines
-
-Always separate success criteria into two categories:
-
-1. **Automated Verification** (can be run by agents):
-   - Commands that can be run
-   - Specific files that should exist
-   - Code compilation/type checking
-   - Automated test suites
-
-2. **Manual Verification** (requires human testing):
-   - UI/UX functionality
-   - Performance under real conditions
-   - Edge cases hard to automate
-   - User acceptance criteria
-
-## Common Patterns
-
-### For New Features:
-- Research existing patterns first
-- Start with data model
-- Build backend logic
-- Add API endpoints
-- Implement UI last
-
-### For Refactoring:
-- Document current behavior
-- Plan incremental changes
-- Maintain backwards compatibility
-- Include migration strategy
-
-### For Database Changes:
-- Start with schema/migration
-- Add data access methods
-- Update business logic
-- Expose via API
-- Update clients
+| Task type | Phase order |
+|-----------|-------------|
+| New feature | Research existing patterns → data model → backend logic → API endpoints → UI last |
+| Refactoring | Document current behavior → incremental changes → maintain backwards compat → migration strategy |
+| Database change | Schema/migration → data access methods → business logic → API → clients |
