@@ -38,14 +38,77 @@ Read-only report shaped so Stevie acts in 30 seconds: state of the branch + exac
 
 ## Output rules
 
+Each rule carries a Bad/Good pair so the shape is unambiguous.
+
 1. **Lead with Counts, climax on Inputs (Fact 2).** First shape = 1-row Counts table. Last shape = `### Inputs needed from Stevie 🔴`. Everything between is skippable context.
+   - Bad: bury "PR #2535 ready to merge" as row 7 of the beads table.
+   - Good: Counts row up top, then context tables, then `### Inputs needed from Stevie 🔴` as the final, aggressively-surfaced section.
+
 2. **ONE unified beads table — never sub-tables (Fact 1).** All four states (shipped/pending/next/blocked) in one table. Never split into In-progress/Ready/Blocked sub-tables.
+   - Bad:
+     ```
+     ### In progress
+     | id | title |
+     ### Ready
+     | id | title |
+     ### Blocked
+     | id | title |
+     ```
+   - Good:
+     ```
+     ### Beads
+     | id | title | status | PR |
+     |---|---|---|---|
+     | ag-xx | … | 🟢 shipped | #2535 → merged |
+     | ag-yy | … | 🔵 pending | #2540 → open |
+     | ag-zz | … | 🟡 next (P1) | — |
+     | ag-ww | … | 🔴 blocked (by ag-vv) | — |
+     ```
+     Sort: shipped → pending → next → blocked.
+
 3. **Status ball on the left edge of every status/priority cell (Fact 1).** Ball is the scan target. Enum: 🟢 shipped · 🔵 pending · 🟡 next (P\<n>) · 🔴 blocked (by …). Priority: 🔴 high · 🟡 medium · 🔵 low.
+   - Bad: `| ag-ww | … | blocked | — |`
+   - Good: `| ag-ww | … | 🔴 blocked (by ag-vv) | — |`
+
 4. **Options → `---` separators, one line each (Fact 1).** Each option/alternative separated by a horizontal rule with ONE line of rationale. Never bullet-soup or run-on prose.
+   - Bad:
+     ```
+     Options: we could add a policy (no FE change but leaves RPC open), or we could
+     strip the policy and add an RPC (proper fix but needs a frontend migration and
+     native rebuild), or we could…
+     ```
+   - Good:
+     ```
+     **Option A — add hotfix policy**
+     Unblocks users now, leaves RPC follow-up open.
+
+     ---
+
+     **Option B — strip policy + RPC migration**
+     Proper fix; needs frontend change + native rebuild.
+     ```
+
 5. **Structural comparison → ASCII diagram, not prose (Fact 1).** Data flow / RLS chain / deploy sequence / who-calls-what gets drawn with box chars, ≤80 chars wide, caveman inside boxes.
+   - Bad: "The client hits the edge function, which validates with Zod and then dispatches to the RPC layer, which writes to the audit log…"
+   - Good:
+     ```
+     client ──▶ /functions/v1/foo ──▶ alex.* (RPC) ──▶ public.alex_audit_log
+                                         │
+                                         └─ Zod validate ──▶ tool dispatcher
+     ```
+
 6. **Decisions → `/interview`, not raw AskUserQuestion (Fact 2).** Multi-faceted decision (which option + scope + timing) → surface row, render option block (rule 4) + diagram (rule 5), then invoke `/interview`. A single `AskUserQuestion` is allowed ONLY for a clean binary yes/no.
+   - Bad: fire one AskUserQuestion with "Merge PR #2535? yes/no" when the real decision is option-A-vs-B with scope and timing attached.
+   - Good: surface the row, render the option block (rule 4) + diagram (rule 5), then call `/interview`.
+
 7. **Caveman prose, exact terms, tables stay tables (Fact 6).** Drop hedging adverbs. `"22 blocked. Top 5 below."` not `"it looks like there might possibly be a few…"`.
+   - Bad: "I have gone ahead and checked all of the beads for you, and it looks like there might possibly be a few that could be blocked."
+   - Good: "22 blocked. Top 5 below."
+
 8. **Emojis carry status semantics only (Fact 1).** Allowed only where it encodes state: 🟢/🔵/🟡/🔴/⚫ balls, 🔴 on Inputs header, ✅/✘/⏳ in CI rollups. No decorative emoji.
+   - Bad: `### 🚀 Beads update! ✨`
+   - Good: `### Beads`
+
 9. **Cap every list (Fact 1).** Blocked beads → 5 + `_(+ N more 🔴 — see bd blocked)_`. Inputs → 10. Next → 5. Overflow gets noted, never dumped.
 
 ## Section order (fixed — 5 tables + optional decision block)
