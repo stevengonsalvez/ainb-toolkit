@@ -119,7 +119,7 @@ source ~/.secrets && python3 {{HOME_TOOL_DIR}}/skills/claude-langfuse/utils/insi
 | Category | Examples | Target Files |
 |----------|----------|--------------|
 | Code Style | Formatting, naming conventions | agents/code-reviewer.md |
-| Architecture | Design patterns, boundaries | agents/solution-architect.md |
+| Architecture | Design patterns, boundaries | agents/distinguished-engineer.md |
 | Process | Workflow, review practices | CLAUDE.md |
 | Tools | Preferred utilities, commands | agents/superstar-engineer.md |
 | Domain | Project-specific knowledge | Project CLAUDE.md |
