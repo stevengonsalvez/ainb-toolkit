@@ -43,6 +43,7 @@ components:
     - frontend-slides
     - gh-issue
     - git-history-surgery
+    - godmode
     - handover
     - health-check
     - implement
