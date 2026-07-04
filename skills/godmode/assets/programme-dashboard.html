@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{PROGRAMME_TITLE}} — godmode</title>
+<style>
+  :root{--bg:#0d1117;--panel:#161b22;--border:#30363d;--fg:#e6edf3;--dim:#8b949e;
+        --green:#3fb950;--amber:#d29922;--red:#f85149;--accent:#58a6ff}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,'Segoe UI',Roboto,sans-serif;padding:24px;max-width:1100px;margin:0 auto}
+  h1{font-size:1.5rem;margin-bottom:4px}
+  .meta{color:var(--dim);font-size:.85rem;margin-bottom:16px}
+  .phase{display:inline-block;background:var(--panel);border:1px solid var(--accent);border-radius:20px;padding:6px 16px;margin-bottom:16px;font-weight:600}
+  .note{background:var(--panel);border:1px solid var(--border);border-left:4px solid var(--accent);border-radius:6px;padding:12px 16px;margin-bottom:20px;font-size:.92rem}
+  .tabs{display:flex;gap:4px;border-bottom:1px solid var(--border);margin-bottom:16px;flex-wrap:wrap}
+  .tab{background:none;border:none;color:var(--dim);padding:8px 14px;cursor:pointer;font-size:.95rem;border-bottom:2px solid transparent}
+  .tab.active{color:var(--fg);border-bottom-color:var(--accent);font-weight:600}
+  .pane{display:none}.pane.active{display:block}
+  table{width:100%;border-collapse:collapse;margin-bottom:20px;font-size:.9rem}
+  th{text-align:left;color:var(--dim);font-weight:600;padding:6px 10px;border-bottom:1px solid var(--border)}
+  td{padding:6px 10px;border-bottom:1px solid var(--border);vertical-align:top}
+  code{background:var(--panel);border:1px solid var(--border);border-radius:4px;padding:1px 6px;font-size:.85em}
+  a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
+  .g{color:var(--green)}.a{color:var(--amber)}.r{color:var(--red)}
+  .scroll{overflow-x:auto}
+  .evidence img{max-width:100%;border:1px solid var(--border);border-radius:6px;margin:8px 0}
+</style>
+</head>
+<body>
+<h1>{{PROGRAMME_TITLE}}</h1>
+<div class="meta"><b>Last update</b> {{TIMESTAMP}} · charter: <code>{{CHARTER_PATH}}</code> · base: <code>{{BASE_BRANCH}}</code></div>
+<div class="phase"><b>PHASE</b> {{PHASE}}</div>
+<div class="note">{{CURRENT_NOTE}}<!-- one paragraph: what just happened, what runs now, what comes next --></div>
+
+<div class="tabs">
+  <button class="tab active" data-pane="overview">Overview</button>
+  <button class="tab" data-pane="epics">Epics</button>
+  <button class="tab" data-pane="features">Features</button>
+  <button class="tab" data-pane="testing">Testing</button>
+  <button class="tab" data-pane="commits">Commits</button>
+  <button class="tab" data-pane="evidence">Evidence</button>
+</div>
+
+<div id="overview" class="pane active">
+  <div class="scroll"><table>
+    <tr><th>Item</th><th>Status</th></tr>
+    <tr><td>Human gate</td><td>{{HUMAN_GATE_STATUS}}</td></tr>
+    <tr><td>Epics shipped</td><td>{{EPICS_SHIPPED}} / {{EPICS_TOTAL}}</td></tr>
+    <tr><td>Termination</td><td>{{TERMINATION_STATUS}}</td></tr>
+    <tr><td>Open PRs</td><td>{{OPEN_PR_LINKS}}</td></tr>
+    <tr><td>Stop-rule counters</td><td>{{STOP_RULE_COUNTERS}}</td></tr>
+  </table></div>
+</div>
+
+<div id="epics" class="pane">
+  <div class="scroll"><table>
+    <tr><th>Epic</th><th>Status / detail</th><th>Size</th></tr>
+    <!-- 🟢 SHIPPED (PR link) · 🟡 in stage · 🔴 blocked · one row per epic.
+         If an epic's detail outgrows this table, split to <slug>-eNN.html and link it here. -->
+    <tr><td>{{E0 name}} 🟢</td><td>{{PR link · validation summary}}</td><td>{{S/M/L}}</td></tr>
+  </table></div>
+</div>
+
+<div id="features" class="pane">
+  <div class="scroll"><table>
+    <tr><th>Feature</th><th>Court verdict</th><th>Epic</th><th>RAG</th></tr>
+    <tr><td>{{F01 name}}</td><td>{{ship-able | downgraded: why | parked: blocker}}</td><td>{{E2}}</td><td>{{🟢🟡🔴⚪}}</td></tr>
+  </table></div>
+</div>
+
+<div id="testing" class="pane">
+  <div class="scroll"><table>
+    <tr><th>Suite</th><th>Last run</th><th>Result</th></tr>
+    <tr><td>{{suite name}}</td><td>{{date}}</td><td>{{🟢 12/12}}</td></tr>
+  </table></div>
+</div>
+
+<div id="commits" class="pane">
+  <div class="scroll"><table>
+    <tr><th>SHA</th><th>Message</th></tr>
+    <!-- EVERY commit, newest first, epic-tagged -->
+    <tr><td><code>{{sha}}</code></td><td>{{message}} <i>({{epic}})</i></td></tr>
+  </table></div>
+</div>
+
+<div id="evidence" class="pane evidence">
+  <!-- Per epic: links/embeds to here.now-hosted artifacts (GIFs, videos,
+       frames, suite transcripts, DB probe results). PR bodies link the same URLs. -->
+  <h3>{{Epic}}</h3>
+  <p><a href="{{here.now url}}">{{artifact name}}</a> — {{one-line what it proves}}</p>
+</div>
+
+<script>
+document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => {
+  document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+  document.querySelectorAll('.pane').forEach(x => x.classList.remove('active'));
+  t.classList.add('active');
+  document.getElementById(t.dataset.pane).classList.add('active');
+}));
+</script>
+</body>
+</html>
