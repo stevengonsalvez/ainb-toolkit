@@ -705,6 +705,9 @@ When health reaches 🟡, proactively:
 
 5.⁠ ⁠*Commit Hygiene*:
    - **ALWAYS commit via the `/commit` skill, NEVER raw `git commit` ad-hoc.** The skill runs the pre-commit cleanup (env files, debug scripts, stray docs, skill-output scratch under `.agents/{goals,plans,research,scratch,handover}/`), enforces atomic single-concern staging by named paths (never `git add -A` / `git add .`), and applies the rules below in a checklist. Running `git commit` directly skips all of that and is how skill scratch ends up in PRs.
+   - **ALWAYS sign every commit** (`git commit -S`, or `commit.gpgsign=true`). NEVER skip signing — do not pass `--no-gpg-sign`, disable `commit.gpgsign`, or otherwise produce an unsigned commit — unless the user explicitly confirms skipping for that commit. If signing fails (missing/locked key, no agent), stop and surface the error; do not silently fall back to an unsigned commit.
+   - **ALWAYS sign every commit** (`git commit -S`, or `commit.gpgsign=true`). NEVER skip signing — do not pass `--no-gpg-sign`, disable `commit.gpgsign`, or otherwise produce an unsigned commit — unless the user explicitly confirms skipping for that commit. If signing fails (missing/locked key, no agent), stop and surface the error; do not silently fall back to an unsigned commit.
+   - **ALWAYS sign every commit** (`git commit -S`, or `commit.gpgsign=true`). NEVER skip signing — do not pass `--no-gpg-sign`, disable `commit.gpgsign`, or otherwise produce an unsigned commit — unless the user explicitly confirms skipping for that commit. If signing fails (missing/locked key, no agent), stop and surface the error; do not silently fall back to an unsigned commit.
    - Never mention Claude, AI, or assistance in commit messages
    - Write commits as if authored by a human developer
    - Follow conventional commit format without attribution
