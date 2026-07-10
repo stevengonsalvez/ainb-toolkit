@@ -147,6 +147,8 @@ the shared `general-rules/` also live at the repo root.
 <summary><b>Multi-agent / Swarm</b> (7)</summary>
 
 `swarm-create` · `swarm-join` · `swarm-status` · `swarm-inbox` · `swarm-shutdown` · `swarm-orchestration` · `swarm-agent-troubleshooting`
+
+> Read more: [Progressive subagents](https://stevengonsalvez.com/tools-tips/progressive-subagents) — chaining agents without blowing the context budget.
 </details>
 
 <details>
@@ -171,6 +173,8 @@ the shared `general-rules/` also live at the repo root.
 <summary><b>Dev infra & tooling</b> (12)</summary>
 
 `tmux-monitor` · `tmux-status` · `start-local` · `start-ios` · `start-android` · `expose` · `plugins` · `oracle` · `debug-bridge` · `media-processing` · `standup` · `tmux-message`
+
+> Read more: [oracle](https://stevengonsalvez.com/tools-tips/oracle) — reaching for a second-opinion reasoning pass mid-task.
 </details>
 
 <details>
@@ -195,6 +199,8 @@ the shared `general-rules/` also live at the repo root.
 <summary><b>Meta / autonomous patterns</b> (5)</summary>
 
 `autonomous-loops` · `agent-ops` · `cost-aware-pipeline` · `scrapling-official` · `fireworks-tech-graph`
+
+> Read more: [The Token Optimisation Playbook](https://stevengonsalvez.com/blog/token-optimisation-playbook) and [Token Optimisation 101](https://stevengonsalvez.com/tools-tips/token-optimisation-101) — the thinking behind `cost-aware-pipeline` and the token/burndown skills.
 </details>
 
 ---
@@ -215,6 +221,8 @@ tool's home dir. Sections in the manifest:
 | `mcp-servers` | `claude mcp add` (user scope) | `~/.claude.json` |
 | `mcporter-servers` | `mcporter.json` | `~/.mcporter/` |
 | `marketplaces` | `claude plugin marketplace add` | Claude plugin cache |
+
+> On why we lean on `mcporter` rather than piling on raw MCP servers, see [Why MCP is mostly the wrong abstraction](https://stevengonsalvez.com/blog/death-of-mcp).
 
 ### Key manifest flags
 
