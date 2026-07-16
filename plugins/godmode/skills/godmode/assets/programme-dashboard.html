@@ -30,8 +30,9 @@
 <body>
 <h1>{{PROGRAMME_TITLE}}</h1>
 <div class="meta"><b>Last update</b> {{TIMESTAMP}} · charter: <code>{{CHARTER_PATH}}</code> · base: <code>{{BASE_BRANCH}}</code></div>
+{{PENDING_BANNER}}
 <div class="phase"><b>PHASE</b> {{PHASE}}</div>
-<div class="note">{{CURRENT_NOTE}}<!-- one paragraph: what just happened, what runs now, what comes next --></div>
+<div class="note">{{CURRENT_NOTE}}</div>
 
 <div class="tabs">
   <button class="tab active" data-pane="overview">Overview</button>
@@ -56,39 +57,49 @@
 <div id="epics" class="pane">
   <div class="scroll"><table>
     <tr><th>Epic</th><th>Status / detail</th><th>Size</th></tr>
-    <!-- 🟢 SHIPPED (PR link) · 🟡 in stage · 🔴 blocked · one row per epic.
-         If an epic's detail outgrows this table, split to <slug>-eNN.html and link it here. -->
-    <tr><td>{{E0 name}} 🟢</td><td>{{PR link · validation summary}}</td><td>{{S/M/L}}</td></tr>
+    <!-- row:epic
+    <tr><td>{name} {emoji}</td><td>{detail}</td><td>{size}</td></tr>
+    -->
+    <!-- rows:epic -->
   </table></div>
 </div>
 
 <div id="features" class="pane">
   <div class="scroll"><table>
     <tr><th>Feature</th><th>Court verdict</th><th>Epic</th><th>RAG</th></tr>
-    <tr><td>{{F01 name}}</td><td>{{ship-able | downgraded: why | parked: blocker}}</td><td>{{E2}}</td><td>{{🟢🟡🔴⚪}}</td></tr>
+    <!-- row:feature
+    <tr><td>{name}</td><td>{verdict}</td><td>{epic}</td><td>{rag}</td></tr>
+    -->
+    <!-- rows:feature -->
   </table></div>
 </div>
 
 <div id="testing" class="pane">
   <div class="scroll"><table>
     <tr><th>Suite</th><th>Last run</th><th>Result</th></tr>
-    <tr><td>{{suite name}}</td><td>{{date}}</td><td>{{🟢 12/12}}</td></tr>
+    <!-- row:testing
+    <tr><td>{suite}</td><td>{date}</td><td>{result}</td></tr>
+    -->
+    <!-- rows:testing -->
   </table></div>
 </div>
 
 <div id="commits" class="pane">
   <div class="scroll"><table>
     <tr><th>SHA</th><th>Message</th></tr>
-    <!-- EVERY commit, newest first, epic-tagged -->
-    <tr><td><code>{{sha}}</code></td><td>{{message}} <i>({{epic}})</i></td></tr>
+    <!-- row:commit
+    <tr><td><code>{sha}</code></td><td>{message}</td></tr>
+    -->
+    <!-- rows:commit -->
   </table></div>
 </div>
 
 <div id="evidence" class="pane evidence">
-  <!-- Per epic: links/embeds to here.now-hosted artifacts (GIFs, videos,
-       frames, suite transcripts, DB probe results). PR bodies link the same URLs. -->
-  <h3>{{Epic}}</h3>
-  <p><a href="{{here.now url}}">{{artifact name}}</a> — {{one-line what it proves}}</p>
+  <!-- row:evidence
+  <h3>{epic}</h3>
+  <p><a href="{url}">{name}</a> : {proves}</p>
+  -->
+  <!-- rows:evidence -->
 </div>
 
 <script>
