@@ -38,7 +38,19 @@ cd "$TOOLKIT_REPO"
 git fetch origin   # compare against origin/main, not just local HEAD
 ```
 
-TO_REPO commits land in THIS repo. The `{{HOME_TOOL_DIR}}/` side is NOT a git repo. Ship via branch → PR → merge on `main`, then redeploy: `node "$TOOLKIT_REPO/bootstrap.js"`.
+TO_REPO commits land in THIS repo. The `{{HOME_TOOL_DIR}}/` side is NOT a git repo — with ONE exception: own-marketplace plugin clones (see Step 0b). Ship via branch → PR → merge on `main`, then redeploy: `node "$TOOLKIT_REPO/bootstrap.js"`.
+
+### Step 0b — Own-plugin git flow (v2)
+
+Skills that migrated into `plugins/<name>/` (manifest flag `own-plugin: true`, e.g. godmode) do NOT sync by copy-diff. Their deployed copies are git artifacts:
+
+```bash
+bash "$TOOLKIT_REPO/skills/sync-learnings/scripts/own-plugin-sync.sh"
+```
+
+The script resolves own marketplaces from `~/.claude/plugins/known_marketplaces.json` `installLocation` (covers BOTH github-cloned marketplaces under `plugins/marketplaces/` AND directory-source local-path installs, which never get a clone dir), then diffs the installed CACHE copy (`~/.claude/plugins/cache/<mkt>/<name>/<ver>/`) against the marketplace clone HEAD — in-session hot-fixes land in the cache and are DESTROYED by the next `claude plugin update` unless surfaced here.
+
+For candidates it emits: edit in the marketplace clone (own code, own repo), then `git add plugins/<name>/ && git commit && git push` (or branch → PR per this skill's conventions), then `claude plugin update <name>@ainb-toolkit` on other machines. Bump the plugin version per the godmode version policy (all provider manifests move together).
 
 ## Runbook
 
@@ -93,6 +105,14 @@ A skill appearing in `external-dependencies.yaml` does NOT mean "don't sync". Th
 
 Discriminator = **`path:` → bundled → sync** vs **`repo:`/`multi-subpath:` → cloned → skip**. `source:` is provenance ONLY, never an exclusion marker (e.g. `media-processing` has both `source:` and `path:` — it IS bundled and DOES sync). Before dropping a skill that exists in BOTH `~/.claude` and repo `skills/`, grep its manifest entry: if it has `path:`, sync it.
 
+### Category 5c — own plugins: never copy-diff, always git flow
+
+| Manifest shape | Meaning | Sync? |
+|----------------|---------|-------|
+| `claude-plugins:` with `own-plugin: true` | source of truth in THIS repo under `plugins/<name>/`; deployed via `claude plugin install`, not bootstrap | NO copy-diff — git flow via Step 0b (`own-plugin-sync.sh`) |
+
+A lingering `~/.claude/skills/<name>` copy of an own-plugin skill is a MIGRATION LEFTOVER, not a sync candidate: bootstrap removes it when pristine and backs it up (`.godmode.pre-plugin-backup-<date>/`) when locally edited. Reconcile backups by porting their edits into `plugins/<name>/` in the repo, then delete the backup.
+
 ## Step 2 — Reverse scan (orphan detection)
 
 Enumerate `{{HOME_TOOL_DIR}}/` items not owned by this repo, surface ONLY genuine orphans. Internal set = `skills/*/` (dirs) ∪ `agents/**/*.md`. The **reflect** plugin sub-skills (`reflect`, `recall`, `consolidate`, `ingest`, `reflect-status`) live in agents-in-a-box `plugins/reflect/`, deploy via that plugin → treat as external (in `REFLECT_SUBSKILLS`).
@@ -105,6 +125,9 @@ REFLECT_SUBSKILLS=$'reflect\nrecall\nconsolidate\ningest\nreflect-status'
 internal_skills=$(
   {
     find skills -mindepth 1 -maxdepth 1 -type d -exec basename {} \;
+    # own-plugin sub-skills (plugins/<name>/skills/*) are internal too:
+    # catalog.yaml components.plugins mirrors this on regen
+    find plugins -mindepth 3 -maxdepth 3 -path 'plugins/*/skills/*' -type d -exec basename {} \; 2>/dev/null
     echo "$REFLECT_SUBSKILLS"
   } | sort -u
 )
