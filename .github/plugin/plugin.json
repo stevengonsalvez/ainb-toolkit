@@ -1,0 +1,16 @@
+{
+  "name": "godmode",
+  "description": "Godmode status + sync parity for Copilot CLI",
+  "version": "0.1.0",
+  "author": {
+    "name": "Steven Gonsalvez",
+    "url": "https://github.com/stevengonsalvez"
+  },
+  "homepage": "https://github.com/stevengonsalvez/ainb-toolkit",
+  "repository": "https://github.com/stevengonsalvez/ainb-toolkit",
+  "license": "Apache-2.0",
+  "keywords": ["orchestration", "automation", "godmode"],
+  "commands": "plugins/godmode/commands/",
+  "skills": "plugins/godmode/skills/",
+  "hooks": "plugins/godmode/hooks/copilot-hooks.json"
+}

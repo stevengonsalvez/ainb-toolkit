@@ -1,0 +1,18 @@
+{
+  "name": "ainb-toolkit",
+  "description": "Plugins from the ainb-toolkit: agent orchestration and delivery machinery",
+  "owner": {
+    "name": "Steven Gonsalvez",
+    "url": "https://github.com/stevengonsalvez"
+  },
+  "plugins": [
+    {
+      "name": "godmode",
+      "description": "Godmode status + sync parity for Copilot CLI (driving the loop is Claude-only)",
+      "tags": ["orchestration", "automation"],
+      "commands": "plugins/godmode/commands/",
+      "skills": "plugins/godmode/skills/",
+      "hooks": "plugins/godmode/hooks/copilot-hooks.json"
+    }
+  ]
+}
