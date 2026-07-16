@@ -334,6 +334,18 @@ agent-skills:
 # =============================================================================
 # Installed via `claude plugin install`. Tracked in ~/.claude/plugins/
 claude-plugins:
+  - name: godmode
+    own-plugin: true  # source of truth is THIS repo; setup-external.sh must NOT copy its skills flat
+    marketplace: stevengonsalvez/ainb-toolkit
+    marketplace_id: ainb-toolkit
+    in-repo-marketplace: ".claude-plugin/marketplace.json at repo root"
+    plugin-source: "plugins/godmode/.claude-plugin/plugin.json"
+    install: |
+      claude plugin marketplace add stevengonsalvez/ainb-toolkit
+      claude plugin install godmode@ainb-toolkit
+    purpose: "Autonomous product factory (own plugin; hook-enforced status, sidecar sync, single-driver lease)"
+    has_skills: true
+
   - name: beads
     marketplace: steveyegge/beads
     marketplace_id: beads-marketplace
