@@ -77,7 +77,7 @@ worktrees available; otherwise serialise (single worktree = single checkout).
    `references/state-and-beads.md`).
 4. Copy `assets/programme-dashboard.html` → `explainers/<slug>.html`, fill
    the `{{...}}` placeholders, publish:
-   `bash {{HOME_TOOL_DIR}}/skills/here-now/scripts/publish.sh explainers/<slug>.html
+   `bash $HOME/.claude/skills/here-now/scripts/publish.sh explainers/<slug>.html
    --slug <slug> --api-key <here.now token from the user's memory/keychain>`
    (stable slug; password-protect if the project demands; ADD an entry to the
    existing root index — never create a new index). Publish failure never
