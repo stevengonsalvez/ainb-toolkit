@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "type": "command",
+        "bash": "\"${PLUGIN_ROOT}/scripts/sync.sh\" pull || exit 0",
+        "powershell": "exit 0",
+        "timeoutSec": 15
+      }
+    ],
+    "userPromptSubmitted": [
+      {
+        "type": "command",
+        "bash": "\"${PLUGIN_ROOT}/scripts/staleness-note.sh\"",
+        "powershell": "exit 0",
+        "timeoutSec": 5
+      }
+    ]
+  }
+}
