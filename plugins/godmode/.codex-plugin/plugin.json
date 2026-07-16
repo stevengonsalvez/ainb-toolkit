@@ -1,6 +1,6 @@
 {
   "name": "godmode",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Godmode status + sync parity for Codex (driving the loop is Claude-only)",
   "author": {
     "name": "Steven Gonsalvez",
@@ -9,13 +9,22 @@
   "homepage": "https://github.com/stevengonsalvez/ainb-toolkit",
   "repository": "https://github.com/stevengonsalvez/ainb-toolkit",
   "license": "Apache-2.0",
-  "keywords": ["orchestration", "automation", "godmode"],
+  "keywords": [
+    "orchestration",
+    "automation",
+    "godmode"
+  ],
   "skills": "./skills/",
   "interface": {
     "displayName": "Godmode",
     "shortDescription": "Programme status, dashboard publish, cross-machine sync",
     "category": "orchestration",
-    "capabilities": ["Instructions", "Lifecycle hooks"],
-    "defaultPrompt": ["/godmode status"]
+    "capabilities": [
+      "Instructions",
+      "Lifecycle hooks"
+    ],
+    "defaultPrompt": [
+      "/godmode status"
+    ]
   }
 }

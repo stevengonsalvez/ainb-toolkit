@@ -1,6 +1,6 @@
 {
   "name": "godmode",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Autonomous product factory with hook-enforced status and cross-machine sync",
   "author": {
     "name": "Steven Gonsalvez",
