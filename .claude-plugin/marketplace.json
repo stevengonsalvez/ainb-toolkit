@@ -1,0 +1,17 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "ainb-toolkit",
+  "description": "Plugins from the ainb-toolkit: agent orchestration and delivery machinery",
+  "owner": {
+    "name": "Steven Gonsalvez",
+    "url": "https://github.com/stevengonsalvez"
+  },
+  "plugins": [
+    {
+      "name": "godmode",
+      "source": "./plugins/godmode",
+      "description": "Autonomous product factory: hook-enforced status, beads-synced cross-machine state, single-driver lease",
+      "category": "orchestration"
+    }
+  ]
+}
