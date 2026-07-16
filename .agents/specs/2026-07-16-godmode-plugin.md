@@ -201,6 +201,16 @@ Edge cases:
 - Degraded non-Claude drive loop (Codex/Copilot stay status + sync parity; run refuses)
 - Dashboard visual redesign (existing programme-dashboard.html carries over)
 
+## Amendments (post-critique, 2026-07-16)
+
+Adversarial review (29-agent workflow, 20 confirmed findings) hardened the design; verdict CAUTION with conditions, all folded into `plans/godmode-plugin.md`:
+
+- [A1] Sync transport: sidecar moves from origin/main to dedicated ref `refs/godmode/<slug>`, ONE commit per sync. Why: protected-main lease split-brain, per-tick heartbeat commits polluting main, CI-on-main triggers. Beads stay on main as today. No epic-branch fallback for the sidecar, ever (lease must live where pulls read); unpushable ref = fail closed, sync disabled visibly.
+- [A2] Lease identity: machine + user + SESSION token, full-identity compare. Two sessions on one host contend like two machines.
+- [A3] Observer model: `/godmode status` never reconstructs local run state (reads sync cache); only `/godmode run` (claim or confirmed --take-over) adopts. SessionStart hook stays local-inert; fresh-machine discovery via `git ls-remote 'refs/godmode/*'` in the command layer. Supersedes the architecture diagram arrow "SessionStart pulls other machine's run state".
+- [A4] state.json additions: `driver_session_id`, `phase_since`, `current_note`. state.json writes are Write/Edit-tool-only (hooks key on PostToolUse); Stop-hook heartbeat backstop covers quiet ticks and Bash slips. Every mutating push is lease-holder-gated; lost lease surfaces to the model (exit 2), never a silent marker.
+- [A5] Single-machine runs: `GODMODE_SYNC=local` disables remote sync entirely; the one-system case pays zero push cost and loses nothing except cross-machine resume.
+
 ## Open questions for /plan
 
 - [ ] Explainer stamp mechanism: exact location + shape (e.g. .agents/scratch/<slug>-explainer.<phase>.stamp) and how the Stop hook detects "phase flipped this session"
