@@ -1,0 +1,20 @@
+{
+  "phase": "E01_EXECUTE",
+  "current_epic": "e01-core",
+  "branch": "e01-core",
+  "running_task": null,
+  "running_run_id": null,
+  "human_gate": "blessed",
+  "driver_session_id": "sess-driver-1",
+  "phase_since": "2026-07-16T17:00:00Z",
+  "current_note": "building core stats module",
+  "epics": { "e00": "SHIPPED_PR1", "e01": "EXECUTING" },
+  "termination": {
+    "backlog_dry": true,
+    "budget_tokens": null,
+    "deadline": null,
+    "spent_tokens_estimate": 12345
+  },
+  "dashboard_slug": "godmode-test-slug",
+  "stop_counters": { "stage_errors": {}, "epic_validation_fails": {} }
+}

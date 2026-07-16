@@ -1,0 +1,13 @@
+{
+  "session_id": "sess-driver-1",
+  "hook_event_name": "PostToolUse",
+  "tool_name": "Write",
+  "tool_input": {
+    "file_path": "/tmp/fixture-repo/.agents/scratch/godmode-test-slug-state.json",
+    "content": "{}"
+  },
+  "tool_output": {
+    "success": true,
+    "file_path": "/tmp/fixture-repo/.agents/scratch/godmode-test-slug-state.json"
+  }
+}

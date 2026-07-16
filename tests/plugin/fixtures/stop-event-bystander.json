@@ -1,0 +1,9 @@
+{
+  "session_id": "sess-bystander-9",
+  "prompt_id": "prompt-3",
+  "transcript_path": "/tmp/fixture-transcript.jsonl",
+  "cwd": "/tmp/fixture-repo",
+  "permission_mode": "default",
+  "hook_event_name": "Stop",
+  "last_assistant_message": "unrelated work in same worktree"
+}
