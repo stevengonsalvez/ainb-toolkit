@@ -1425,14 +1425,21 @@ async function handlePackagesStructureCopy(tool, config, overrideHomeDir = null,
                         }
                         scriptLines.push('');
                         for (const p of claudePlugins) {
-                            scriptLines.push(`claude plugin install ${p.name}`);
+                            // Scoped install: bare `plugin install <name>` is ambiguous across
+                            // many registered marketplaces; update refreshes already-installed
+                            // machines (install alone no-ops when present).
+                            const mktId = p.marketplace_id || `${p.name}-marketplace`;
+                            scriptLines.push(`claude plugin install ${p.name}@${mktId} || true`);
+                            scriptLines.push(`claude plugin update ${p.name}@${mktId} || true`);
                         }
                         scriptLines.push('');
                         // Copy plugin skills into ~/.claude/skills/ so they're discoverable as slash commands
                         // Plugin installs put skills in ~/.claude/plugins/cache/<marketplace_id>/<name>/<version>/skills/
-                        // but Claude Code only looks in ~/.claude/skills/ for user-invocable skills
+                        // but Claude Code only looks in ~/.claude/skills/ for user-invocable skills.
+                        // Own plugins (own-plugin: true) are exempt: their skills live ONLY in the
+                        // plugin install; a flat copy would resurrect the pre-plugin sync drift.
                         scriptLines.push('echo "Copying plugin skills to skills directory..."');
-                        for (const p of claudePlugins) {
+                        for (const p of claudePlugins.filter(x => !x['own-plugin'])) {
                             const marketplaceId = p.marketplace_id || `${p.name}-marketplace`;
                             scriptLines.push(`for skill_dir in "\${HOME}/.claude/plugins/cache/${marketplaceId}/${p.name}"/*/skills/*/; do`);
                             scriptLines.push(`  if [ -d "$skill_dir" ] && [ -f "$skill_dir/SKILL.md" ]; then`);
@@ -1683,6 +1690,54 @@ async function handlePackagesStructureCopy(tool, config, overrideHomeDir = null,
         if (fs.existsSync(staleDir)) {
             fs.rmSync(staleDir, { recursive: true });
             console.log(`  Removed deprecated ${path.basename(staleDir)}/ directory`);
+        }
+    }
+
+    // Skills migrated into first-class plugins (plugins/<name>/skills/<name>).
+    // Bootstrap no longer syncs them; stale home copies are removed when
+    // pristine. Diff-gated: a locally edited copy may hold unsynced /reflect
+    // learnings and is preserved as a backup, NEVER deleted.
+    const MIGRATED_TO_PLUGINS = ['godmode'];
+    const normalizeForDiff = (content) => content
+        .split(os.homedir()).join('$HOME')
+        .replace(/\r\n/g, '\n')
+        .split('\n').map(l => l.replace(/\s+$/, '')).join('\n')
+        .replace(/\n+$/, '');
+    const listFilesRecursive = (dir, base = dir) => {
+        const out = [];
+        for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+            const p = path.join(dir, e.name);
+            if (e.isDirectory()) out.push(...listFilesRecursive(p, base));
+            else out.push(path.relative(base, p));
+        }
+        return out.sort();
+    };
+    const dirsContentIdentical = (a, b) => {
+        const fa = listFilesRecursive(a);
+        if (fa.join('\n') !== listFilesRecursive(b).join('\n')) return false;
+        return fa.every(rel =>
+            normalizeForDiff(fs.readFileSync(path.join(a, rel), 'utf8')) ===
+            normalizeForDiff(fs.readFileSync(path.join(b, rel), 'utf8')));
+    };
+    for (const migrated of MIGRATED_TO_PLUGINS) {
+        const staleSkillDir = path.join(destDir, 'skills', migrated);
+        if (!fs.existsSync(staleSkillDir)) continue;
+        const pluginCopy = path.join(__dirname, 'plugins', migrated, 'skills', migrated);
+        let identical = false;
+        try {
+            identical = fs.existsSync(pluginCopy) && dirsContentIdentical(staleSkillDir, pluginCopy);
+        } catch (e) {
+            identical = false;
+        }
+        if (identical) {
+            fs.rmSync(staleSkillDir, { recursive: true });
+            console.log(`  Removed stale skills/${migrated}/ (migrated to plugins/${migrated}; content pristine)`);
+        } else {
+            const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+            const backupDir = path.join(destDir, 'skills', `.${migrated}.pre-plugin-backup-${stamp}`);
+            fs.rmSync(backupDir, { recursive: true, force: true });
+            fs.renameSync(staleSkillDir, backupDir);
+            console.log(`  ⚠ skills/${migrated}/ has local edits: preserved at ${backupDir}; reconcile via /sync-learnings v2`);
         }
     }
 
