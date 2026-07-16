@@ -67,3 +67,9 @@ machine's institutional memory — future adversarial prompts should cite it).
 - **Workflow results can truncate** — the full return lives in the task output
   file, per-agent detail in the run's `journal.jsonl`. Read those before
   diagnosing an "empty" stage.
+- **Lease pushes never replay.** A rejected lease push means the CAS was lost,
+  not "refetch and try the same write again"; blind replay would defeat the
+  lock. State/charter may retry once, only after re-verifying the holder.
+- **Explainer receipts are the only publish proof.** The domain publisher
+  writes zero local state on success; godmode publishes phase explainers ONLY
+  through explainer-publish.sh so the Stop gate has a receipt to check.
