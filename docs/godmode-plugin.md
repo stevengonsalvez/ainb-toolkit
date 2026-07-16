@@ -1,0 +1,102 @@
+# godmode plugin
+
+The autonomous product factory, packaged as the first plugin of the
+ainb-toolkit in-repo marketplace. Three things the plugin adds over the old
+bootstrap-synced skill: hooks OWN the status surface (unskippable), run state
+syncs across machines on a dedicated git ref, and a single-driver lease stops
+two sessions driving one programme.
+
+## Install
+
+| Provider | Command |
+|---|---|
+| Claude Code | `claude plugin marketplace add stevengonsalvez/ainb-toolkit && claude plugin install godmode@ainb-toolkit` |
+| Codex | `.codex-plugin/` adapter; shares `hooks/hooks.json` by path convention |
+| Copilot CLI | `.github/plugin/` manifests + `hooks/copilot-hooks.json` (sessionStart pull + staleness nudge only; subdir paths unverified against Copilot CLI, fall back to manual hook registration if install rejects them) |
+
+Driving the loop (`init`/`run`) is Claude-only; Codex/Copilot get status +
+sync parity and refuse `run` with a status printout.
+
+## Prerequisites (per machine)
+
+- `git`, `jq`, `python3`, `bd` (beads)
+- Publishing: `~/.claude/skills/here-now/` and `~/.claude/skills/explain-to-me/`
+  (bootstrap-synced sibling skills) and `~/.herenow/credentials` (0600).
+  Missing pieces DEGRADE VISIBLY: `/godmode status` preflight prints
+  "status publishing DISABLED: missing <X>"; the pipeline writes a pending
+  marker and the dashboard shows a staleness banner.
+- After merging a change that migrates a skill to a plugin, run
+  `node bootstrap.js` once per machine: pristine stale copies of
+  `~/.claude/skills/godmode` are removed, locally edited ones are preserved at
+  `~/.claude/skills/.godmode.pre-plugin-backup-<date>/` (reconcile via
+  /sync-learnings v2, then delete the backup).
+
+## Hook inventory
+
+| Event | Script | Does |
+|---|---|---|
+| SessionStart (startup/resume/compact) | `sync.sh pull` | refresh sidecar cache; inert (<50 ms) without a local programme |
+| PostToolUse (Write\|Edit) | `on-state-write.sh` | on state.json writes: render dashboard, publish, sidecar push; pending marker on failure; exit 2 ONLY on lease loss |
+| Stop | `explainer-gate.sh` | block the DRIVER session when a transition phase lacks its explainer receipt (subagents/bystanders exempt; fail-open on infra errors) |
+| Stop | `sync.sh push --if-active` | heartbeat backstop (quiet ticks, Bash-written state) |
+| PreCompact | `sync.sh push --if-active` | pre-compaction insurance push |
+
+## Sidecar + lease
+
+```
+origin
+└─ refs/godmode/<slug>          ← dedicated ref, never a branch
+   └─ one commit per sync: state.json (durable subset) + charter.md + lease.json
+
+[unclaimed] ──run──▶ [held: machine/user/session]
+                        │ heartbeat rides each sync commit (debounced)
+                        ▼
+        heartbeat older than GODMODE_LEASE_TTL (1800 s)?
+          │ yes: other machine auto-claims       │ no: claim refused
+          ▼                                      ▼
+       [held: B]                    run --take-over: confirm, claim, adopt
+```
+
+- CAS = push rejection, classified: protected/declined refs fail CLOSED
+  ("cross-machine sync disabled", exit 6); non-fast-forward = raced (exit 3).
+  Lease pushes never blind-replay.
+- Observers are structurally read-only: `/godmode status` reads the sync cache
+  and never creates scratch state, so observer machines cannot push.
+- `GODMODE_SYNC=local` disables all remote sync (single-machine mode: zero
+  push cost, everything else works).
+
+## Machine-B runbook
+
+```bash
+/godmode status            # discover programmes (git ls-remote refs/godmode/*),
+                           # report state + lease holder; read-only
+/godmode run               # auto-claims only if the lease is STALE
+/godmode run --take-over   # confirm, force-claim, sync.sh adopt <slug>
+```
+
+## Version policy (observed, not assumed)
+
+`claude plugin update` compares VERSIONS: same version = "already at latest",
+content is NOT delivered (observed 2026-07-16 on Claude Code 2.1.211); a patch
+bump delivers a fresh cache dir. Therefore: ANY change under
+`plugins/godmode/**` bumps at least the patch version, and all three provider
+manifests (`plugins/godmode/.claude-plugin/`, `plugins/godmode/.codex-plugin/`,
+`.github/plugin/`) carry the SAME version (bats-enforced:
+`tests/plugin/manifests.bats`).
+
+## Troubleshooting
+
+| Symptom | Meaning | Fix |
+|---|---|---|
+| `<slug>-publish.pending` exists / dashboard banner | publish or sync infra failing | fix creds/network; next state write retries and clears it |
+| `<slug>-lease-lost` marker / exit-2 hook message | another session took the lease | post handoff note, stop re-arming; `--take-over` to reclaim |
+| "cross-machine sync disabled" | remote rejects `refs/godmode/*` | unprotect the ref namespace or run `GODMODE_SYNC=local` |
+| `.godmode.pre-plugin-backup-<date>/` in skills dir | migration found local edits | port edits into `plugins/godmode/`, push, delete backup |
+| stop blocked with "shipped without its explainer" | phase flipped, no receipt | publish via `${CLAUDE_PLUGIN_ROOT}/scripts/explainer-publish.sh` (writes the receipt) |
+
+## Tests
+
+```bash
+npm run test:plugin        # 40 bats cases: render/sidecar/lease/gate/manifests
+npm run test:plugin:e2e    # sandbox-HOME marketplace install, drives installed hooks
+```
