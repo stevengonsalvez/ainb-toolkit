@@ -43,7 +43,6 @@ components:
     - frontend-slides
     - gh-issue
     - git-history-surgery
-    - godmode
     - handover
     - health-check
     - implement
@@ -110,6 +109,11 @@ components:
     - validate
     - webapp-testing
     - workflow
+
+  plugins:
+    - name: godmode
+      skills:
+        - godmode
 
   workflows:
     - name: single-agent
