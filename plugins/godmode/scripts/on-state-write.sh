@@ -30,6 +30,21 @@ mark() { # step, error
     '{step:$step, error:$err, ts:$ts}' > "$PENDING" 2>/dev/null || true
 }
 
+# ---- driver_session_id backfill (first writer wins) ----
+# The model cannot know its own session_id; this hook does. The session that
+# writes programme state IS the driver; record it so the Stop gate can scope.
+DRIVER_CUR="$(jq -r '.driver_session_id // empty' "$STATE" 2>/dev/null || true)"
+if [ -z "$DRIVER_CUR" ] || [ "$DRIVER_CUR" = "null" ]; then
+  if [ -n "$SESSION_ID" ]; then
+    TMPS="$(mktemp)"
+    if jq --arg s "$SESSION_ID" '.driver_session_id = $s' "$STATE" > "$TMPS" 2>/dev/null; then
+      mv "$TMPS" "$STATE"
+    else
+      rm -f "$TMPS"
+    fi
+  fi
+fi
+
 # ---- render (deterministic, local) ----
 OUT_HTML="$REPO/explainers/$SLUG.html"
 PENDING_ARG=()
@@ -43,12 +58,30 @@ if ! ERR="$(python3 "$SCRIPT_DIR/render_dashboard.py" \
 fi
 
 # ---- publish (here.now; override for tests via GODMODE_PUBLISH_CMD) ----
+# here.now semantics: --slug can only UPDATE an existing publish; creates get a
+# server-assigned slug. First successful create's slug is remembered in the
+# site file and reused for every update after.
 WEB_SLUG="$(jq -r '.dashboard_slug // empty' "$STATE" 2>/dev/null || true)"
+SITE_FILE="$SCRATCH/$SLUG-dashboard-site"
 PUB="${GODMODE_PUBLISH_CMD:-$HOME/.claude/skills/here-now/scripts/publish.sh}"
 if [ -n "$WEB_SLUG" ]; then
   if [ -x "$PUB" ] || command -v "$PUB" >/dev/null 2>&1; then
-    if ERR="$("$PUB" "$OUT_HTML" --slug "$WEB_SLUG" 2>&1)"; then
+    TARGET_SLUG="$WEB_SLUG"
+    [ -f "$SITE_FILE" ] && TARGET_SLUG="$(cat "$SITE_FILE")"
+    if ERR="$("$PUB" "$OUT_HTML" --slug "$TARGET_SLUG" 2>&1)"; then
+      printf '%s' "$TARGET_SLUG" > "$SITE_FILE" 2>/dev/null || true
       rm -f "$PENDING" 2>/dev/null || true
+    elif printf '%s' "$ERR" | grep -qi 'not found'; then
+      # slug never created: create fresh, remember the server-assigned slug
+      if OUT_URL="$("$PUB" "$OUT_HTML" 2>&1)"; then
+        URL="$(printf '%s\n' "$OUT_URL" | grep -oE 'https://[^ ]+' | tail -1)"
+        NEW_SLUG="$(printf '%s' "$URL" | sed -n 's|https://\([^.]*\)\.here\.now.*|\1|p')"
+        if [ -n "$NEW_SLUG" ]; then printf '%s' "$NEW_SLUG" > "$SITE_FILE"; fi
+        echo "godmode: dashboard created at $URL (requested slug '$WEB_SLUG' unavailable: create assigns slugs)" >&2
+        rm -f "$PENDING" 2>/dev/null || true
+      else
+        mark publish "$OUT_URL"
+      fi
     else
       mark publish "$ERR"
     fi

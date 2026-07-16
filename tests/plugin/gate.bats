@@ -84,6 +84,43 @@ setup() {
   [ -f explainers/godmode-test-slug.html ]
 }
 
+@test "on-state-write backfills driver_session_id from the hook event (first writer wins)" {
+  jq '.driver_session_id = null' .agents/scratch/godmode-test-slug-state.json > t.json \
+    && mv t.json .agents/scratch/godmode-test-slug-state.json
+  EV="$(jq -n --arg fp "$REPO/.agents/scratch/godmode-test-slug-state.json" \
+      '{session_id:"sess-new-driver",tool_name:"Write",tool_input:{file_path:$fp}}')"
+  bash -c "echo '$EV' | GODMODE_PUBLISH_CMD=/usr/bin/true GODMODE_SYNC=local '$SCRIPTS/on-state-write.sh'"
+  [ "$(jq -r .driver_session_id .agents/scratch/godmode-test-slug-state.json)" = "sess-new-driver" ]
+  # second session does NOT overwrite an established driver
+  EV2="$(jq -n --arg fp "$REPO/.agents/scratch/godmode-test-slug-state.json" \
+      '{session_id:"sess-usurper",tool_name:"Write",tool_input:{file_path:$fp}}')"
+  bash -c "echo '$EV2' | GODMODE_PUBLISH_CMD=/usr/bin/true GODMODE_SYNC=local '$SCRIPTS/on-state-write.sh'"
+  [ "$(jq -r .driver_session_id .agents/scratch/godmode-test-slug-state.json)" = "sess-new-driver" ]
+}
+
+@test "on-state-write falls back to create when --slug update hits Not found, remembers site slug" {
+  cat > stubpub.sh <<'EOF'
+#!/bin/sh
+if [ "$2" = "--slug" ]; then
+  if [ "$3" = "three-word-abc" ]; then echo "updated three-word-abc"; exit 0; fi
+  echo "error: Not found" >&2; exit 1
+fi
+echo "creating publish (1 files)..."
+echo "https://three-word-abc.here.now"
+EOF
+  chmod +x stubpub.sh
+  EV="$(jq -n --arg fp "$REPO/.agents/scratch/godmode-test-slug-state.json" \
+      '{session_id:"sess-driver-1",tool_name:"Write",tool_input:{file_path:$fp}}')"
+  run bash -c "echo '$EV' | GODMODE_PUBLISH_CMD='$PWD/stubpub.sh' GODMODE_SYNC=local '$SCRIPTS/on-state-write.sh'"
+  [ "$status" -eq 0 ]
+  [ "$(cat .agents/scratch/godmode-test-slug-dashboard-site)" = "three-word-abc" ]
+  [ ! -f .agents/scratch/godmode-test-slug-publish.pending ]
+  # subsequent publish updates the remembered slug (stub succeeds only for it)
+  run bash -c "echo '$EV' | GODMODE_PUBLISH_CMD='$PWD/stubpub.sh' GODMODE_SYNC=local '$SCRIPTS/on-state-write.sh'"
+  [ "$status" -eq 0 ]
+  [ ! -f .agents/scratch/godmode-test-slug-publish.pending ]
+}
+
 @test "on-state-write surfaces lease loss with exit 2" {
   echo "other/holder/x" > .agents/scratch/godmode-test-slug-lease-lost
   EV="$(jq -n --arg fp "$REPO/.agents/scratch/godmode-test-slug-state.json" \
