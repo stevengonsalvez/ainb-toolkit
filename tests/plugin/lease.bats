@@ -71,6 +71,43 @@ claim_a() { ( cd "$CLONE_A" && GODMODE_SESSION_ID=sessA "$SCRIPTS/lease.sh" clai
   [ "$(jq -r .holder "$CLONE_B/.agents/scratch/.godmode-sync/prog/lease.json")" = "otherhost/other/sessZ" ]
 }
 
+@test "heartbeat push ignores a FOREIGN tool's state file in shared scratch" {
+  # sync.sh push autodetects the slug from .agents/scratch, shared with other
+  # tools. A foreign *-state.json must never be pushed to refs/godmode/<slug>.
+  rm -f "$CLONE_A/.agents/scratch"/*-state.json
+  echo '{"some":"other tool","items":[1,2]}' > "$CLONE_A/.agents/scratch/othertool-state.json"
+  run bash -c "cd '$CLONE_A' && '$SCRIPTS/sync.sh' push"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"nothing to push"* || "$output" == *"no godmode signature"* ]]
+  # nothing landed on the remote
+  run bash -c "cd '$CLONE_A' && git ls-remote origin 'refs/godmode/*'"
+  [ -z "$output" ]
+}
+
+@test "push refuses an EXPLICIT foreign slug (push-branch signature guard)" {
+  # Bypass autodetect by naming the slug directly: the push branch's own
+  # signature guard must still refuse a non-godmode state file.
+  rm -f "$CLONE_A/.agents/scratch"/*-state.json
+  echo '{"foreign":true,"items":[1]}' > "$CLONE_A/.agents/scratch/foreign-state.json"
+  run bash -c "cd '$CLONE_A' && '$SCRIPTS/sync.sh' push foreign"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"no godmode signature"* ]]
+  run bash -c "cd '$CLONE_A' && git ls-remote origin 'refs/godmode/*'"
+  [ -z "$output" ]
+}
+
+@test "autodetect picks the godmode-signed state file, not a foreign one sorting first" {
+  rm -f "$CLONE_A/.agents/scratch"/*-state.json
+  echo '{"foreign":true}' > "$CLONE_A/.agents/scratch/aaa-state.json"   # sorts first
+  seed_state "$CLONE_A" zzz-prog sessA                                   # real, sorts last
+  run bash -c "cd '$CLONE_A' && GODMODE_SESSION_ID=sessA '$SCRIPTS/sync.sh' push"
+  [ "$status" -eq 0 ]
+  # the real programme was pushed, the foreign one ignored
+  run bash -c "cd '$CLONE_A' && git ls-remote origin 'refs/godmode/*'"
+  [[ "$output" == *"refs/godmode/zzz-prog"* ]]
+  [[ "$output" != *"refs/godmode/aaa"* ]]
+}
+
 @test "observer (no scratch state) push is inert" {
   run bash -c "cd '$CLONE_B' && '$SCRIPTS/sync.sh' push"
   [ "$status" -eq 0 ]

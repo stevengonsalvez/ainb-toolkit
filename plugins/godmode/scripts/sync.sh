@@ -40,10 +40,17 @@ if [ "${GODMODE_SYNC:-remote}" = "local" ]; then
 fi
 
 autodetect_slug() {
+  # Pick the first GODMODE-SIGNED state file, not merely the first *-state.json:
+  # .agents/scratch is shared, so a foreign tool's state file sorting first
+  # would otherwise shadow a real godmode programme in the same repo.
   local f
-  f="$(ls "$SCRATCH"/*-state.json 2>/dev/null | head -1 || true)"
-  [ -n "$f" ] || return 1
-  basename "$f" | sed 's/-state\.json$//'
+  for f in "$SCRATCH"/*-state.json; do
+    [ -f "$f" ] || continue
+    jq -e '.phase and (.epics or .dashboard_slug)' "$f" >/dev/null 2>&1 || continue
+    basename "$f" | sed 's/-state\.json$//'
+    return 0
+  done
+  return 1
 }
 
 iso_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
@@ -83,6 +90,13 @@ case "$ACTION" in
     [ -n "$SLUG" ] || { echo "godmode sync: no local programme, nothing to push"; exit 0; }
     STATE="$SCRATCH/$SLUG-state.json"
     [ -f "$STATE" ] || { echo "godmode sync: no scratch state, observer mode, nothing to push"; exit 0; }
+
+    # ---- godmode signature required (same guard as on-state-write.sh) ----
+    # The Stop/PreCompact heartbeat autodetects the slug, so a foreign tool's
+    # *-state.json in the shared .agents/scratch would otherwise get pushed to
+    # refs/godmode/<its-slug> on the remote. Never sync a non-godmode file.
+    jq -e '.phase and (.epics or .dashboard_slug)' "$STATE" >/dev/null 2>&1 \
+      || { echo "godmode sync: no godmode signature, nothing to push"; exit 0; }
 
     # ---- only the DRIVER's session may mutate ----
     # Stop/PreCompact hooks fire in every session in the checkout. A bystander
