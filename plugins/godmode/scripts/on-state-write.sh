@@ -20,6 +20,13 @@ SLUG="$(basename "$FP" | sed 's/-state\.json$//')"
 STATE="$SCRATCH/$SLUG-state.json"
 [ -f "$STATE" ] || exit 0
 
+# Positive godmode signature REQUIRED before touching anything. .agents/scratch
+# is the shared skill-scratch dir, so a *-state.json there may belong to another
+# tool entirely; without this check godmode rewrote foreign state files, littered
+# the repo, and pushed refs/godmode/<slug> for non-godmode slugs to the shared
+# remote (adversarial review 2026-07-17).
+jq -e '.phase and (.epics or .dashboard_slug)' "$STATE" >/dev/null 2>&1 || exit 0
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PENDING="$SCRATCH/$SLUG-publish.pending"
 LOST="$SCRATCH/$SLUG-lease-lost"
@@ -78,15 +85,24 @@ if [ -n "$WEB_SLUG" ]; then
       printf '%s' "$TARGET_SLUG" > "$SITE_FILE" 2>/dev/null || true
       rm -f "$PENDING" 2>/dev/null || true
     elif printf '%s' "$ERR" | grep -qi 'not found'; then
-      # slug never created: create fresh, remember the server-assigned slug
-      if OUT_URL="$("$PUB" "$OUT_HTML" 2>&1)"; then
-        URL="$(printf '%s\n' "$OUT_URL" | grep -oE 'https://[^ ]+' | tail -1)"
-        NEW_SLUG="$(printf '%s' "$URL" | sed -n 's|https://\([^.]*\)\.here\.now.*|\1|p')"
-        if [ -n "$NEW_SLUG" ]; then printf '%s' "$NEW_SLUG" > "$SITE_FILE"; fi
-        echo "godmode: dashboard created at $URL (requested slug '$WEB_SLUG' unavailable: create assigns slugs)" >&2
-        rm -f "$PENDING" 2>/dev/null || true
+      # Slug never created: create fresh, remember the server-assigned slug.
+      # publish.sh's CONTRACT: stdout is exactly the siteUrl; stderr carries
+      # diagnostics incl. a claim URL. Merging them and taking the last match
+      # picked the claim URL and never stored a slug, so anonymous publishes
+      # re-created a fresh 24h site every tick (review 2026-07-17). Parse
+      # stdout only, and reject /claim/ defensively.
+      if OUT_URL="$("$PUB" "$OUT_HTML" 2>/dev/null)"; then
+        URL="$(printf '%s\n' "$OUT_URL" | grep -oE 'https://[a-z0-9-]+\.here\.now[^ ]*' | grep -v '/claim/' | head -1)"
+        NEW_SLUG="$(printf '%s' "$URL" | sed -n 's|https://\([a-z0-9-]*\)\.here\.now.*|\1|p')"
+        if [ -n "$NEW_SLUG" ]; then
+          printf '%s' "$NEW_SLUG" > "$SITE_FILE"
+          echo "godmode: dashboard created at $URL (requested slug '$WEB_SLUG' unavailable: create assigns slugs; reusing '$NEW_SLUG' from now on)" >&2
+          rm -f "$PENDING" 2>/dev/null || true
+        else
+          mark publish "create succeeded but no here.now URL on stdout: $OUT_URL"
+        fi
       else
-        mark publish "$OUT_URL"
+        mark publish "create failed"
       fi
     else
       mark publish "$ERR"
