@@ -28,7 +28,19 @@ TOKEN_FILE="$SCRATCH/$SLUG-session-token"
 LOST_MARKER="$SCRATCH/$SLUG-lease-lost"
 
 session_token() {
-  if [ -n "${GODMODE_SESSION_ID:-}" ]; then echo "$GODMODE_SESSION_ID"; return; fi
+  # Identity resolution: env (each session's hooks carry their own session_id)
+  # wins and is PERSISTED, so model-side Bash without the env resolves the same
+  # identity via the file. Without persist-on-claim, a hook-claimed lease
+  # (session UUID) and a model-run refresh (generated token) diverge and the
+  # driver evicts itself (observed live, 2026-07-16).
+  if [ -n "${GODMODE_SESSION_ID:-}" ]; then
+    if [ ! -f "$TOKEN_FILE" ]; then
+      mkdir -p "$SCRATCH"
+      printf '%s' "$GODMODE_SESSION_ID" > "$TOKEN_FILE" 2>/dev/null || true
+    fi
+    echo "$GODMODE_SESSION_ID"
+    return
+  fi
   if [ -f "$TOKEN_FILE" ]; then cat "$TOKEN_FILE"; return; fi
   mkdir -p "$SCRATCH"
   local t; t="$PPID-$(date -u +%s)"

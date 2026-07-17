@@ -103,10 +103,17 @@ case "$ACTION" in
       exit 0
     fi
 
-    # ---- our identity (must match lease.sh's) ----
+    # ---- our identity (must match lease.sh's: env first + persist, file second) ----
     TOKEN_FILE="$SCRATCH/$SLUG-session-token"
-    TOKEN="${GODMODE_SESSION_ID:-}"
-    [ -n "$TOKEN" ] || { [ -f "$TOKEN_FILE" ] && TOKEN="$(cat "$TOKEN_FILE")" || TOKEN="$PPID-$(date -u +%s)"; }
+    if [ -n "${GODMODE_SESSION_ID:-}" ]; then
+      TOKEN="$GODMODE_SESSION_ID"
+      [ -f "$TOKEN_FILE" ] || printf '%s' "$TOKEN" > "$TOKEN_FILE" 2>/dev/null || true
+    elif [ -f "$TOKEN_FILE" ]; then
+      TOKEN="$(cat "$TOKEN_FILE")"
+    else
+      TOKEN="$PPID-$(date -u +%s)"
+      printf '%s' "$TOKEN" > "$TOKEN_FILE" 2>/dev/null || true
+    fi
     IDENT="$(hostname -s)/${USER}/$TOKEN"
 
     # ---- debounce: durable subset unchanged AND our own fresh heartbeat -> skip ----

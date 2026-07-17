@@ -83,6 +83,16 @@ claim_a() { ( cd "$CLONE_A" && GODMODE_SESSION_ID=sessA "$SCRIPTS/lease.sh" clai
   [ ! -f "$CLONE_A/.agents/scratch/prog-lease-lost" ]
 }
 
+@test "hook-claimed lease survives model-side refresh (single identity source)" {
+  # hook path: env session id seeds the token file at claim
+  ( cd "$CLONE_A" && GODMODE_SESSION_ID=uuid-hook-1 "$SCRIPTS/lease.sh" claim "$PWD" prog )
+  [ "$(cat "$CLONE_A/.agents/scratch/prog-session-token")" = "uuid-hook-1" ]
+  # model path: NO env var; must resolve the same identity via the file
+  run "$SCRIPTS/lease.sh" refresh "$CLONE_A" prog
+  [ "$status" -eq 0 ]
+  [ ! -f "$CLONE_A/.agents/scratch/prog-lease-lost" ]
+}
+
 @test "GODMODE_SYNC=local disables lease and sync" {
   run env GODMODE_SYNC=local "$SCRIPTS/lease.sh" claim "$CLONE_A" prog
   [ "$status" -eq 0 ]

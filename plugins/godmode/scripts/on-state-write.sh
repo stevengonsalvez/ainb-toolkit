@@ -30,6 +30,12 @@ mark() { # step, error
     '{step:$step, error:$err, ts:$ts}' > "$PENDING" 2>/dev/null || true
 }
 
+# ---- seed the session token file (single lease-identity source) ----
+if [ ! -f "$SCRATCH/$SLUG-session-token" ] && [ -n "$SESSION_ID" ]; then
+  mkdir -p "$SCRATCH"
+  printf '%s' "$SESSION_ID" > "$SCRATCH/$SLUG-session-token" 2>/dev/null || true
+fi
+
 # ---- driver_session_id backfill (first writer wins) ----
 # The model cannot know its own session_id; this hook does. The session that
 # writes programme state IS the driver; record it so the Stop gate can scope.
