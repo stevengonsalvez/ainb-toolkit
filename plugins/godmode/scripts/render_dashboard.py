@@ -167,7 +167,9 @@ def main():
         "TIMESTAMP": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ"),
         "CHARTER_PATH": esc(args.charter),
         "BASE_BRANCH": esc(state.get("branch", "main")),
-        "PHASE": esc(state.get("phase", "?")),
+        "PHASE": esc(state.get("phase", "?")
+                     + (f"  ·  since {state['phase_since']}"
+                        if state.get("phase_since") else "")),
         "CURRENT_NOTE": esc(state.get("current_note") or "(no note)"),
         "HUMAN_GATE_STATUS": esc(state.get("human_gate", "?")),
         "EPICS_SHIPPED": str(shipped),
@@ -210,7 +212,9 @@ def main():
     tpl = expand_rows(tpl, "commit", git_commits(args.repo))
     tpl = expand_rows(tpl, "evidence", evidence_rows)
 
-    leftover = re.findall(r"\{\{[A-Z_]+\}\}", tpl)
+    # Any case/shape of token, not just [A-Z_]: a lowercase or digit-bearing
+    # placeholder would otherwise ship unrendered to the dashboard.
+    leftover = re.findall(r"\{\{[^}\n]{1,60}\}\}", tpl)
     if leftover:
         print(f"render: unresolved tokens {sorted(set(leftover))}",
               file=sys.stderr)

@@ -18,10 +18,14 @@ RECEIPTS="$SCRATCH/$SLUG-explainer-receipts.json"
 PY="$HOME/.claude/skills/explain-to-me/scripts/publish_explainer.py"
 
 URL=""
+# URL parse is deliberately tight: a receipt with a WRONG url still clears the
+# Stop gate, so a loose grab (trailing punctuation, a claim link, an unrelated
+# URL in diagnostics) would launder a bad proof into a real one.
+url_from() { printf '%s\n' "$1" | grep -oE 'https://[A-Za-z0-9.-]+/[^ )"]*|https://[A-Za-z0-9.-]+' | grep -v '/claim/' | head -1; }
 if [ -n "${GODMODE_EXPLAINER_CMD:-}" ]; then
   OUT="$("$GODMODE_EXPLAINER_CMD" "$FILE" "$@" 2>&1)" || { echo "$OUT" >&2; exit 1; }
   echo "$OUT"
-  URL="$(echo "$OUT" | grep -oE 'https://[^ ]+' | head -1 || true)"
+  URL="$(url_from "$OUT" || true)"
 elif [ -f "$HOME/.herenow/explainers.json" ] && [ -f "$PY" ] && [ "$#" -gt 0 ]; then
   OUT="$(python3 "$PY" "$FILE" "$@" 2>&1)" || { echo "$OUT" >&2; exit 1; }
   echo "$OUT"
