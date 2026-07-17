@@ -1,2 +1,6 @@
 node_modules
 logs/
+
+# python bytecode
+__pycache__/
+*.pyc
