@@ -58,6 +58,21 @@ case "$MODE" in
     done
 
     TIP="$(fetch_tip)"
+
+    # ---- lease CAS on CONTENT, not just ref position ----
+    # Push rejection guarantees ref linearity, not lease ownership: a commit
+    # parented on the current tip is accepted whatever lease it carries, so a
+    # deposed driver could fast-forward-clobber the new holder (split brain).
+    # Verify ownership against the EXACT tip we are about to parent on, closing
+    # the check-then-push window (adversarial review 2026-07-17).
+    if [ -n "${GODMODE_EXPECT_HOLDER:-}" ] && [ -n "$TIP" ]; then
+      TIP_HOLDER="$(git show "$TIP:lease.json" 2>/dev/null | jq -r '.holder // empty' 2>/dev/null || true)"
+      if [ -n "$TIP_HOLDER" ] && [ "$TIP_HOLDER" != "$GODMODE_EXPECT_HOLDER" ]; then
+        echo "sidecar: lease moved to $TIP_HOLDER before push, refusing to clobber" >&2
+        exit 5
+      fi
+    fi
+
     IDX="$(mktemp)"
     trap 'rm -f "$IDX"' EXIT
     export GIT_INDEX_FILE="$IDX"
@@ -103,13 +118,21 @@ case "$MODE" in
       echo "cross-machine sync disabled: refs/godmode/* not pushable on this remote" >&2
       exit 6
     fi
-    if grep -qiE 'non-fast-forward|fetch first|\[rejected\]' "$ERR"; then
+    # Retryable contention. "cannot lock ref"/"reference already exists" is what
+    # a FIRST-EVER concurrent claim looks like (two machines racing to create the
+    # ref) — the exact scenario the lease exists for. Calling that "not pushable"
+    # sent operators to GODMODE_SYNC=local, i.e. straight into the split-brain
+    # the sidecar prevents. Observed: 20 concurrent pushes -> 9 of them here.
+    if grep -qiE 'non-fast-forward|fetch first|\[rejected\]|cannot lock ref|reference already exists|failed to lock|unable to update ref|lock ref' "$ERR"; then
       rm -f "$ERR"
       exit 3
     fi
+    # Unknown failure: transient (network/timeout) is likelier than a policy
+    # block, and the caller treats 3 as "re-pull and see who won" — which is
+    # safe either way, because the next pull reveals the true holder.
     cat "$ERR" >&2; rm -f "$ERR"
-    echo "cross-machine sync disabled: refs/godmode/* not pushable on this remote" >&2
-    exit 6
+    echo "sidecar: push failed, treating as contention (will re-verify holder)" >&2
+    exit 3
     ;;
 
   *) echo "sidecar: unknown mode '$MODE'" >&2; exit 2 ;;
