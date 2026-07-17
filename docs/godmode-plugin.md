@@ -97,6 +97,11 @@ manifests (`plugins/godmode/.claude-plugin/`, `plugins/godmode/.codex-plugin/`,
 ## Tests
 
 ```bash
-npm run test:plugin        # 40 bats cases: render/sidecar/lease/gate/manifests
+npm run test:plugin        # bats: render/sidecar/lease/gate/manifests
 npm run test:plugin:e2e    # sandbox-HOME marketplace install, drives installed hooks
 ```
+
+The suite is mutation-checked: every rule worth having has a test that dies
+when the rule is deleted. `gate.bats` carries a negative control (a do-nothing
+gate must fail the suite) because `jq -e` returns 0 on empty input, which once
+made all nine gate tests pass against a stub.
