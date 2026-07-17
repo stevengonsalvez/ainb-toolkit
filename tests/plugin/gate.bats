@@ -22,13 +22,33 @@ setup() {
 @test "gate blocks driver on transition phase without receipt" {
   run bash -c "stop_json=\$(jq --arg c '$REPO' '. + {cwd:\$c}' '$FX/stop-event.json'); echo \"\$stop_json\" | '$SCRIPTS/explainer-gate.sh'"
   [ "$status" -eq 0 ]
-  echo "$output" | jq -e '.decision == "block"'
+  # -n first: `jq -e` returns 0 on EMPTY input, so asserting on it alone passes
+  # against a do-nothing stub. -s slurps, making empty fail. Both are required.
+  [ -n "$output" ]
+  echo "$output" | jq -se '.[0].decision == "block"'
+  echo "$output" | jq -se '.[0].reason | test("without its explainer")'
 }
 
 @test "gate blocks only once per session and phase" {
-  bash -c "jq --arg c '$REPO' '. + {cwd:\$c}' '$FX/stop-event.json' | '$SCRIPTS/explainer-gate.sh'" >/dev/null
+  run bash -c "jq --arg c '$REPO' '. + {cwd:\$c}' '$FX/stop-event.json' | '$SCRIPTS/explainer-gate.sh'"
+  # FIRST call must actually block (else 'blocks once' is indistinguishable
+  # from 'never blocks') and must leave the session+phase marker
+  [ -n "$output" ]
+  echo "$output" | jq -se '.[0].decision == "block"'
+  [ -f ".agents/scratch/godmode-test-slug-gate-blocked.sess-driver-1.E01_SHIP" ]
   run bash -c "jq --arg c '$REPO' '. + {cwd:\$c}' '$FX/stop-event.json' | '$SCRIPTS/explainer-gate.sh'"
   [ -z "$output" ]
+}
+
+@test "NEGATIVE CONTROL: a do-nothing gate must FAIL this suite" {
+  # The suite's own honesty check. Every exemption test asserts absence of
+  # output, which a stub satisfies; this proves at least one test can tell a
+  # real gate from a stub. If this ever passes with STUB=1, the suite is lying.
+  printf '#!/usr/bin/env bash\nexit 0\n' > stub-gate.sh && chmod +x stub-gate.sh
+  run bash -c "jq --arg c '$REPO' '. + {cwd:\$c}' '$FX/stop-event.json' | '$PWD/stub-gate.sh'"
+  [ -z "$output" ]
+  run bash -c "echo '$output' | jq -se '.[0].decision == \"block\"'"
+  [ "$status" -ne 0 ]
 }
 
 @test "gate exempts subagents and burns no marker" {
@@ -36,6 +56,19 @@ setup() {
   [ -z "$output" ]
   run bash -c "ls .agents/scratch/godmode-test-slug-gate-blocked.* 2>/dev/null"
   [ -z "$output" ]
+}
+
+@test "gate exempts agent_id even on a Stop event (the exemption itself, not the event name)" {
+  # The subagent fixture is SubagentStop, so it exits on the event-name check
+  # and never reaches the agent_id branch. This drives agent_id directly.
+  run bash -c "jq --arg c '$REPO' '. + {cwd:\$c, agent_id:\"agent-7\"}' '$FX/stop-event.json' | '$SCRIPTS/explainer-gate.sh'"
+  [ -z "$output" ]
+  run bash -c "ls .agents/scratch/godmode-test-slug-gate-blocked.* 2>/dev/null"
+  [ -z "$output" ]
+  # ...and the identical event WITHOUT agent_id does block (proves the guard is why)
+  run bash -c "jq --arg c '$REPO' '. + {cwd:\$c}' '$FX/stop-event.json' | '$SCRIPTS/explainer-gate.sh'"
+  [ -n "$output" ]
+  echo "$output" | jq -se '.[0].decision == "block"'
 }
 
 @test "gate exempts bystander sessions" {
@@ -70,6 +103,23 @@ setup() {
 @test "on-state-write ignores unrelated writes" {
   run bash -c "echo '{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"/tmp/nope.txt\"}}' | '$SCRIPTS/on-state-write.sh'"
   [ "$status" -eq 0 ]
+  # the guard must be WHY nothing happened: no render, no litter
+  [ ! -d explainers ] || [ -z "$(ls explainers 2>/dev/null)" ]
+}
+
+@test "on-state-write ignores a FOREIGN tool's state file in shared scratch" {
+  # .agents/scratch is the shared skill-scratch dir: a *-state.json there may
+  # belong to another tool. Without a godmode signature check we rewrote it,
+  # littered the repo, and pushed refs/godmode/<slug> for a foreign slug.
+  echo '{"some":"other tool","items":[1,2]}' > .agents/scratch/othertool-state.json
+  BEFORE="$(cat .agents/scratch/othertool-state.json)"
+  EV="$(jq -n --arg fp "$REPO/.agents/scratch/othertool-state.json" \
+      '{session_id:"sess-x",tool_name:"Write",tool_input:{file_path:$fp}}')"
+  run bash -c "echo '$EV' | GODMODE_PUBLISH_CMD=/usr/bin/true GODMODE_SYNC=local '$SCRIPTS/on-state-write.sh'"
+  [ "$status" -eq 0 ]
+  [ "$(cat .agents/scratch/othertool-state.json)" = "$BEFORE" ]   # not rewritten
+  [ ! -f .agents/scratch/othertool-session-token ]                 # no litter
+  [ ! -f explainers/othertool.html ]                               # no render
 }
 
 @test "on-state-write full path: publish success clears pending, failure marks it" {

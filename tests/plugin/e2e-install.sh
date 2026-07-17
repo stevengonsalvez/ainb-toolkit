@@ -38,8 +38,11 @@ cp "$FX/issues.jsonl" .beads/issues.jsonl
 cp "$FX/charter.md" .agents/goals/godmode-test-slug-charter.md
 
 # 1. gate blocks driver from the INSTALLED location
+# NOTE: `jq -e` returns 0 on EMPTY input, so asserting on it alone would pass
+# against a deleted gate. -n + -s (slurp) makes empty fail.
 OUT="$(jq --arg c "$W" '. + {cwd:$c}' "$FX/stop-event.json" | "$PLUGIN_DIR/scripts/explainer-gate.sh")"
-echo "$OUT" | jq -e '.decision == "block"' >/dev/null || { echo "FAIL: installed gate did not block"; exit 1; }
+[ -n "$OUT" ] || { echo "FAIL: installed gate produced no output"; exit 1; }
+echo "$OUT" | jq -se '.[0].decision == "block"' >/dev/null || { echo "FAIL: installed gate did not block"; exit 1; }
 echo "PASS: installed gate blocks"
 
 # 2. on-state-write renders + stub-publishes from the INSTALLED location
