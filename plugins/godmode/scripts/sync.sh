@@ -104,14 +104,13 @@ case "$ACTION" in
 
     CACHE="$REPO/.agents/scratch/.godmode-sync/$SLUG"
 
-    # ---- our identity (MUST match lease.sh session_token(): env, driver id, file) ----
+    # ---- our identity (MUST match lease.sh session_token(): token file only) ----
     TOKEN_FILE="$SCRATCH/$SLUG-session-token"
-    if [ -n "${GODMODE_SESSION_ID:-}" ]; then
-      TOKEN="$GODMODE_SESSION_ID"
-    elif [ -n "$DRIVER_SID" ] && [ "$DRIVER_SID" != "null" ]; then
-      TOKEN="$DRIVER_SID"
-    elif [ -f "$TOKEN_FILE" ]; then
+    if [ -f "$TOKEN_FILE" ]; then
       TOKEN="$(cat "$TOKEN_FILE")"
+    elif [ -n "${GODMODE_SESSION_ID:-}" ]; then
+      TOKEN="$GODMODE_SESSION_ID"
+      printf '%s' "$TOKEN" > "$TOKEN_FILE" 2>/dev/null || true
     else
       TOKEN="$PPID-$(date -u +%s)"
       printf '%s' "$TOKEN" > "$TOKEN_FILE" 2>/dev/null || true

@@ -8,11 +8,22 @@ setup() {
 
 claim_a() { ( cd "$CLONE_A" && GODMODE_SESSION_ID=sessA "$SCRIPTS/lease.sh" claim "$PWD" prog "$@" ); }
 
-@test "claim then same-host second-session claim is refused (exit 4)" {
-  claim_a
-  run env GODMODE_SESSION_ID=sessB "$SCRIPTS/lease.sh" claim "$CLONE_A" prog
-  [ "$status" -eq 4 ]
-  [[ "$output" == *"refused"* ]]
+@test "a co-located second session cannot push to the driver's lease (A2)" {
+  # Two sessions in ONE checkout share the state + token file, so their
+  # model-side claims are genuinely indistinguishable (the only model-side
+  # identity, driver_session_id, names the driver). The A2 safety boundary is
+  # therefore the PUSH, not the claim: a bystander session's heartbeat (which
+  # carries its own env id) is blocked by the driver-session gate, so it can
+  # never mutate the sidecar. That is what actually prevents split brain.
+  # (Different worktrees on one host have separate token files and DO contend
+  # at claim time — the normal fleet case.)
+  claim_a   # driver A holds; state names driver_session_id via seed_state? set it:
+  jq '.driver_session_id = "sessA"' "$CLONE_A/.agents/scratch/prog-state.json" > "$CLONE_A/t" \
+    && mv "$CLONE_A/t" "$CLONE_A/.agents/scratch/prog-state.json"
+  run env GODMODE_SESSION_ID=sessB bash -c "cd '$CLONE_A' && '$SCRIPTS/sync.sh' push prog"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"not the driver session"* ]]
+  [ ! -f "$CLONE_A/.agents/scratch/prog-lease-lost" ]
 }
 
 @test "stale heartbeat allows foreign takeover" {
@@ -178,6 +189,26 @@ claim_a() { ( cd "$CLONE_A" && GODMODE_SESSION_ID=sessA "$SCRIPTS/lease.sh" clai
   # remote lease is still B's
   ( cd "$CLONE_B" && rm -rf .agents/scratch/.godmode-sync/prog && "$SCRIPTS/sidecar_remote.sh" pull "$PWD" prog >/dev/null )
   [[ "$(jq -r .holder "$CLONE_B/.agents/scratch/.godmode-sync/prog/lease.json")" == */sessB ]]
+}
+
+@test "cross-machine takeover does not self-evict when the hook backfills driver id" {
+  # Takeover order (fresh machine): claim -> adopt -> first state write backfills
+  # the REAL session id. claim runs with no env and no driver_session_id, so it
+  # stamps an ephemeral holder; the later backfill must NOT flip the resolved
+  # identity out from under it. Ranking driver_session_id above the token file
+  # broke exactly this (review 2026-07-17).
+  printf '{"phase":"E01","epics":{},"dashboard_slug":"d","driver_session_id":null}' \
+    > "$CLONE_A/.agents/scratch/demo-state.json"
+  ( cd "$CLONE_A" && "$SCRIPTS/lease.sh" claim "$PWD" demo )
+  # hook backfills the real session id, DIFFERENT from the ephemeral claim token
+  jq '.driver_session_id = "REAL-SESSION-B"' "$CLONE_A/.agents/scratch/demo-state.json" > "$CLONE_A/t" \
+    && mv "$CLONE_A/t" "$CLONE_A/.agents/scratch/demo-state.json"
+  # model-side refresh (no env) must still resolve to self
+  run "$SCRIPTS/lease.sh" refresh "$CLONE_A" demo
+  [ "$status" -eq 0 ]
+  [ ! -f "$CLONE_A/.agents/scratch/demo-lease-lost" ]
+  run "$SCRIPTS/lease.sh" check "$CLONE_A" demo
+  [[ "$output" == *"self=yes"* ]]
 }
 
 @test "GODMODE_SYNC=local disables lease and sync" {

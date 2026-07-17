@@ -28,29 +28,28 @@ TOKEN_FILE="$SCRATCH/$SLUG-session-token"
 LOST_MARKER="$SCRATCH/$SLUG-lease-lost"
 
 session_token() {
-  # The lease belongs to the DRIVER SESSION, so the identity is the driver's
-  # session id — the one thing that is stable across the driver's own hook runs
-  # (env) and its model-side Bash (no env), and that a co-located bystander
-  # session cannot accidentally inherit.
+  # Lease identity = the token FILE, seeded ONCE and never overwritten. It is
+  # the single artifact both halves of one driver resolve to consistently:
+  # model-side Bash (/godmode run, no env) and the driver's own hooks (env set)
+  # read the same file, so what `claim` stamps as holder is exactly what the
+  # next `refresh` resolves. Seeding: the first writer wins — INIT's first state
+  # write seeds it from the real session_id (on-state-write.sh), a fresh-machine
+  # takeover's `claim` seeds an ephemeral token before any hook runs. Either
+  # way it stays fixed for the session.
   #
-  # Resolution order, each rung load-bearing:
-  #   1. GODMODE_SESSION_ID — a session that knows its own id uses it, ALWAYS.
-  #      A second session must present its own identity, never inherit the
-  #      incumbent's, or same-host contention silently disappears (A2).
-  #   2. state.json .driver_session_id — model-side Bash carries no env, and the
-  #      session running the loop IS the driver, so this resolves to the same
-  #      string its own hooks use. (A random per-invocation token here is what
-  #      made the driver evict itself, observed live 2026-07-16.)
-  #   3. token file — last resort: no env and no driver id yet (pre-INIT).
-  # The checkout-global token file must never outrank 1 or 2: that is what let a
-  # bystander session refresh a crashed driver's lease (review 2026-07-17).
-  if [ -n "${GODMODE_SESSION_ID:-}" ]; then echo "$GODMODE_SESSION_ID"; return; fi
-  local drv
-  drv="$(jq -r '.driver_session_id // empty' "$SCRATCH/$SLUG-state.json" 2>/dev/null || true)"
-  if [ -n "$drv" ] && [ "$drv" != "null" ]; then echo "$drv"; return; fi
+  # Why NOT driver_session_id here: that field is ALSO the Stop-gate's identity
+  # (the real session_id the hook backfills), and on a takeover it is backfilled
+  # AFTER claim already stamped an ephemeral holder, so ranking it above the
+  # token file flipped the resolved identity and self-evicted the new driver on
+  # the exact cross-machine handoff the lease exists for (review 2026-07-17).
+  #
+  # A2 (two sessions, one checkout) is NOT enforced here: it is enforced by
+  # sync-hook.sh threading each session's own env id plus the driver-session
+  # gate in sync.sh push (env vs driver_session_id). session_token stays simple.
   if [ -f "$TOKEN_FILE" ]; then cat "$TOKEN_FILE"; return; fi
   mkdir -p "$SCRATCH"
-  local t; t="$PPID-$(date -u +%s)"
+  local t
+  if [ -n "${GODMODE_SESSION_ID:-}" ]; then t="$GODMODE_SESSION_ID"; else t="$PPID-$(date -u +%s)"; fi
   printf '%s' "$t" > "$TOKEN_FILE"
   echo "$t"
 }
