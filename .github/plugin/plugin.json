@@ -1,7 +1,7 @@
 {
   "name": "godmode",
   "description": "Godmode status + sync parity for Copilot CLI",
-  "version": "0.1.3",
+  "version": "0.2.0",
   "author": {
     "name": "Steven Gonsalvez",
     "url": "https://github.com/stevengonsalvez"
