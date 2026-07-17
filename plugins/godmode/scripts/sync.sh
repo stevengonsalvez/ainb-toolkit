@@ -103,18 +103,6 @@ case "$ACTION" in
     fi
 
     CACHE="$REPO/.agents/scratch/.godmode-sync/$SLUG"
-    # ---- holder gate FIRST: read-only check against freshly pulled lease ----
-    RC=0
-    GODMODE_SYNC_CACHE="$CACHE" "$LEASE" check "$REPO" "$SLUG" >/dev/null || RC=$?
-    if [ "$RC" = 4 ]; then
-      HOLDER="$(jq -r '.holder // "unknown"' "$CACHE/lease.json" 2>/dev/null || echo unknown)"
-      printf '%s' "$HOLDER" > "$SCRATCH/$SLUG-lease-lost"
-      echo "godmode sync: lease held by $HOLDER, pushing NOTHING (lease-lost marker set)" >&2
-      exit 0
-    elif [ "$RC" = 6 ]; then
-      echo "godmode sync: remote unpushable, sync disabled" >&2
-      exit 0
-    fi
 
     # ---- our identity (MUST match lease.sh session_token(): env, driver id, file) ----
     TOKEN_FILE="$SCRATCH/$SLUG-session-token"
@@ -130,13 +118,32 @@ case "$ACTION" in
     fi
     IDENT="$(hostname -s)/${USER}/$TOKEN"
 
+    # ---- holder gate FIRST, against a freshly pulled lease ----
+    # ANY foreign holder blocks, stale or fresh. Gating on freshness (lease.sh
+    # check, which only refuses foreign+FRESH) let a background heartbeat push
+    # silently RECLAIM a stale foreign lease — making takeover a side effect of
+    # a Stop hook rather than an explicit act. Takeover belongs to `lease.sh
+    # claim` via /godmode run (auto on stale, or --take-over), where it is
+    # recorded. No lease at all = nothing to respect (pre-claim INIT), push on.
+    RC=0
+    GODMODE_SYNC_CACHE="$CACHE" "$SIDE" pull "$REPO" "$SLUG" >/dev/null 2>&1 || RC=$?
+    if [ "$RC" = 6 ]; then
+      echo "godmode sync: remote unpushable, sync disabled" >&2
+      exit 0
+    fi
+    REMOTE_HOLDER="$(jq -r '.holder // empty' "$CACHE/lease.json" 2>/dev/null || true)"
+    if [ -n "$REMOTE_HOLDER" ] && [ "$REMOTE_HOLDER" != "$IDENT" ]; then
+      printf '%s' "$REMOTE_HOLDER" > "$SCRATCH/$SLUG-lease-lost"
+      echo "godmode sync: lease held by $REMOTE_HOLDER, pushing NOTHING (lease-lost marker set)" >&2
+      exit 0
+    fi
+
     # ---- debounce: durable subset unchanged AND our own fresh heartbeat -> skip ----
     TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
     jq -S 'del(.running_task, .running_run_id, .driver_session_id)' "$STATE" > "$TMP/state.json"
     CHARTER="$REPO/.agents/goals/$SLUG-charter.md"
     [ -f "$CHARTER" ] && cp "$CHARTER" "$TMP/charter.md"
     HB="$(jq -r '.heartbeat_ts // empty' "$CACHE/lease.json" 2>/dev/null || true)"
-    REMOTE_HOLDER="$(jq -r '.holder // empty' "$CACHE/lease.json" 2>/dev/null || true)"
     if [ -f "$CACHE/state.json" ] && [ -n "$HB" ] && [ "$REMOTE_HOLDER" = "$IDENT" ]; then
       AGE=$(( $(date -u +%s) - $(epoch_of "$HB") ))
       if diff -q <(jq -S . "$CACHE/state.json" 2>/dev/null) <(jq -S . "$TMP/state.json") >/dev/null 2>&1 \

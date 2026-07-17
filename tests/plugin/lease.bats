@@ -43,6 +43,23 @@ claim_a() { ( cd "$CLONE_A" && GODMODE_SESSION_ID=sessA "$SCRIPTS/lease.sh" clai
   [[ "$HOLDER" == */sessB ]]
 }
 
+@test "a heartbeat push does NOT silently reclaim a stale FOREIGN lease" {
+  # Takeover is an explicit act (lease.sh claim via /godmode run), not a side
+  # effect of a background Stop hook. A foreign holder blocks the push whether
+  # its heartbeat is fresh OR stale; the driver marks lease-lost and stops.
+  jq '.driver_session_id = "sessA"' "$CLONE_A/.agents/scratch/prog-state.json" > "$CLONE_A/t" \
+    && mv "$CLONE_A/t" "$CLONE_A/.agents/scratch/prog-state.json"
+  # a FOREIGN holder owns the lease, heartbeat long stale
+  push_backdated_lease "$CLONE_A" prog "2026-01-01T00:00:00Z" "otherhost/other/sessZ"
+  run env GODMODE_SESSION_ID=sessA bash -c "cd '$CLONE_A' && '$SCRIPTS/sync.sh' push prog"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"lease held by otherhost/other/sessZ"* ]]
+  [ -f "$CLONE_A/.agents/scratch/prog-lease-lost" ]
+  # the foreign lease is UNCHANGED — not reclaimed
+  ( cd "$CLONE_B" && "$SCRIPTS/sidecar_remote.sh" pull "$PWD" prog >/dev/null )
+  [ "$(jq -r .holder "$CLONE_B/.agents/scratch/.godmode-sync/prog/lease.json")" = "otherhost/other/sessZ" ]
+}
+
 @test "observer (no scratch state) push is inert" {
   run bash -c "cd '$CLONE_B' && '$SCRIPTS/sync.sh' push"
   [ "$status" -eq 0 ]
