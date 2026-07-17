@@ -13,7 +13,7 @@ tick that changes anything.
   "branch": "e02-entity-resolution",
   "running_task": "wq2xrhp74",
   "running_run_id": "wf_ffacbda8-86c",
-  "driver_session_id": "<claude session_id of the driver; gates the Stop hook>",
+  "driver_session_id": "<written as null at INIT; the PostToolUse hook backfills the driver's real session_id (first-writer-wins); gates the Stop hook>",
   "current_note": "one paragraph for the dashboard note slot",
   "human_gate": "pending | blessed | blessed_parallel_pairs",
   "epics": {"e00": "SHIPPED_PR2903", "e01": "SHIPPED_PR2904", "e02": "EXECUTING"},

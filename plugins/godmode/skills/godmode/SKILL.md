@@ -84,8 +84,11 @@ worktrees available; otherwise serialise (single worktree = single checkout).
    model policy (resolve fable toggle), verify doctrine, termination, stop
    rules, dashboard slug. Write `.agents/goals/<slug>-charter.md`.
 3. Write `.agents/scratch/<slug>-state.json` (schema:
-   `references/state-and-beads.md`), including `driver_session_id` (this
-   session) and `phase_since`. Claim the driver lease:
+   `references/state-and-beads.md`) with `driver_session_id: null` and a
+   `phase_since` timestamp. You cannot know your own session_id: the
+   PostToolUse hook fills `driver_session_id` from the hook event on this very
+   write (first-writer-wins), which is why the write must precede the claim.
+   Then claim the driver lease:
    `bash ${CLAUDE_PLUGIN_ROOT}/scripts/lease.sh claim <repo> <slug>`.
 4. Dashboard publishing is HOOK-OWNED: every state.json write triggers
    render + publish + sidecar push (PostToolUse). Your duties: keep
