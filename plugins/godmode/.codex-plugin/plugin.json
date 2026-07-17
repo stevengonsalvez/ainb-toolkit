@@ -1,6 +1,6 @@
 {
   "name": "godmode",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Godmode status + sync parity for Codex (driving the loop is Claude-only)",
   "author": {
     "name": "Steven Gonsalvez",
