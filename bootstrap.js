@@ -1729,15 +1729,23 @@ async function handlePackagesStructureCopy(tool, config, overrideHomeDir = null,
         } catch (e) {
             identical = false;
         }
-        if (identical) {
-            fs.rmSync(staleSkillDir, { recursive: true });
-            console.log(`  Removed stale skills/${migrated}/ (migrated to plugins/${migrated}; content pristine)`);
-        } else {
-            const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-            const backupDir = path.join(destDir, 'skills', `.${migrated}.pre-plugin-backup-${stamp}`);
-            fs.rmSync(backupDir, { recursive: true, force: true });
-            fs.renameSync(staleSkillDir, backupDir);
-            console.log(`  ⚠ skills/${migrated}/ has local edits: preserved at ${backupDir}; reconcile via /sync-learnings v2`);
+        // The mutation itself is wrapped too: a filesystem error here (locked
+        // file, permission, race) must skip cleanup for this skill, never abort
+        // the whole bootstrap run for the user. On any doubt we keep the home
+        // copy — leaving a stale dir is recoverable; losing edits is not.
+        try {
+            if (identical) {
+                fs.rmSync(staleSkillDir, { recursive: true, force: true });
+                console.log(`  Removed stale skills/${migrated}/ (migrated to plugins/${migrated}; content pristine)`);
+            } else {
+                const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+                const backupDir = path.join(destDir, 'skills', `.${migrated}.pre-plugin-backup-${stamp}`);
+                fs.rmSync(backupDir, { recursive: true, force: true });
+                fs.renameSync(staleSkillDir, backupDir);
+                console.log(`  ⚠ skills/${migrated}/ has local edits: preserved at ${backupDir}; reconcile via /sync-learnings v2`);
+            }
+        } catch (e) {
+            console.log(`  ⚠ could not clean up stale skills/${migrated}/ (${e.message}); left in place, re-run bootstrap to retry`);
         }
     }
 
