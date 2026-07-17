@@ -162,14 +162,15 @@ def main():
             f'(step: {esc(p.get("step", "?"))}). Showing freshest local render; '
             'retrying every tick.</div>')
 
+    _ph = state.get("phase")
+    _phase_str = "?" if _ph is None else str(_ph)
     scalars = {
         "PROGRAMME_TITLE": esc(charter_title or state.get("dashboard_slug", "godmode")),
         "TIMESTAMP": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ"),
         "CHARTER_PATH": esc(args.charter),
         "BASE_BRANCH": esc(state.get("branch", "main")),
-        "PHASE": esc(state.get("phase", "?")
-                     + (f"  ·  since {state['phase_since']}"
-                        if state.get("phase_since") else "")),
+        "PHASE": esc(_phase_str + (f"  ·  since {state['phase_since']}"
+                                   if state.get("phase_since") else "")),
         "CURRENT_NOTE": esc(state.get("current_note") or "(no note)"),
         "HUMAN_GATE_STATUS": esc(state.get("human_gate", "?")),
         "EPICS_SHIPPED": str(shipped),
@@ -179,6 +180,16 @@ def main():
         "STOP_RULE_COUNTERS": esc(json.dumps(state.get("stop_counters", {}))),
         "PENDING_BANNER": banner,
     }
+    # Unresolved-token guard is a TEMPLATE authoring check, so validate the RAW
+    # template BEFORE injecting data. Scanning the rendered output instead made
+    # any {{...}} inside a commit message, bead title, or note fail the render
+    # (esc/html.escape does not escape braces), silently stalling the dashboard
+    # on ordinary content (review 2026-07-17).
+    known = {"{{" + k + "}}" for k in scalars}
+    unknown = sorted(set(re.findall(r"\{\{[A-Za-z0-9_]+\}\}", tpl)) - known)
+    if unknown:
+        print(f"render: template has unhandled tokens {unknown}", file=sys.stderr)
+        return 1
     for k, v in scalars.items():
         tpl = tpl.replace("{{" + k + "}}", v)
 
@@ -214,12 +225,6 @@ def main():
 
     # Any case/shape of token, not just [A-Z_]: a lowercase or digit-bearing
     # placeholder would otherwise ship unrendered to the dashboard.
-    leftover = re.findall(r"\{\{[^}\n]{1,60}\}\}", tpl)
-    if leftover:
-        print(f"render: unresolved tokens {sorted(set(leftover))}",
-              file=sys.stderr)
-        return 1
-
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(tpl)
