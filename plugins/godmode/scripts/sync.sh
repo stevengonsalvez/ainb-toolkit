@@ -84,6 +84,19 @@ case "$ACTION" in
     STATE="$SCRATCH/$SLUG-state.json"
     [ -f "$STATE" ] || { echo "godmode sync: no scratch state, observer mode, nothing to push"; exit 0; }
 
+    # ---- only the DRIVER's session may mutate ----
+    # Stop/PreCompact hooks fire in every session in the checkout. A bystander
+    # session must not heartbeat (it would keep a crashed driver's lease alive
+    # and block foreign takeover, spec A2). sync-hook.sh threads the firing
+    # session's id; model-side runs have no env and are the driver by
+    # definition (they are the session that owns the loop).
+    DRIVER_SID="$(jq -r '.driver_session_id // empty' "$STATE" 2>/dev/null || true)"
+    if [ -n "${GODMODE_SESSION_ID:-}" ] && [ -n "$DRIVER_SID" ] && [ "$DRIVER_SID" != "null" ] \
+       && [ "$GODMODE_SESSION_ID" != "$DRIVER_SID" ]; then
+      echo "godmode sync: not the driver session, nothing to push"
+      exit 0
+    fi
+
     if [ "$IF_ACTIVE" = 1 ]; then
       PHASE="$(jq -r '.phase // empty' "$STATE" 2>/dev/null || true)"
       [ -n "$PHASE" ] && [ "$PHASE" != "DONE" ] || exit 0
@@ -103,11 +116,12 @@ case "$ACTION" in
       exit 0
     fi
 
-    # ---- our identity (must match lease.sh's: env first + persist, file second) ----
+    # ---- our identity (MUST match lease.sh session_token(): env, driver id, file) ----
     TOKEN_FILE="$SCRATCH/$SLUG-session-token"
     if [ -n "${GODMODE_SESSION_ID:-}" ]; then
       TOKEN="$GODMODE_SESSION_ID"
-      [ -f "$TOKEN_FILE" ] || printf '%s' "$TOKEN" > "$TOKEN_FILE" 2>/dev/null || true
+    elif [ -n "$DRIVER_SID" ] && [ "$DRIVER_SID" != "null" ]; then
+      TOKEN="$DRIVER_SID"
     elif [ -f "$TOKEN_FILE" ]; then
       TOKEN="$(cat "$TOKEN_FILE")"
     else
@@ -140,8 +154,17 @@ case "$ACTION" in
           '{holder:$h, machine:$m, heartbeat_ts:$ts, held_since:$since}' > "$TMP/lease.json"
 
     RC=0
+    GODMODE_EXPECT_HOLDER="$REMOTE_HOLDER" \
     GODMODE_SYNC_MSG="chore(godmode): sync $SLUG $(jq -r .phase "$TMP/state.json" 2>/dev/null || echo '?')" \
       "$SIDE" push "$REPO" "$SLUG" "$TMP" || RC=$?
+    if [ "$RC" = 5 ]; then
+      # lease moved between our holder-gate and the push: we are deposed
+      GODMODE_SYNC_CACHE="$CACHE" "$SIDE" pull "$REPO" "$SLUG" >/dev/null 2>&1 || true
+      printf '%s' "$(jq -r '.holder // "unknown"' "$CACHE/lease.json" 2>/dev/null || echo unknown)" \
+        > "$SCRATCH/$SLUG-lease-lost"
+      echo "godmode sync: lease moved during push, pushed nothing" >&2
+      exit 0
+    fi
     if [ "$RC" = 3 ]; then
       # raced: refetch, re-verify holder, single retry
       GODMODE_SYNC_CACHE="$CACHE" "$SIDE" pull "$REPO" "$SLUG" >/dev/null || true

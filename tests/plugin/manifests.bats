@@ -18,10 +18,20 @@ load helpers
   H="$REPO_ROOT/plugins/godmode/hooks/hooks.json"
   jq -e '.hooks.Stop[0].hooks | length == 2' "$H"
   jq -e '.hooks.Stop[0].hooks[0].command | contains("explainer-gate.sh")' "$H"
-  jq -e '.hooks.Stop[0].hooks[1].command | contains("sync.sh")' "$H"
   jq -e '.hooks.SessionStart[0].hooks[0].command | contains("sync.sh")' "$H"
-  jq -e '.hooks.PreCompact[0].hooks[0].command | contains("sync.sh")' "$H"
   jq -e '.hooks.PostToolUse[0].matcher == "Write|Edit"' "$H"
+}
+
+@test "MUTATING hooks route through sync-hook.sh so the session id is threaded" {
+  # Stop/PreCompact fire in EVERY session; without the firing session's id they
+  # fell back to a checkout-global token and a bystander heartbeated the
+  # driver's lease (A2). SessionStart is pull-only, so it needs no id.
+  H="$REPO_ROOT/plugins/godmode/hooks/hooks.json"
+  jq -e '.hooks.Stop[0].hooks[1].command | contains("sync-hook.sh")' "$H"
+  jq -e '.hooks.PreCompact[0].hooks[0].command | contains("sync-hook.sh")' "$H"
+  [ -x "$REPO_ROOT/plugins/godmode/scripts/sync-hook.sh" ]
+  # and the wrapper actually exports what it read from stdin
+  grep -q 'GODMODE_SESSION_ID="\$SID"' "$REPO_ROOT/plugins/godmode/scripts/sync-hook.sh"
 }
 
 @test "copilot hooks use the copilot schema (camelCase, bash/timeoutSec)" {

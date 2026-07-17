@@ -28,19 +28,26 @@ TOKEN_FILE="$SCRATCH/$SLUG-session-token"
 LOST_MARKER="$SCRATCH/$SLUG-lease-lost"
 
 session_token() {
-  # Identity resolution: env (each session's hooks carry their own session_id)
-  # wins and is PERSISTED, so model-side Bash without the env resolves the same
-  # identity via the file. Without persist-on-claim, a hook-claimed lease
-  # (session UUID) and a model-run refresh (generated token) diverge and the
-  # driver evicts itself (observed live, 2026-07-16).
-  if [ -n "${GODMODE_SESSION_ID:-}" ]; then
-    if [ ! -f "$TOKEN_FILE" ]; then
-      mkdir -p "$SCRATCH"
-      printf '%s' "$GODMODE_SESSION_ID" > "$TOKEN_FILE" 2>/dev/null || true
-    fi
-    echo "$GODMODE_SESSION_ID"
-    return
-  fi
+  # The lease belongs to the DRIVER SESSION, so the identity is the driver's
+  # session id — the one thing that is stable across the driver's own hook runs
+  # (env) and its model-side Bash (no env), and that a co-located bystander
+  # session cannot accidentally inherit.
+  #
+  # Resolution order, each rung load-bearing:
+  #   1. GODMODE_SESSION_ID — a session that knows its own id uses it, ALWAYS.
+  #      A second session must present its own identity, never inherit the
+  #      incumbent's, or same-host contention silently disappears (A2).
+  #   2. state.json .driver_session_id — model-side Bash carries no env, and the
+  #      session running the loop IS the driver, so this resolves to the same
+  #      string its own hooks use. (A random per-invocation token here is what
+  #      made the driver evict itself, observed live 2026-07-16.)
+  #   3. token file — last resort: no env and no driver id yet (pre-INIT).
+  # The checkout-global token file must never outrank 1 or 2: that is what let a
+  # bystander session refresh a crashed driver's lease (review 2026-07-17).
+  if [ -n "${GODMODE_SESSION_ID:-}" ]; then echo "$GODMODE_SESSION_ID"; return; fi
+  local drv
+  drv="$(jq -r '.driver_session_id // empty' "$SCRATCH/$SLUG-state.json" 2>/dev/null || true)"
+  if [ -n "$drv" ] && [ "$drv" != "null" ]; then echo "$drv"; return; fi
   if [ -f "$TOKEN_FILE" ]; then cat "$TOKEN_FILE"; return; fi
   mkdir -p "$SCRATCH"
   local t; t="$PPID-$(date -u +%s)"
@@ -69,13 +76,15 @@ is_stale() { [ "$(lease_age)" -gt "$TTL" ]; }
 is_self()  { [ "$(holder)" = "$(identity)" ]; }
 has_lease(){ [ -f "$CACHE/lease.json" ] && [ -n "$(holder)" ]; }
 
-push_lease() { # $1 = held_since to preserve (empty -> now)
+push_lease() { # $1 = held_since to preserve (empty -> now); $2 = expected tip holder
   local since="${1:-}"; [ -n "$since" ] || since="$(iso_now)"
+  local expect="${2:-}"
   local tmp; tmp="$(mktemp -d)"
   jq -n --arg h "$(identity)" --arg m "$(hostname -s)" \
         --arg ts "$(iso_now)" --arg since "$since" \
         '{holder:$h, machine:$m, heartbeat_ts:$ts, held_since:$since}' > "$tmp/lease.json"
   local rc=0
+  GODMODE_EXPECT_HOLDER="$expect" \
   GODMODE_SYNC_MSG="chore(godmode): lease $SLUG" "$SIDE" push "$REPO" "$SLUG" "$tmp" || rc=$?
   rm -rf "$tmp"
   return $rc
@@ -111,11 +120,16 @@ case "$ACTION" in
       echo "lease: lost to $(holder || echo '(none)')" >&2
       exit 5
     fi
-    rc=0; push_lease "$(held_since)" || rc=$?
+    # CAS on content: refuse to clobber if the tip's holder is no longer us
+    rc=0; push_lease "$(held_since)" "$(holder)" || rc=$?
+    if [ "$rc" = 5 ]; then
+      pull_lease; printf '%s' "$(holder)" > "$LOST_MARKER"
+      echo "lease: lost to $(holder) (moved during push)" >&2; exit 5
+    fi
     if [ "$rc" = 3 ]; then
       pull_lease
       if is_self; then
-        rc=0; push_lease "$(held_since)" || rc=$?
+        rc=0; push_lease "$(held_since)" "$(holder)" || rc=$?
         [ "$rc" = 0 ] || { printf '%s' "$(holder)" > "$LOST_MARKER"; echo "lease: lost (race)" >&2; exit 5; }
       else
         printf '%s' "$(holder)" > "$LOST_MARKER"
