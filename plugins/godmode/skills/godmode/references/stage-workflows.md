@@ -8,7 +8,8 @@ scope). Every template shares the GROUND preamble pattern:
 const ground = `READ FIRST: <charter path> (doctrine + commit policy) and
 <stage input artifacts>. Branch: <branch>. Env/creds: <session env file>.
 COMMIT POLICY: atomic single-concern commits, conventional, named paths,
-no AI attribution. NEVER commit .agents/, explainers/, scratch, env files.`
+no AI attribution. NEVER commit .agents/, explainers/, scratch, env files.
+(The refs/godmode/* sidecar is hook-maintained; workflows never touch it.)`
 ```
 
 Rules that apply to every stage script:
@@ -141,4 +142,6 @@ Verify-prompt essentials (bake in — each averts a known failure, lessons.md):
 previous epic's branch; body = what+why+validation evidence+review catches;
 apply the review label via REST (`gh api .../labels`). 3. Close epic +
 folded-feature beads with evidence notes (scripts/beads_remote.sh). 4. Update
-dashboard + state; next epic's branch created FROM this one.
+state.json (hooks publish the dashboard), then write the phase explainer and
+publish via explainer-publish.sh (its receipt clears the Stop gate); next
+epic's branch created FROM this one.

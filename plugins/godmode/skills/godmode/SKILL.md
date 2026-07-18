@@ -16,9 +16,17 @@ your constitution and playbooks.
 | Invocation | Action |
 |---|---|
 | `/godmode <north-star> [--no-court] [--budget <tokens>] [--deadline <ISO>] [--fable off]` (alias: `/godmode init <north-star> ...`) | INIT: generate charter + state + dashboard + beads, run Feasibility Court + Roadmap, present roadmap at the human gate |
-| `/godmode run` | Resume/continue the loop from state (any session, incl. post-crash) |
-| `/godmode status` | Standup: read state + beads + dashboard, report, change nothing |
-| `/godmode pause` | Stop re-arming the loop; state stays resumable |
+| `/godmode run [--take-over]` | Resume/continue the loop from state (any session, incl. post-crash). Claims the driver lease first: refuses while another session's lease is fresh, auto-claims a stale one, `--take-over` forces after an AskUserQuestion confirm. On a fresh machine: `sync.sh discover`, pick the slug, claim, then `sync.sh adopt <slug>` reconstructs local state |
+| `/godmode status` | Standup: read state + beads + dashboard + lease, report, change nothing. NEVER adopts (observer-safe: no scratch state means hooks stay inert). Preflight prints "status publishing DISABLED: missing <X>" when here-now/credentials are absent |
+| `/godmode pause` | Stop re-arming the loop; state stays resumable; release the lease (`lease.sh release`) |
+
+## Provider parity
+
+| Capability | Claude | Codex | Copilot |
+|---|---|---|---|
+| init / run (drive the loop) | full | refuse + status message | refuse + status message |
+| status / discover | yes | yes | yes |
+| dashboard publish + sidecar sync + lease guard | all hooks | hooks.json (shared format) | sessionStart pull + staleness nudge only |
 
 ## The three-layer machine
 
@@ -26,7 +34,9 @@ your constitution and playbooks.
 LAYER 1  CHARTER   .agents/goals/<slug>-charter.md   — constitution, re-read EVERY tick
 LAYER 2  DRIVER    /loop dynamic mode                — ScheduleWakeup ~600s, same prompt re-entered
 LAYER 3  WORKFLOWS one ultracode Workflow per stage  — resumable via resumeFromRunId
-STATE    beads (epic/feature nodes) + .agents/scratch/<slug>-state.json
+STATE    beads (epic/feature nodes) + .agents/scratch/<slug>-state.json (working
+         copy) + hook-maintained sidecar mirror {state,charter,lease} on the
+         dedicated ref refs/godmode/<slug> (cross-machine; GODMODE_SYNC=local opts out)
 ```
 
 ## Pipeline (stage names are the primary vocabulary; W-numbers are aliases)
@@ -74,14 +84,17 @@ worktrees available; otherwise serialise (single worktree = single checkout).
    model policy (resolve fable toggle), verify doctrine, termination, stop
    rules, dashboard slug. Write `.agents/goals/<slug>-charter.md`.
 3. Write `.agents/scratch/<slug>-state.json` (schema:
-   `references/state-and-beads.md`).
-4. Copy `assets/programme-dashboard.html` → `explainers/<slug>.html`, fill
-   the `{{...}}` placeholders, publish:
-   `bash {{HOME_TOOL_DIR}}/skills/here-now/scripts/publish.sh explainers/<slug>.html
-   --slug <slug> --api-key <here.now token from the user's memory/keychain>`
-   (stable slug; password-protect if the project demands; ADD an entry to the
-   existing root index — never create a new index). Publish failure never
-   blocks: keep the local file fresh, retry next tick.
+   `references/state-and-beads.md`) with `driver_session_id: null` and a
+   `phase_since` timestamp. You cannot know your own session_id: the
+   PostToolUse hook fills `driver_session_id` from the hook event on this very
+   write (first-writer-wins), which is why the write must precede the claim.
+   Then claim the driver lease:
+   `bash ${CLAUDE_PLUGIN_ROOT}/scripts/lease.sh claim <repo> <slug>`.
+4. Dashboard publishing is HOOK-OWNED: every state.json write triggers
+   render + publish + sidecar push (PostToolUse). Your duties: keep
+   state.json truthful, write `current_note`, pick a stable
+   `dashboard_slug`. Publish failure never blocks (pending marker +
+   dashboard banner; hooks retry on the next state write).
 5. Run DISCOVER (template: `references/stage-workflows.md`) → writes the
    registry. Then, unless `--no-court`, the Feasibility Court workflow, then
    Roadmap. With `--no-court`: registry taken verbatim, straight to Roadmap.
@@ -100,12 +113,20 @@ worktrees available; otherwise serialise (single worktree = single checkout).
    commits landed per the commit policy; advance the state machine (consult
    `bd ready` for dependency order when picking the next epic); launch the
    next stage workflow.
-3. Refresh + republish the dashboard (every tick, even timestamp-only). If
-   the host is unreachable: keep the local file fresh, retry next tick, never
-   block the factory on publishing.
+3. Heartbeat + lease: run `${CLAUDE_PLUGIN_ROOT}/scripts/lease.sh refresh`
+   EVERY wake, state changed or not (quiet multi-tick workflows must not
+   starve the lease). Exit 5 or a `<slug>-lease-lost` marker: post a handoff
+   note, downgrade to read-only, do NOT re-arm. The dashboard republishes
+   itself on every state write (hook-owned); a pending-publish marker means
+   degraded publishing, mention it and keep going.
 4. Update beads (recipes in `references/state-and-beads.md`), state.json, and
    the token ledger (accounting rules in the same file — fail CLOSED if spend
-   is unmeasurable under a --budget).
+   is unmeasurable under a --budget). state.json writes go through the
+   Write/Edit TOOL only (Non-negotiables). On a phase flip also stamp
+   `phase_since`; after SHIP / HUMAN_GATE / DONE write the phase explainer
+   (/explain-to-me) and publish it via
+   `${CLAUDE_PLUGIN_ROOT}/scripts/explainer-publish.sh` (the Stop gate blocks
+   your stop until its receipt exists).
 5. Re-arm: ScheduleWakeup ~600s, reason = current phase, prompt = the DRIVER
    RE-ENTRY PROMPT verbatim (below). Honour STOP RULES first.
 
@@ -163,15 +184,29 @@ the only blocking gate.
 
 ## Scripts
 
-- `scripts/beads_remote.sh` — close/annotate beads on origin/main via git
-  plumbing without touching any checkout (safe under concurrent worktrees)
+- `scripts/beads_remote.sh` (skill-local) — close/annotate beads on origin/main
+  via git plumbing without touching any checkout (safe under concurrent worktrees)
+- Plugin scripts at `${CLAUDE_PLUGIN_ROOT}/scripts/`:
+  `render_dashboard.py` (deterministic dashboard) · `on-state-write.sh`
+  (PostToolUse pipeline) · `explainer-publish.sh` (receipt writer, the ONLY
+  sanctioned explainer publish path) · `explainer-gate.sh` (Stop gate) ·
+  `sync.sh` (pull|push|adopt|discover) · `lease.sh` (claim|refresh|check|release)
+  · `sidecar_remote.sh` (refs/godmode/<slug> plumbing) · `staleness-note.sh`
+  (Copilot nudge)
 
 ## Non-negotiables
 
 - Commit policy: atomic single-concern commits, conventional, named paths only
   (never `git add -A`), no AI attribution, never commit charters/state/
-  dashboards/scratch/env files. Sign only when the gpg cache is warm; never
-  spawn GUI pinentry headless.
+  dashboards/scratch/env files, EXCEPT the sidecar mirror on
+  `refs/godmode/<slug>`, which hooks maintain via git plumbing. Sign only when
+  the gpg cache is warm; never spawn GUI pinentry headless.
+- state.json is written ONLY via the Write/Edit tool, never Bash
+  redirection/jq/mv: the status and heartbeat hooks key on the PostToolUse
+  event (belt: the Stop-hook heartbeat entry; a Bash-written state file means
+  a silently stale dashboard and a starving lease).
+- Plugin version policy: ANY change under `plugins/godmode/**` bumps at least
+  the patch version, all three provider manifests together.
 - The dashboard is not optional and never goes stale past one tick.
 - Stale-work check: before fixing any backlog item, verify it isn't already
   fixed in-tree (`git log/show` + live probe). Close-with-citation beats re-fix.

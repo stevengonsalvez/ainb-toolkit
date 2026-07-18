@@ -1,0 +1,18 @@
+{
+  "ainb-toolkit": {
+    "source": {
+      "source": "directory",
+      "path": "/FIXTURE/ainb-toolkit"
+    },
+    "installLocation": "/FIXTURE/ainb-toolkit",
+    "lastUpdated": "2026-07-16T17:00:00.000Z"
+  },
+  "ponytail": {
+    "source": {
+      "source": "github",
+      "repo": "DietrichGebert/ponytail"
+    },
+    "installLocation": "/FIXTURE/home/.claude/plugins/marketplaces/ponytail",
+    "lastUpdated": "2026-07-16T17:00:00.000Z"
+  }
+}

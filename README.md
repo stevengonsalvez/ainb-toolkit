@@ -90,6 +90,26 @@ Claude transitively covers Hermes.
 
 ---
 
+## Plugins (in-repo marketplace)
+
+This repo is also a Claude Code plugin **marketplace**
+(`.claude-plugin/marketplace.json`). Plugins live under `plugins/<name>/` and
+install via the plugin CLI instead of the bootstrap skill sync (strangler
+pattern: `skills/` stays bootstrap-synced; families migrate to plugins when
+touched):
+
+```bash
+claude plugin marketplace add stevengonsalvez/ainb-toolkit
+claude plugin install godmode@ainb-toolkit
+```
+
+First migrant: **godmode** (hook-enforced status publishing, cross-machine
+sidecar sync on `refs/godmode/<slug>`, single-driver lease). Details:
+`docs/godmode-plugin.md`. Updating own plugins: edit here, bump the version
+(all three provider manifests together; `claude plugin update` delivers ONLY
+on a version change, observed 2026-07-16), push, then
+`claude plugin update <name>@ainb-toolkit` on each machine.
+
 ## Repository layout
 
 This repo is **flattened**: the canonical source trees live directly at

@@ -8,10 +8,13 @@ tick that changes anything.
 ```json
 {
   "phase": "DISCOVER | FEASIBILITY_COURT | ROADMAP | HUMAN_GATE | E<N>_PLAN | E<N>_EXECUTE | E<N>_SHIP | DONE",
+  "phase_since": "2026-07-16T17:00:00Z",
   "current_epic": "e02-entity-resolution",
   "branch": "e02-entity-resolution",
   "running_task": "wq2xrhp74",
   "running_run_id": "wf_ffacbda8-86c",
+  "driver_session_id": "<written as null at INIT; the PostToolUse hook backfills the driver's real session_id (first-writer-wins); gates the Stop hook>",
+  "current_note": "one paragraph for the dashboard note slot",
   "human_gate": "pending | blessed | blessed_parallel_pairs",
   "epics": {"e00": "SHIPPED_PR2903", "e01": "SHIPPED_PR2904", "e02": "EXECUTING"},
   "termination": {"backlog_dry": true, "budget_tokens": null, "deadline": null,
@@ -79,19 +82,37 @@ branch moved, re-fetch and replay — never force. If the branch is
 push-PROTECTED, fall back to committing the beads change on the current epic
 branch instead — it merges with the PR.
 
-## Durability caveats
+## Sidecar sync + lease (cross-machine)
 
-Charter + state.json typically live in gitignored dirs (`.agents/goals/`,
-`.agents/scratch/`) — they survive session death but NOT worktree deletion or
-another machine. Therefore: (a) resume assumes the SAME worktree; (b) mirror
-the durable minimum (phase, epic→status map, dashboard slug, termination
-config) into the programme's root bead notes at each phase transition, so a
-cross-machine resume can reconstruct; (c) if a cleanup pass (e.g. a commit
-skill's scratch sweep) runs mid-programme, it MUST exempt
-`<slug>-charter.md` and `<slug>-state.json`.
+The plugin hooks maintain a durable mirror on the dedicated ref
+`refs/godmode/<slug>` (never a branch): `state.json` (durable subset),
+`charter.md`, `lease.json`. One commit per sync, debounced to at most about
+one heartbeat commit per tick. `GODMODE_SYNC=local` disables all remote sync
+for single-machine programmes (zero push cost).
+
+- Durable-subset rule: machine-local fields (`running_task`,
+  `running_run_id`, `driver_session_id`) never sync; `sync.sh adopt` nulls
+  them on reconstruction.
+- Lease: `{holder, machine, heartbeat_ts, held_since}`; holder identity is
+  `machine/user/SESSION-token`, so two sessions on one host contend like two
+  machines. TTL `GODMODE_LEASE_TTL` (default 1800 s). CAS = push rejection,
+  classified: protected/declined refs fail CLOSED (sync disabled, visibly),
+  non-fast-forward means raced. Lease pushes NEVER blind-replay.
+- Observer model: `/godmode status` reads the sync cache
+  (`.agents/scratch/.godmode-sync/<slug>/`) and never creates scratch state,
+  so observer machines cannot trigger mutating hooks. Only `/godmode run`
+  (after claim or confirmed `--take-over`) runs `sync.sh adopt`.
+- Fallback when the sync ref is unreachable: mirror the durable minimum
+  (phase, epic map, dashboard slug, termination config) into the programme's
+  root bead notes at phase transitions, as before.
+- If a cleanup pass (e.g. a commit skill's scratch sweep) runs mid-programme,
+  it MUST exempt `<slug>-charter.md`, `<slug>-state.json`, and the
+  `.godmode-sync/` cache.
 
 ## Resume procedure (new session / post-crash / post-compaction)
 
+0. Same machine: `sync.sh pull`. Another machine: `sync.sh discover`, then
+   `/godmode run` (lease claim, then `sync.sh adopt <slug>`).
 1. Read the charter, then state.json. These outrank any conversation summary.
 2. `TaskList` / check the `running_task` output file: workflow still running →
    just re-enter the loop (re-arm ScheduleWakeup). Completed → process its

@@ -1,2 +1,10 @@
 node_modules
 logs/
+
+# python bytecode
+__pycache__/
+*.pyc
+
+# run-scoped agent scratch (specs + plans stay tracked)
+.agents/goals/
+.agents/evidence/

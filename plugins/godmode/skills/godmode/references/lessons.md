@@ -67,3 +67,21 @@ machine's institutional memory — future adversarial prompts should cite it).
 - **Workflow results can truncate** — the full return lives in the task output
   file, per-agent detail in the run's `journal.jsonl`. Read those before
   diagnosing an "empty" stage.
+- **Lease pushes never replay.** A rejected lease push means the CAS was lost,
+  not "refetch and try the same write again"; blind replay would defeat the
+  lock. State/charter may retry once, only after re-verifying the holder.
+- **Explainer receipts are the only publish proof.** The domain publisher
+  writes zero local state on success; godmode publishes phase explainers ONLY
+  through explainer-publish.sh so the Stop gate has a receipt to check.
+- **ScheduleWakeup does not re-arm inside a nested interactive `claude`.** A
+  driver launched in a tmux pane (rather than as the session you are typing in)
+  processes its tick, then parks at the prompt forever: the loop never
+  self-continues. Running godmode that way needs one nudge per tick, or the
+  charter's re-entry prompt fired by an external scheduler. Observed live
+  2026-07-17: 2.5h idle at the prompt mid-EXECUTE, no error anywhere.
+- **A model usage limit parks the driver silently.** The pane shows
+  "You've reached your <model> limit" and the loop simply stops; state, lease
+  heartbeat and dashboard all freeze at the last tick, which reads exactly
+  like a hung workflow. Check the pane for a limit banner BEFORE diagnosing
+  the factory (8h lost to this once). Switch models and re-issue the re-entry
+  prompt to resume; the sidecar makes the resume lossless.

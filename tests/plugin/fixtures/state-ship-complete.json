@@ -1,0 +1,20 @@
+{
+  "phase": "E01_SHIP",
+  "current_epic": "e01-core",
+  "branch": "e01-core",
+  "running_task": null,
+  "running_run_id": null,
+  "human_gate": "blessed",
+  "driver_session_id": "sess-driver-1",
+  "phase_since": "2026-07-16T18:00:00Z",
+  "current_note": "e01 shipped, PR open",
+  "epics": { "e00": "SHIPPED_PR1", "e01": "SHIPPED_PR2" },
+  "termination": {
+    "backlog_dry": true,
+    "budget_tokens": null,
+    "deadline": null,
+    "spent_tokens_estimate": 23456
+  },
+  "dashboard_slug": "godmode-test-slug",
+  "stop_counters": { "stage_errors": {}, "epic_validation_fails": {} }
+}

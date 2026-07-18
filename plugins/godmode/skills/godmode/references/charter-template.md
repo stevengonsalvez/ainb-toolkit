@@ -44,19 +44,24 @@ Epics serial on stacked branches unless blessed-parallel AND provably disjoint.
 · Atomic single-concern conventional commits, named paths only, no AI
   attribution. {{Signing rule for this machine.}}
 · One PR per epic, labelled {{REVIEW_LABEL}}, stacked on the previous.
-· NEVER commit: charter, state, dashboard html, scratch, env files.
+· NEVER commit: charter, state, dashboard html, scratch, env files. Exception:
+  the sidecar mirror on refs/godmode/{{slug}} is hook-maintained via plumbing.
 
 — LIVE DASHBOARD —
 · {{DASHBOARD_URL}} (slug {{SLUG}}, password {{PASSWORD|none}}, entry added to
   the existing root index). Local file: explainers/{{slug}}.html.
-· Refreshed EVERY tick: PHASE chip, RAG per epic + feature, testing table,
-  full commit log (sha+message, newest first), evidence links.
+· HOOK-OWNED: every state.json write renders + republishes it (PHASE chip,
+  RAG per epic + feature, testing table, commit log, evidence links). Keep
+  state.json truthful; write current_note; that IS the dashboard duty.
 
 — LOOP PROTOCOL (each wake) —
 1. Read this charter + .agents/scratch/{{slug}}-state.json. 2. Check running
 workflow; on completion persist artifacts, verify commits, advance the state
-machine, launch the next stage. 3. Refresh + republish dashboard. 4. Update
-beads + state. 5. ScheduleWakeup ~600s, reason = current phase.
+machine, launch the next stage. 3. lease.sh refresh (every wake; lost lease =
+handoff note, read-only, stop re-arming). 4. Update beads + state (state via
+Write/Edit tool ONLY; stamp phase_since on flips; publish phase explainers via
+explainer-publish.sh after SHIP/HUMAN_GATE/DONE). 5. ScheduleWakeup ~600s,
+reason = current phase.
 · STOP RULES: workflow errors ×2 same stage | validation fails ×3 one epic |
   any prod/staging touch | epic > {{TOKEN_CAP|~15M}} subagent tokens.
 

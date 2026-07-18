@@ -452,3 +452,67 @@ describe('Spec-Driven Development (SDD) Setup', () => {
 
     // Full smoke coverage exists in the main suite; duplicated flow removed here to avoid redundancy.
 });
+
+describe('Migrated plugin skills (godmode)', () => {
+    const tempDir = path.join(__dirname, 'tmp-migrated-test');
+    const tool = 'claude-code-4.5';
+
+    afterEach(() => {
+        if (fs.existsSync(tempDir)) {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    const runBootstrap = (mockHomeDir) => {
+        execSync(`node bootstrap.js --tool=${tool} --homeDir=${mockHomeDir}`, {
+            stdio: 'pipe',
+            env: { ...process.env },
+        });
+    };
+
+    const seedStaleCopy = (mockHomeDir) => {
+        const config = TOOL_CONFIG[tool];
+        const dest = path.join(mockHomeDir, config.targetSubdir, 'skills', 'godmode');
+        fs.cpSync(path.join(__dirname, 'plugins', 'godmode', 'skills', 'godmode'), dest, { recursive: true });
+        return dest;
+    };
+
+    it('removes a pristine bootstrap-era godmode skill copy', () => {
+        const mockHomeDir = path.join(tempDir, 'home-pristine');
+        fs.mkdirSync(mockHomeDir, { recursive: true });
+        const stale = seedStaleCopy(mockHomeDir);
+        runBootstrap(mockHomeDir);
+        expect(fs.existsSync(stale)).toBe(false);
+        const skillsDir = path.dirname(stale);
+        const backups = fs.readdirSync(skillsDir).filter(d => d.includes('pre-plugin-backup'));
+        expect(backups).toHaveLength(0);
+    });
+
+    it('backs up (never deletes) a locally edited godmode skill copy', () => {
+        const mockHomeDir = path.join(tempDir, 'home-edited');
+        fs.mkdirSync(mockHomeDir, { recursive: true });
+        const stale = seedStaleCopy(mockHomeDir);
+        fs.appendFileSync(path.join(stale, 'SKILL.md'), '\n<!-- local learning: do not lose -->\n');
+        runBootstrap(mockHomeDir);
+        expect(fs.existsSync(stale)).toBe(false);
+        const skillsDir = path.dirname(stale);
+        const backups = fs.readdirSync(skillsDir).filter(d => d.startsWith('.godmode.pre-plugin-backup-'));
+        expect(backups).toHaveLength(1);
+        const backedUp = fs.readFileSync(path.join(skillsDir, backups[0], 'SKILL.md'), 'utf8');
+        expect(backedUp).toContain('local learning: do not lose');
+    });
+
+    it('generates scoped, non-copying setup-external.sh lines for own plugins', () => {
+        const mockHomeDir = path.join(tempDir, 'home-external');
+        fs.mkdirSync(mockHomeDir, { recursive: true });
+        runBootstrap(mockHomeDir);
+        const config = TOOL_CONFIG[tool];
+        const scriptPath = path.join(mockHomeDir, config.targetSubdir, 'setup-external.sh');
+        expect(fs.existsSync(scriptPath)).toBe(true);
+        const script = fs.readFileSync(scriptPath, 'utf8');
+        expect(script).toContain('claude plugin install godmode@ainb-toolkit');
+        expect(script).toContain('claude plugin update godmode@ainb-toolkit');
+        // own-plugin skills are never flat-copied into ~/.claude/skills
+        expect(script).not.toContain('cache/ainb-toolkit/godmode');
+    });
+});
