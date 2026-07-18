@@ -180,6 +180,52 @@ EOF
   [[ "$output" == *"lease lost to other/holder/x"* ]]
 }
 
+@test "on-state-write status pipeline works under bash 3.2 (empty pending array)" {
+  # A bare "${arr[@]}" under set -u aborts on bash < 4.4 (stock macOS /bin/bash
+  # is 3.2), which silently killed the whole pipeline on every state write.
+  [ -x /bin/bash ] || skip "no /bin/bash"
+  case "$(/bin/bash --version | head -1)" in *"version 3."*) ;; *) skip "not bash 3.2" ;; esac
+  EV="$(jq -n --arg fp "$REPO/.agents/scratch/godmode-test-slug-state.json" \
+      '{session_id:"s",tool_name:"Write",tool_input:{file_path:$fp}}')"
+  rm -f .agents/scratch/godmode-test-slug-publish.pending
+  echo "$EV" | GODMODE_PUBLISH_CMD=/usr/bin/true GODMODE_SYNC=local \
+    /bin/bash "$SCRIPTS/on-state-write.sh"
+  [ -f explainers/godmode-test-slug.html ]
+}
+
+@test "explainer receipt rejects a laundered URL (claim link / unrelated diagnostic)" {
+  # A receipt with a WRONG url still clears the Stop gate, so the parse must
+  # pick the REAL here.now URL, not a /claim/ link or an unrelated URL printed
+  # earlier in the publisher output.
+  cat > advpub.sh <<'EOF'
+#!/bin/sh
+echo "claim here: https://x.here.now/claim/abc"
+echo "diagnostic https://unrelated.example.com/foo"
+echo "site: https://real-slug.here.now/."
+EOF
+  chmod +x advpub.sh
+  GODMODE_REPO="$REPO" GODMODE_EXPLAINER_CMD="$PWD/advpub.sh" \
+    "$SCRIPTS/explainer-publish.sh" /dev/null godmode-test-slug E01_SHIP >/dev/null
+  URL="$(jq -r '.[0].url' .agents/scratch/godmode-test-slug-explainer-receipts.json)"
+  [ "$URL" = "https://real-slug.here.now/" ]
+  # a publisher emitting ONLY a claim link yields NO receipt
+  printf '#!/bin/sh\necho "https://x.here.now/claim/z"\n' > claimonly.sh && chmod +x claimonly.sh
+  run env GODMODE_REPO="$REPO" GODMODE_EXPLAINER_CMD="$PWD/claimonly.sh" \
+    "$SCRIPTS/explainer-publish.sh" /dev/null godmode-test-slug E02_SHIP
+  [ "$status" -eq 1 ]
+}
+
+@test "gate ignores a FOREIGN state file sorting before the godmode one" {
+  # .agents/scratch is shared: a foreign *-state.json must not gate a stop.
+  echo '{"foreign":true,"phase":"X"}' > .agents/scratch/aaa-foreign-state.json
+  # driver's real programme is state-ship-complete (already seeded in setup)
+  run bash -c "jq --arg c '$REPO' '. + {cwd:\$c}' '$FX/stop-event.json' | '$SCRIPTS/explainer-gate.sh'"
+  # still blocks the driver on the SIGNED state, foreign file ignored
+  [ -n "$output" ]
+  echo "$output" | jq -se '.[0].decision == "block"'
+  rm -f .agents/scratch/aaa-foreign-state.json
+}
+
 @test "explainer-publish writes receipt on success, none on failure" {
   printf '#!/bin/sh\necho "https://stub.here.now/abc"\n' > okpub.sh && chmod +x okpub.sh
   GODMODE_REPO="$REPO" GODMODE_EXPLAINER_CMD="$PWD/okpub.sh" \
