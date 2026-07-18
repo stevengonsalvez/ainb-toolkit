@@ -8,14 +8,19 @@ two sessions driving one programme.
 
 ## Install
 
+All three CLIs read the marketplace at the repo root and install godmode from
+`plugins/godmode/` (verified end-to-end 2026-07-18: skill + hooks land in each
+CLI's plugin cache).
+
 | Provider | Command |
 |---|---|
 | Claude Code | `claude plugin marketplace add stevengonsalvez/ainb-toolkit && claude plugin install godmode@ainb-toolkit` |
-| Codex | `.codex-plugin/` adapter; shares `hooks/hooks.json` by path convention |
-| Copilot CLI | `.github/plugin/` manifests + `hooks/copilot-hooks.json` (sessionStart pull + staleness nudge only; subdir paths unverified against Copilot CLI, fall back to manual hook registration if install rejects them) |
+| Codex | `codex plugin marketplace add stevengonsalvez/ainb-toolkit && codex plugin add godmode@ainb-toolkit` (reads the same `.claude-plugin/marketplace.json`; shares `hooks/hooks.json` by convention) |
+| Copilot CLI | `copilot plugin marketplace add stevengonsalvez/ainb-toolkit && copilot plugin install godmode@ainb-toolkit` (reads `.github/plugin/marketplace.json`; uses `hooks/copilot-hooks.json`) |
 
-Driving the loop (`init`/`run`) is Claude-only; Codex/Copilot get status +
-sync parity and refuse `run` with a status printout.
+Each `marketplace add` also accepts a local path instead of `owner/repo` for
+testing an unmerged checkout. Driving the loop (`init`/`run`) is Claude-only;
+Codex/Copilot get status + sync parity and refuse `run` with a status printout.
 
 ## Prerequisites (per machine)
 
