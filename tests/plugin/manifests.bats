@@ -14,6 +14,16 @@ load helpers
     "$REPO_ROOT/.claude-plugin/marketplace.json"
 }
 
+@test "Copilot marketplace entry has a source (its absence broke copilot install)" {
+  # copilot plugin marketplace add rejects an entry with no source:
+  # "Invalid marketplace.json: plugins.0.source: Invalid input". Paths are
+  # relative to that source, so they must be plugin-dir-relative, not repo-root.
+  M="$REPO_ROOT/.github/plugin/marketplace.json"
+  jq -e '.plugins[0].source == "./plugins/godmode"' "$M"
+  jq -e '.plugins[0].skills == "skills/"' "$M"
+  jq -e '.plugins[0].hooks == "hooks/copilot-hooks.json"' "$M"
+}
+
 @test "hooks.json wires gate AND heartbeat on Stop, sync on SessionStart/PreCompact" {
   H="$REPO_ROOT/plugins/godmode/hooks/hooks.json"
   jq -e '.hooks.Stop[0].hooks | length == 2' "$H"
