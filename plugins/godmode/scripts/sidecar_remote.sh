@@ -64,10 +64,27 @@ case "$MODE" in
     # parented on the current tip is accepted whatever lease it carries, so a
     # deposed driver could fast-forward-clobber the new holder (split brain).
     # Verify ownership against the EXACT tip we are about to parent on, closing
-    # the check-then-push window (adversarial review 2026-07-17).
-    if [ -n "${GODMODE_EXPECT_HOLDER:-}" ] && [ -n "$TIP" ]; then
+    # the check-then-push window (review 2026-07-17).
+    #
+    # GODMODE_EXPECT_HOLDER carries the caller's expectation:
+    #   unset/empty  -> deliberate takeover (lease.sh claim of a stale/absent
+    #                   lease): skip the CAS, we mean to overwrite.
+    #   __none__     -> we saw NO holder and expect none: refuse if a foreign
+    #                   holder appeared in the pull/fetch TOCTOU window (a
+    #                   concurrent first claim or a release->reclaim handoff).
+    #   <holder>     -> we saw this holder: refuse if the tip now carries a
+    #                   DIFFERENT one.
+    # The empty case previously also meant "expected none", which silently
+    # let a foreign lease landing at cold-start get clobbered (review 2026-07-18).
+    EXP="${GODMODE_EXPECT_HOLDER:-}"
+    if [ -n "$EXP" ] && [ -n "$TIP" ]; then
       TIP_HOLDER="$(git show "$TIP:lease.json" 2>/dev/null | jq -r '.holder // empty' 2>/dev/null || true)"
-      if [ -n "$TIP_HOLDER" ] && [ "$TIP_HOLDER" != "$GODMODE_EXPECT_HOLDER" ]; then
+      if [ "$EXP" = "__none__" ]; then
+        if [ -n "$TIP_HOLDER" ]; then
+          echo "sidecar: a holder ($TIP_HOLDER) appeared where none was expected, refusing to clobber" >&2
+          exit 5
+        fi
+      elif [ -n "$TIP_HOLDER" ] && [ "$TIP_HOLDER" != "$EXP" ]; then
         echo "sidecar: lease moved to $TIP_HOLDER before push, refusing to clobber" >&2
         exit 5
       fi

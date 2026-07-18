@@ -173,8 +173,12 @@ case "$ACTION" in
           --arg ts "$(iso_now)" --arg since "$SINCE" \
           '{holder:$h, machine:$m, heartbeat_ts:$ts, held_since:$since}' > "$TMP/lease.json"
 
+    # We hold the lease (holder == IDENT) or saw none. Either way a FOREIGN
+    # holder appearing on the tip means we were deposed in the TOCTOU window:
+    # expect exactly what we saw (__none__ when empty), refuse to clobber.
+    EXPECT="$REMOTE_HOLDER"; [ -n "$EXPECT" ] || EXPECT="__none__"
     RC=0
-    GODMODE_EXPECT_HOLDER="$REMOTE_HOLDER" \
+    GODMODE_EXPECT_HOLDER="$EXPECT" \
     GODMODE_SYNC_MSG="chore(godmode): sync $SLUG $(jq -r .phase "$TMP/state.json" 2>/dev/null || echo '?')" \
       "$SIDE" push "$REPO" "$SLUG" "$TMP" || RC=$?
     if [ "$RC" = 5 ]; then
@@ -189,12 +193,15 @@ case "$ACTION" in
       # raced: refetch, re-verify holder, single retry
       GODMODE_SYNC_CACHE="$CACHE" "$SIDE" pull "$REPO" "$SLUG" >/dev/null || true
       NEWHOLDER="$(jq -r '.holder // empty' "$CACHE/lease.json" 2>/dev/null || true)"
-      if [ -n "$NEWHOLDER" ] && [ "$NEWHOLDER" != "$(hostname -s)/${USER}/$TOKEN" ]; then
+      if [ -n "$NEWHOLDER" ] && [ "$NEWHOLDER" != "$IDENT" ]; then
         printf '%s' "$NEWHOLDER" > "$SCRATCH/$SLUG-lease-lost"
         echo "godmode sync: lease lost to $NEWHOLDER during push, NOT retrying" >&2
         exit 0
       fi
-      "$SIDE" push "$REPO" "$SLUG" "$TMP" || { echo "godmode sync: push retry failed" >&2; exit 0; }
+      # retry carries the SAME content-CAS as the main push (was unguarded)
+      RETRY_EXPECT="$NEWHOLDER"; [ -n "$RETRY_EXPECT" ] || RETRY_EXPECT="__none__"
+      GODMODE_EXPECT_HOLDER="$RETRY_EXPECT" \
+        "$SIDE" push "$REPO" "$SLUG" "$TMP" || { echo "godmode sync: push retry failed" >&2; exit 0; }
     elif [ "$RC" = 6 ]; then
       echo "godmode sync: remote unpushable, sync disabled" >&2
       exit 0

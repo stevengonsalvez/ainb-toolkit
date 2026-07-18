@@ -59,6 +59,34 @@ EOF
   [ -z "$(git -C "$REMOTE" for-each-ref 'refs/godmode/*')" ]
 }
 
+@test "CAS refuses to clobber a foreign lease when NONE was expected (__none__)" {
+  # Cold-start / release->reclaim: we saw no holder, but a foreign claim landed
+  # in the pull->fetch TOCTOU window. An empty expectation used to SKIP the CAS
+  # and fast-forward-clobber it (split brain). __none__ must refuse.
+  seed_state "$CLONE_A" prog sessA
+  # a foreign holder is already on the ref
+  TMP="$(mktemp -d)"
+  jq -n '{holder:"foreignHost/foo/sessFOREIGN", machine:"m", heartbeat_ts:"2026-07-18T00:00:00Z", held_since:"x"}' > "$TMP/lease.json"
+  cp "$FX/state.json" "$TMP/state.json"
+  "$SCRIPTS/sidecar_remote.sh" push "$CLONE_A" prog "$TMP" >/dev/null
+  # we push expecting NO holder
+  MINE="$(mktemp -d)"; cp "$FX/state.json" "$MINE/state.json"
+  jq -n '{holder:"myHost/me/sessMINE", machine:"m", heartbeat_ts:"2026-07-18T01:00:00Z", held_since:"y"}' > "$MINE/lease.json"
+  run env GODMODE_EXPECT_HOLDER=__none__ "$SCRIPTS/sidecar_remote.sh" push "$CLONE_A" prog "$MINE"
+  [ "$status" -eq 5 ]
+  # the foreign lease survives
+  ( cd "$CLONE_B" && "$SCRIPTS/sidecar_remote.sh" pull "$PWD" prog >/dev/null )
+  [ "$(jq -r .holder "$CLONE_B/.agents/scratch/.godmode-sync/prog/lease.json")" = "foreignHost/foo/sessFOREIGN" ]
+}
+
+@test "CAS with __none__ allows the push when the ref truly has no holder" {
+  seed_state "$CLONE_A" prog sessA
+  MINE="$(mktemp -d)"; cp "$FX/state.json" "$MINE/state.json"
+  jq -n '{holder:"myHost/me/sessMINE", machine:"m", heartbeat_ts:"t", held_since:"y"}' > "$MINE/lease.json"
+  run env GODMODE_EXPECT_HOLDER=__none__ "$SCRIPTS/sidecar_remote.sh" push "$CLONE_A" prog "$MINE"
+  [ "$status" -eq 0 ]
+}
+
 @test "pull of absent ref is a clean no-op" {
   run "$SCRIPTS/sidecar_remote.sh" pull "$CLONE_B" ghost
   [ "$status" -eq 0 ]
