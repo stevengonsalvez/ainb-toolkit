@@ -16,7 +16,14 @@ J() { printf '%s' "$IN" | jq -r "$1 // empty" 2>/dev/null || true; }
 CWD="$(J .cwd)"
 REPO="${GODMODE_REPO:-${CWD:-$PWD}}"
 SCRATCH="$REPO/.agents/scratch"
-STATE="$(ls "$SCRATCH"/*-state.json 2>/dev/null | head -1 || true)"
+# Pick the first GODMODE-SIGNED state file (.agents/scratch is shared with
+# other tools; a foreign *-state.json must not gate a bystander's stop).
+STATE=""
+for _s in "$SCRATCH"/*-state.json; do
+  [ -f "$_s" ] || continue
+  jq -e '.phase and (.epics or .dashboard_slug)' "$_s" >/dev/null 2>&1 || continue
+  STATE="$_s"; break
+done
 [ -n "$STATE" ] || exit 0                              # no programme: inert
 SLUG="$(basename "$STATE" | sed 's/-state\.json$//')"
 
