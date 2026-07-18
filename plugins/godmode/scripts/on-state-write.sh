@@ -62,10 +62,13 @@ fi
 OUT_HTML="$REPO/explainers/$SLUG.html"
 PENDING_ARG=()
 [ -f "$PENDING" ] && PENDING_ARG=(--pending "$PENDING")
+# ${arr[@]+"${arr[@]}"} is the bash-3.2-safe empty-array expansion: a bare
+# "${arr[@]}" under `set -u` aborts on bash < 4.4 (stock macOS /bin/bash is
+# 3.2), which silently killed the ENTIRE status pipeline on every state write.
 if ! ERR="$(python3 "$SCRIPT_DIR/render_dashboard.py" \
       --state "$STATE" --beads "$REPO/.beads/issues.jsonl" \
       --charter "$REPO/.agents/goals/$SLUG-charter.md" \
-      --repo "$REPO" --out "$OUT_HTML" "${PENDING_ARG[@]}" 2>&1)"; then
+      --repo "$REPO" --out "$OUT_HTML" ${PENDING_ARG[@]+"${PENDING_ARG[@]}"} 2>&1)"; then
   mark render "$ERR"
   exit 0
 fi
