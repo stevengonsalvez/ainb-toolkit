@@ -223,8 +223,6 @@ def main():
     tpl = expand_rows(tpl, "commit", git_commits(args.repo))
     tpl = expand_rows(tpl, "evidence", evidence_rows)
 
-    # Any case/shape of token, not just [A-Z_]: a lowercase or digit-bearing
-    # placeholder would otherwise ship unrendered to the dashboard.
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(tpl)
