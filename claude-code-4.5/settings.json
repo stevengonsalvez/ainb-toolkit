@@ -233,7 +233,8 @@
     "reflect@ainb-reflect-memory": false,
     "rust-analyzer-lsp@claude-plugins-official": true,
     "codex@openai-codex": true,
-    "impeccable@impeccable": true
+    "impeccable@impeccable": true,
+    "godmode@ainb-toolkit": true
   },
   "extraKnownMarketplaces": {
     "agents-in-a-box": {
@@ -270,6 +271,12 @@
       "source": {
         "source": "github",
         "repo": "pbakaus/impeccable"
+      }
+    },
+    "ainb-toolkit": {
+      "source": {
+        "source": "github",
+        "repo": "stevengonsalvez/ainb-toolkit"
       }
     }
   },
