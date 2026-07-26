@@ -437,6 +437,20 @@ claude-plugins:
       - Sub-skills: reflect, reflect:consolidate, reflect:ingest, reflect:recall, reflect-status
     in-repo-marketplace: ".claude-plugin/marketplace.json (at the root of stevengonsalvez/agents-in-a-box)"
     plugin-source: "plugins/reflect/.claude-plugin/plugin.json"
+    note: "Same plugin NAME as the ainb-reflect-memory entry below — they are distinct plugins from distinct marketplaces. Disambiguate by marketplace_id, never by name alone."
+
+  # Second plugin also named `reflect`, from a different marketplace. Both are
+  # disabled in settings.json as of 2026-07-26; keep the pair adjacent so the
+  # name collision is obvious to anyone editing either one.
+  - name: reflect
+    marketplace: https://github.com/stevengonsalvez/ainb-reflect-memory.git
+    marketplace_id: ainb-reflect-memory
+    marketplace-source: git  # git URL, not github owner/repo shorthand
+    install: |
+      claude plugin marketplace add https://github.com/stevengonsalvez/ainb-reflect-memory.git
+      claude plugin install reflect@ainb-reflect-memory
+    purpose: "Standalone fork of the reflect learning/memory plugin (GraphRAG-backed recall)"
+    has_skills: true
 
   - name: dev-browser
     marketplace: sawyerhood/dev-browser
@@ -524,6 +538,25 @@ claude-plugins:
       - Companion compression tools for memory/context token optimization
       - Backup original files as FILE.original.md before compression
     docs: "https://github.com/JuliusBrussee/caveman"
+
+  - name: ponytail
+    marketplace: DietrichGebert/ponytail
+    marketplace_id: ponytail
+    install: |
+      claude plugin marketplace add DietrichGebert/ponytail
+      claude plugin install ponytail@ponytail
+    purpose: "Lazy-senior-developer response mode — YAGNI ladder, stdlib-first, shortest working diff"
+    has_skills: true
+    multi-skill: true
+    installed-to: ~/.claude/skills
+    skills:
+      - ponytail: "Lazy-senior-developer mode enforcing the YAGNI/stdlib-first ladder"
+      - ponytail-audit: "Audit code for over-engineering and speculative abstraction"
+      - ponytail-debt: "Surface deliberate simplifications and their upgrade paths"
+      - ponytail-gain: "Report what was skipped and when to add it"
+      - ponytail-help: "Help/usage guide for the ponytail skill family"
+      - ponytail-review: "Review changes against the laziness ladder"
+    docs: "https://github.com/DietrichGebert/ponytail"
 
 # =============================================================================
 # NPX SKILLS (agent skills from npm/GitHub)
