@@ -19,7 +19,8 @@
     "OTEL_LOG_TOOL_CONTENT": "1",
     "OTEL_METRICS_INCLUDE_VERSION": "1",
     "OTEL_METRICS_INCLUDE_ENTRYPOINT": "1",
-    "RECALL_GLOBAL": "1"
+    "RECALL_GLOBAL": "1",
+    "DISABLE_GROWTHBOOK": "1"
   },
   "includeCoAuthoredBy": false,
   "permissions": {
@@ -223,12 +224,16 @@
   "enabledPlugins": {
     "warp@claude-code-warp": true,
     "security-guidance@claude-plugins-official": true,
-    "reflect@agents-in-a-box": true,
+    "reflect@agents-in-a-box": false,
     "ainb-fleet@agents-in-a-box": true,
     "ainb-hooks@agents-in-a-box": true,
     "caveman-stats@agents-in-a-box": true,
     "caveman@caveman": true,
-    "ponytail@ponytail": true
+    "ponytail@ponytail": true,
+    "reflect@ainb-reflect-memory": false,
+    "rust-analyzer-lsp@claude-plugins-official": true,
+    "codex@openai-codex": true,
+    "impeccable@impeccable": true
   },
   "extraKnownMarketplaces": {
     "agents-in-a-box": {
@@ -248,6 +253,24 @@
         "source": "github",
         "repo": "DietrichGebert/ponytail"
       }
+    },
+    "ainb-reflect-memory": {
+      "source": {
+        "source": "git",
+        "url": "https://github.com/stevengonsalvez/ainb-reflect-memory.git"
+      }
+    },
+    "openai-codex": {
+      "source": {
+        "source": "github",
+        "repo": "openai/codex-plugin-cc"
+      }
+    },
+    "impeccable": {
+      "source": {
+        "source": "github",
+        "repo": "pbakaus/impeccable"
+      }
     }
   },
   "skipDangerousModePermissionPrompt": true,
@@ -257,6 +280,6 @@
   "inputNeededNotifEnabled": true,
   "skipAutoPermissionPrompt": true,
   "permissionMode": "bypassPermissions",
-  "effortLevel": "xhigh",
+  "effortLevel": "high",
   "tui": "fullscreen"
 }
