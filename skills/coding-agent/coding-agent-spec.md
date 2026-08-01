@@ -1,3 +1,10 @@
+> **STALE, HISTORICAL RECORD ONLY.** This spec captures the 2026-04 refactor that
+> standardised on raw tmux as the single execution model. That is no longer the
+> contract. `ainb run` is now the primary spawn path and raw tmux is a named
+> fallback. Where this document and `SKILL.md` disagree, **`SKILL.md` Pattern 1
+> wins**. Read it for the history of the OpenClaw removal, never as current
+> guidance.
+
 # Specification: coding-agent Skill Optimization
 
 **Generated from:** User interview (optimization request)
