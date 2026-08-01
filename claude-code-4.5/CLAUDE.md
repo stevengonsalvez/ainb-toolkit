@@ -105,6 +105,57 @@ Playwright: run inside tmux with `--reporter=json` piped to a log; NEVER `--repo
 Prefer `/start-local`, `/start-ios`, `/start-android` skills, they do all of the above automatically.
 </background_server_execution>
 
+<never_idle_while_waiting>
+CRITICAL: waiting is never a stopping point. If work is in flight (CI, PR checks, deploy, build, background agent, long test run, external job), you MUST arm a wake mechanism before yielding. Ending a turn with "CI is still running" / "waiting for the build" / "let me know when it finishes" is a session stall and is forbidden. If nothing is armed, you have not finished the turn.
+
+Pick by how many wake-ups you need:
+
+```
+┌──────────────────────────┐   ┌───────────────────────────┐
+│ 1 wake, condition known  │──▶│ background shell          │
+│ "tell me when CI done"   │   │ + `until <cond>; do ...`  │
+└──────────────────────────┘   └───────────────────────────┘
+┌──────────────────────────┐   ┌───────────────────────────┐
+│ N wakes, has an end      │──▶│ Monitor, cmd emits + exits│
+│ "each check as it lands" │   │                           │
+└──────────────────────────┘   └───────────────────────────┘
+┌──────────────────────────┐   ┌───────────────────────────┐
+│ N wakes, no end          │──▶│ Monitor persistent: true  │
+│ "every ERROR in log"     │   │ stop via TaskStop         │
+└──────────────────────────┘   └───────────────────────────┘
+┌──────────────────────────┐   ┌───────────────────────────┐
+│ Nothing mechanically     │──▶│ /loop (dynamic) +         │
+│ watchable from shell     │   │ ScheduleWakeup            │
+└──────────────────────────┘   └───────────────────────────┘
+```
+
+Monitor, TaskStop, and ScheduleWakeup are Claude Code mechanisms. On a harness without them (Codex, Copilot), every row collapses to the background-shell form below, still bounded, still armed before yielding.
+
+Rules:
+- Harness-tracked work (background shell job, Monitor, Task/subagent) re-invokes you on completion. Do NOT also ScheduleWakeup a short poll on top of it, that is duplicate work. Only add a long fallback (1200s+) in case the job wedges.
+- Every wait gets a HARD bound: deadline and max poll count, computed up front from the expected duration (CI ~10min → cap ~20min). On breach, stop polling, report what is stuck with the last known status, and emit `needs input:`. Never poll a wedged job indefinitely.
+- Coverage: the watch condition must match FAILURE states too, not just success. Silence looks identical to "still running". Poll on terminal status (`success|failure|cancelled|timed_out|skipped`), never on the happy path alone.
+- Poll intervals: 30s+ for remote APIs (rate limits), 0.5-1s for local file/port checks.
+- While waiting, keep working on anything that does not depend on the result. Blocking idly is the last resort, not the first.
+
+GitHub CI, canonical form (background bash, exits when every check reaches a terminal bucket, hard cap on iterations):
+
+```bash
+n=0; until [ $n -ge 40 ]; do
+  s=$(gh pr checks "$PR" --json name,bucket 2>/dev/null) || { sleep 30; n=$((n+1)); continue; }
+  jq -e 'length > 0 and all(.[]; .bucket != "pending")' <<<"$s" >/dev/null && { jq -r '.[] | "\(.name): \(.bucket)"' <<<"$s"; break; }
+  sleep 30; n=$((n+1))
+done
+# Explicit if, NOT `[ $n -ge 40 ] && echo ...`: that trailing test returns 1 on
+# the success path, so a green run reports as a failed background task.
+if [ $n -ge 40 ]; then echo "TIMEOUT: checks still pending after 20m"; exit 1; fi
+```
+
+Same shape for `gh run watch "$RUN_ID" --exit-status` (single run) and for merge-queue commits: watch each commit's checks, not just the PR.
+
+Enforced mechanically in Claude Code by the `ainb-hooks` plugin (`hooks/stall_guard.py`, a Stop hook): if a turn ends with in-flight work and no wake armed, the stop is blocked once with a pointer back to this rule.
+</never_idle_while_waiting>
+
 # Screenshot & Image Manipulation
 
 <image_manipulation_protocol>
