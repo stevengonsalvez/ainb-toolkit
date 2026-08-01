@@ -8,6 +8,14 @@ user-invocable: true
 
 Spawn a Claude Code agent in a separate tmux session with optional handover context.
 
+> **Prefer `ainb run` for coding work in a git repo.** See `/coding-agent`
+> Pattern 1 (or `/ainb-fleet:ainb-spawn`): those sessions get an isolated
+> worktree, a correct workspace name, and fleet/ATC visibility, which raw tmux
+> sessions do not. Use `/spawn-agent` when `ainb` is not on PATH, the target is
+> not a git repo, or you specifically need the `--with-handover` contract and
+> the `agent-{timestamp}` registry that `/recover-sessions` and `/tmux-monitor`
+> read.
+
 ## Usage
 
 ```bash
