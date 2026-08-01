@@ -321,7 +321,7 @@ printf '{"FEATURE_SPEC":"%s","IMPL_PLAN":"%s","SPECS_DIR":"%s","BRANCH":"%s"}\n'
 
         // Template substitution: placeholders are resolved, paths interpolated.
         const claudeContent = fs.readFileSync(path.join(destDir, 'CLAUDE.md'), 'utf8');
-        expect(claudeContent).toContain('.claude/session/current-session.yaml');
+        expect(claudeContent).toContain('~/.claude/skills/cost-aware-pipeline/SKILL.md');
         expect(claudeContent).not.toContain('{{TOOL_DIR}}');
         expect(claudeContent).not.toContain('{{HOME_TOOL_DIR}}');
 
