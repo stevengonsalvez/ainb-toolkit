@@ -731,13 +731,14 @@ npx-skills:
       - gog-save-attachments: "Gmail attachment download and Drive archival"
       - crabbox: "Bundled in the same repo but UNRELATED to Google Workspace — OpenClaw remote validation wrapper (Linux/macOS/Windows/WSL2, Blacksmith Testbox). Safe to remove if unwanted."
     requires:
-      - "gog CLI: brew install gogcli (verified against 0.12.0)"
+      - "gog CLI: brew install gogcli — needs a recent build; latest release is v0.34.1 (2026-07-16)"
       - "OAuth client: gog auth credentials set <client_secret.json>  (a Desktop-type client; the gws client at ~/.config/gws/client_secret.json can be reused verbatim)"
       - "Account grant: gog auth add <email> --services gmail,calendar,drive,docs,sheets,slides,contacts,tasks,people --force-consent"
     notes:
       - "Consumer Gmail accounts cannot use gog-admin / gog-groups / gog-keep (Workspace-only, need a service account with domain-wide delegation)."
       - "Refresh tokens land in the OS keyring (macOS Keychain); config at ~/Library/Application Support/gogcli/config.json."
       - "gog and gws can share one OAuth client — separate token stores, no interference."
+      - "VERSION SKEW: the skills document an agent contract (`gog auth doctor`, `--wrap-untrusted`, `GOG_HELP=agent`) that a stale CLI will not have. Checked on 0.12.0: `gog schema --json` works, but `auth doctor` and `--wrap-untrusted` fail as unknown and `GOG_HELP=agent` emits plain help. Keep the CLI current or the skills will hand agents commands that error."
     docs: "https://gogcli.sh"
 
 # =============================================================================
