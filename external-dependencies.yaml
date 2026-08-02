@@ -13,7 +13,7 @@
 # =============================================================================
 
 version: "1.0.0"
-updated: "2026-05-08"
+updated: "2026-08-02"
 
 # Internal toolkit components (skills, plugins, agents, workflows, utilities)
 # are catalogued in catalog.yaml — auto-generated from filesystem
@@ -689,6 +689,57 @@ npx-skills:
     security-note: "skills.sh install-time scan: Snyk Critical Risk on 4 of 5 skills (generate, marketplace-cards, product-photoshoot, soul-id), Medium on websites; Socket 0 alerts across all; Gen column High Risk on marketplace-cards & product-photoshoot. Skills run with full agent permissions and shell out to a curl|sh-installed CLI — review before use. Scan detail: https://skills.sh/higgsfield-ai/skills"
     docs: "https://skills.sh/higgsfield-ai/skills"
 
+  - name: gogcli-skills
+    repo: openclaw/gogcli
+    ref: main
+    install: "npx skills add https://github.com/openclaw/gogcli --global --agent claude-code --agent codex --skill '*' --yes"
+    applies-to: [claude, codex]
+    purpose: "Google Workspace skill family wrapping the `gog` CLI — per-service skills (Gmail, Calendar, Drive, Docs, Sheets, Slides, Tasks, Contacts, Keep, Chat, Meet, Groups, Forms, Classroom, Photos, Maps, YouTube, Analytics, Search Console, Sites, Apps Script, Admin) plus read-only workflow skills (inbox triage, weekly digest, meeting prep, Drive sharing audit, contacts cleanup, attachment archival)."
+    multi-skill: true
+    source-path: ".agents/skills/"
+    install-layout: "Source of truth ~/.agents/skills/; symlinked into ~/.claude/skills/ by the CLI. Codex links must be created manually — the CLI reports 'universal: Codex' but does NOT populate ~/.codex/skills/ (same gap as higgsfield-skills). Fix: cd ~/.codex/skills && for d in ~/.agents/skills/gog* ~/.agents/skills/crabbox; do n=$(basename \"$d\"); ln -sfn \"../../.agents/skills/$n\" \"$n\"; done"
+    skills:
+      - gog: "Root skill — safe Google Workspace automation, stable JSON, auth inspection, scoped reads/writes (GOG_HELP=agent, gog schema, --wrap-untrusted)"
+      - gog-gmail: "Gmail operations through gog"
+      - gog-calendar: "Google Calendar operations through gog"
+      - gog-drive: "Google Drive operations through gog"
+      - gog-docs: "Google Docs operations through gog"
+      - gog-sheets: "Google Sheets operations through gog"
+      - gog-slides: "Google Slides operations through gog"
+      - gog-tasks: "Google Tasks operations through gog"
+      - gog-contacts: "Google Contacts operations through gog"
+      - gog-people: "Google People operations through gog"
+      - gog-keep: "Google Keep operations through gog (Workspace only; service account)"
+      - gog-chat: "Google Chat operations through gog"
+      - gog-meet: "Google Meet operations through gog"
+      - gog-groups: "Google Groups operations through gog (Workspace only)"
+      - gog-forms: "Google Forms operations through gog"
+      - gog-classroom: "Google Classroom operations through gog"
+      - gog-photos: "Google Photos operations through gog"
+      - gog-maps: "Google Maps operations through gog"
+      - gog-youtube: "YouTube operations through gog"
+      - gog-analytics: "Google Analytics operations through gog"
+      - gog-searchconsole: "Google Search Console operations through gog"
+      - gog-sites: "Google Sites operations through gog"
+      - gog-appscript: "Apps Script operations through gog"
+      - gog-admin: "Workspace Admin operations through gog (Workspace only; domain-wide delegation)"
+      - gog-inbox-triage: "Gmail inbox triage — prioritize unread, inspect safely, prepare reply drafts"
+      - gog-weekly-digest: "Read-only weekly digest across Calendar, Gmail, and Tasks"
+      - gog-meeting-prep: "Calendar meeting prep including attendees and linked Workspace files"
+      - gog-drive-audit: "Read-only Drive sharing and permission audits"
+      - gog-contacts-cleanup: "Contacts duplicate review and guarded cleanup"
+      - gog-save-attachments: "Gmail attachment download and Drive archival"
+      - crabbox: "Bundled in the same repo but UNRELATED to Google Workspace — OpenClaw remote validation wrapper (Linux/macOS/Windows/WSL2, Blacksmith Testbox). Safe to remove if unwanted."
+    requires:
+      - "gog CLI: brew install gogcli (verified against 0.12.0)"
+      - "OAuth client: gog auth credentials set <client_secret.json>  (a Desktop-type client; the gws client at ~/.config/gws/client_secret.json can be reused verbatim)"
+      - "Account grant: gog auth add <email> --services gmail,calendar,drive,docs,sheets,slides,contacts,tasks,people --force-consent"
+    notes:
+      - "Consumer Gmail accounts cannot use gog-admin / gog-groups / gog-keep (Workspace-only, need a service account with domain-wide delegation)."
+      - "Refresh tokens land in the OS keyring (macOS Keychain); config at ~/Library/Application Support/gogcli/config.json."
+      - "gog and gws can share one OAuth client — separate token stores, no interference."
+    docs: "https://gogcli.sh"
+
 # =============================================================================
 # NANOCLAW SKILLS (qwibitai/nanoclaw container/skills/)
 # =============================================================================
@@ -777,6 +828,9 @@ nanoclaw-skills:
     - name: gog
       homepage: "https://gogcli.sh"
       purpose: "Google Workspace CLI for Gmail, Calendar, Drive, Contacts, Sheets, Docs"
+      status: superseded
+      superseded-by: "npx-skills → gogcli-skills (openclaw/gogcli, upstream, 31 skills)"
+      note: "Stale single-file SKILL.md; not present in nanoclaw container/skills/ on main as of 2026-08-02. Replaced in ~/.claude/skills/gog by a symlink to the upstream install."
 
     # --- GitHub operations ---
     - name: github
