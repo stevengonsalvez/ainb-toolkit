@@ -646,11 +646,14 @@ printf '%b\n %b' "$L1" "$L2"
 # Fallback resolves the latest installed reflect plugin dynamically so the
 # statusline keeps working across plugin version upgrades without manual edits.
 if [[ -n "${CLAUDE_PLUGIN_ROOT:-}" ]]; then
-  TIMELINE_HELPER="$CLAUDE_PLUGIN_ROOT/scripts/reflect_timeline.sh"
+  _REFLECT_ROOT="$CLAUDE_PLUGIN_ROOT/"
 else
   _REFLECT_CACHE="$HOME/.claude/plugins/cache/agents-in-a-box/reflect"
-  TIMELINE_HELPER="$(ls -1d "$_REFLECT_CACHE"/*/ 2>/dev/null | sort -V | tail -1)scripts/reflect_timeline.sh"
+  _REFLECT_ROOT="$(ls -1d "$_REFLECT_CACHE"/*/ 2>/dev/null | sort -V | tail -1)"
 fi
+# v5.2+ flat layout ships it under plugin/scripts/; older releases at scripts/.
+TIMELINE_HELPER="${_REFLECT_ROOT}plugin/scripts/reflect_timeline.sh"
+[[ -x "$TIMELINE_HELPER" ]] || TIMELINE_HELPER="${_REFLECT_ROOT}scripts/reflect_timeline.sh"
 if [[ "${REFLECT_TIMELINE_DISABLE:-0}" != "1" ]] && [[ -x "$TIMELINE_HELPER" ]]; then
   REFLECT_TIMELINE_SESSION_ID="$(_jq '.session_id')" \
   REFLECT_TIMELINE_PROJECT_DIR="$(_jq '.workspace.project_dir // .workspace.current_dir')" \
