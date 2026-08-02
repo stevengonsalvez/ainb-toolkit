@@ -652,8 +652,13 @@ else
   _REFLECT_ROOT="$(ls -1d "$_REFLECT_CACHE"/*/ 2>/dev/null | sort -V | tail -1)"
 fi
 # v5.2+ flat layout ships it under plugin/scripts/; older releases at scripts/.
-TIMELINE_HELPER="${_REFLECT_ROOT}plugin/scripts/reflect_timeline.sh"
-[[ -x "$TIMELINE_HELPER" ]] || TIMELINE_HELPER="${_REFLECT_ROOT}scripts/reflect_timeline.sh"
+# Empty root (plugin not installed) must NOT fall through to a cwd-relative
+# path — that would execute a same-named script from whatever repo is open.
+TIMELINE_HELPER=""
+if [[ -n "$_REFLECT_ROOT" ]]; then
+  TIMELINE_HELPER="${_REFLECT_ROOT}plugin/scripts/reflect_timeline.sh"
+  [[ -x "$TIMELINE_HELPER" ]] || TIMELINE_HELPER="${_REFLECT_ROOT}scripts/reflect_timeline.sh"
+fi
 if [[ "${REFLECT_TIMELINE_DISABLE:-0}" != "1" ]] && [[ -x "$TIMELINE_HELPER" ]]; then
   REFLECT_TIMELINE_SESSION_ID="$(_jq '.session_id')" \
   REFLECT_TIMELINE_PROJECT_DIR="$(_jq '.workspace.project_dir // .workspace.current_dir')" \
