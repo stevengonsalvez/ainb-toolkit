@@ -429,6 +429,7 @@ C_ORANGE="255;184;108"
 C_PINK="255;121;198"
 C_RED="255;85;85"
 C_GREY="68;71;90"
+C_CAVE="176;98;38"   # dark orange — caveman badge, distinct from dirty-git C_ORANGE
 
 # Build one powerline segment. Handles bg→bg transition.
 # Args: <bg r;g;b> <fg r;g;b> <text> <prev_bg r;g;b or empty>
@@ -567,6 +568,14 @@ if [[ -n "$BD_DISPLAY" ]]; then
   prev="$C_PINK"
 fi
 
+# Caveman badge (dark orange) — computed in SIGNAL 9 above
+if [[ -n "$CAVEMAN_BADGE" ]]; then
+  cave_text="$CAVEMAN_BADGE"
+  [[ -n "$CAVEMAN_SAVINGS" ]] && cave_text+=" ${CAVEMAN_SAVINGS}"
+  L1+=$(_seg "$C_CAVE" "$C_WHITE" "$cave_text" "$prev")
+  prev="$C_CAVE"
+fi
+
 L1+=$(_seg_end "$prev")
 
 # ── Build Line 2 (plain: model · health · bars · cost) ──────────────────────
@@ -637,10 +646,18 @@ printf '%b\n %b' "$L1" "$L2"
 # Fallback resolves the latest installed reflect plugin dynamically so the
 # statusline keeps working across plugin version upgrades without manual edits.
 if [[ -n "${CLAUDE_PLUGIN_ROOT:-}" ]]; then
-  TIMELINE_HELPER="$CLAUDE_PLUGIN_ROOT/scripts/reflect_timeline.sh"
+  _REFLECT_ROOT="$CLAUDE_PLUGIN_ROOT/"
 else
   _REFLECT_CACHE="$HOME/.claude/plugins/cache/agents-in-a-box/reflect"
-  TIMELINE_HELPER="$(ls -1d "$_REFLECT_CACHE"/*/ 2>/dev/null | sort -V | tail -1)scripts/reflect_timeline.sh"
+  _REFLECT_ROOT="$(ls -1d "$_REFLECT_CACHE"/*/ 2>/dev/null | sort -V | tail -1)"
+fi
+# v5.2+ flat layout ships it under plugin/scripts/; older releases at scripts/.
+# Empty root (plugin not installed) must NOT fall through to a cwd-relative
+# path — that would execute a same-named script from whatever repo is open.
+TIMELINE_HELPER=""
+if [[ -n "$_REFLECT_ROOT" ]]; then
+  TIMELINE_HELPER="${_REFLECT_ROOT}plugin/scripts/reflect_timeline.sh"
+  [[ -x "$TIMELINE_HELPER" ]] || TIMELINE_HELPER="${_REFLECT_ROOT}scripts/reflect_timeline.sh"
 fi
 if [[ "${REFLECT_TIMELINE_DISABLE:-0}" != "1" ]] && [[ -x "$TIMELINE_HELPER" ]]; then
   REFLECT_TIMELINE_SESSION_ID="$(_jq '.session_id')" \
