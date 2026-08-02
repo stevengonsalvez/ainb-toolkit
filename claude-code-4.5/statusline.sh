@@ -429,6 +429,7 @@ C_ORANGE="255;184;108"
 C_PINK="255;121;198"
 C_RED="255;85;85"
 C_GREY="68;71;90"
+C_CAVE="176;98;38"   # dark orange — caveman badge, distinct from dirty-git C_ORANGE
 
 # Build one powerline segment. Handles bg→bg transition.
 # Args: <bg r;g;b> <fg r;g;b> <text> <prev_bg r;g;b or empty>
@@ -565,6 +566,14 @@ if [[ -n "$BD_DISPLAY" ]]; then
   bd_text="bd:${BD_COUNT}▸"
   L1+=$(_seg "$C_PINK" "$C_BLACK" "$bd_text" "$prev")
   prev="$C_PINK"
+fi
+
+# Caveman badge (dark orange) — computed in SIGNAL 9 above
+if [[ -n "$CAVEMAN_BADGE" ]]; then
+  cave_text="$CAVEMAN_BADGE"
+  [[ -n "$CAVEMAN_SAVINGS" ]] && cave_text+=" ${CAVEMAN_SAVINGS}"
+  L1+=$(_seg "$C_CAVE" "$C_WHITE" "$cave_text" "$prev")
+  prev="$C_CAVE"
 fi
 
 L1+=$(_seg_end "$prev")
