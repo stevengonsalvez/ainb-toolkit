@@ -119,8 +119,10 @@ def main():
         #         print("BLOCKED: Dangerous rm command detected and prevented", file=sys.stderr)
         #         sys.exit(2)  # Exit code 2 blocks tool call and shows error to Claude
         
-        # Ensure log directory exists
-        log_dir = Path.cwd() / 'logs'
+        # Ensure log directory exists. Absolute, NOT Path.cwd(): see the same
+        # fix in post_tool_use.py — cwd-relative logs scattered telemetry into
+        # every directory a session happened to run in.
+        log_dir = Path.home() / '.claude' / 'logs'
         log_dir.mkdir(parents=True, exist_ok=True)
         log_path = log_dir / 'pre_tool_use.json'
         
