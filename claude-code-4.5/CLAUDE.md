@@ -43,9 +43,36 @@ NEVER use em-dashes (—) in any output: responses, docs, commit messages, code 
 <option_presentation>
 MANDATORY: whenever you would present Stevie with options, choices between paths, A/B/C decisions, "which approach?", "should I do X or Y?", trade-off picks, you MUST invoke the `/interview` skill (via the Skill tool) to ask via structured `AskUserQuestion`, not plaintext markdown tables in chat.
 
-Applies to any enumerated fork where the next step depends on Stevie's pick: options A/B/C, decision-time forks during implementation ("merge vs rebase?"), tool/library selection, architecture choices for confirmation. Does NOT apply to open-ended questions, yes/no confirmations on a single proposed action, or status reports without a fork.
+Applies to any enumerated fork where the next step depends on Stevie's pick: options A/B/C, decision-time forks during implementation ("merge vs rebase?"), tool/library selection, architecture choices for confirmation.
+
+BROADENED 2026-08-04: this is NOT limited to enumerated A/B/C forks. ANY message whose real content is "I need something from you before I go on" must be a structured `AskUserQuestion`, never prose. That includes:
+
+- "your call" / "up to you" / "let me know" / "want me to X or Y?"
+- "waiting for you" / "blocked on your decision" / "needs input:"
+- offers to do the next thing ("Want me to take #3374 next, or the card fixes?")
+- asking permission for a scoped action when the alternative is doing nothing
+- surfacing a disagreement with a review, a spec, or Stevie, where the resolution is his
+
+If the honest next line is a question addressed to Stevie, it goes in the tool. Turning it into prose because it "feels conversational" or because there are only two obvious answers is the regression this rule exists to stop.
+
+Distinguish WAITING-ON-MACHINE from WAITING-ON-STEVIE:
+
+```
+┌────────────────────────────┐   ┌──────────────────────────────┐
+│ waiting on CI, build,      │──▶│ status line + armed wake     │
+│ agent, deploy, test run    │   │ "WAITING: <what>"  (prose OK)│
+└────────────────────────────┘   └──────────────────────────────┘
+┌────────────────────────────┐   ┌──────────────────────────────┐
+│ waiting on STEVIE          │──▶│ AskUserQuestion, ALWAYS      │
+│ decision, permission, pick │   │ options + recommendation     │
+└────────────────────────────┘   └──────────────────────────────┘
+```
+
+Per <lead_with_recommendation>, arrive with a recommended option marked "(Recommended)" first, never a blank survey. Two options is enough, do not pad to four. Use `preview` for anything with a concrete shape (diffs, layouts, orderings).
 
 Why: plaintext options dumped in chat are easy to skim past, hard to answer cleanly, and produce ambiguous follow-ups. `AskUserQuestion` (via `/interview`) produces typed answers the agent can branch on. Stevie has explicitly mandated this, slipping back to plaintext option tables is a correction-worthy regression.
+
+Why broadened: Stevie 2026-08-04. Even with the fork rule in place, decision-shaped asks kept arriving as ordinary prose at the end of long status reports, where they read as commentary and got lost.
 </option_presentation>
 
 <paste_ready_artifacts>

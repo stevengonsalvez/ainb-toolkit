@@ -60,8 +60,11 @@ logging.setLogRecordFactory(record_factory)
 def log_to_json_file(input_data):
     """Original functionality: log all tool usage to JSON file."""
     try:
-        # Ensure log directory exists
-        log_dir = Path.cwd() / 'logs'
+        # Ensure log directory exists. Absolute, NOT Path.cwd(): a cwd-relative
+        # 'logs' dropped a logs/ dir into whatever directory the session was in,
+        # scattering telemetry across ~20 project trees and even into a plugin
+        # source dir, from where a directory-source install copied it.
+        log_dir = Path.home() / '.claude' / 'logs'
         log_dir.mkdir(parents=True, exist_ok=True)
         log_path = log_dir / 'post_tool_use.json'
 
