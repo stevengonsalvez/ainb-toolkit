@@ -19,8 +19,7 @@
     "OTEL_LOG_TOOL_CONTENT": "1",
     "OTEL_METRICS_INCLUDE_VERSION": "1",
     "OTEL_METRICS_INCLUDE_ENTRYPOINT": "1",
-    "RECALL_GLOBAL": "1",
-    "DISABLE_GROWTHBOOK": "1"
+    "RECALL_GLOBAL": "1"
   },
   "includeCoAuthoredBy": false,
   "permissions": {
