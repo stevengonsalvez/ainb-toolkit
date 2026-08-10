@@ -1,6 +1,6 @@
 ---
 name: godmode
-description: "Autonomous product factory — /make-a-goal in godmode. Point it at a north-star outcome and it runs the whole delivery machine unattended: brainstorm the feature landscape (Discover), put every idea through a Feasibility Court, cluster into a Roadmap of epics, then per epic Plan → adversarial review → Execute (model-paired build) → VERIFY (drive the real UI/TUI/API, not mocks) → ship a stacked PR, looping until the backlog is dry or a budget/time bound fires. One human gate (roadmap blessing), hard stop rules, always-on tabbed RAG dashboard, crash-proof resume from state files. Use when the user says 'godmode', 'run the factory', 'ship X to nirvana', 'execute this whole backlog autonomously', 'goals within goals', or wants a multi-epic programme driven end-to-end with real end-to-end verification. NOT for single features, one-off verification, or scoped builds — use /make-a-goal, browser/tmux verification skills, or a plain plan for those."
+description: "Autonomous product factory. A finite programme delivers a bounded roadmap. A perpetual programme continuously pairs independent models to discover evidence-backed value, create and execute goals, run full regression, repair confirmed fallout, and create the next progression until a hard safety, budget, or deadline boundary fires."
 ---
 
 # godmode — the autonomous product factory
@@ -15,7 +15,7 @@ your constitution and playbooks.
 
 | Invocation | Action |
 |---|---|
-| `/godmode <north-star> [--no-court] [--budget <tokens>] [--deadline <ISO>] [--fable off]` (alias: `/godmode init <north-star> ...`) | INIT: generate charter + state + dashboard + beads, run Feasibility Court + Roadmap, present roadmap at the human gate |
+| `/godmode <north-star> --mode finite\|perpetual [--approval none\|roadmap] [--no-court] [--budget <tokens>] [--deadline <ISO>]` (alias: `/godmode init <north-star> ...`) | INIT: generate charter + state + dashboard + beads, then begin finite delivery or perpetual evolution |
 | `/godmode run [--take-over]` | Resume/continue the loop from state (any session, incl. post-crash). Claims the driver lease first: refuses while another session's lease is fresh, auto-claims a stale one, `--take-over` forces after an AskUserQuestion confirm. On a fresh machine: `sync.sh discover`, pick the slug, claim, then `sync.sh adopt <slug>` reconstructs local state |
 | `/godmode status` | Standup: read state + beads + dashboard + lease, report, change nothing. NEVER adopts (observer-safe: no scratch state means hooks stay inert). Preflight prints "status publishing DISABLED: missing <X>" when here-now/credentials are absent |
 | `/godmode pause` | Stop re-arming the loop; state stays resumable; release the lease (`lease.sh release`) |
@@ -24,9 +24,12 @@ your constitution and playbooks.
 
 | Capability | Claude | Codex | Copilot |
 |---|---|---|---|
-| init / run (drive the loop) | full | refuse + status message | refuse + status message |
+| init / run (drive the loop) | native scheduler | native Codex automation required | external scheduler adapter required |
 | status / discover | yes | yes | yes |
-| dashboard publish + sidecar sync + lease guard | all hooks | hooks.json (shared format) | sessionStart pull + staleness nudge only |
+| dashboard publish + sidecar sync + lease guard | all hooks | hooks.json (shared format) | sessionStart pull + staleness nudge |
+
+Never claim a provider is driving when its scheduler or peer-model adapter is
+missing. Record the capability result in state and defer that lane visibly.
 
 ## The three-layer machine
 
@@ -53,8 +56,8 @@ FEASIBILITY COURT (W0)   once   every REGISTRY idea → verdict: feasible | down
 ROADMAP (W1)             once   cluster survivors → ordered epics + parallel-pair candidates,
         │                       seed beads (one per epic + per feature)
         ▼
-[HUMAN GATE]                    the ONLY interactive gate: user blesses the roadmap
-        ▼                       (may authorise parallel epic pairs)
+[OPTIONAL ROADMAP GATE]         only when approval_policy is roadmap
+        ▼
 per epic, serial on stacked branches:
    PLAN (W2)      planner → adversarial review → revise → VERIFY THE REVISE EDITED THE
         │         PLAN FILES (mtime/content) — see references/lessons.md
@@ -65,14 +68,37 @@ per epic, serial on stacked branches:
    SHIP           stacked PR (labelled for review) → close epic+feature beads with
         │         evidence notes → dashboard update
         ▼
-TERMINATION       backlog-dry (default) | --budget exhausted | --deadline reached
-                  — first to fire wins; post final summary + PushNotification, stop loop
+PERPETUAL         after every ship: full regression + next discovery/plan
+                  backlog-dry becomes adaptive evidence research, never DONE
+TERMINATION       finite backlog-dry | --budget exhausted | --deadline reached |
+                  security, production-safety, authority, or lease loss
 ```
 
-Backlog replenishment: after each epic ships, a BRAIN completeness-critic pass
-("what would a user still complain about — modality unrun, claim unverified?")
-may append new features to the REGISTRY; they enter the Court like any other.
-Backlog-dry means the critic comes back empty too.
+Perpetual progression: after each epic ships, start cumulative regression in
+an isolated lane. At the same time, the completeness critic re-enters Discover
+and creates evidence-backed candidates for the next generation. A confirmed
+defect preempts the single mutation lane. Discovery and planning continue in
+parallel. An empty Court result enters adaptive-backoff research, never DONE.
+
+## Creative quorum
+
+Every creative decision has two independent model perspectives: Discover,
+Feasibility Court, Roadmap, completeness critic, incident root-cause analysis,
+and strategic reprioritisation. Resolve the route before launching work with:
+
+```bash
+${CLAUDE_PLUGIN_ROOT}/scripts/programme_policy.py creative-route <availability.json>
+```
+
+- Claude primary pairs a Claude creative model with `codex:codex-rescue`.
+- Codex primary pairs a Codex model with Claude Fable.
+- Copilot primary uses two distinct Copilot models, then enriches with Claude
+  or Codex when available.
+- Fallback uses any two distinct available models. One model means creative
+  work is deferred, while regression and grounded work continue.
+- Persist both proposals, model identifiers, evidence, disagreement, and the
+  synthesis. A third model synthesises when available; otherwise use the
+  evidence rubric and preserve dissent.
 
 Parallel epics: allowed ONLY if blessed AND file-sets provably disjoint AND
 worktrees available; otherwise serialise (single worktree = single checkout).
@@ -98,16 +124,15 @@ worktrees available; otherwise serialise (single worktree = single checkout).
 5. Run DISCOVER (template: `references/stage-workflows.md`) → writes the
    registry. Then, unless `--no-court`, the Feasibility Court workflow, then
    Roadmap. With `--no-court`: registry taken verbatim, straight to Roadmap.
-6. Present the roadmap to the user (HUMAN GATE), set state
-   `human_gate: "pending"`, PushNotification ONCE — and do NOT arm the loop.
-   Blessing arrives as a user message; it re-enters via `/godmode run`, which
-   sets `human_gate: "blessed"` and starts the loop.
+6. If `approval_policy` is `roadmap`, present the roadmap, set
+   `human_gate: "pending"`, and wait. Otherwise set `human_gate: "none"` and
+   start the loop immediately. Perpetual mode normally uses `none`.
 
 ## LOOP protocol (every wake — this is the driver contract)
 
-1. Read the charter + state.json. They outrank your memory of last tick.
-   If `human_gate` is `"pending"`: do NOT re-arm — the gate was already posted;
-   wait for the user (see INIT step 6).
+1. Read the charter + state.json. They outrank your memory of last tick. Run
+   `programme_policy.py validate-state <state>` before any side effect. If an
+   optional `human_gate` is pending, do not re-arm.
 2. Check the running workflow (task output file / TaskList). If done: read its
    result AND its journal if the result looks off; persist artifacts; verify
    commits landed per the commit policy; advance the state machine (consult
@@ -127,7 +152,10 @@ worktrees available; otherwise serialise (single worktree = single checkout).
    (/explain-to-me) and publish it via
    `${CLAUDE_PLUGIN_ROOT}/scripts/explainer-publish.sh` (the Stop gate blocks
    your stop until its receipt exists).
-5. Re-arm: ScheduleWakeup ~600s, reason = current phase, prompt = the DRIVER
+5. Ask `programme_policy.py next-action <state>` which lane owns the next
+   action. Confirmed defects own mutation, shipped epics queue regression, and
+   perpetual empty backlogs queue research. Re-arm: ScheduleWakeup ~600s,
+   reason = current phase, prompt = the DRIVER
    RE-ENTRY PROMPT verbatim (below). Honour STOP RULES first.
 
 ### Driver re-entry prompt (the exact string for every ScheduleWakeup)
@@ -145,19 +173,20 @@ wake re-enter this skill and re-read the constitution.
 Page = PushNotification + a red banner note on the dashboard, then stop
 re-arming. Triggers:
 
-- A workflow errors twice on the same stage.
-- Validation fails 3 consecutive runs on one epic.
-- PRODUCTION is untouchable, always. The validation backend named in the
-  charter is writable ONLY via the charter's stated mechanism; any write
-  outside that list (or any production write at all) = STOP.
-- Per-epic token spend exceeds the charter cap (default ~15M subagent tokens),
-  or budget spend is unmeasurable while a --budget is set.
+- Budget or deadline is exhausted, or budget spend is unmeasurable under a cap.
+- Security, production-safety, lost lease, or missing required authority.
+- A declared production deployment breaches its health policy after rollback.
+
+Repeated workflow or validation failure is not a global stop. Use bounded
+retries, create a quarantined incident, release the mutation lane, and keep
+independent research and planning moving. Any confirmed defect preempts the
+mutation lane until repaired and fully re-verified.
 
 ## Model policy (defaults; charter may override any line)
 
 | Role | Default | Fallback |
 |---|---|---|
-| BRAIN — brainstorm, roadmap orchestration, adversarial review | fable | `--fable off` or unavailable → opus-4.8 + `codex:codex-rescue` pair |
+| BRAIN | host primary plus mandatory creative peer | availability route from Creative quorum |
 | BUILD | opus + codex pair (`codex:codex-rescue` agentType), disagreements surfaced not silently resolved | charter override |
 | TEST / VALIDATE | sonnet | charter override |
 | SCAFFOLD / mechanical | sonnet | charter override |
@@ -170,9 +199,10 @@ Web UI → real-browser drive · TUI → tmux+VHS frame-truth · API → real re
 + side-effect asserts · library → unit+property(+mutation).
 Cross-cutting: mock ONLY the human at the input boundary; READ the artefact
 (never blank-check); evidence uploaded to here.now and linked from the
-dashboard Evidence tab AND the PR body. Per-epic human review is PASSIVE —
-the PR + dashboard notify; it never blocks the loop. The roadmap blessing is
-the only blocking gate.
+dashboard Evidence tab AND the PR body. In perpetual mode, every shipped epic
+runs the entire cumulative regression spine before auto-merge. Regression uses
+an isolated worktree. A confirmed failure pauses unrelated mutation, creates a
+repair incident, then resumes paused work from a rebased baseline.
 
 ## References (load when you reach that step)
 
