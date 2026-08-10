@@ -148,6 +148,18 @@ setup() {
   [ "$(jq -r .driver_session_id .agents/scratch/godmode-test-slug-state.json)" = "sess-new-driver" ]
 }
 
+@test "on-state-write rejects an impossible perpetual state before publishing" {
+  jq '.mode = "perpetual" | .approval_policy = "none" | .human_gate = "pending" | .termination.backlog_dry = true' \
+    .agents/scratch/godmode-test-slug-state.json > t.json \
+    && mv t.json .agents/scratch/godmode-test-slug-state.json
+  EV="$(jq -n --arg fp "$REPO/.agents/scratch/godmode-test-slug-state.json" \
+      '{session_id:"sess-driver-1",tool_name:"Write",tool_input:{file_path:$fp}}')"
+  run bash -c "echo '$EV' | GODMODE_PUBLISH_CMD=/usr/bin/true GODMODE_SYNC=local '$SCRIPTS/on-state-write.sh'"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"invalid programme state"* ]]
+  [ -f .agents/scratch/godmode-test-slug-state.invalid ]
+}
+
 @test "on-state-write falls back to create when --slug update hits Not found, remembers site slug" {
   cat > stubpub.sh <<'EOF'
 #!/bin/sh
