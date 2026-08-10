@@ -8,7 +8,7 @@
   "plugins": [
     {
       "name": "godmode",
-      "description": "Godmode status + sync parity for Copilot CLI (driving the loop is Claude-only)",
+  "description": "Perpetual autonomous product factory for Copilot CLI",
       "source": "./plugins/godmode",
       "category": "orchestration",
       "tags": ["orchestration", "automation"],

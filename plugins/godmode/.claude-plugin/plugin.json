@@ -1,7 +1,7 @@
 {
   "name": "godmode",
-  "version": "0.2.4",
-  "description": "Autonomous product factory with hook-enforced status and cross-machine sync",
+  "version": "0.3.0",
+  "description": "Perpetual autonomous product factory with cross-model creativity and regression control",
   "author": {
     "name": "Steven Gonsalvez",
     "url": "https://github.com/stevengonsalvez"

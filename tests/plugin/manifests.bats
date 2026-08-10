@@ -9,6 +9,21 @@ load helpers
   [ "$V1" = "$V3" ]
 }
 
+@test "Godmode 0.3.0 removes false Claude-only driving claims" {
+  jq -e '.version == "0.3.0"' "$REPO_ROOT/plugins/godmode/.claude-plugin/plugin.json"
+  jq -e '.version == "0.3.0"' "$REPO_ROOT/plugins/godmode/.codex-plugin/plugin.json"
+  jq -e '.version == "0.3.0"' "$REPO_ROOT/.github/plugin/plugin.json"
+  ! grep -qi 'driving the loop is Claude-only' "$REPO_ROOT/plugins/godmode/.codex-plugin/plugin.json"
+  ! grep -qi 'driving the loop is Claude-only' "$REPO_ROOT/.github/plugin/marketplace.json"
+}
+
+@test "Godmode ships its deterministic programme policy" {
+  POLICY="$REPO_ROOT/plugins/godmode/scripts/programme_policy.py"
+  [ -x "$POLICY" ]
+  grep -q 'validate-state' "$REPO_ROOT/plugins/godmode/scripts/on-state-write.sh"
+  grep -q 'creative-route' "$REPO_ROOT/plugins/godmode/skills/godmode/SKILL.md"
+}
+
 @test "marketplace declares godmode sourced from ./plugins/godmode" {
   jq -e '.plugins[] | select(.name == "godmode") | .source == "./plugins/godmode"' \
     "$REPO_ROOT/.claude-plugin/marketplace.json"
