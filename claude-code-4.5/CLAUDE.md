@@ -28,6 +28,36 @@ Decide, don't survey. Every substantive answer must LEAD with a clear one-line r
 Why: Stevie 2026-06-18, "Dont just give lots of corpus, always give me next steps, what is your suggestion." Said after answers heavy on explanation and light on a decisive call.
 </lead_with_recommendation>
 
+<turn_end_block>
+MANDATORY when a turn ends after multi-step work (investigation, CI run, implementation, PR, agent handoff, anything with in-flight or completed state). The LAST thing in the response is a state table plus one `next:` line. Nothing after it except an `AskUserQuestion` call. Exempt: trivial one-liners, single-fact answers, pure clarifying questions.
+
+```
+| thread           | state                        | next             |
+|------------------|------------------------------|------------------|
+| hangar-e2e flake | card in store, not in view   | fix board render |
+| PR #644          | diagnosis only, not a fix    | merge as-is      |
+| part2 Phase B/C  | not started                  | after board bug  |
+
+next: fix board render (snapshot-replace drops rows)
+
+- fails at run #1 launch, not rerun [fact]
+- store has card, view does not, after repaint [fact]
+- same family as #629 snapshot-replace [inference]
+```
+
+Rules:
+- Three columns, always `thread | state | next`. One row per live thread. No extra columns, no merged cells.
+- `state` is present-tense observed condition, under 12 words. Not a story of how you got there.
+- `next` per row is the action for THAT thread, 5 words max. `blocked: <what>` if none.
+- One `next:` line under the table names the single recommended action across all threads. This IS the recommendation required by <lead_with_recommendation>.
+- Under it, at most FIVE bullets. Each one line, under 15 words, tagged `[fact]` or `[inference]` per <diagnostic_honesty>. Over five or over one line: cut, do not relocate, do not write to a file.
+- ZERO prose paragraphs. No "what #644 now honestly claims", no "the fork I need you on", no track-record retrospectives, no narrative of wrong turns. If a wrong turn matters, it is one tagged bullet.
+- Forks: table prints state, then the decision goes STRAIGHT into `AskUserQuestion` per <option_presentation>. Prose describing the options, or ending with "which do you want?", is banned outright.
+- Status/waiting turns still get the block; `state` carries "WAITING: <what>" per <never_idle_while_waiting>.
+
+Why: Stevie 2026-08-10, after a turn-end report of ~400 words of narrative diagnosis, self-assessment, and a prose two-option fork. "this is too hard to read, comprehend and make decisions." State and next action are the only things a stop-turn needs to convey; everything else is the agent talking to itself.
+</turn_end_block>
+
 <diagnostic_honesty>
 When diagnosing problems, separate observations from inferences. Reserve "confirmed cause" / "root cause" / "found it" / "smoking gun" for claims backed by a citation (release note, documented API contract, source code, or a direct reproducible test). For pattern-matched diagnoses, label them as "hypothesis" or "likely" and state what would falsify the hypothesis. If asked "where did you get that", answer honestly that it was inference and re-open the diagnosis, do not double down.
 </diagnostic_honesty>
