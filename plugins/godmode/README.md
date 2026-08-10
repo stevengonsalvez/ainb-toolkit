@@ -1,11 +1,16 @@
 # godmode
 
-An autonomous product factory, packaged as a plugin for Claude Code, Codex, and
-Copilot CLI. Point it at a north-star outcome and it runs the whole delivery
-machine unattended: brainstorm the feature landscape, put every idea through a
-feasibility court, cluster into a roadmap of epics, then per epic
-plan → adversarial review → build → **verify against the real UI/TUI/API** →
-ship a stacked PR, looping until the backlog is dry or a budget/time bound fires.
+An autonomous product factory for Claude Code, Codex, and Copilot CLI. Every
+programme explicitly selects `finite` or `perpetual` mode. Perpetual mode pairs
+independent models for creative work, continuously creates evidence-backed
+goals, runs full regression after each epic, repairs confirmed fallout, then
+creates the next progression until hard safety, budget, or deadline limits fire.
+
+![Godmode perpetual progression](assets/perpetual-loop.svg)
+
+**Ideate → create goal → execute → regress and repair → create next goal.**
+Planning and regression overlap. Mutation stays single-lane. Every creative
+decision carries independent model views, evidence, dissent, and synthesis.
 
 Two things the plugin adds that the bare skill could not:
 
@@ -16,8 +21,10 @@ Two things the plugin adds that the bare skill could not:
   single-driver lease ride a dedicated git ref (`refs/godmode/<slug>`), so a
   second machine can watch it or take it over after a crash.
 
-Driving the loop is Claude-only (it needs Claude's workflow + wakeup
-primitives); Codex and Copilot get status + sync parity.
+Driving depends on declared provider capability. Claude uses its native
+scheduler. Codex uses native automation. Copilot requires a configured external
+scheduler adapter. Missing capability defers driving visibly, while status and
+sidecar inspection remain available.
 
 ---
 
@@ -72,20 +79,20 @@ manifests).
 
 | Command | What it does |
 |---|---|
-| `/godmode "<north-star>" [--no-court] [--budget <tokens>] [--deadline <ISO>] [--fable off]` | INIT: charter + state + dashboard + beads, run the Feasibility Court + Roadmap, present the roadmap at the one human gate |
+| `/godmode "<north-star>" --mode finite\|perpetual [--approval none\|roadmap] [--budget <tokens>] [--deadline <ISO>]` | INIT: charter + state + dashboard + beads, then finite delivery or perpetual evolution |
 | `/godmode run [--take-over]` | Resume/continue the loop from state (any session, incl. post-crash). Claims the driver lease first; `--take-over` forces it after a confirm |
 | `/godmode status` | Read state + beads + dashboard + lease, report, change nothing. Safe on any machine/provider |
 | `/godmode pause` | Stop re-arming the loop; state stays resumable; releases the lease |
 
-The **only** blocking interaction is the roadmap blessing (the human gate).
-Everything after runs unattended: per-epic PRs and the dashboard notify you but
-never block the loop.
+`approval_policy: roadmap` is optional. Perpetual programmes normally use
+`none`: they continue through goal generations, while safety and hard caps are
+the only global stops.
 
 ### What each provider can do
 
 | Capability | Claude | Codex | Copilot |
 |---|---|---|---|
-| init / run (drive the loop) | full | refuse + status | refuse + status |
+| init / run (drive the loop) | native scheduler | native automation required | external scheduler required |
 | status / discover | yes | yes | yes |
 | dashboard publish · sidecar sync · lease guard | all hooks | hooks.json (shared) | sessionStart pull + staleness nudge |
 

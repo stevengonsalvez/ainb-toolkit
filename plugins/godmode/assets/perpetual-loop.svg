@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 620" role="img" aria-labelledby="title desc">
+  <title id="title">Godmode perpetual goal loop</title>
+  <desc id="desc">A continuous workflow from paired creative discovery through goal execution, regression, repair, ship, and the next goal generation.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#08111f"/>
+      <stop offset="1" stop-color="#111b35"/>
+    </linearGradient>
+    <linearGradient id="loop" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#54e8c7"/>
+      <stop offset=".5" stop-color="#72a8ff"/>
+      <stop offset="1" stop-color="#c584ff"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-30%" width="140%" height="160%">
+      <feDropShadow dx="0" dy="14" stdDeviation="16" flood-color="#000" flood-opacity=".38"/>
+    </filter>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L0,8 L8,4 z" fill="#8cb9ff"/>
+    </marker>
+  </defs>
+  <rect width="1200" height="620" rx="34" fill="url(#bg)"/>
+  <circle cx="600" cy="310" r="214" fill="none" stroke="#284362" stroke-width="2"/>
+  <path d="M420 185 C500 80 700 80 786 198" fill="none" stroke="url(#loop)" stroke-width="9" stroke-linecap="round" marker-end="url(#arrow)"/>
+  <path d="M821 238 C900 350 790 492 665 515" fill="none" stroke="url(#loop)" stroke-width="9" stroke-linecap="round" marker-end="url(#arrow)"/>
+  <path d="M572 520 C385 502 303 352 367 234" fill="none" stroke="url(#loop)" stroke-width="9" stroke-linecap="round" marker-end="url(#arrow)"/>
+  <g fill="#dceaff" font-family="PT Sans" text-anchor="middle">
+    <text x="600" y="278" font-size="17" font-weight="700" fill="#8fb2de" letter-spacing="3">GODMODE</text>
+    <text x="600" y="320" font-size="38" font-weight="750">Perpetual progression</text>
+    <text x="600" y="354" font-size="18" fill="#a9bfdf">Never backlog dry. Always next credible value.</text>
+  </g>
+  <g filter="url(#shadow)" font-family="PT Sans">
+    <g transform="translate(88 101)">
+      <rect width="246" height="114" rx="20" fill="#142744" stroke="#3d698d"/>
+      <circle cx="31" cy="33" r="12" fill="#54e8c7"/>
+      <text x="55" y="39" fill="#f2f8ff" font-size="20" font-weight="700">1. Ideate</text>
+      <text x="24" y="77" fill="#a9bfdf" font-size="15">Paired models find</text>
+      <text x="24" y="98" fill="#a9bfdf" font-size="15">evidence-backed value</text>
+    </g>
+    <g transform="translate(868 101)">
+      <rect width="246" height="114" rx="20" fill="#142744" stroke="#3d698d"/>
+      <circle cx="31" cy="33" r="12" fill="#72a8ff"/>
+      <text x="55" y="39" fill="#f2f8ff" font-size="20" font-weight="700">2. Create goal</text>
+      <text x="24" y="77" fill="#a9bfdf" font-size="15">Court, roadmap, proof,</text>
+      <text x="24" y="98" fill="#a9bfdf" font-size="15">and execution contract</text>
+    </g>
+    <g transform="translate(868 407)">
+      <rect width="246" height="114" rx="20" fill="#142744" stroke="#3d698d"/>
+      <circle cx="31" cy="33" r="12" fill="#c584ff"/>
+      <text x="55" y="39" fill="#f2f8ff" font-size="20" font-weight="700">3. Execute</text>
+      <text x="24" y="77" fill="#a9bfdf" font-size="15">One mutation lane,</text>
+      <text x="24" y="98" fill="#a9bfdf" font-size="15">real-surface verification</text>
+    </g>
+    <g transform="translate(88 407)">
+      <rect width="246" height="114" rx="20" fill="#142744" stroke="#3d698d"/>
+      <circle cx="31" cy="33" r="12" fill="#ffb86b"/>
+      <text x="55" y="39" fill="#f2f8ff" font-size="20" font-weight="700">4. Regress</text>
+      <text x="24" y="77" fill="#a9bfdf" font-size="15">Repair confirmed fallout,</text>
+      <text x="24" y="98" fill="#a9bfdf" font-size="15">then create next generation</text>
+    </g>
+  </g>
+  <g fill="#9fc0e8" font-family="PT Sans" font-size="14" font-weight="650">
+    <text x="370" y="65">creative quorum</text>
+    <text x="885" y="351">auto-merge and deploy</text>
+    <text x="314" y="365">repair preempts mutation</text>
+  </g>
+</svg>
