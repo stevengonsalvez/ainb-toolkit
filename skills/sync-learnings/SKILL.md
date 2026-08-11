@@ -76,6 +76,7 @@ For candidates it emits: edit in the marketplace clone (own code, own repo), the
 | `{{HOME_TOOL_DIR}}/CLAUDE.md` | `claude-code-4.5/CLAUDE.md` (reverse-interp, Step 7) |
 | `{{HOME_TOOL_DIR}}/settings.json` | `claude-code-4.5/settings.json` (reverse-interp) |
 | `{{HOME_TOOL_DIR}}/statusline.sh` | `claude-code-4.5/statusline.sh` (+x preserved) |
+| `~/.codex/config.toml` | `codex/config.toml` — **repo-ward only, and only through the filter below** |
 
 Notes:
 - **Commands are NOT synced.** No `commands/` or `workflows/*/commands/` in the repo — they migrated to skills. Workflows are single files at `workflows/<name>/WORKFLOW.md`.
@@ -92,6 +93,41 @@ Notes:
 | Plugin-managed | `plugins/` cache, skills provided by plugins | tracked in `external-dependencies.yaml`, not in `skills/`+`agents/` |
 
 `settings.json` (no `.local`) IS synced — canonical shared config; reverse-interpolate paths.
+
+### Files bootstrap will NOT redeploy over (`PRESERVE_IF_EXISTS`)
+
+`config.toml`, `settings.json`, `statusline.sh`. Each is mutated on the machine after deploy — codex
+appends trust/plugin state to `config.toml`, and tools like AgentPeek rewrite `statusLine` inside
+`settings.json`. On a machine that already has one, `bootstrap.js` backs it up
+(`<file>.pre-bootstrap-backup-<stamp>`) and skips; the repo copy is the baseline a FRESH machine gets.
+
+Consequence: **repo-side changes to these three do not propagate automatically.** This skill's repo-ward
+diff is how they travel, and adopting one on an existing machine is a hand-merge. `CLAUDE.md` /
+`AGENTS.md` are deliberately NOT preserved — they are repo-authored and must keep propagating.
+
+### `~/.codex/config.toml` — filtered, one-way, never redeployed over a live file
+
+Codex has no `config.local.toml`, so the ONE file mixes preferences with runtime state. A live copy is
+~25 KB of which ~99% is machine junk: a `[projects."<abs path>"]` trust block per directory ever
+approved (temp worktrees included), `[hooks.state.*]`, `[marketplaces.*]` / `[plugins."..."]` install
+state, and `[mcp_servers.*]` + `[shell_environment_policy]` injected by the ChatGPT desktop app with
+absolute `/Applications` paths and build SHAs. **This repo is public.** Never copy the whole file.
+
+```bash
+bash skills/sync-learnings/scripts/codex-config-shareable.sh > codex/config.toml   # then review the diff
+bash skills/sync-learnings/scripts/codex-config-shareable.sh --self-check          # verify the filter
+```
+
+The script keeps the hand-authored preferences (top-level model/personality keys, `[tui]`, `[notice]`,
+`[otel]`, `[features]`, `[desktop]`) with their explanatory comments, drops every section listed above,
+drops the `notify` key (absolute app path), reverse-interpolates `$HOME`, and **exits non-zero if a
+credential-shaped value survives** rather than emitting it. It prints the dropped-section count to
+stderr so an over-filter is visible instead of assumed.
+
+Direction is repo-ward ONLY. `bootstrap.js` treats `config.toml` as `PRESERVE_IF_EXISTS`: on a machine
+that already has one it backs the file up (`config.toml.pre-bootstrap-backup-<stamp>`) and skips,
+because deploying over it would destroy live trust and plugin state. The repo copy is the baseline a
+FRESH machine gets. To adopt a repo-side change on an existing machine, merge the section by hand.
 
 ### Category 5b — bundled vs pulled: presence in the manifest is NOT "external"
 
