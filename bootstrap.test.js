@@ -453,6 +453,134 @@ describe('Spec-Driven Development (SDD) Setup', () => {
     // Full smoke coverage exists in the main suite; duplicated flow removed here to avoid redundancy.
 });
 
+describe('Live tool config is never overwritten (codex config.toml)', () => {
+    const tempDir = path.join(__dirname, 'tmp-preserve-config-test');
+    const tool = 'codex';
+    const codexDir = (mockHomeDir) => path.join(mockHomeDir, TOOL_CONFIG[tool].targetSubdir);
+
+    afterEach(() => {
+        if (fs.existsSync(tempDir)) {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    const runBootstrap = (mockHomeDir) => {
+        execSync(`node bootstrap.js --tool=${tool} --homeDir=${mockHomeDir}`, {
+            stdio: 'pipe',
+            env: { ...process.env },
+        });
+    };
+
+    it('preserves an existing config.toml and leaves a backup', () => {
+        const mockHomeDir = path.join(tempDir, 'home-populated');
+        const dest = path.join(codexDir(mockHomeDir), 'config.toml');
+        fs.mkdirSync(path.dirname(dest), { recursive: true });
+        const live = 'model = "gpt-5.6-terra"\n\n[projects."/repo"]\ntrust_level = "trusted"\n';
+        fs.writeFileSync(dest, live);
+
+        runBootstrap(mockHomeDir);
+
+        expect(fs.readFileSync(dest, 'utf8')).toBe(live);
+        const backups = fs.readdirSync(codexDir(mockHomeDir))
+            .filter(f => f.startsWith('config.toml.pre-bootstrap-backup-'));
+        expect(backups).toHaveLength(1);
+        expect(fs.readFileSync(path.join(codexDir(mockHomeDir), backups[0]), 'utf8')).toBe(live);
+    });
+
+    it('still deploys the repo baseline when no config.toml exists', () => {
+        const mockHomeDir = path.join(tempDir, 'home-fresh');
+        fs.mkdirSync(mockHomeDir, { recursive: true });
+
+        runBootstrap(mockHomeDir);
+
+        const dest = path.join(codexDir(mockHomeDir), 'config.toml');
+        expect(fs.readFileSync(dest, 'utf8'))
+            .toBe(fs.readFileSync(path.join(__dirname, 'codex', 'config.toml'), 'utf8'));
+    });
+});
+
+describe('Live tool config is never overwritten (claude settings.json)', () => {
+    const tempDir = path.join(__dirname, 'tmp-preserve-settings-test');
+    const tool = 'claude-code-4.5';
+    const claudeDir = (mockHomeDir) => path.join(mockHomeDir, TOOL_CONFIG[tool].targetSubdir);
+
+    afterEach(() => {
+        if (fs.existsSync(tempDir)) {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('leaves no backup on a fresh install (does not guard its own writes)', () => {
+        const mockHomeDir = path.join(tempDir, 'home-fresh');
+        fs.mkdirSync(mockHomeDir, { recursive: true });
+
+        execSync(`node bootstrap.js --tool=${tool} --homeDir=${mockHomeDir}`, {
+            stdio: 'pipe',
+            env: { ...process.env },
+        });
+
+        const dest = claudeDir(mockHomeDir);
+        expect(fs.existsSync(path.join(dest, 'settings.json'))).toBe(true);
+        expect(fs.readdirSync(dest).filter(f => f.includes('pre-bootstrap-backup'))).toHaveLength(0);
+    });
+
+    it('keeps exactly one backup across repeated runs and none when unchanged', () => {
+        const mockHomeDir = path.join(tempDir, 'home-repeat');
+        const dest = claudeDir(mockHomeDir);
+        fs.mkdirSync(dest, { recursive: true });
+        fs.writeFileSync(path.join(dest, 'settings.json'), '{"statusLine":{"command":"agentpeek"}}');
+
+        const run = () => execSync(`node bootstrap.js --tool=${tool} --homeDir=${mockHomeDir}`, {
+            stdio: 'pipe', env: { ...process.env },
+        });
+        run(); run(); run();
+
+        expect(fs.readdirSync(dest).filter(f => f.startsWith('settings.json.pre-bootstrap-backup-')))
+            .toHaveLength(1);
+
+        // A copy identical to the repo baseline holds no live state worth keeping.
+        fs.rmSync(path.join(dest, fs.readdirSync(dest).find(f => f.includes('pre-bootstrap-backup'))));
+        fs.copyFileSync(path.join(__dirname, 'claude-code-4.5', 'settings.json'), path.join(dest, 'settings.json'));
+        run();
+        expect(fs.readdirSync(dest).filter(f => f.includes('pre-bootstrap-backup'))).toHaveLength(0);
+    });
+
+    it('does not freeze another tool\'s settings.json (guard is per-tool)', () => {
+        const mockHomeDir = path.join(tempDir, 'home-gemini');
+        const geminiDir = path.join(mockHomeDir, TOOL_CONFIG.gemini.targetSubdir);
+        fs.mkdirSync(geminiDir, { recursive: true });
+        fs.writeFileSync(path.join(geminiDir, 'settings.json'), '{"stale":true}');
+
+        execSync(`node bootstrap.js --tool=gemini --homeDir=${mockHomeDir}`, {
+            stdio: 'pipe', env: { ...process.env },
+        });
+
+        // gemini/settings.json is repo-authored with no machine-side writer.
+        expect(fs.readFileSync(path.join(geminiDir, 'settings.json'), 'utf8')).not.toBe('{"stale":true}');
+    });
+
+    it('preserves a locally modified settings.json but still updates CLAUDE.md', () => {
+        const mockHomeDir = path.join(tempDir, 'home');
+        const dest = claudeDir(mockHomeDir);
+        fs.mkdirSync(dest, { recursive: true });
+        // e.g. AgentPeek rewrites statusLine in place after bootstrap ran
+        const live = JSON.stringify({ statusLine: { command: 'agentpeek-statusline' } }, null, 2);
+        fs.writeFileSync(path.join(dest, 'settings.json'), live);
+        fs.writeFileSync(path.join(dest, 'CLAUDE.md'), 'stale instructions\n');
+
+        execSync(`node bootstrap.js --tool=${tool} --homeDir=${mockHomeDir}`, {
+            stdio: 'pipe',
+            env: { ...process.env },
+        });
+
+        expect(fs.readFileSync(path.join(dest, 'settings.json'), 'utf8')).toBe(live);
+        expect(fs.readdirSync(dest).filter(f => f.startsWith('settings.json.pre-bootstrap-backup-')))
+            .toHaveLength(1);
+        // Agent instructions are repo-authored and MUST keep propagating.
+        expect(fs.readFileSync(path.join(dest, 'CLAUDE.md'), 'utf8')).not.toBe('stale instructions\n');
+    });
+});
+
 describe('Migrated plugin skills (godmode)', () => {
     const tempDir = path.join(__dirname, 'tmp-migrated-test');
     const tool = 'claude-code-4.5';

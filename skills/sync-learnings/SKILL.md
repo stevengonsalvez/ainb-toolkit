@@ -76,6 +76,7 @@ For candidates it emits: edit in the marketplace clone (own code, own repo), the
 | `{{HOME_TOOL_DIR}}/CLAUDE.md` | `claude-code-4.5/CLAUDE.md` (reverse-interp, Step 7) |
 | `{{HOME_TOOL_DIR}}/settings.json` | `claude-code-4.5/settings.json` (reverse-interp) |
 | `{{HOME_TOOL_DIR}}/statusline.sh` | `claude-code-4.5/statusline.sh` (+x preserved) |
+| `~/.codex/config.toml` | `codex/config.toml` — **repo-ward only, and only through the filter below** |
 
 Notes:
 - **Commands are NOT synced.** No `commands/` or `workflows/*/commands/` in the repo — they migrated to skills. Workflows are single files at `workflows/<name>/WORKFLOW.md`.
@@ -92,6 +93,60 @@ Notes:
 | Plugin-managed | `plugins/` cache, skills provided by plugins | tracked in `external-dependencies.yaml`, not in `skills/`+`agents/` |
 
 `settings.json` (no `.local`) IS synced — canonical shared config; reverse-interpolate paths.
+
+### Files bootstrap will NOT redeploy over (`PRESERVE_IF_EXISTS`)
+
+Keyed **per tool**, not by bare filename:
+
+| Tool | Preserved | Machine-side writer |
+|------|-----------|---------------------|
+| `codex` | `config.toml` | codex appends project trust levels, hook state, app-injected MCP servers |
+| `claude-code-4.5` | `settings.json`, `statusline.sh` | e.g. AgentPeek rewrites `statusLine` in place |
+
+Everything else still deploys normally — `gemini/settings.json` is repo-authored with no machine-side
+writer, so scoping by tool keeps maintainer fixes flowing there.
+
+On a machine that already has one of these, bootstrap keeps the live file and prints what it skipped,
+naming the differing top-level keys for JSON. It keeps exactly **one** backup
+(`<file>.pre-bootstrap-backup-<stamp>`, older ones pruned) and writes **no** backup when the live file
+is byte-identical to the repo copy or was authored by that same run — otherwise routine re-runs would
+pile up full copies of a file holding `env` vars and hook commands.
+
+Consequence: **repo-side changes to these files do not propagate automatically.** This skill's
+repo-ward diff is how they travel, and adopting one on an existing machine is a hand-merge.
+`CLAUDE.md` / `AGENTS.md` are deliberately NOT preserved — they are repo-authored and must keep
+propagating.
+
+### `~/.codex/config.toml` — filtered, one-way, never redeployed over a live file
+
+Codex has no `config.local.toml`, so the ONE file mixes preferences with runtime state. A live copy is
+~25 KB of which ~99% is machine junk: a `[projects."<abs path>"]` trust block per directory ever
+approved (temp worktrees included), `[hooks.state.*]`, `[marketplaces.*]` / `[plugins."..."]` install
+state, and `[mcp_servers.*]` + `[shell_environment_policy]` injected by the ChatGPT desktop app with
+absolute `/Applications` paths and build SHAs. **This repo is public.** Never copy the whole file.
+
+```bash
+bash skills/sync-learnings/scripts/codex-config-shareable.sh --out codex/config.toml   # then review the diff
+bash skills/sync-learnings/scripts/codex-config-shareable.sh --self-check              # verify the filter
+```
+
+Use `--out`, never `> codex/config.toml`: the shell truncates a redirect target *before* the script
+runs, so a fail-closed refusal would leave the baseline empty and look like a clean sync. `--out`
+writes a temp file and moves it into place only on success.
+
+The filter is an **allow-list**: only `[tui]`, `[notice]`, `[features]`, `[desktop]` and a fixed set of
+top-level preference keys survive, with the comments that annotate them. Anything else — including a
+section that postdates this script, such as `[model_providers]` with an internal `base_url`/`env_key` —
+is dropped and NAMED on stderr, so a genuinely shareable new preference gets noticed and added
+deliberately rather than published by default. Comments are emitted only when what FOLLOWS them is
+kept, so a note above `[projects."/work/acme"]` dies with its section.
+
+`$HOME` is reverse-interpolated, and a credential-shaped value that somehow survives makes the script
+exit non-zero reporting **line numbers only** — printing the matched line would move the secret from
+the repo into the session transcript and CI logs.
+
+Note `[otel]` is NOT shareable: it points at a `localhost:4318` collector that exists on one machine
+and turns on `log_user_prompt`, which no one should inherit by default.
 
 ### Category 5b — bundled vs pulled: presence in the manifest is NOT "external"
 
