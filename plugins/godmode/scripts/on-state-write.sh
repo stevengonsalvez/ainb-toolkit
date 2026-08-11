@@ -32,6 +32,16 @@ PENDING="$SCRATCH/$SLUG-publish.pending"
 LOST="$SCRATCH/$SLUG-lease-lost"
 SESSION_ID="$(printf '%s' "$IN" | jq -r '.session_id // empty' 2>/dev/null || true)"
 
+# State is the driver contract. Reject impossible perpetual transitions before
+# publishing or syncing them, but never try to repair a driver-owned file here.
+POLICY="$SCRIPT_DIR/programme_policy.py"
+if [ -x "$POLICY" ] && ! STATE_ERROR="$("$POLICY" validate-state "$STATE" 2>&1)"; then
+  printf '%s' "$STATE_ERROR" > "$SCRATCH/$SLUG-state.invalid" 2>/dev/null || true
+  echo "godmode: invalid programme state: $STATE_ERROR" >&2
+  exit 2
+fi
+rm -f "$SCRATCH/$SLUG-state.invalid" 2>/dev/null || true
+
 mark() { # step, error
   jq -n --arg step "$1" --arg err "$2" --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     '{step:$step, error:$err, ts:$ts}' > "$PENDING" 2>/dev/null || true

@@ -8,6 +8,9 @@ tick that changes anything.
 ```json
 {
   "phase": "DISCOVER | FEASIBILITY_COURT | ROADMAP | HUMAN_GATE | E<N>_PLAN | E<N>_EXECUTE | E<N>_SHIP | DONE",
+  "mode": "finite | perpetual",
+  "approval_policy": "none | roadmap",
+  "generation": 3,
   "phase_since": "2026-07-16T17:00:00Z",
   "current_epic": "e02-entity-resolution",
   "branch": "e02-entity-resolution",
@@ -15,19 +18,36 @@ tick that changes anything.
   "running_run_id": "wf_ffacbda8-86c",
   "driver_session_id": "<written as null at INIT; the PostToolUse hook backfills the driver's real session_id (first-writer-wins); gates the Stop hook>",
   "current_note": "one paragraph for the dashboard note slot",
-  "human_gate": "pending | blessed | blessed_parallel_pairs",
+  "human_gate": "none | pending | blessed | blessed_parallel_pairs",
   "epics": {"e00": "SHIPPED_PR2903", "e01": "SHIPPED_PR2904", "e02": "EXECUTING"},
-  "termination": {"backlog_dry": true, "budget_tokens": null, "deadline": null,
-                   "spent_tokens_estimate": 0},
+  "termination": {"backlog_dry": false, "budget_tokens": null, "deadline": null,
+                   "spent_tokens_estimate": 0, "reason": null},
+  "lanes": {
+    "mutation": {"owner": "e02-entity-resolution | repair-17 | null"},
+    "regression": {"status": "idle | queued | running | passed | failed"},
+    "discovery": {"status": "idle | queued | running | backoff", "next_at": null}
+  },
+  "creative_quorum": {"status": "ready | deferred", "models": ["claude:fable", "codex:rescue"],
+                        "receipt": "path or URL"},
+  "incidents": [{"id": "repair-17", "status": "confirmed | quarantined | resolved",
+                 "evidence": "path or URL"}],
+  "deployment": {"status": "idle | canary | healthy | rolled_back", "receipt": null},
   "dashboard_slug": "swift-epoch-fvds",
   "stop_counters": {"stage_errors": {}, "epic_validation_fails": {}}
 }
 ```
 
 Rules: strings not booleans for phases (grep-able); bump `stop_counters` and
-check against STOP RULES before re-arming. Termination bounds are
-INDEPENDENT toggles — any subset may be set; the first enabled bound to fire
-terminates the programme.
+check against STOP RULES before re-arming. `finite` may enable `backlog_dry`.
+`perpetual` must set it false: an empty Court queues adaptive research instead
+of completion. `programme_policy.py validate-state` runs from the state-write
+hook and rejects impossible transitions without rewriting state.
+
+The mutation lane has one owner only. Regression and discovery may run in
+parallel. A confirmed incident replaces the current mutation owner until its
+repair and cumulative verification finish. `creative_quorum.status: ready`
+requires two distinct model identifiers and a receipt containing both views,
+their disagreement, evidence, and synthesis.
 
 ### Token accounting (feeds --budget and the per-epic cap)
 

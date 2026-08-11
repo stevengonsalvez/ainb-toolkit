@@ -10,6 +10,12 @@ lines — it is loaded constantly.
 Every loop iteration re-reads this file. It is the source of truth for how the
 programme runs. Base branch: {{BASE_BRANCH}}. Worktree: {{WORKTREE_PATH}}.
 
+— MODE AND AUTHORITY —
+· Mode: {{finite | perpetual}}. Approval policy: {{none | roadmap}}.
+· Provider capability receipts: {{scheduler + peer-model adapters per host}}.
+· External integration authority: {{configured integrations only}}.
+· Production policy: {{progressive rollout, health signals, automatic rollback}}.
+
 — OUTCOME —
 {{North-star restated as terminal states: every feature in the registry
 ({{REGISTRY_PATH}}) either SHIPPED with green verification, or explicitly
@@ -17,16 +23,20 @@ parked with a Feasibility Court verdict (downgraded tier + named blocker).
 Fold in any pre-existing backlog items by ID with their required disposition.}}
 
 — PIPELINE (state machine per epic) —
-Feasibility Court (once{{, SKIPPED via --no-court}}) → Roadmap + epic beads
-(once) → [HUMAN GATE: roadmap blessing] → per epic: Plan (planner →
+Creative-quorum Discover → Feasibility Court ({{once | every generation}}) →
+Roadmap + epic beads → {{optional roadmap approval}} → per epic: Plan (planner →
 adversarial review → revise → verify-the-revise) → Execute (build-pair →
 pair review → adversarial epic review → VERIFY → fix loop ≤2 → build gate)
-→ epic bead closed only when verification green → stacked PR.
-Epics serial on stacked branches unless blessed-parallel AND provably disjoint.
+→ full cumulative regression → auto-merge when all declared checks pass.
+One mutation owner at a time. Regression and discovery may run in parallel.
+Confirmed defects preempt mutation, become repair incidents, then resume paused
+work after re-verification and rebase.
 
 — MODEL POLICY —
-· BRAIN (brainstorm / roadmap orchestration / adversarial review) = {{fable |
-  <fallback: strongest Claude + codex pair>}}
+· CREATIVE QUORUM = {{Claude primary + codex:codex-rescue | Codex primary +
+  Claude Fable | two Copilot models, enriched by Claude or Codex}}. Record
+  both proposals, evidence, dissent, synthesis, and availability receipt.
+· One available model means defer creative work, never invent a solo verdict.
 · BUILD = {{opus}} + {{codex:codex-rescue}} pair; disagreements surfaced.
 · TEST/VALIDATE = {{sonnet}}. SCAFFOLD = {{sonnet}}.
 
@@ -55,30 +65,29 @@ Epics serial on stacked branches unless blessed-parallel AND provably disjoint.
   state.json truthful; write current_note; that IS the dashboard duty.
 
 — LOOP PROTOCOL (each wake) —
-1. Read this charter + .agents/scratch/{{slug}}-state.json. 2. Check running
-workflow; on completion persist artifacts, verify commits, advance the state
-machine, launch the next stage. 3. lease.sh refresh (every wake; lost lease =
-handoff note, read-only, stop re-arming). 4. Update beads + state (state via
-Write/Edit tool ONLY; stamp phase_since on flips; publish phase explainers via
-explainer-publish.sh after SHIP/HUMAN_GATE/DONE). 5. ScheduleWakeup ~600s,
-reason = current phase.
-· STOP RULES: workflow errors ×2 same stage | validation fails ×3 one epic |
-  any prod/staging touch | epic > {{TOKEN_CAP|~15M}} subagent tokens.
+1. Read charter + state. 2. Validate with `programme_policy.py validate-state`.
+3. Check running work and `next-action`; launch regression after ship, repair
+after confirmed incident, and next discovery while mutation is occupied. 4.
+Refresh lease. 5. Update beads, state, audit receipts, and dashboard. 6.
+Schedule next wake with adaptive research backoff when Court is empty.
+· STOP RULES: budget or deadline | security | production-safety after rollback |
+  lost lease | missing required authority. Repeated ordinary failure is bounded
+  retry plus quarantine, not a global stop.
 
 — TERMINATION —
-{{backlog-dry (default) | budget: N subagent tokens total | deadline: ISO}}
-— first bound to fire wins; on termination post a final summary, PushNotification,
-and stop re-arming the loop.
+Finite: {{backlog-dry | budget | deadline}}. Perpetual: {{budget | deadline |
+safety}}. In perpetual mode backlog-dry queues cited adaptive research and the
+next generation. Hard stop posts final summary, incident evidence, and alert.
 
 — SUCCESS CRITERIA (ALL MUST BE TRUE) —
-1. Every registry feature has a Court verdict recorded.
-2. Every blessed epic: plan artifact + reviewed + executed + verification
-   green + PR raised; parked features carry verdicts.
+1. Every candidate has two creative views, evidence, and Court verdict.
+2. Every epic: plan + review + execution + verification + cumulative regression
+   green + auto-merge receipt; parked features carry verdicts.
 3. Dashboard live and updated throughout.
 4. Evidence exists for every closed epic (suite output, artifacts, PR links).
 
 — OPERATING RULES — NON-NEGOTIABLE —
-1. PLAN FIRST per epic. 2. WORK AUTONOMOUSLY (one human gate + stop rules).
+1. PLAN FIRST per epic. 2. WORK AUTONOMOUSLY (optional approval + safety stops).
 3. SELF-VERIFY every step. 4. DEBUG YOURSELF. 5. NO PLACEHOLDERS in shipped
 code. 6. PROGRESS LOG (dashboard + beads). 7. STAY ON GOAL. 8. IF BLOCKED,
 log + continue parallelizable work. 9. CHECK SUCCESS BEFORE STOPPING.

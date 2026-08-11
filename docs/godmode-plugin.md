@@ -19,8 +19,10 @@ CLI's plugin cache).
 | Copilot CLI | `copilot plugin marketplace add stevengonsalvez/ainb-toolkit && copilot plugin install godmode@ainb-toolkit` (reads `.github/plugin/marketplace.json`; uses `hooks/copilot-hooks.json`) |
 
 Each `marketplace add` also accepts a local path instead of `owner/repo` for
-testing an unmerged checkout. Driving the loop (`init`/`run`) is Claude-only;
-Codex/Copilot get status + sync parity and refuse `run` with a status printout.
+testing an unmerged checkout. Driving requires provider capability: Claude uses
+its native scheduler, Codex uses native automation, and Copilot requires a
+configured external scheduler adapter. Missing capability defers driving with a
+visible status receipt, never a false claim of autonomous execution.
 
 ## Prerequisites (per machine)
 
@@ -41,7 +43,7 @@ Codex/Copilot get status + sync parity and refuse `run` with a status printout.
 | Event | Script | Does |
 |---|---|---|
 | SessionStart (startup/resume/compact) | `sync.sh pull` | refresh sidecar cache; inert (<50 ms) without a local programme |
-| PostToolUse (Write\|Edit) | `on-state-write.sh` | on state.json writes: render dashboard, publish, sidecar push; pending marker on failure; exit 2 ONLY on lease loss |
+| PostToolUse (Write\|Edit) | `on-state-write.sh` | validate state, render dashboard, publish, sidecar push; pending marker on failure; exit 2 on invalid state or lease loss |
 | Stop | `explainer-gate.sh` | block the DRIVER session when a transition phase lacks its explainer receipt (subagents/bystanders exempt; fail-open on infra errors) |
 | Stop | `sync.sh push --if-active` | heartbeat backstop (quiet ticks, Bash-written state) |
 | PreCompact | `sync.sh push --if-active` | pre-compaction insurance push |
@@ -110,3 +112,15 @@ The suite is mutation-checked: every rule worth having has a test that dies
 when the rule is deleted. `gate.bats` carries a negative control (a do-nothing
 gate must fail the suite) because `jq -e` returns 0 on empty input, which once
 made all nine gate tests pass against a stub.
+# Perpetual mode
+
+Godmode 0.3.0 adds charter-selected perpetual evolution. It never terminates
+because a backlog is empty. It re-enters creative, evidence-gated discovery
+with adaptive backoff, then creates the next goal generation. Creative stages
+require two independent models, preserve disagreement, and defer when no
+quorum is available. Every shipped epic queues cumulative regression; a
+confirmed defect preempts mutation until repaired and fully re-verified.
+
+Provider driving is capability-gated: Claude needs its native scheduler, Codex
+needs native automation, and Copilot needs a configured external scheduler.
+Missing capability is visible deferment, never claimed autonomy.

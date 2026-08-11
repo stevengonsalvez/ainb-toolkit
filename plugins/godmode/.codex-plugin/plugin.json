@@ -1,7 +1,7 @@
 {
   "name": "godmode",
-  "version": "0.2.4",
-  "description": "Godmode status + sync parity for Codex (driving the loop is Claude-only)",
+  "version": "0.3.0",
+  "description": "Perpetual autonomous product factory for Codex",
   "author": {
     "name": "Steven Gonsalvez",
     "url": "https://github.com/stevengonsalvez"
@@ -17,14 +17,14 @@
   "skills": "./skills/",
   "interface": {
     "displayName": "Godmode",
-    "shortDescription": "Programme status, dashboard publish, cross-machine sync",
+    "shortDescription": "Perpetual programme driver, dashboard, and cross-machine sync",
     "category": "orchestration",
     "capabilities": [
       "Instructions",
       "Lifecycle hooks"
     ],
     "defaultPrompt": [
-      "/godmode status"
+      "/godmode init --mode perpetual"
     ]
   }
 }
