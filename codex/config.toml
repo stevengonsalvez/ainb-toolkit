@@ -10,7 +10,6 @@ model = "gpt-5.6-terra"
 model_reasoning_effort = "high"
 personality = "pragmatic"
 approvals_reviewer = "user"
-
 plan_mode_reasoning_effort = "high"
 
 [tui]
@@ -20,18 +19,6 @@ status_line_use_colors = true
 [notice]
 hide_full_access_warning = true
 hide_rate_limit_model_nudge = true
-
-# --- OpenTelemetry -> local Grafana Alloy (forwards to Grafana Cloud) ---
-# HTTP exporter on purpose: the otlp-grpc path has a known h2 cross-contamination
-# bug (openai/codex discussion #17687). metrics_exporter is overridden off the
-# default "statsig" so usage data goes to our collector, not OpenAI analytics.
-# NOTE: [otel] is honoured ONLY in ~/.codex/config.toml, never project-local.
-[otel]
-environment = "local"
-log_user_prompt = true
-exporter = { otlp-http = { endpoint = "http://localhost:4318/v1/logs", protocol = "binary" } }
-trace_exporter = { otlp-http = { endpoint = "http://localhost:4318/v1/traces", protocol = "binary" } }
-metrics_exporter = { otlp-http = { endpoint = "http://localhost:4318/v1/metrics", protocol = "binary" } }
 
 [features]
 memories = true

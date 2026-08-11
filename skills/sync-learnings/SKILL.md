@@ -96,14 +96,26 @@ Notes:
 
 ### Files bootstrap will NOT redeploy over (`PRESERVE_IF_EXISTS`)
 
-`config.toml`, `settings.json`, `statusline.sh`. Each is mutated on the machine after deploy — codex
-appends trust/plugin state to `config.toml`, and tools like AgentPeek rewrite `statusLine` inside
-`settings.json`. On a machine that already has one, `bootstrap.js` backs it up
-(`<file>.pre-bootstrap-backup-<stamp>`) and skips; the repo copy is the baseline a FRESH machine gets.
+Keyed **per tool**, not by bare filename:
 
-Consequence: **repo-side changes to these three do not propagate automatically.** This skill's repo-ward
-diff is how they travel, and adopting one on an existing machine is a hand-merge. `CLAUDE.md` /
-`AGENTS.md` are deliberately NOT preserved — they are repo-authored and must keep propagating.
+| Tool | Preserved | Machine-side writer |
+|------|-----------|---------------------|
+| `codex` | `config.toml` | codex appends project trust levels, hook state, app-injected MCP servers |
+| `claude-code-4.5` | `settings.json`, `statusline.sh` | e.g. AgentPeek rewrites `statusLine` in place |
+
+Everything else still deploys normally — `gemini/settings.json` is repo-authored with no machine-side
+writer, so scoping by tool keeps maintainer fixes flowing there.
+
+On a machine that already has one of these, bootstrap keeps the live file and prints what it skipped,
+naming the differing top-level keys for JSON. It keeps exactly **one** backup
+(`<file>.pre-bootstrap-backup-<stamp>`, older ones pruned) and writes **no** backup when the live file
+is byte-identical to the repo copy or was authored by that same run — otherwise routine re-runs would
+pile up full copies of a file holding `env` vars and hook commands.
+
+Consequence: **repo-side changes to these files do not propagate automatically.** This skill's
+repo-ward diff is how they travel, and adopting one on an existing machine is a hand-merge.
+`CLAUDE.md` / `AGENTS.md` are deliberately NOT preserved — they are repo-authored and must keep
+propagating.
 
 ### `~/.codex/config.toml` — filtered, one-way, never redeployed over a live file
 
@@ -114,20 +126,27 @@ state, and `[mcp_servers.*]` + `[shell_environment_policy]` injected by the Chat
 absolute `/Applications` paths and build SHAs. **This repo is public.** Never copy the whole file.
 
 ```bash
-bash skills/sync-learnings/scripts/codex-config-shareable.sh > codex/config.toml   # then review the diff
-bash skills/sync-learnings/scripts/codex-config-shareable.sh --self-check          # verify the filter
+bash skills/sync-learnings/scripts/codex-config-shareable.sh --out codex/config.toml   # then review the diff
+bash skills/sync-learnings/scripts/codex-config-shareable.sh --self-check              # verify the filter
 ```
 
-The script keeps the hand-authored preferences (top-level model/personality keys, `[tui]`, `[notice]`,
-`[otel]`, `[features]`, `[desktop]`) with their explanatory comments, drops every section listed above,
-drops the `notify` key (absolute app path), reverse-interpolates `$HOME`, and **exits non-zero if a
-credential-shaped value survives** rather than emitting it. It prints the dropped-section count to
-stderr so an over-filter is visible instead of assumed.
+Use `--out`, never `> codex/config.toml`: the shell truncates a redirect target *before* the script
+runs, so a fail-closed refusal would leave the baseline empty and look like a clean sync. `--out`
+writes a temp file and moves it into place only on success.
 
-Direction is repo-ward ONLY. `bootstrap.js` treats `config.toml` as `PRESERVE_IF_EXISTS`: on a machine
-that already has one it backs the file up (`config.toml.pre-bootstrap-backup-<stamp>`) and skips,
-because deploying over it would destroy live trust and plugin state. The repo copy is the baseline a
-FRESH machine gets. To adopt a repo-side change on an existing machine, merge the section by hand.
+The filter is an **allow-list**: only `[tui]`, `[notice]`, `[features]`, `[desktop]` and a fixed set of
+top-level preference keys survive, with the comments that annotate them. Anything else — including a
+section that postdates this script, such as `[model_providers]` with an internal `base_url`/`env_key` —
+is dropped and NAMED on stderr, so a genuinely shareable new preference gets noticed and added
+deliberately rather than published by default. Comments are emitted only when what FOLLOWS them is
+kept, so a note above `[projects."/work/acme"]` dies with its section.
+
+`$HOME` is reverse-interpolated, and a credential-shaped value that somehow survives makes the script
+exit non-zero reporting **line numbers only** — printing the matched line would move the secret from
+the repo into the session transcript and CI logs.
+
+Note `[otel]` is NOT shareable: it points at a `localhost:4318` collector that exists on one machine
+and turns on `log_user_prompt`, which no one should inherit by default.
 
 ### Category 5b — bundled vs pulled: presence in the manifest is NOT "external"
 
