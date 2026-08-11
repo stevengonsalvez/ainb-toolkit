@@ -11,6 +11,35 @@ import os from 'os';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Live tool config that the machine itself mutates after deploy: codex writes
+// project trust levels, hook state and app-injected MCP servers into config.toml;
+// tools like AgentPeek rewrite statusLine in settings.json. The repo copy is a
+// baseline for a fresh machine, NEVER an authority over an existing one —
+// deploying it over a populated file silently destroys real state. Back up and
+// skip instead; the repo-ward direction is /sync-learnings' job.
+//
+// CLAUDE.md/AGENTS.md are deliberately NOT here: they are authored in the repo
+// and must keep propagating out to every machine.
+const PRESERVE_IF_EXISTS = new Set(['config.toml', 'settings.json', 'statusline.sh']);
+
+// Returns true when the caller must NOT write destPath.
+function preserveExistingConfig(destPath) {
+    const fileName = path.basename(destPath);
+    if (!PRESERVE_IF_EXISTS.has(fileName) || !fs.existsSync(destPath)) return false;
+
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '');
+    const backupPath = `${destPath}.pre-bootstrap-backup-${stamp}`;
+    try {
+        fs.copyFileSync(destPath, backupPath);
+        console.log(`  ⚠ kept existing ${fileName} (backup: ${path.basename(backupPath)}); sync repo-ward via /sync-learnings`);
+    } catch (e) {
+        // Backup failed — still refuse to overwrite. Skipping leaves the live
+        // file intact, which is the whole point of the guard.
+        console.log(`  ⚠ kept existing ${fileName} (backup failed: ${e.message})`);
+    }
+    return true;
+}
+
 const TOOL_CONFIG = {
     cline: {
         ruleGlob: 'cline-rulestore-rule.md',
@@ -1191,7 +1220,7 @@ async function handleSharedContentCopy(tool, config, targetFolder) {
         const sourcePath = path.join(__dirname, config.settingsFile);
         const destPath = path.join(destDir, 'settings.json');
         
-        if (fs.existsSync(sourcePath)) {
+        if (fs.existsSync(sourcePath) && !preserveExistingConfig(destPath)) {
             fs.copyFileSync(sourcePath, destPath);
             completeProgress('Copied settings file');
         }
@@ -1771,9 +1800,10 @@ async function handlePackagesStructureCopy(tool, config, overrideHomeDir = null,
     // Skip for project folder installations to avoid overwriting project-specific settings
     if (config.copySettings !== false && shouldUseHome) {
         const settingsSource = path.join(__dirname, 'claude-code-4.5', 'settings.json');
-        if (fs.existsSync(settingsSource)) {
+        const settingsDest = path.join(destDir, 'settings.json');
+        if (fs.existsSync(settingsSource) && !preserveExistingConfig(settingsDest)) {
             showProgress('Copying settings.json');
-            fs.copyFileSync(settingsSource, path.join(destDir, 'settings.json'));
+            fs.copyFileSync(settingsSource, settingsDest);
             totalFilesCopied++;
             completeProgress('Copied settings.json');
         }
@@ -1788,6 +1818,8 @@ async function handlePackagesStructureCopy(tool, config, overrideHomeDir = null,
             const destPath = path.join(destDir, fileName);
 
             if (fs.existsSync(sourcePath)) {
+                if (preserveExistingConfig(destPath)) continue;
+
                 const substitutions = (config.templateSubstitutions || {})[fileName] ||
                     (fileName.endsWith('.md') ? (config.templateSubstitutions || {})['**/*.md'] : null);
 
@@ -2025,8 +2057,9 @@ async function handleFullDirectoryCopy(tool, config, overrideHomeDir = null, tar
             const sourcePath = path.join(__dirname, toolFile);
             const fileName = path.basename(toolFile);
             const destPath = path.join(destDir, fileName);
-            
+
             if (fs.existsSync(sourcePath)) {
+                if (preserveExistingConfig(destPath)) continue;
                 fs.copyFileSync(sourcePath, destPath);
                 toolFilesCopied++;
             }
