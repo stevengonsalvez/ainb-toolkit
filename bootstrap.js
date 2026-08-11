@@ -11,31 +11,78 @@ import os from 'os';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Live tool config that the machine itself mutates after deploy: codex writes
-// project trust levels, hook state and app-injected MCP servers into config.toml;
-// tools like AgentPeek rewrite statusLine in settings.json. The repo copy is a
-// baseline for a fresh machine, NEVER an authority over an existing one —
-// deploying it over a populated file silently destroys real state. Back up and
-// skip instead; the repo-ward direction is /sync-learnings' job.
+// Live tool config that the MACHINE mutates after deploy: codex writes project
+// trust levels, hook state and app-injected MCP servers into ~/.codex/config.toml;
+// tools like AgentPeek rewrite statusLine in ~/.claude/settings.json. The repo
+// copy is a baseline for a fresh machine, NEVER an authority over an existing
+// one — deploying it over a populated file silently destroys real state.
 //
-// CLAUDE.md/AGENTS.md are deliberately NOT here: they are authored in the repo
-// and must keep propagating out to every machine.
-const PRESERVE_IF_EXISTS = new Set(['config.toml', 'settings.json', 'statusline.sh']);
+// Keyed BY TOOL, not by bare basename: gemini/settings.json is repo-authored with
+// no machine-side writer, and freezing it would strand maintainer fixes on every
+// machine that ever bootstrapped.
+//
+// CLAUDE.md/AGENTS.md are deliberately absent: they are repo-authored and must
+// keep propagating out to every machine.
+const PRESERVE_IF_EXISTS = {
+    codex: new Set(['config.toml']),
+    'claude-code-4.5': new Set(['settings.json', 'statusline.sh']),
+};
+
+// Files this run authored. A fresh install writes settings.json through the
+// copySettings path and then meets it again in toolSpecificFiles; without this
+// the guard would "preserve" the file bootstrap itself just created, leaving a
+// junk backup and telling a first-time user their settings were protected.
+const writtenThisRun = new Set();
+
+function topLevelDrift(destPath, sourcePath) {
+    if (!destPath.endsWith('.json')) return '';
+    try {
+        const live = JSON.parse(fs.readFileSync(destPath, 'utf8'));
+        const repo = JSON.parse(fs.readFileSync(sourcePath, 'utf8'));
+        const differing = [...new Set([...Object.keys(repo), ...Object.keys(live)])]
+            .filter(k => JSON.stringify(live[k]) !== JSON.stringify(repo[k]));
+        return differing.length ? ` — differing keys: ${differing.join(', ')}` : '';
+    } catch (e) {
+        return '';
+    }
+}
 
 // Returns true when the caller must NOT write destPath.
-function preserveExistingConfig(destPath) {
+function preserveExistingConfig(tool, destPath, sourcePath) {
     const fileName = path.basename(destPath);
-    if (!PRESERVE_IF_EXISTS.has(fileName) || !fs.existsSync(destPath)) return false;
+    const guarded = (PRESERVE_IF_EXISTS[tool] || new Set()).has(fileName);
+    if (!guarded || !fs.existsSync(destPath)) return false;
+    if (writtenThisRun.has(destPath)) return false;
+
+    // Identical to the repo copy: there is no live state to protect, so let the
+    // caller write and skip the backup. Otherwise every re-run of bootstrap —
+    // which is the normal way to take an update — would deposit another full
+    // copy of a file that can hold env vars and hook commands.
+    try {
+        if (sourcePath && fs.readFileSync(destPath, 'utf8') === fs.readFileSync(sourcePath, 'utf8')) {
+            return false;
+        }
+    } catch (e) {
+        // Unreadable — fall through to the safe path (preserve).
+    }
 
     const stamp = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '');
     const backupPath = `${destPath}.pre-bootstrap-backup-${stamp}`;
     try {
+        // Keep exactly one backup: the previous ones describe states already
+        // superseded, and they pile up unbounded across routine re-runs.
+        for (const stale of fs.readdirSync(path.dirname(destPath))) {
+            if (stale.startsWith(`${fileName}.pre-bootstrap-backup-`)) {
+                fs.rmSync(path.join(path.dirname(destPath), stale), { force: true });
+            }
+        }
         fs.copyFileSync(destPath, backupPath);
-        console.log(`  ⚠ kept existing ${fileName} (backup: ${path.basename(backupPath)}); sync repo-ward via /sync-learnings`);
+        console.log(`  ⚠ kept existing ${fileName}${topLevelDrift(destPath, sourcePath)}`);
+        console.log(`    repo version NOT applied (backup: ${path.basename(backupPath)}); merge via /sync-learnings`);
     } catch (e) {
         // Backup failed — still refuse to overwrite. Skipping leaves the live
         // file intact, which is the whole point of the guard.
-        console.log(`  ⚠ kept existing ${fileName} (backup failed: ${e.message})`);
+        console.log(`  ⚠ kept existing ${fileName} (backup failed: ${e.message}); repo version NOT applied`);
     }
     return true;
 }
@@ -1220,8 +1267,9 @@ async function handleSharedContentCopy(tool, config, targetFolder) {
         const sourcePath = path.join(__dirname, config.settingsFile);
         const destPath = path.join(destDir, 'settings.json');
         
-        if (fs.existsSync(sourcePath) && !preserveExistingConfig(destPath)) {
+        if (fs.existsSync(sourcePath) && !preserveExistingConfig(tool, destPath, sourcePath)) {
             fs.copyFileSync(sourcePath, destPath);
+            writtenThisRun.add(destPath);
             completeProgress('Copied settings file');
         }
     }
@@ -1801,9 +1849,10 @@ async function handlePackagesStructureCopy(tool, config, overrideHomeDir = null,
     if (config.copySettings !== false && shouldUseHome) {
         const settingsSource = path.join(__dirname, 'claude-code-4.5', 'settings.json');
         const settingsDest = path.join(destDir, 'settings.json');
-        if (fs.existsSync(settingsSource) && !preserveExistingConfig(settingsDest)) {
+        if (fs.existsSync(settingsSource) && !preserveExistingConfig(tool, settingsDest, settingsSource)) {
             showProgress('Copying settings.json');
             fs.copyFileSync(settingsSource, settingsDest);
+            writtenThisRun.add(settingsDest);
             totalFilesCopied++;
             completeProgress('Copied settings.json');
         }
@@ -1818,7 +1867,7 @@ async function handlePackagesStructureCopy(tool, config, overrideHomeDir = null,
             const destPath = path.join(destDir, fileName);
 
             if (fs.existsSync(sourcePath)) {
-                if (preserveExistingConfig(destPath)) continue;
+                if (preserveExistingConfig(tool, destPath, sourcePath)) continue;
 
                 const substitutions = (config.templateSubstitutions || {})[fileName] ||
                     (fileName.endsWith('.md') ? (config.templateSubstitutions || {})['**/*.md'] : null);
@@ -1830,6 +1879,7 @@ async function handlePackagesStructureCopy(tool, config, overrideHomeDir = null,
                 } else {
                     fs.copyFileSync(sourcePath, destPath);
                 }
+                writtenThisRun.add(destPath);
                 toolFilesCopied++;
             }
         }
@@ -2059,8 +2109,9 @@ async function handleFullDirectoryCopy(tool, config, overrideHomeDir = null, tar
             const destPath = path.join(destDir, fileName);
 
             if (fs.existsSync(sourcePath)) {
-                if (preserveExistingConfig(destPath)) continue;
+                if (preserveExistingConfig(tool, destPath, sourcePath)) continue;
                 fs.copyFileSync(sourcePath, destPath);
+                writtenThisRun.add(destPath);
                 toolFilesCopied++;
             }
         }

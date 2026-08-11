@@ -510,6 +510,55 @@ describe('Live tool config is never overwritten (claude settings.json)', () => {
         }
     });
 
+    it('leaves no backup on a fresh install (does not guard its own writes)', () => {
+        const mockHomeDir = path.join(tempDir, 'home-fresh');
+        fs.mkdirSync(mockHomeDir, { recursive: true });
+
+        execSync(`node bootstrap.js --tool=${tool} --homeDir=${mockHomeDir}`, {
+            stdio: 'pipe',
+            env: { ...process.env },
+        });
+
+        const dest = claudeDir(mockHomeDir);
+        expect(fs.existsSync(path.join(dest, 'settings.json'))).toBe(true);
+        expect(fs.readdirSync(dest).filter(f => f.includes('pre-bootstrap-backup'))).toHaveLength(0);
+    });
+
+    it('keeps exactly one backup across repeated runs and none when unchanged', () => {
+        const mockHomeDir = path.join(tempDir, 'home-repeat');
+        const dest = claudeDir(mockHomeDir);
+        fs.mkdirSync(dest, { recursive: true });
+        fs.writeFileSync(path.join(dest, 'settings.json'), '{"statusLine":{"command":"agentpeek"}}');
+
+        const run = () => execSync(`node bootstrap.js --tool=${tool} --homeDir=${mockHomeDir}`, {
+            stdio: 'pipe', env: { ...process.env },
+        });
+        run(); run(); run();
+
+        expect(fs.readdirSync(dest).filter(f => f.startsWith('settings.json.pre-bootstrap-backup-')))
+            .toHaveLength(1);
+
+        // A copy identical to the repo baseline holds no live state worth keeping.
+        fs.rmSync(path.join(dest, fs.readdirSync(dest).find(f => f.includes('pre-bootstrap-backup'))));
+        fs.copyFileSync(path.join(__dirname, 'claude-code-4.5', 'settings.json'), path.join(dest, 'settings.json'));
+        run();
+        expect(fs.readdirSync(dest).filter(f => f.includes('pre-bootstrap-backup'))).toHaveLength(0);
+    });
+
+    it('does not freeze another tool\'s settings.json (guard is per-tool)', () => {
+        const mockHomeDir = path.join(tempDir, 'home-gemini');
+        const geminiDir = path.join(mockHomeDir, TOOL_CONFIG.gemini.targetSubdir);
+        fs.mkdirSync(geminiDir, { recursive: true });
+        fs.writeFileSync(path.join(geminiDir, 'settings.json'), '{"stale":true}');
+
+        execSync(`node bootstrap.js --tool=gemini --homeDir=${mockHomeDir}`, {
+            stdio: 'pipe', env: { ...process.env },
+        });
+
+        // gemini/settings.json is repo-authored with no machine-side writer.
+        expect(fs.readFileSync(path.join(geminiDir, 'settings.json'), 'utf8')).not.toBe('{"stale":true}');
+    });
+
     it('preserves a locally modified settings.json but still updates CLAUDE.md', () => {
         const mockHomeDir = path.join(tempDir, 'home');
         const dest = claudeDir(mockHomeDir);
