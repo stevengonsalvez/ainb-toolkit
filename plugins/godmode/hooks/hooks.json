@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/sync.sh\" pull || exit 0",
+            "command": "ROOT=\"${CLAUDE_PLUGIN_ROOT}\"; [ -n \"$ROOT\" ] || ROOT=\"${PLUGIN_ROOT}\"; [ -n \"$ROOT\" ] || { echo 'godmode: missing plugin root' >&2; exit 2; }; \"$ROOT/scripts/sync.sh\" pull || exit 0",
             "timeout": 15,
             "statusMessage": "godmode: pulling run state"
           }
@@ -15,11 +15,11 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "Write|Edit",
+        "matcher": "Write|Edit|apply_patch",
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/on-state-write.sh\"",
+            "command": "ROOT=\"${CLAUDE_PLUGIN_ROOT}\"; [ -n \"$ROOT\" ] || ROOT=\"${PLUGIN_ROOT}\"; [ -n \"$ROOT\" ] || { echo 'godmode: missing plugin root' >&2; exit 2; }; \"$ROOT/scripts/on-state-write.sh\"",
             "timeout": 60
           }
         ]
@@ -30,12 +30,12 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/explainer-gate.sh\"",
+            "command": "ROOT=\"${CLAUDE_PLUGIN_ROOT}\"; [ -n \"$ROOT\" ] || ROOT=\"${PLUGIN_ROOT}\"; [ -n \"$ROOT\" ] || { echo 'godmode: missing plugin root' >&2; exit 2; }; \"$ROOT/scripts/explainer-gate.sh\"",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/sync-hook.sh\" push --if-active",
+            "command": "ROOT=\"${CLAUDE_PLUGIN_ROOT}\"; [ -n \"$ROOT\" ] || ROOT=\"${PLUGIN_ROOT}\"; [ -n \"$ROOT\" ] || { echo 'godmode: missing plugin root' >&2; exit 2; }; \"$ROOT/scripts/sync-hook.sh\" push --if-active",
             "timeout": 30,
             "statusMessage": "godmode: heartbeat"
           }
@@ -48,7 +48,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/sync-hook.sh\" push --if-active",
+            "command": "ROOT=\"${CLAUDE_PLUGIN_ROOT}\"; [ -n \"$ROOT\" ] || ROOT=\"${PLUGIN_ROOT}\"; [ -n \"$ROOT\" ] || { echo 'godmode: missing plugin root' >&2; exit 2; }; \"$ROOT/scripts/sync-hook.sh\" push --if-active",
             "timeout": 30,
             "statusMessage": "godmode: pre-compact sync"
           }

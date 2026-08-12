@@ -9,10 +9,10 @@ load helpers
   [ "$V1" = "$V3" ]
 }
 
-@test "Godmode 0.3.0 removes false Claude-only driving claims" {
-  jq -e '.version == "0.3.0"' "$REPO_ROOT/plugins/godmode/.claude-plugin/plugin.json"
-  jq -e '.version == "0.3.0"' "$REPO_ROOT/plugins/godmode/.codex-plugin/plugin.json"
-  jq -e '.version == "0.3.0"' "$REPO_ROOT/.github/plugin/plugin.json"
+@test "Godmode 0.3.1 removes false Claude-only driving claims" {
+  jq -e '.version == "0.3.1"' "$REPO_ROOT/plugins/godmode/.claude-plugin/plugin.json"
+  jq -e '.version == "0.3.1"' "$REPO_ROOT/plugins/godmode/.codex-plugin/plugin.json"
+  jq -e '.version == "0.3.1"' "$REPO_ROOT/.github/plugin/plugin.json"
   ! grep -qi 'driving the loop is Claude-only' "$REPO_ROOT/plugins/godmode/.codex-plugin/plugin.json"
   ! grep -qi 'driving the loop is Claude-only' "$REPO_ROOT/.github/plugin/marketplace.json"
 }
@@ -44,7 +44,24 @@ load helpers
   jq -e '.hooks.Stop[0].hooks | length == 2' "$H"
   jq -e '.hooks.Stop[0].hooks[0].command | contains("explainer-gate.sh")' "$H"
   jq -e '.hooks.SessionStart[0].hooks[0].command | contains("sync.sh")' "$H"
-  jq -e '.hooks.PostToolUse[0].matcher == "Write|Edit"' "$H"
+  jq -e '.hooks.PostToolUse[0].matcher == "Write|Edit|apply_patch"' "$H"
+}
+
+@test "shared hooks resolve Claude and Codex plugin roots" {
+  H="$REPO_ROOT/plugins/godmode/hooks/hooks.json"
+  ROOT="$BATS_TEST_TMPDIR/godmode"
+  mkdir -p "$ROOT/scripts"
+  for script in sync.sh on-state-write.sh explainer-gate.sh sync-hook.sh; do
+    printf '#!/bin/sh\nexit 0\n' > "$ROOT/scripts/$script"
+    chmod +x "$ROOT/scripts/$script"
+  done
+
+  while IFS= read -r command; do
+    run env -u PLUGIN_ROOT CLAUDE_PLUGIN_ROOT="$ROOT" sh -c "$command" < "$FX/stop-event.json"
+    [ "$status" -eq 0 ]
+    run env -u CLAUDE_PLUGIN_ROOT PLUGIN_ROOT="$ROOT" sh -c "$command" < "$FX/stop-event.json"
+    [ "$status" -eq 0 ]
+  done < <(jq -r '[.hooks.SessionStart[0].hooks[], .hooks.PostToolUse[0].hooks[], .hooks.Stop[0].hooks[], .hooks.PreCompact[0].hooks[]] | .[].command' "$H")
 }
 
 @test "MUTATING hooks route through sync-hook.sh so the session id is threaded" {
