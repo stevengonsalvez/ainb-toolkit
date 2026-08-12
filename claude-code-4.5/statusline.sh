@@ -31,7 +31,9 @@ _cache_age() {
   [[ ! -f "$CACHE_FILE" ]] && echo 9999 && return
   local now mtime
   now=$(date +%s)
-  mtime=$(stat -f %m "$CACHE_FILE" 2>/dev/null || stat -c %Y "$CACHE_FILE" 2>/dev/null || echo 0)
+  # GNU first: on Linux `stat -f` succeeds but prints filesystem info, so the
+  # BSD-first order never falls through and the arithmetic below errors out.
+  mtime=$(stat -c %Y "$CACHE_FILE" 2>/dev/null || stat -f %m "$CACHE_FILE" 2>/dev/null || echo 0)
   echo $(( now - mtime ))
 }
 
