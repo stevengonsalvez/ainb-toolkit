@@ -1,7 +1,7 @@
 {
   "name": "godmode",
   "description": "Perpetual autonomous product factory for Copilot CLI",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "author": {
     "name": "Steven Gonsalvez",
     "url": "https://github.com/stevengonsalvez"
