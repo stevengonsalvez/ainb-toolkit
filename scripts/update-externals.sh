@@ -42,6 +42,7 @@ update_npx() {
   run "npx skills add vercel-labs/agent-browser --yes"
   run "npx skills add vercel-labs/agent-skills --yes"
   run "npx skills add pbakaus/impeccable --yes"
+  run "npx skills add humanlayer/skills --global --agent claude-code --agent codex --skill show-me --yes"
   run "npx add-skill here-now"
   run "npx add-skill find-skills"
   run "npx add-skill summarize"
