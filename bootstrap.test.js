@@ -720,6 +720,23 @@ describe('Ainb scoped Codex home (~/.agents-in-a-box/codex-home)', () => {
         expect(fs.readFileSync(path.join(owned, 'SKILL.md'), 'utf8')).toBe('user-owned scoped variant\n');
     });
 
+    it('preserves a dangling scoped symlink instead of relinking it', () => {
+        const mockHomeDir = path.join(tempDir, 'home-dangling');
+        const scoped = scopedHomeOf(mockHomeDir);
+        const dest = path.join(scoped, 'skills', CANARY);
+        fs.mkdirSync(path.dirname(dest), { recursive: true });
+        // e.g. an ainb link to a target that is not mounted yet — still a
+        // scoped entry someone else owns, so bootstrap must not delete it.
+        const danglingTarget = path.join(mockHomeDir, 'not-mounted-yet', CANARY);
+        fs.symlinkSync(danglingTarget, dest);
+
+        runBootstrap(mockHomeDir);
+
+        expect(fs.lstatSync(dest).isSymbolicLink()).toBe(true);
+        expect(fs.readlinkSync(dest)).toBe(danglingTarget);
+        expect(fs.existsSync(dest)).toBe(false);
+    });
+
     it('does not create a scoped home that ainb has not created yet', () => {
         const mockHomeDir = path.join(tempDir, 'home-absent');
         fs.mkdirSync(mockHomeDir, { recursive: true });

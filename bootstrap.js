@@ -1343,12 +1343,25 @@ async function handleSharedContentCopy(tool, config, targetFolder) {
 // rest of the scoped home (auth.json, databases, installation_id) is never
 // touched. Skips entirely when the scoped home does not exist — ainb owns its
 // creation, bootstrap only repairs one that is already there.
+//
+// Presence is decided by lstat, never existsSync: a dangling symlink is still
+// a scoped entry someone else put there (an ainb link to a not-yet-mounted
+// target, a user's own link) and deleting it is not bootstrap's call.
+function lstatOrNull(p) {
+    try {
+        return fs.lstatSync(p);
+    } catch (e) {
+        return null;
+    }
+}
+
 function reconcileAinbCodexSkills(homeDir, deployedSkillsDir) {
     const scopedHome = path.join(homeDir, '.agents-in-a-box', 'codex-home');
     if (!fs.existsSync(scopedHome) || !fs.existsSync(deployedSkillsDir)) return null;
 
     const scopedSkills = path.join(scopedHome, 'skills');
-    if (fs.existsSync(scopedSkills) && fs.lstatSync(scopedSkills).isSymbolicLink()) {
+    const scopedSkillsEntry = lstatOrNull(scopedSkills);
+    if (scopedSkillsEntry && scopedSkillsEntry.isSymbolicLink()) {
         // A whole-dir symlink means writes here land in the real ~/.codex.
         console.log(`  ⚠ ${scopedSkills} is a symlink; skipping scoped skill reconcile`);
         return null;
@@ -1360,10 +1373,8 @@ function reconcileAinbCodexSkills(homeDir, deployedSkillsDir) {
     for (const entry of fs.readdirSync(deployedSkillsDir, { withFileTypes: true })) {
         if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
         const dest = path.join(scopedSkills, entry.name);
-        if (fs.existsSync(dest)) { preserved++; continue; }
+        if (lstatOrNull(dest)) { preserved++; continue; }
         try {
-            // Only a dangling symlink can be left here, and it holds no data.
-            fs.rmSync(dest, { force: true });
             fs.symlinkSync(path.join(deployedSkillsDir, entry.name), dest);
             linked++;
         } catch (e) {
