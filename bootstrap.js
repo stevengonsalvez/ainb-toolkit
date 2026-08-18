@@ -1331,6 +1331,59 @@ async function handleSharedContentCopy(tool, config, targetFolder) {
     console.log(`Files copied to: ${destDir}`);
 }
 
+// Ainb runs its managed Codex app-server with CODEX_HOME pointed at
+// ~/.agents-in-a-box/codex-home so remote enrollment, thread databases and
+// server identity stay isolated from Codex Desktop (two app-servers sharing
+// ~/.codex collide over persisted enrollment). Sharing the whole home — or the
+// whole skills dir — via symlink reintroduces exactly that collision, so this
+// reconciles ONLY the missing skills: one symlink per bootstrap-deployed skill.
+//
+// Anything already present in the scoped skills dir is left alone: a
+// user-owned skill, `.system`, or an ainb-managed entry is never replaced. The
+// rest of the scoped home (auth.json, databases, installation_id) is never
+// touched. Skips entirely when the scoped home does not exist — ainb owns its
+// creation, bootstrap only repairs one that is already there.
+//
+// Presence is decided by lstat, never existsSync: a dangling symlink is still
+// a scoped entry someone else put there (an ainb link to a not-yet-mounted
+// target, a user's own link) and deleting it is not bootstrap's call.
+function lstatOrNull(p) {
+    try {
+        return fs.lstatSync(p);
+    } catch (e) {
+        return null;
+    }
+}
+
+function reconcileAinbCodexSkills(homeDir, deployedSkillsDir) {
+    const scopedHome = path.join(homeDir, '.agents-in-a-box', 'codex-home');
+    if (!fs.existsSync(scopedHome) || !fs.existsSync(deployedSkillsDir)) return null;
+
+    const scopedSkills = path.join(scopedHome, 'skills');
+    const scopedSkillsEntry = lstatOrNull(scopedSkills);
+    if (scopedSkillsEntry && scopedSkillsEntry.isSymbolicLink()) {
+        // A whole-dir symlink means writes here land in the real ~/.codex.
+        console.log(`  ⚠ ${scopedSkills} is a symlink; skipping scoped skill reconcile`);
+        return null;
+    }
+    fs.mkdirSync(scopedSkills, { recursive: true });
+
+    let linked = 0;
+    let preserved = 0;
+    for (const entry of fs.readdirSync(deployedSkillsDir, { withFileTypes: true })) {
+        if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+        const dest = path.join(scopedSkills, entry.name);
+        if (lstatOrNull(dest)) { preserved++; continue; }
+        try {
+            fs.symlinkSync(path.join(deployedSkillsDir, entry.name), dest);
+            linked++;
+        } catch (e) {
+            console.log(`  ⚠ could not link scoped skill ${entry.name} (${e.message})`);
+        }
+    }
+    return { linked, preserved, scopedSkills };
+}
+
 async function handlePackagesStructureCopy(tool, config, overrideHomeDir = null, targetFolder = null, isNonInteractive = false, specifiedPackages = null) {
     let destDir;
     let displayPath;
@@ -1640,6 +1693,15 @@ async function handlePackagesStructureCopy(tool, config, overrideHomeDir = null,
                         scriptLines.push('');
                     }
 
+                    if (tool === 'codex') {
+                        // These clones land in ~/.codex/skills only now, long after
+                        // the in-run reconcile, so link the new arrivals into the
+                        // Ainb scoped home rather than waiting for a re-bootstrap.
+                        scriptLines.push('# Link newly installed skills into the Ainb scoped CODEX_HOME (no-op if absent)');
+                        scriptLines.push(`node ${JSON.stringify(__filename)} --reconcile-scoped-skills || true`);
+                        scriptLines.push('');
+                    }
+
                     scriptLines.push('echo "✓ External dependencies installed!"');
                     config._externalDepsScript = scriptLines.join('\n');
                     config._externalDepsCount = applicableDeps.length;
@@ -1823,6 +1885,15 @@ async function handlePackagesStructureCopy(tool, config, overrideHomeDir = null,
             }
         } catch (e) {
             console.log(`  ⚠ could not clean up stale skills/${migrated}/ (${e.message}); left in place, re-run bootstrap to retry`);
+        }
+    }
+
+    // Ainb runs its managed Codex app-server under a scoped CODEX_HOME, so the
+    // skills deployed above are invisible to it until they are reconciled in.
+    if (tool === 'codex' && shouldUseHome) {
+        const result = reconcileAinbCodexSkills(overrideHomeDir || os.homedir(), path.join(destDir, 'skills'));
+        if (result) {
+            console.log(`  Ainb scoped Codex home: linked ${result.linked} skills, preserved ${result.preserved} existing entries`);
         }
     }
 
@@ -2594,6 +2665,19 @@ async function main() {
     // of truth instead of a hand-copied map that drifts.
     if (args.includes('--dump-config')) {
         process.stdout.write(JSON.stringify(TOOL_CONFIG));
+        return;
+    }
+    // Standalone reconcile: setup-external.sh clones agent-skills into
+    // ~/.codex/skills AFTER bootstrap has finished, so it calls back here to
+    // link the new arrivals into the Ainb scoped home. No-op when that home
+    // does not exist.
+    if (args.includes('--reconcile-scoped-skills')) {
+        const homeArg = args.find(arg => arg.startsWith('--homeDir='));
+        const homeDir = homeArg ? homeArg.split('=')[1] : os.homedir();
+        const result = reconcileAinbCodexSkills(homeDir, path.join(homeDir, TOOL_CONFIG.codex.targetSubdir, 'skills'));
+        console.log(result
+            ? `Ainb scoped Codex home: linked ${result.linked} skills, preserved ${result.preserved} existing entries`
+            : 'No Ainb scoped Codex home to reconcile');
         return;
     }
     const toolArg = args.find(arg => arg.startsWith('--tool='));

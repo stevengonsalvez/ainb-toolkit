@@ -644,3 +644,131 @@ describe('Migrated plugin skills (godmode)', () => {
         expect(script).not.toContain('cache/ainb-toolkit/godmode');
     });
 });
+
+describe('Ainb scoped Codex home (~/.agents-in-a-box/codex-home)', () => {
+    const tempDir = path.join(__dirname, 'tmp-ainb-codex-home-test');
+    const tool = 'codex';
+
+    afterEach(() => {
+        if (fs.existsSync(tempDir)) {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    const runBootstrap = (mockHomeDir) => {
+        execSync(`node bootstrap.js --tool=${tool} --homeDir=${mockHomeDir}`, {
+            stdio: 'pipe',
+            env: { ...process.env },
+        });
+    };
+
+    const scopedHomeOf = (mockHomeDir) => path.join(mockHomeDir, '.agents-in-a-box', 'codex-home');
+    const codexSkillsOf = (mockHomeDir) => path.join(mockHomeDir, TOOL_CONFIG[tool].targetSubdir, 'skills');
+
+    // A skill bootstrap always deploys, used as the canary for reconciliation.
+    const CANARY = 'interview';
+
+    it('links bootstrap skills into a scoped home that has none yet', () => {
+        const mockHomeDir = path.join(tempDir, 'home-initial');
+        fs.mkdirSync(scopedHomeOf(mockHomeDir), { recursive: true });
+
+        runBootstrap(mockHomeDir);
+
+        const linked = path.join(scopedHomeOf(mockHomeDir), 'skills', CANARY);
+        expect(fs.lstatSync(linked).isSymbolicLink()).toBe(true);
+        expect(fs.realpathSync(linked)).toBe(fs.realpathSync(path.join(codexSkillsOf(mockHomeDir), CANARY)));
+        expect(fs.existsSync(path.join(linked, 'SKILL.md'))).toBe(true);
+
+        // Never the whole home or the whole skills dir.
+        expect(fs.lstatSync(scopedHomeOf(mockHomeDir)).isSymbolicLink()).toBe(false);
+        expect(fs.lstatSync(path.join(scopedHomeOf(mockHomeDir), 'skills')).isSymbolicLink()).toBe(false);
+    });
+
+    it('repairs an existing scoped home without touching its state', () => {
+        const mockHomeDir = path.join(tempDir, 'home-repair');
+        const scoped = scopedHomeOf(mockHomeDir);
+        fs.mkdirSync(path.join(scoped, 'skills', '.system', 'ainb-internal'), { recursive: true });
+        fs.writeFileSync(path.join(scoped, 'skills', '.system', 'ainb-internal', 'SKILL.md'), 'system\n');
+        fs.writeFileSync(path.join(scoped, 'auth.json'), '{"scoped":"auth"}');
+        fs.writeFileSync(path.join(scoped, 'installation_id'), 'ainb-install-id\n');
+        fs.writeFileSync(path.join(scoped, 'remote_enrollment.json'), '{"enrolled":true}');
+        fs.writeFileSync(path.join(scoped, 'threads.db'), 'sqlite-bytes');
+
+        runBootstrap(mockHomeDir);
+
+        expect(fs.lstatSync(path.join(scoped, 'skills', CANARY)).isSymbolicLink()).toBe(true);
+        expect(fs.readFileSync(path.join(scoped, 'auth.json'), 'utf8')).toBe('{"scoped":"auth"}');
+        expect(fs.readFileSync(path.join(scoped, 'installation_id'), 'utf8')).toBe('ainb-install-id\n');
+        expect(fs.readFileSync(path.join(scoped, 'remote_enrollment.json'), 'utf8')).toBe('{"enrolled":true}');
+        expect(fs.readFileSync(path.join(scoped, 'threads.db'), 'utf8')).toBe('sqlite-bytes');
+        // .system is scoped-owned and must survive untouched.
+        expect(fs.readFileSync(path.join(scoped, 'skills', '.system', 'ainb-internal', 'SKILL.md'), 'utf8')).toBe('system\n');
+        // config.toml is never merged or created in the scoped home.
+        expect(fs.existsSync(path.join(scoped, 'config.toml'))).toBe(false);
+    });
+
+    it('never replaces a colliding user-owned scoped skill with a symlink', () => {
+        const mockHomeDir = path.join(tempDir, 'home-collision');
+        const scoped = scopedHomeOf(mockHomeDir);
+        const owned = path.join(scoped, 'skills', CANARY);
+        fs.mkdirSync(owned, { recursive: true });
+        fs.writeFileSync(path.join(owned, 'SKILL.md'), 'user-owned scoped variant\n');
+
+        runBootstrap(mockHomeDir);
+
+        expect(fs.lstatSync(owned).isSymbolicLink()).toBe(false);
+        expect(fs.readFileSync(path.join(owned, 'SKILL.md'), 'utf8')).toBe('user-owned scoped variant\n');
+    });
+
+    it('preserves a dangling scoped symlink instead of relinking it', () => {
+        const mockHomeDir = path.join(tempDir, 'home-dangling');
+        const scoped = scopedHomeOf(mockHomeDir);
+        const dest = path.join(scoped, 'skills', CANARY);
+        fs.mkdirSync(path.dirname(dest), { recursive: true });
+        // e.g. an ainb link to a target that is not mounted yet — still a
+        // scoped entry someone else owns, so bootstrap must not delete it.
+        const danglingTarget = path.join(mockHomeDir, 'not-mounted-yet', CANARY);
+        fs.symlinkSync(danglingTarget, dest);
+
+        runBootstrap(mockHomeDir);
+
+        expect(fs.lstatSync(dest).isSymbolicLink()).toBe(true);
+        expect(fs.readlinkSync(dest)).toBe(danglingTarget);
+        expect(fs.existsSync(dest)).toBe(false);
+    });
+
+    it('reconciles skills that setup-external.sh installs after bootstrap', () => {
+        const mockHomeDir = path.join(tempDir, 'home-external');
+        fs.mkdirSync(scopedHomeOf(mockHomeDir), { recursive: true });
+
+        runBootstrap(mockHomeDir);
+
+        // setup-external.sh clones agent-skills into ~/.codex/skills long after
+        // the in-run reconcile, so it must call back into bootstrap.
+        const script = fs.readFileSync(
+            path.join(mockHomeDir, TOOL_CONFIG[tool].targetSubdir, 'setup-external.sh'), 'utf8');
+        expect(script).toContain('--reconcile-scoped-skills');
+
+        // Simulate the clone, then run the callback the script emits.
+        const lateSkill = path.join(codexSkillsOf(mockHomeDir), 'late-external-skill');
+        fs.mkdirSync(lateSkill, { recursive: true });
+        fs.writeFileSync(path.join(lateSkill, 'SKILL.md'), 'cloned by setup-external\n');
+
+        execSync(`node bootstrap.js --reconcile-scoped-skills --homeDir=${mockHomeDir}`, {
+            stdio: 'pipe', env: { ...process.env },
+        });
+
+        const linked = path.join(scopedHomeOf(mockHomeDir), 'skills', 'late-external-skill');
+        expect(fs.lstatSync(linked).isSymbolicLink()).toBe(true);
+        expect(fs.readFileSync(path.join(linked, 'SKILL.md'), 'utf8')).toBe('cloned by setup-external\n');
+    });
+
+    it('does not create a scoped home that ainb has not created yet', () => {
+        const mockHomeDir = path.join(tempDir, 'home-absent');
+        fs.mkdirSync(mockHomeDir, { recursive: true });
+
+        runBootstrap(mockHomeDir);
+
+        expect(fs.existsSync(path.join(mockHomeDir, '.agents-in-a-box'))).toBe(false);
+    });
+});
