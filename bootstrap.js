@@ -1693,6 +1693,15 @@ async function handlePackagesStructureCopy(tool, config, overrideHomeDir = null,
                         scriptLines.push('');
                     }
 
+                    if (tool === 'codex') {
+                        // These clones land in ~/.codex/skills only now, long after
+                        // the in-run reconcile, so link the new arrivals into the
+                        // Ainb scoped home rather than waiting for a re-bootstrap.
+                        scriptLines.push('# Link newly installed skills into the Ainb scoped CODEX_HOME (no-op if absent)');
+                        scriptLines.push(`node ${JSON.stringify(__filename)} --reconcile-scoped-skills || true`);
+                        scriptLines.push('');
+                    }
+
                     scriptLines.push('echo "✓ External dependencies installed!"');
                     config._externalDepsScript = scriptLines.join('\n');
                     config._externalDepsCount = applicableDeps.length;
@@ -2656,6 +2665,19 @@ async function main() {
     // of truth instead of a hand-copied map that drifts.
     if (args.includes('--dump-config')) {
         process.stdout.write(JSON.stringify(TOOL_CONFIG));
+        return;
+    }
+    // Standalone reconcile: setup-external.sh clones agent-skills into
+    // ~/.codex/skills AFTER bootstrap has finished, so it calls back here to
+    // link the new arrivals into the Ainb scoped home. No-op when that home
+    // does not exist.
+    if (args.includes('--reconcile-scoped-skills')) {
+        const homeArg = args.find(arg => arg.startsWith('--homeDir='));
+        const homeDir = homeArg ? homeArg.split('=')[1] : os.homedir();
+        const result = reconcileAinbCodexSkills(homeDir, path.join(homeDir, TOOL_CONFIG.codex.targetSubdir, 'skills'));
+        console.log(result
+            ? `Ainb scoped Codex home: linked ${result.linked} skills, preserved ${result.preserved} existing entries`
+            : 'No Ainb scoped Codex home to reconcile');
         return;
     }
     const toolArg = args.find(arg => arg.startsWith('--tool='));

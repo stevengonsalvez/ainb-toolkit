@@ -737,6 +737,32 @@ describe('Ainb scoped Codex home (~/.agents-in-a-box/codex-home)', () => {
         expect(fs.existsSync(dest)).toBe(false);
     });
 
+    it('reconciles skills that setup-external.sh installs after bootstrap', () => {
+        const mockHomeDir = path.join(tempDir, 'home-external');
+        fs.mkdirSync(scopedHomeOf(mockHomeDir), { recursive: true });
+
+        runBootstrap(mockHomeDir);
+
+        // setup-external.sh clones agent-skills into ~/.codex/skills long after
+        // the in-run reconcile, so it must call back into bootstrap.
+        const script = fs.readFileSync(
+            path.join(mockHomeDir, TOOL_CONFIG[tool].targetSubdir, 'setup-external.sh'), 'utf8');
+        expect(script).toContain('--reconcile-scoped-skills');
+
+        // Simulate the clone, then run the callback the script emits.
+        const lateSkill = path.join(codexSkillsOf(mockHomeDir), 'late-external-skill');
+        fs.mkdirSync(lateSkill, { recursive: true });
+        fs.writeFileSync(path.join(lateSkill, 'SKILL.md'), 'cloned by setup-external\n');
+
+        execSync(`node bootstrap.js --reconcile-scoped-skills --homeDir=${mockHomeDir}`, {
+            stdio: 'pipe', env: { ...process.env },
+        });
+
+        const linked = path.join(scopedHomeOf(mockHomeDir), 'skills', 'late-external-skill');
+        expect(fs.lstatSync(linked).isSymbolicLink()).toBe(true);
+        expect(fs.readFileSync(path.join(linked, 'SKILL.md'), 'utf8')).toBe('cloned by setup-external\n');
+    });
+
     it('does not create a scoped home that ainb has not created yet', () => {
         const mockHomeDir = path.join(tempDir, 'home-absent');
         fs.mkdirSync(mockHomeDir, { recursive: true });
