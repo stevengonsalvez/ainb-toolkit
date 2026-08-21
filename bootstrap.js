@@ -87,6 +87,130 @@ function preserveExistingConfig(tool, destPath, sourcePath) {
     return true;
 }
 
+// ainb (agents-in-a-box) runs its fleet/hangar codex sessions under its own
+// CODEX_HOME so their threads, sessions and app-server socket stay out of the
+// user's interactive codex state. It seeds that home with an auth.json symlink
+// and nothing else, so those sessions boot with no skills, no AGENTS.md, no
+// hooks and no plugins: `interview` and friends are simply absent, and the
+// godmode hooks never load. Link the rest back at ~/.codex so a fleet session
+// sees the same setup a terminal session does.
+//
+// Deliberately NOT collapsing the two homes into one symlink: the isolation is
+// the point, and sharing the sqlite state would drop fleet threads into the
+// user's session picker.
+const SATELLITE_CODEX_HOME = path.join('.agents-in-a-box', 'codex-home');
+const SATELLITE_CODEX_LINKS = [
+    'skills',
+    'AGENTS.md',
+    'hooks.json',
+    'rules',
+    'plugins',
+    // Marketplace snapshots resolve as $CODEX_HOME/.tmp/marketplaces/<name>, so
+    // without this `codex plugin list` fails with "no supported manifest".
+    path.join('.tmp', 'marketplaces'),
+];
+
+// config.toml is absent from the link list on purpose: codex writes
+// [projects.*] trust entries and [hooks.state] hashes into whichever home is
+// live, so it has to stay a real file on both sides.
+//
+// Split textually rather than through a TOML parser. bootstrap has no TOML
+// dependency, and the only thing that needs reconciling is which [projects.*]
+// blocks exist; everything else is taken from ~/.codex wholesale.
+function splitCodexConfig(text) {
+    const body = [];
+    const projects = new Map();
+    let current = null;
+
+    for (const line of text.split('\n')) {
+        if (line.startsWith('[')) {
+            current = line.startsWith('[projects.') ? line : null;
+            if (current) projects.set(current, [line]);
+            else body.push(line);
+        } else if (current) {
+            projects.get(current).push(line);
+        } else {
+            body.push(line);
+        }
+    }
+    return { body: body.join('\n').trimEnd(), projects };
+}
+
+// Naive concatenation produces a duplicate key and codex then refuses to start,
+// so satellite-only project blocks are the only ones carried over.
+function mergeSatelliteCodexConfig(realPath, satellitePath) {
+    const real = splitCodexConfig(fs.readFileSync(realPath, 'utf8'));
+    const satellite = fs.existsSync(satellitePath)
+        ? splitCodexConfig(fs.readFileSync(satellitePath, 'utf8'))
+        : { projects: new Map() };
+
+    const merged = new Map(real.projects);
+    for (const [header, block] of satellite.projects) {
+        if (!merged.has(header)) merged.set(header, block);
+    }
+
+    const blocks = [...merged.values()].map(lines => lines.join('\n').trimEnd());
+    return `${real.body}\n\n${blocks.join('\n\n')}\n`;
+}
+
+function backupSatellitePath(target) {
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '');
+    const name = path.basename(target);
+    // Keep exactly one backup per path, matching preserveExistingConfig: routine
+    // re-runs would otherwise pile up copies of a whole skills tree.
+    for (const stale of fs.readdirSync(path.dirname(target))) {
+        if (stale.startsWith(`${name}.pre-bootstrap-backup-`)) {
+            fs.rmSync(path.join(path.dirname(target), stale), { recursive: true, force: true });
+        }
+    }
+    fs.renameSync(target, `${target}.pre-bootstrap-backup-${stamp}`);
+}
+
+function linkSatelliteCodexHome(homeDir) {
+    const satellite = path.join(homeDir, SATELLITE_CODEX_HOME);
+    // ainb is not installed on this machine, so there is nothing to wire up.
+    if (!fs.existsSync(satellite)) return;
+
+    const real = path.join(homeDir, '.codex');
+    showProgress('Linking ainb codex-home to ~/.codex');
+    let linked = 0;
+
+    for (const name of SATELLITE_CODEX_LINKS) {
+        const source = path.join(real, name);
+        const dest = path.join(satellite, name);
+        if (!fs.existsSync(source)) continue;
+
+        try {
+            const existing = fs.lstatSync(dest);
+            // Already pointing where we want it: re-running bootstrap is the
+            // normal way to take an update and must not churn backups.
+            if (existing.isSymbolicLink() && fs.readlinkSync(dest) === source) continue;
+            backupSatellitePath(dest);
+        } catch (e) {
+            if (e.code !== 'ENOENT') {
+                console.log(`  ⚠ skipped ${name} in ainb codex-home: ${e.message}`);
+                continue;
+            }
+        }
+
+        fs.mkdirSync(path.dirname(dest), { recursive: true });
+        fs.symlinkSync(source, dest);
+        linked++;
+    }
+
+    const realConfig = path.join(real, 'config.toml');
+    const satelliteConfig = path.join(satellite, 'config.toml');
+    if (fs.existsSync(realConfig)) {
+        try {
+            fs.writeFileSync(satelliteConfig, mergeSatelliteCodexConfig(realConfig, satelliteConfig));
+        } catch (e) {
+            console.log(`  ⚠ could not merge ainb codex-home config.toml: ${e.message}`);
+        }
+    }
+
+    completeProgress(`Linked ${linked} path(s) into ainb codex-home`);
+}
+
 const TOOL_CONFIG = {
     cline: {
         ruleGlob: 'cline-rulestore-rule.md',
@@ -2596,6 +2720,13 @@ async function main() {
         process.stdout.write(JSON.stringify(TOOL_CONFIG));
         return;
     }
+    // Diagnostic: run only the ainb codex-home wiring against --homeDir. Lets
+    // the suite exercise the symlink/merge logic without a full codex install.
+    if (args.includes('--link-satellite-codex-home')) {
+        const homeArg = args.find(arg => arg.startsWith('--homeDir='));
+        linkSatelliteCodexHome(homeArg ? homeArg.split('=')[1] : os.homedir());
+        return;
+    }
     const toolArg = args.find(arg => arg.startsWith('--tool='));
     const targetFolderArg = args.find(arg => arg.startsWith('--targetFolder='));
     const homeDirArg = args.find(arg => arg.startsWith('--homeDir='));
@@ -2662,6 +2793,11 @@ async function main() {
     // Handle packages structure (new catalog-based structure)
     if (config.usePackagesStructure) {
         await handlePackagesStructureCopy(tool, config, overrideHomeDir, targetFolder, isNonInteractive, specifiedPackages);
+        // Only meaningful for a home install: a project-scoped copy is not what
+        // ainb's fleet sessions read from.
+        if (tool === 'codex' && (!targetFolder || config.forceHomeInstall)) {
+            linkSatelliteCodexHome(overrideHomeDir || os.homedir());
+        }
         return;
     }
 

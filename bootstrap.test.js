@@ -644,3 +644,117 @@ describe('Migrated plugin skills (godmode)', () => {
         expect(script).not.toContain('cache/ainb-toolkit/godmode');
     });
 });
+
+// ainb spins its own CODEX_HOME at ~/.agents-in-a-box/codex-home and seeds it
+// with an auth.json symlink only, so fleet codex sessions boot with no skills,
+// no AGENTS.md and no hooks. bootstrap links the rest back at ~/.codex.
+describe('ainb codex-home wiring', () => {
+    const tempDir = path.join(__dirname, 'tmp-satellite-codex');
+
+    const runLink = (homeDir) => execSync(
+        `node bootstrap.js --link-satellite-codex-home --homeDir=${homeDir}`,
+        { cwd: __dirname }
+    );
+
+    const seedHome = () => {
+        const homeDir = path.join(tempDir, 'home');
+        const real = path.join(homeDir, '.codex');
+        const satellite = path.join(homeDir, '.agents-in-a-box', 'codex-home');
+        fs.mkdirSync(path.join(real, 'skills', 'interview'), { recursive: true });
+        fs.mkdirSync(path.join(real, 'rules'), { recursive: true });
+        fs.mkdirSync(path.join(real, 'plugins'), { recursive: true });
+        fs.mkdirSync(path.join(real, '.tmp', 'marketplaces'), { recursive: true });
+        fs.writeFileSync(path.join(real, 'skills', 'interview', 'SKILL.md'), 'interview');
+        fs.writeFileSync(path.join(real, 'AGENTS.md'), 'global instructions');
+        fs.writeFileSync(path.join(real, 'hooks.json'), '{"hooks":[]}');
+        fs.mkdirSync(satellite, { recursive: true });
+        return { homeDir, real, satellite };
+    };
+
+    afterEach(() => {
+        if (fs.existsSync(tempDir)) fs.rmSync(tempDir, { recursive: true, force: true });
+    });
+
+    it('links skills, AGENTS.md, hooks.json, rules and plugins into the ainb home', () => {
+        const { real, homeDir, satellite } = seedHome();
+        fs.writeFileSync(path.join(real, 'config.toml'), 'model = "gpt-5.6-terra"\n');
+        runLink(homeDir);
+
+        for (const name of ['skills', 'AGENTS.md', 'hooks.json', 'rules', 'plugins']) {
+            const dest = path.join(satellite, name);
+            expect(fs.lstatSync(dest).isSymbolicLink()).toBe(true);
+            expect(fs.readlinkSync(dest)).toBe(path.join(real, name));
+        }
+        // Marketplace snapshots resolve under $CODEX_HOME/.tmp, so the parent
+        // directory has to be created rather than symlinked wholesale.
+        expect(fs.readlinkSync(path.join(satellite, '.tmp', 'marketplaces')))
+            .toBe(path.join(real, '.tmp', 'marketplaces'));
+        // The skill that started this: reachable through the link.
+        expect(fs.readFileSync(path.join(satellite, 'skills', 'interview', 'SKILL.md'), 'utf8'))
+            .toBe('interview');
+    });
+
+    it('is a no-op when ainb is not installed', () => {
+        const { homeDir } = seedHome();
+        fs.rmSync(path.join(homeDir, '.agents-in-a-box'), { recursive: true, force: true });
+        fs.writeFileSync(path.join(homeDir, '.codex', 'config.toml'), 'model = "x"\n');
+        expect(() => runLink(homeDir)).not.toThrow();
+        expect(fs.existsSync(path.join(homeDir, '.agents-in-a-box'))).toBe(false);
+    });
+
+    it('merges config.toml without duplicating a [projects.*] key', () => {
+        const { real, homeDir, satellite } = seedHome();
+        fs.writeFileSync(path.join(real, 'config.toml'), [
+            'model = "gpt-5.6-terra"',
+            '',
+            '[projects."/repo/shared"]',
+            'trust_level = "trusted"',
+            '',
+        ].join('\n'));
+        fs.writeFileSync(path.join(satellite, 'config.toml'), [
+            '[projects."/repo/shared"]',
+            'trust_level = "trusted"',
+            '',
+            '[projects."/repo/fleet-only"]',
+            'trust_level = "trusted"',
+            '',
+        ].join('\n'));
+
+        runLink(homeDir);
+        const merged = fs.readFileSync(path.join(satellite, 'config.toml'), 'utf8');
+
+        // The body comes from ~/.codex, so model/personality reach fleet sessions.
+        expect(merged).toContain('model = "gpt-5.6-terra"');
+        // Naive concatenation yields a duplicate key and codex then refuses to start.
+        expect(merged.match(/\[projects\."\/repo\/shared"\]/g)).toHaveLength(1);
+        // A trust entry only the fleet home knew about survives.
+        expect(merged).toContain('[projects."/repo/fleet-only"]');
+    });
+
+    it('re-running does not churn backups for links already correct', () => {
+        const { real, homeDir, satellite } = seedHome();
+        fs.writeFileSync(path.join(real, 'config.toml'), 'model = "x"\n');
+        runLink(homeDir);
+        runLink(homeDir);
+        const backups = fs.readdirSync(satellite).filter(f => f.includes('.pre-bootstrap-backup-'));
+        expect(backups).toHaveLength(0);
+        expect(fs.lstatSync(path.join(satellite, 'skills')).isSymbolicLink()).toBe(true);
+    });
+
+    it('backs up a real directory it replaces instead of deleting it', () => {
+        const { real, homeDir, satellite } = seedHome();
+        fs.writeFileSync(path.join(real, 'config.toml'), 'model = "x"\n');
+        // The live shape: a real skills/ holding codex's bundled .system skills.
+        fs.mkdirSync(path.join(satellite, 'skills', '.system', 'imagegen'), { recursive: true });
+        fs.writeFileSync(path.join(satellite, 'skills', '.system', 'imagegen', 'SKILL.md'), 'bundled');
+
+        runLink(homeDir);
+
+        expect(fs.lstatSync(path.join(satellite, 'skills')).isSymbolicLink()).toBe(true);
+        const backups = fs.readdirSync(satellite).filter(f => f.startsWith('skills.pre-bootstrap-backup-'));
+        expect(backups).toHaveLength(1);
+        expect(fs.readFileSync(
+            path.join(satellite, backups[0], '.system', 'imagegen', 'SKILL.md'), 'utf8'
+        )).toBe('bundled');
+    });
+});
