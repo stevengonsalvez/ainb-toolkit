@@ -134,4 +134,5 @@ One-time setup when Stevie accepts the offer (or asks for it):
 | Index entry count went DOWN after publish | Stale CDN read — script cache-busts `data.json`; if hand-editing, always fetch with `?cb=<random>` |
 | `Unauthorized. Provide claimToken` | Site was published anonymously — use the claim token or publish fresh |
 | Mount live but 404 on domain | Cloudflare KV propagation, wait ≤60s |
+| Theme injection adds en/em dashes | Run `references/theme-dash-hygiene.md` check before publish/commit |
 | `jq`/`cut` vanish in piped zsh loops | Write a script file with `export PATH=…` at top; don't inline via xargs |

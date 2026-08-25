@@ -34,6 +34,10 @@ Caveman mode by default. Address user as **Stevie**.
   `{{CONSTRAINTS}}`, `{{AUDIENCE}}`, `{{SUCCESS_1}}`, `{{SUCCESS_2}}`, `{{SUCCESS_3}}`.
 - `assets/stub-plan.md.tmpl` — stub handed to `/interview`. Token: `{{OUTCOME}}`.
 
+## Plan-to-goal shortcut
+
+When Stevie asks for `plan -> critique -> make-a-goal` in one flow, and the reviewed plan already contains all six context fields plus three measurable success criteria, do not re-interview. Render `<slug>.plan-spec.md` from the reviewed plan, then render goal artifact. Preserve this skill's non-goal: artifact only, no execution. If any required field is thin or missing, ask at most one structured follow-up for only missing fields.
+
 ## Runbook
 
 1. **Get the outcome line.** If `$ARGUMENTS` non-empty, that IS the line → step 2.

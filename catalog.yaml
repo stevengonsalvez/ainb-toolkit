@@ -144,6 +144,7 @@ components:
 
   utilities:
     hooks:
+      - bash_auto_background
       - compile-statusline
       - cost_tracker
       - dev_server_tmux

@@ -85,6 +85,8 @@ Pick the tool — first match wins:
 
 Branch: if a likely prompt tool exists but the call fails as unavailable → treat as "no native tool", fall back to plaintext immediately. Do NOT spend a turn asking how to ask.
 
+Lambda/Discord note: if interviewing Stevie blocks work and fleet rules require mortal inbox, create the `targetAgent: "mortal"` inbox item first, then ask the concise plaintext interview with `[inbox:<id>]`. Keep one ask block, 2-5 numbered questions, and do not mutate repos/issues until answers define outcome shape.
+
 ### Output shape convention (default — `### Format preferences` (nested inside `## For /interview`) overrides)
 
 | Content shape                            | Use                                        |
