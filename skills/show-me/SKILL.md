@@ -1,6 +1,6 @@
 ---
 name: show-me
-description: Render the current situation as ASCII diagrams, one evidence table, and one NEXT line. Every cell is grounded in a command run this turn, never conversation memory. Use when Stevie asks where something stands - "/show-me", "show me where we are", "show me the state", "what's the state of X", "where are we", "explain this visually" - or when a status answer would otherwise be prose. NOT for "show me <file>", "show me the diff", "show me that function": those are plain reads, not situation reports.
+description: Render the situation as ASCII diagrams, minimal prose, and one NEXT line. Two lanes, inferred unless forced. STATUS lane for a thing that exists - "/show-me", "where are we", "what's the state of X", "is it green" - every cell grounded in a command run this turn. IDEA lane for a thing that does not exist yet - "/show-me --idea", "what is this issue", "explain your proposal", "what are the options", "explain this visually" - requirement and proposal drawn as boxes, with claims about existing code still grounded. NOT for "show me <file>", "show me the diff", "show me that function": those are plain reads.
 ---
 
 # show-me
@@ -11,7 +11,45 @@ happens next.
 **Prose is the failure mode.** If a paragraph is forming, it belongs in a box, a
 cell, or the bin.
 
-## Order (fixed)
+## Lane selection
+
+Two lanes. A flag forces one; with no flag, infer.
+
+```
+                      /show-me
+                          │
+                  ┌───────┴───────┐
+                  │ flag given?   │
+                  └───┬───────┬───┘
+                  yes │       │ no
+                      ▼       ▼
+              ┌──────────┐  ┌──────────────────┐
+              │ obey it  │  │ subject EXISTS?  │
+              └──────────┘  └───┬──────────┬───┘
+                            yes │          │ no
+                                ▼          ▼
+                          ┌─────────┐  ┌────────┐
+                          │ STATUS  │  │  IDEA  │
+                          └─────────┘  └────────┘
+```
+
+| flag | lane | subject |
+|------|------|---------|
+| `--status` | status | branch, PR, CI run, service, file on disk, running job |
+| `--idea` | idea | issue, requirement, proposal, options, design not yet built |
+| none | infer | exists → status; does not exist yet → idea |
+
+**Both live and neither named → ask which.** Guessing the lane wastes the whole
+render, same as guessing the subject.
+
+Signals that the subject does not exist yet, so the lane is IDEA: the invoking
+message says *what is*, *explain*, *propose*, *options*, *should we*; the
+subject is an issue number with no branch; nothing has been built.
+
+Everything below to `## Idea lane` is the STATUS lane. The IDEA lane keeps the
+prose ban, the bullet cap, and the NEXT line, and re-targets grounding.
+
+## Status lane — order (fixed)
 
 ```
 ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌──────┐  ┌─────────┐
@@ -159,15 +197,79 @@ Residual facts that fit neither diagram nor table. Optional, ≤5, one line each
 tagged `[fact]` or `[inference]`. Not a prose channel: if a bullet needs a
 second line, cut it.
 
+## Idea lane
+
+For a thing that does not exist yet: a requirement, a proposal, a fork.
+Same ban on prose, same bullet cap, same one NEXT line, different shape. Like
+the status lane, this output REPLACES the usual turn-end state block; never
+emit both. Reads only, same as the status lane.
+
+### Order (fixed)
+
+```
+┌───────────┐  ┌──────────┐  ┌───────────┐  ┌──────┐  ┌──────┐  ┌─────────┐
+│REQUIREMENT│─▶│  TODAY   │─▶│ TRADE-OFF │─▶│ COST │─▶│ NEXT │─▶│ bullets │
+│  diagram  │  │    vs    │  │  one per  │  │      │  │  →   │  │   ≤5    │
+│           │  │ PROPOSED │  │   axis    │  │      │  │      │  │         │
+└───────────┘  └──────────┘  └───────────┘  └──────┘  └──────┘  └─────────┘
+                              only if a               omit if
+                              real fork               none
+```
+
+| block | draw | omit when |
+|-------|------|-----------|
+| REQUIREMENT | what is being asked, as boxes | never |
+| TODAY vs PROPOSED | the two shapes side by side | nothing exists to compare |
+| TRADE-OFF | one diagram per axis of choice | no real fork |
+| COST | what the recommendation gives up | it gives up nothing |
+
+Lead with the recommendation inside the diagram, not in a sentence above it.
+Label the recommended branch in the box.
+
+### Grounding re-targets, it does not vanish
+
+The rule that makes the status lane trustworthy applies here to every claim
+about code that **already exists**. Only the proposal itself is exempt.
+
+```
+ claim about EXISTING code
+   "get_entitlement has 3 branches"   ──▶ GROUND IT this turn
+   "prod has duplicate club names"    ──▶ GROUND IT this turn
+   "that trigger is ungated"          ──▶ GROUND IT this turn
+          │
+          └── cannot ground ──▶ render UNVERIFIED, do not drop
+
+ claim about the PROPOSAL
+   "a computed branch auto-revokes"   ──▶ tag [inference]
+```
+
+An ungrounded claim about existing code is the failure this lane invites: it
+reads as analysis and ships as fact. Run the grep before drawing the box.
+
+A **claims table** appears only when existing-code claims are load-bearing —
+same `checked this turn` column as the status lane, ≤8 rows. No claims about
+existing code, no table.
+
+### NEXT in the idea lane
+
+| situation | line |
+|-----------|------|
+| decision needed | `NEXT → pick grant model, then → write spec` |
+| ready to build | `NEXT → run /interview on #3584` |
+| pure explanation | `NEXT → none (explanatory read)` |
+
+When NEXT names a decision, put it in the structured question tool with the
+recommended option first — never a prose "which do you want?".
+
 ## Hard limits
 
-| element | cap |
-|---------|-----|
-| diagrams | PROBLEM, plus BEFORE/AFTER only if changed |
-| tables | 1 evidence table, plus optional before/after table |
-| bullets | ≤5, one line each |
-| prose paragraphs | **0** |
-| HTML / artifacts | **never** — terminal only |
+| element | status lane | idea lane |
+|---------|-------------|-----------|
+| diagrams | PROBLEM, plus BEFORE/AFTER only if changed | ≤6 |
+| tables | 1 evidence table, plus optional before/after table | claims table only when existing-code claims are load-bearing |
+| bullets | ≤5, one line each | ≤5, one line each |
+| prose paragraphs | **0** | **0** |
+| HTML / artifacts | **never** — terminal only | **never** — terminal only |
 
 Over the cap: **cut it, do not relocate it.** Not into a file, an artifact, or a
 follow-up message. If it does not fit, it was not the key point.
@@ -187,7 +289,7 @@ repeated** — rendering from memory reproduces all four by design:
 A status view that is confidently wrong is worse than none: it stops people
 looking.
 
-## Worked example
+## Worked example — status lane
 
 ```
 PROBLEM
