@@ -81,6 +81,7 @@ components:
     - session-metrics
     - session-summary
     - shadcn-ui
+    - show-me
     - skill-creator
     - spawn-agent
     - standup
