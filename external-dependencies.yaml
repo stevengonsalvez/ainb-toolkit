@@ -653,7 +653,7 @@ npx-skills:
   - name: cloudflare-skills
     repo: cloudflare/skills
     ref: main
-    install: "npx skills add https://github.com/cloudflare/skills"
+    install: "npx skills add https://github.com/cloudflare/skills --yes"
     purpose: "Cloudflare's official platform skills — one repo, 11 skills under skills/; bias to live Cloudflare docs over pre-trained knowledge"
     provides:
       - cloudflare
