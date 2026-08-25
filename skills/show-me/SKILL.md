@@ -1,6 +1,6 @@
 ---
 name: show-me
-description: Render the situation as ASCII diagrams, minimal prose, and one NEXT line. Two lanes, inferred unless forced. STATUS lane for a thing that exists - "/show-me", "where are we", "what's the state of X", "is it green" - every cell grounded in a command run this turn. IDEA lane for a thing that does not exist yet - "/show-me --idea", "what is this issue", "explain your proposal", "what are the options", "explain this visually" - requirement and proposal drawn as boxes, with claims about existing code still grounded. NOT for "show me <file>", "show me the diff", "show me that function": those are plain reads.
+description: 'Render the situation as ASCII diagrams, minimal prose, and one NEXT line. Two lanes, inferred unless forced. STATUS lane for a thing that exists - "/show-me", "where are we", "what''s the state of X", "is it green" - every cell grounded in a command run this turn. IDEA lane for a thing that does not exist yet - "/show-me --idea", "what is this issue", "explain your proposal", "what are the options", "explain this visually" - requirement and proposal drawn as boxes, with claims about existing code still grounded. NOT for "show me <file>", "show me the diff", "show me that function": those are plain reads.'
 ---
 
 # show-me
