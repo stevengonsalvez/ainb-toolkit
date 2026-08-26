@@ -438,6 +438,46 @@ claude-plugins:
     in-repo-marketplace: ".claude-plugin/marketplace.json (at the root of stevengonsalvez/agents-in-a-box)"
     plugin-source: "plugins/reflect/.claude-plugin/plugin.json"
 
+
+  - name: ainb-fleet
+    marketplace: stevengonsalvez/agents-in-a-box
+    marketplace_id: agents-in-a-box
+    version: "0.2.0"
+    install: |
+      claude plugin marketplace add stevengonsalvez/agents-in-a-box
+      claude plugin install ainb-fleet@agents-in-a-box
+    purpose: "Fleet orchestration over every local claude session (standup / broadcast / needs / ATC)"
+    has_skills: true
+
+  - name: ainb-hooks
+    marketplace: stevengonsalvez/agents-in-a-box
+    marketplace_id: agents-in-a-box
+    version: "0.4.4"
+    install: |
+      claude plugin marketplace add stevengonsalvez/agents-in-a-box
+      claude plugin install ainb-hooks@agents-in-a-box
+    purpose: "Shared hook pack; includes stall_guard.py, the Stop hook enforcing never-idle-while-waiting"
+
+  - name: caveman-stats
+    marketplace: stevengonsalvez/agents-in-a-box
+    marketplace_id: agents-in-a-box
+    version: "1.0.0"
+    install: |
+      claude plugin marketplace add stevengonsalvez/agents-in-a-box
+      claude plugin install caveman-stats@agents-in-a-box
+    purpose: "Statusline token-savings badge for caveman mode"
+
+  - name: illustration
+    marketplace: stevengonsalvez/agents-in-a-box
+    marketplace_id: agents-in-a-box
+    version: "1.0.0"
+    install: |
+      claude plugin marketplace add stevengonsalvez/agents-in-a-box
+      claude plugin install illustration@agents-in-a-box
+    purpose: "Explanatory + brand illustration (Popa mascot) as hand-drawn sketchnotes"
+    has_skills: true  # ships skills/illustration and skills/popa
+    requires:
+      - "an image backend that accepts reference images (nano-banana-pro / Gemini 3 Pro Image, or image_gen) — the mascot cannot be produced from text alone"
   - name: dev-browser
     marketplace: sawyerhood/dev-browser
     marketplace_id: sawyerhood-dev-browser
