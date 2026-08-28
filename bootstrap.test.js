@@ -196,47 +196,80 @@ printf '{"FEATURE_SPEC":"%s","IMPL_PLAN":"%s","SPECS_DIR":"%s","BRANCH":"%s"}\n'
         }
     });
 
-    // SKIP(stale): asserts the legacy gemini `sharedContentDir`/`copySharedContent`
-    // flow, which the packages-structure installer removed — needs re-authoring
-    // against the current gemini deploy.
-    it.skip('copies shared content to gemini project folder with correct structure', () => {
-        const tool = 'gemini';
+    it('deploys packages structure to antigravity home directory with template substitutions and setup-external.sh', () => {
+        const tool = 'antigravity';
         const config = TOOL_CONFIG[tool];
-        const target = path.join(tempDir, tool);
-        fs.mkdirSync(target, { recursive: true });
+        const mockHomeDir = path.join(tempDir, 'antigravity-home');
+        fs.mkdirSync(mockHomeDir, { recursive: true });
+        const destDir = path.join(mockHomeDir, config.targetSubdir);
 
-        const command = `node bootstrap.js --tool=${tool} --targetFolder=${target}`;
+        const command = `node bootstrap.js --tool=${tool} --homeDir=${mockHomeDir}`;
         execSync(command, {
             stdio: 'pipe',
             env: { ...process.env },
         });
 
-        const destDir = path.join(target, config.targetSubdir);
         expect(fs.existsSync(destDir)).toBe(true);
         expect(fs.existsSync(path.join(destDir, 'GEMINI.md'))).toBe(true);
-        expect(fs.existsSync(path.join(destDir, 'commands'))).toBe(true);
-        expect(fs.existsSync(path.join(destDir, 'templates'))).toBe(true);
-        expect(fs.existsSync(path.join(destDir, 'session', 'current-session.yaml'))).toBe(true);
-        // Should NOT have CLAUDE.md
-        expect(fs.existsSync(path.join(destDir, 'CLAUDE.md'))).toBe(false);
 
-        // Check commands folder has files
-        const commandsDir = path.join(destDir, 'commands');
-        const commandFiles = fs.readdirSync(commandsDir);
-        expect(commandFiles.length).toBeGreaterThan(0);
-        expect(commandFiles.some(f => f.endsWith('.md'))).toBe(true);
+        // packages-structure deploy: skills + agents + utilities land in the tool home.
+        expect(fs.existsSync(path.join(destDir, 'skills'))).toBe(true);
+        const skillDirs = fs.readdirSync(path.join(destDir, 'skills'));
+        expect(skillDirs.length).toBeGreaterThan(0);
+        expect(fs.existsSync(path.join(destDir, 'agents'))).toBe(true);
+        expect(fs.existsSync(path.join(destDir, 'utils'))).toBe(true);
+        expect(fs.existsSync(path.join(destDir, 'hooks'))).toBe(true);
+        expect(fs.existsSync(path.join(destDir, 'output-styles'))).toBe(true);
+        expect(fs.existsSync(path.join(destDir, 'reflections'))).toBe(true);
 
-        // Check template substitution
-        const geminiContent = fs.readFileSync(path.join(destDir, 'GEMINI.md'), 'utf8');
-        expect(geminiContent).toContain('.gemini/session/current-session.yaml');
-        expect(geminiContent).not.toContain('{{TOOL_DIR}}');
-        
-        // Check settings.json is copied to .gemini folder
+        // settings.json is copied to .gemini folder
         expect(fs.existsSync(path.join(destDir, 'settings.json'))).toBe(true);
-        const settingsContent = fs.readFileSync(path.join(destDir, 'settings.json'), 'utf8');
-        const settings = JSON.parse(settingsContent);
-        expect(settings.theme).toBe('GitHub');
-        expect(settings.mcpServers).toBeDefined();
+
+        // Template substitution: placeholders are resolved, paths interpolated.
+        const geminiContent = fs.readFileSync(path.join(destDir, 'GEMINI.md'), 'utf8');
+        expect(geminiContent).toContain('~/.gemini/skills/cost-aware-pipeline/SKILL.md');
+        expect(geminiContent).not.toContain('{{TOOL_DIR}}');
+        expect(geminiContent).not.toContain('{{HOME_TOOL_DIR}}');
+        expect(geminiContent).not.toContain('{{TOOLKIT_RUNTIME}}');
+
+        // Check that settings.local.json is excluded
+        expect(fs.existsSync(path.join(destDir, 'settings.local.json'))).toBe(false);
+
+        // Check setup-external.sh is generated with Claude plugins extraction and agent skills
+        const setupExternalPath = path.join(destDir, 'setup-external.sh');
+        expect(fs.existsSync(setupExternalPath)).toBe(true);
+        const setupExternalContent = fs.readFileSync(setupExternalPath, 'utf8');
+        expect(setupExternalContent).toContain('Installing Claude plugins...');
+        expect(setupExternalContent).toContain('.gemini/skills');
+        expect(setupExternalContent).toContain('Installing npx agent skills...');
+        expect(setupExternalContent).toContain('Installing agent skills (git repos)...');
+        expect(setupExternalContent).toContain('ui-ux-pro-max');
+        expect(setupExternalContent).toContain('notebooklm');
+        expect(setupExternalContent).toContain('fireworks-tech-graph');
+        expect(setupExternalContent).toContain('antv-infographic');
+        expect(setupExternalContent).toContain('stitch-skills');
+        expect(setupExternalContent).toContain('mcporter');
+        expect(setupExternalContent).toContain('graphify');
+    });
+
+    it('supports gemini as a backward-compatible alias for antigravity deployment', () => {
+        const tool = 'gemini';
+        const config = TOOL_CONFIG[tool];
+        const mockHomeDir = path.join(tempDir, 'gemini-alias-home');
+        fs.mkdirSync(mockHomeDir, { recursive: true });
+        const destDir = path.join(mockHomeDir, config.targetSubdir);
+
+        const command = `node bootstrap.js --tool=${tool} --homeDir=${mockHomeDir}`;
+        execSync(command, {
+            stdio: 'pipe',
+            env: { ...process.env },
+        });
+
+        expect(fs.existsSync(destDir)).toBe(true);
+        expect(fs.existsSync(path.join(destDir, 'GEMINI.md'))).toBe(true);
+        expect(fs.existsSync(path.join(destDir, 'skills'))).toBe(true);
+        expect(fs.existsSync(path.join(destDir, 'agents'))).toBe(true);
+        expect(fs.existsSync(path.join(destDir, 'setup-external.sh'))).toBe(true);
     });
 
     // SKIP(stale): asserts the legacy amazonq layout (mcp.json, AmazonQ.md
@@ -545,18 +578,19 @@ describe('Live tool config is never overwritten (claude settings.json)', () => {
         expect(fs.readdirSync(dest).filter(f => f.includes('pre-bootstrap-backup'))).toHaveLength(0);
     });
 
-    it('does not freeze another tool\'s settings.json (guard is per-tool)', () => {
-        const mockHomeDir = path.join(tempDir, 'home-gemini');
-        const geminiDir = path.join(mockHomeDir, TOOL_CONFIG.gemini.targetSubdir);
+    it('preserves antigravity and gemini settings.json when locally modified', () => {
+        const mockHomeDir = path.join(tempDir, 'home-antigravity');
+        const geminiDir = path.join(mockHomeDir, TOOL_CONFIG.antigravity.targetSubdir);
         fs.mkdirSync(geminiDir, { recursive: true });
-        fs.writeFileSync(path.join(geminiDir, 'settings.json'), '{"stale":true}');
+        fs.writeFileSync(path.join(geminiDir, 'settings.json'), '{"customMcp":true}');
 
-        execSync(`node bootstrap.js --tool=gemini --homeDir=${mockHomeDir}`, {
+        execSync(`node bootstrap.js --tool=antigravity --homeDir=${mockHomeDir}`, {
             stdio: 'pipe', env: { ...process.env },
         });
 
-        // gemini/settings.json is repo-authored with no machine-side writer.
-        expect(fs.readFileSync(path.join(geminiDir, 'settings.json'), 'utf8')).not.toBe('{"stale":true}');
+        // settings.json is guarded under PRESERVE_IF_EXISTS for antigravity/gemini
+        expect(fs.readFileSync(path.join(geminiDir, 'settings.json'), 'utf8')).toBe('{"customMcp":true}');
+        expect(fs.readdirSync(geminiDir).filter(f => f.startsWith('settings.json.pre-bootstrap-backup-'))).toHaveLength(1);
     });
 
     it('preserves a locally modified settings.json but still updates CLAUDE.md', () => {
