@@ -1,6 +1,6 @@
 ---
 name: sync-learnings
-description: Sync user-level agent config changes back to the ainb-toolkit repo (works for Claude, Codex, Copilot)
+description: Sync user-level agent config changes back to the ainb-toolkit repo (works for Claude, Codex, Copilot, Antigravity/Gemini)
 user-invocable: true
 ---
 
@@ -16,7 +16,7 @@ Bidirectionally sync `{{HOME_TOOL_DIR}}/` (deployed user-level config) with the 
  (deployed copy)     (canonical: skills/ agents/ utilities/ + claude-code-4.5/)
 ```
 
-`bootstrap.js` deploys repo → home, substituting `{{TOOL_DIR}}`/`{{HOME_TOOL_DIR}}` placeholders per tool. `claude-code-4.5/CLAUDE.md` is the canonical agent-instructions file; codex/copilot symlink their `AGENTS.md` to it.
+`bootstrap.js` deploys repo → home, substituting `{{TOOL_DIR}}`/`{{HOME_TOOL_DIR}}` placeholders per tool. `claude-code-4.5/CLAUDE.md` is the canonical agent-instructions file; codex/copilot/gemini symlink their `AGENTS.md` / `GEMINI.md` to it.
 
 ## When NOT to use
 
@@ -76,6 +76,8 @@ For candidates it emits: edit in the marketplace clone (own code, own repo), the
 | `{{HOME_TOOL_DIR}}/CLAUDE.md` | `claude-code-4.5/CLAUDE.md` (reverse-interp, Step 7) |
 | `{{HOME_TOOL_DIR}}/settings.json` | `claude-code-4.5/settings.json` (reverse-interp) |
 | `{{HOME_TOOL_DIR}}/statusline.sh` | `claude-code-4.5/statusline.sh` (+x preserved) |
+| `~/.gemini/settings.json` | `gemini/settings.json` (reverse-interp) |
+| `~/.gemini/GEMINI.md` | `gemini/GEMINI.md` (symlink/reverse-interp) |
 | `~/.codex/config.toml` | `codex/config.toml` — sole Codex preferences file; repo-ward only through the filter below |
 
 Notes:
@@ -102,9 +104,9 @@ Keyed **per tool**, not by bare filename:
 |------|-----------|---------------------|
 | `codex` | `config.toml` | codex appends project trust levels, hook state, app-injected MCP servers |
 | `claude-code-4.5` | `settings.json`, `statusline.sh` | e.g. AgentPeek rewrites `statusLine` in place |
+| `antigravity` / `gemini` | `settings.json` | user/IDE manages MCP servers and environment locally |
 
-Everything else still deploys normally — `gemini/settings.json` is repo-authored with no machine-side
-writer, so scoping by tool keeps maintainer fixes flowing there.
+Everything else still deploys normally.
 
 On a machine that already has one of these, bootstrap keeps the live file and prints what it skipped,
 naming the differing top-level keys for JSON. It keeps exactly **one** backup
@@ -242,8 +244,8 @@ Why: bulk deploys cluster-touch mtimes, so "newer→older" is wrong. Canonicaliz
 ```bash
 canon() { perl -pe '
   s|\{\{HOME_TOOL_DIR\}\}|@H@|g; s|\$HOME/\{\{TOOL_DIR\}\}|@H@|g;
-  s|/Users/[^/]+/\.claude|@H@|g; s|~/\.claude|@H@|g; s|\$HOME/\.claude|@H@|g;
-  s|\{\{TOOL_DIR\}\}|.claude|g;' "$1"; }
+  s|/Users/[^/]+/\.(claude|gemini|codex|copilot)|@H@|g; s|~/\.(claude|gemini|codex|copilot)|@H@|g; s|\$HOME/\.(claude|gemini|codex|copilot)|@H@|g;
+  s|\{\{TOOL_DIR\}\}|@T@|g; s|(?<!/)\.(claude|gemini|codex|copilot)|@T@|g;' "$1"; }
 
 only_repo=$(diff <(canon REPO_FILE) <(canon HOME_FILE) | grep -c '^<')
 only_home=$(diff <(canon REPO_FILE) <(canon HOME_FILE) | grep -c '^>')
@@ -365,10 +367,10 @@ Do NOT reverse-interpolate `.claude` used as a plain directory-name segment (e.g
 
 Repo files use `{{HOME_TOOL_DIR}}`/`{{TOOL_DIR}}` cross-tool placeholders. Substitute BEFORE writing to a tool's home dir — never leave literals.
 
-| Template | Claude Code | Codex | Copilot |
-|----------|-------------|-------|---------|
-| `{{HOME_TOOL_DIR}}` | `$HOME/.claude` | `~/.codex` | `~/.copilot` |
-| `{{TOOL_DIR}}` | `.claude` | `.codex` | `.copilot` |
+| Template | Claude Code | Codex | Copilot | Antigravity / Gemini |
+|----------|-------------|-------|---------|----------------------|
+| `{{HOME_TOOL_DIR}}` | `$HOME/.claude` | `~/.codex` | `~/.copilot` | `~/.gemini` |
+| `{{TOOL_DIR}}` | `.claude` | `.codex` | `.copilot` | `.gemini` |
 
 ```bash
 # Claude Code target:
