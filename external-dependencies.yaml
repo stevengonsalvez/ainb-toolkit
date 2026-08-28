@@ -685,6 +685,21 @@ npx-skills:
       - Accessibility and WCAG compliance auditing
       - Design system extraction and normalization
 
+  - name: show-me
+    repo: humanlayer/skills
+    ref: main
+    install: "npx skills add humanlayer/skills --global --agent claude-code --agent codex --skill show-me --yes"
+    applies-to: [claude, codex]
+    purpose: "Explain the current topic visually — pseudocode, call trees, component trees, shallow file trees, and focused single-file HTML artifacts. Picks the smallest view that makes the point."
+    install-layout: "Source of truth ~/.agents/skills/show-me; symlinked into ~/.claude/skills/ by the CLI. Codex links may need creating manually — the CLI reports 'universal: Codex' but does not always populate ~/.codex/skills/ (same gap as higgsfield-skills / gogcli-skills)."
+    partial-install: "The repo ships 5 skills; only show-me is installed. Add others with a second --skill flag rather than --skill '*'."
+    features:
+      - Diagram-first explanations with no preamble
+      - Code-shape sketches (pseudocode, call tree, component tree, file tree)
+      - Self-contained HTML artifacts when a rendered view beats text
+    security-note: "skills.sh install-time scan: Gen Safe, Socket 0 alerts, Snyk Low Risk. Scan detail: https://skills.sh/humanlayer/skills"
+    docs: "https://github.com/humanlayer/skills"
+
   - name: summarize
     source: "npx add-skill"
     homepage: "https://summarize.sh"
