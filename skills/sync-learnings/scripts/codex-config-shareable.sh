@@ -28,7 +28,7 @@ set -euo pipefail
 # endpoint, path, credential or machine identifier.
 ALLOW_SECTIONS='^[[](tui|notice|features|desktop)[]]$'
 # Top-level (pre-first-section) keys safe to publish.
-ALLOW_TOPLEVEL='^(project_doc_fallback_filenames|project_doc_max_bytes|model|model_reasoning_effort|personality|approvals_reviewer|plan_mode_reasoning_effort)[[:space:]]*='
+ALLOW_TOPLEVEL='^(project_doc_fallback_filenames|project_doc_max_bytes|model|model_reasoning_effort|model_verbosity|model_reasoning_summary|hide_agent_reasoning|personality|approvals_reviewer|plan_mode_reasoning_effort)[[:space:]]*='
 
 shareable() {
     # Comments/blank lines are buffered and emitted only when what FOLLOWS them
@@ -38,6 +38,7 @@ shareable() {
         function flush(  i) { for (i = 1; i <= nbuf; i++) print buf[i]; nbuf = 0 }
         /^[[:space:]]*(#|$)/ { buf[++nbuf] = $0; next }
         /^\[/ {
+            insection = 1
             keep = ($0 ~ allow)
             if (keep) { flush(); print } else { nbuf = 0 }
             next
@@ -68,26 +69,34 @@ if [ "${1:-}" = "--self-check" ]; then
     fixture="$(mktemp)"; out="$(mktemp)"; trap 'rm -f "$fixture" "$out"' EXIT
     cat > "$fixture" <<'EOF'
 model = "gpt-5.6-terra"
+model_verbosity = "low"
+model_reasoning_summary = "none"
+hide_agent_reasoning = true
 notify = ["/Applications/Some.app/bin", "turn-ended"]
 
 # explains the next section
 [tui]
-status_line_use_colors = true
+animations = false
+show_tooltips = false
+status_line = []
+terminal_title = []
+notifications = false
 
 # work laptop only: acme client sandbox
 [projects."/Users/x/work/acme"]
 trust_level = "trusted"
+model_verbosity = "high"
 
 [model_providers.acme]
 base_url = "https://llm.internal.acme.example/v1"
 env_key = "ACME_LLM_KEY"
 EOF
     got="$(shareable "$fixture")"
-    for expected in 'model = "gpt-5.6-terra"' '[tui]' '# explains the next section'; do
+    for expected in 'model = "gpt-5.6-terra"' 'model_verbosity = "low"' 'model_reasoning_summary = "none"' 'hide_agent_reasoning = true' '[tui]' 'notifications = false' '# explains the next section'; do
         grep -qF -- "$expected" <<<"$got" || { echo "self-check FAILED: missing $expected"; exit 1; }
     done
     # Dropped sections, their keys, their comments, and any un-vetted section.
-    for forbidden in 'projects' 'trust_level' 'notify =' 'acme' 'model_providers' 'base_url' 'env_key'; do
+    for forbidden in 'projects' 'trust_level' 'model_verbosity = "high"' 'notify =' 'acme' 'model_providers' 'base_url' 'env_key'; do
         grep -qF -- "$forbidden" <<<"$got" && { echo "self-check FAILED: leaked $forbidden"; exit 1; }
     done
 
