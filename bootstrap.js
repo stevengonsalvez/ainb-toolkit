@@ -17,15 +17,18 @@ const __dirname = path.dirname(__filename);
 // copy is a baseline for a fresh machine, NEVER an authority over an existing
 // one — deploying it over a populated file silently destroys real state.
 //
-// Keyed BY TOOL, not by bare basename: gemini/settings.json is repo-authored with
-// no machine-side writer, and freezing it would strand maintainer fixes on every
-// machine that ever bootstrapped.
+// Keyed BY TOOL, not by bare basename.
+// Live tool config that the MACHINE mutates after deploy: codex writes project
+// trust levels, hook state and app-injected MCP servers into ~/.codex/config.toml;
+// claude/antigravity rewrite or manage settings.json locally.
 //
 // CLAUDE.md/AGENTS.md are deliberately absent: they are repo-authored and must
 // keep propagating out to every machine.
 const PRESERVE_IF_EXISTS = {
     codex: new Set(['config.toml']),
     'claude-code-4.5': new Set(['settings.json', 'statusline.sh']),
+    antigravity: new Set(['settings.json']),
+    gemini: new Set(['settings.json']),
 };
 
 // Files this run authored. A fresh install writes settings.json through the
@@ -385,7 +388,7 @@ const TOOL_CONFIG = {
             }
         }
     },
-    gemini: {
+    antigravity: {
         ruleGlob: 'GEMINI.md',
         ruleDir: 'gemini',
         targetSubdir: '.gemini',
@@ -393,10 +396,10 @@ const TOOL_CONFIG = {
         forceHomeInstall: true,
         copyClaudeMd: false,
         copySettings: false,
-        externalDepTypes: ['npx-skills', 'agent-skills'],
+        externalDepTypes: ['claude-plugins', 'npx-skills', 'agent-skills'],
         packageMappings: {
             'skills': 'skills',
-            '../gemini/agents': 'agents',
+            'agents': 'agents',
             'utilities/utils': 'utils',
             'utilities/hooks': 'hooks',
             'utilities/output-styles': 'output-styles',
@@ -407,39 +410,115 @@ const TOOL_CONFIG = {
         templateSubstitutions: {
             '**/*.md': {
                 'TOOL_DIR': '.gemini',
-                'HOME_TOOL_DIR': '~/.gemini'
+                'HOME_TOOL_DIR': '~/.gemini',
+                'TOOLKIT_RUNTIME': 'antigravity'
             },
             '**/*.sh': {
                 'TOOL_DIR': '.gemini',
-                'HOME_TOOL_DIR': '~/.gemini'
+                'HOME_TOOL_DIR': '~/.gemini',
+                'TOOLKIT_RUNTIME': 'antigravity'
             },
             '**/*.py': {
                 'TOOL_DIR': '.gemini',
-                'HOME_TOOL_DIR': '~/.gemini'
+                'HOME_TOOL_DIR': '~/.gemini',
+                'TOOLKIT_RUNTIME': 'antigravity'
             },
             '**/*.js': {
                 'TOOL_DIR': '.gemini',
-                'HOME_TOOL_DIR': '~/.gemini'
+                'HOME_TOOL_DIR': '~/.gemini',
+                'TOOLKIT_RUNTIME': 'antigravity'
             },
             '**/*.ts': {
                 'TOOL_DIR': '.gemini',
-                'HOME_TOOL_DIR': '~/.gemini'
+                'HOME_TOOL_DIR': '~/.gemini',
+                'TOOLKIT_RUNTIME': 'antigravity'
             },
             '**/*.json': {
                 'TOOL_DIR': '.gemini',
-                'HOME_TOOL_DIR': '~/.gemini'
+                'HOME_TOOL_DIR': '~/.gemini',
+                'TOOLKIT_RUNTIME': 'antigravity'
             },
             '**/*.yaml': {
                 'TOOL_DIR': '.gemini',
-                'HOME_TOOL_DIR': '~/.gemini'
+                'HOME_TOOL_DIR': '~/.gemini',
+                'TOOLKIT_RUNTIME': 'antigravity'
             },
             '**/*.yml': {
                 'TOOL_DIR': '.gemini',
-                'HOME_TOOL_DIR': '~/.gemini'
+                'HOME_TOOL_DIR': '~/.gemini',
+                'TOOLKIT_RUNTIME': 'antigravity'
             },
             '**/*.toml': {
                 'TOOL_DIR': '.gemini',
-                'HOME_TOOL_DIR': '~/.gemini'
+                'HOME_TOOL_DIR': '~/.gemini',
+                'TOOLKIT_RUNTIME': 'antigravity'
+            }
+        }
+    },
+    gemini: {
+        ruleGlob: 'GEMINI.md',
+        ruleDir: 'gemini',
+        targetSubdir: '.gemini',
+        usePackagesStructure: true,
+        forceHomeInstall: true,
+        copyClaudeMd: false,
+        copySettings: false,
+        externalDepTypes: ['claude-plugins', 'npx-skills', 'agent-skills'],
+        packageMappings: {
+            'skills': 'skills',
+            'agents': 'agents',
+            'utilities/utils': 'utils',
+            'utilities/hooks': 'hooks',
+            'utilities/output-styles': 'output-styles',
+            'utilities/reflections': 'reflections'
+        },
+        toolSpecificFiles: ['gemini/GEMINI.md', 'gemini/settings.json'],
+        excludeFiles: ['settings.local.json'],
+        templateSubstitutions: {
+            '**/*.md': {
+                'TOOL_DIR': '.gemini',
+                'HOME_TOOL_DIR': '~/.gemini',
+                'TOOLKIT_RUNTIME': 'antigravity'
+            },
+            '**/*.sh': {
+                'TOOL_DIR': '.gemini',
+                'HOME_TOOL_DIR': '~/.gemini',
+                'TOOLKIT_RUNTIME': 'antigravity'
+            },
+            '**/*.py': {
+                'TOOL_DIR': '.gemini',
+                'HOME_TOOL_DIR': '~/.gemini',
+                'TOOLKIT_RUNTIME': 'antigravity'
+            },
+            '**/*.js': {
+                'TOOL_DIR': '.gemini',
+                'HOME_TOOL_DIR': '~/.gemini',
+                'TOOLKIT_RUNTIME': 'antigravity'
+            },
+            '**/*.ts': {
+                'TOOL_DIR': '.gemini',
+                'HOME_TOOL_DIR': '~/.gemini',
+                'TOOLKIT_RUNTIME': 'antigravity'
+            },
+            '**/*.json': {
+                'TOOL_DIR': '.gemini',
+                'HOME_TOOL_DIR': '~/.gemini',
+                'TOOLKIT_RUNTIME': 'antigravity'
+            },
+            '**/*.yaml': {
+                'TOOL_DIR': '.gemini',
+                'HOME_TOOL_DIR': '~/.gemini',
+                'TOOLKIT_RUNTIME': 'antigravity'
+            },
+            '**/*.yml': {
+                'TOOL_DIR': '.gemini',
+                'HOME_TOOL_DIR': '~/.gemini',
+                'TOOLKIT_RUNTIME': 'antigravity'
+            },
+            '**/*.toml': {
+                'TOOL_DIR': '.gemini',
+                'HOME_TOOL_DIR': '~/.gemini',
+                'TOOLKIT_RUNTIME': 'antigravity'
             }
         }
     },
@@ -503,6 +582,8 @@ const TOOL_CONFIG = {
 // Maps internal tool IDs to canonical names used in applies-to fields of the manifest
 const TOOL_CANONICAL_NAMES = {
     'claude-code-4.5': 'claude',
+    'antigravity': 'antigravity',
+    'gemini': 'antigravity',
 };
 
 const GENERAL_RULES_DIR = path.join(__dirname, 'general-rules');
@@ -1569,6 +1650,7 @@ async function handlePackagesStructureCopy(tool, config, overrideHomeDir = null,
                         // Own plugins (own-plugin: true) are exempt: their skills live ONLY in the
                         // plugin install; a flat copy would resurrect the pre-plugin sync drift.
                         scriptLines.push('echo "Copying plugin skills to skills directory..."');
+                        scriptLines.push(`mkdir -p "\${HOME}/${config.targetSubdir}/skills"`);
                         for (const p of claudePlugins.filter(x => !x['own-plugin'])) {
                             const marketplaceId = p.marketplace_id || `${p.name}-marketplace`;
                             scriptLines.push(`for skill_dir in "\${HOME}/.claude/plugins/cache/${marketplaceId}/${p.name}"/*/skills/*/; do`);

@@ -1,1 +1,1 @@
-../claude-code/CLAUDE.md
+../claude-code-4.5/CLAUDE.md
