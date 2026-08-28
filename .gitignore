@@ -6,6 +6,7 @@ logs/
 __pycache__/
 *.pyc
 
-# run-scoped agent scratch (specs + plans stay tracked)
+# run-scoped agent scratch (plans stay tracked)
 .agents/goals/
 .agents/evidence/
+.agents/specs/
