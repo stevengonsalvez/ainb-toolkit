@@ -1,5 +1,6 @@
 node_modules
 logs/
+.claude/worktrees/
 
 # python bytecode
 __pycache__/
