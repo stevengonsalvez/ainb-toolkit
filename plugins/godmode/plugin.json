@@ -1,0 +1,14 @@
+{
+  "name": "godmode",
+  "version": "0.3.1",
+  "description": "Perpetual autonomous product factory with cross-model creativity and regression control",
+  "author": {
+    "name": "Steven Gonsalvez",
+    "url": "https://github.com/stevengonsalvez"
+  },
+  "homepage": "https://github.com/stevengonsalvez/ainb-toolkit",
+  "repository": "https://github.com/stevengonsalvez/ainb-toolkit",
+  "license": "Apache-2.0",
+  "rules": "./rules/",
+  "skills": "./skills/"
+}
