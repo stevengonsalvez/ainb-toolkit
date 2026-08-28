@@ -496,6 +496,8 @@ describe('Live tool config is never overwritten (codex config.toml)', () => {
         const dest = path.join(codexDir(mockHomeDir), 'config.toml');
         expect(fs.readFileSync(dest, 'utf8'))
             .toBe(fs.readFileSync(path.join(__dirname, 'codex', 'config.toml'), 'utf8'));
+        expect(fs.readFileSync(dest, 'utf8')).toContain('model_verbosity = "low"');
+        expect(fs.readFileSync(dest, 'utf8')).toContain('notifications = false');
     });
 });
 

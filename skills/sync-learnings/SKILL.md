@@ -76,7 +76,7 @@ For candidates it emits: edit in the marketplace clone (own code, own repo), the
 | `{{HOME_TOOL_DIR}}/CLAUDE.md` | `claude-code-4.5/CLAUDE.md` (reverse-interp, Step 7) |
 | `{{HOME_TOOL_DIR}}/settings.json` | `claude-code-4.5/settings.json` (reverse-interp) |
 | `{{HOME_TOOL_DIR}}/statusline.sh` | `claude-code-4.5/statusline.sh` (+x preserved) |
-| `~/.codex/config.toml` | `codex/config.toml` — **repo-ward only, and only through the filter below** |
+| `~/.codex/config.toml` | `codex/config.toml` — sole Codex preferences file; repo-ward only through the filter below |
 
 Notes:
 - **Commands are NOT synced.** No `commands/` or `workflows/*/commands/` in the repo — they migrated to skills. Workflows are single files at `workflows/<name>/WORKFLOW.md`.
@@ -135,7 +135,8 @@ runs, so a fail-closed refusal would leave the baseline empty and look like a cl
 writes a temp file and moves it into place only on success.
 
 The filter is an **allow-list**: only `[tui]`, `[notice]`, `[features]`, `[desktop]` and a fixed set of
-top-level preference keys survive, with the comments that annotate them. Anything else — including a
+top-level preference keys survive, including compact-TUI preferences (`model_verbosity`,
+`model_reasoning_summary`, `hide_agent_reasoning`). Anything else — including a
 section that postdates this script, such as `[model_providers]` with an internal `base_url`/`env_key` —
 is dropped and NAMED on stderr, so a genuinely shareable new preference gets noticed and added
 deliberately rather than published by default. Comments are emitted only when what FOLLOWS them is
