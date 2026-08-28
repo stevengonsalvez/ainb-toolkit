@@ -158,7 +158,7 @@ agent-skills:
     repo: https://github.com/nextlevelbuilder/ui-ux-pro-max-skill
     version: "2.2.1"
     multi-subpath: .claude/skills
-    applies-to: [claude, codex, copilot, gemini]
+    applies-to: [claude, codex, copilot, gemini, antigravity]
     purpose: "UI/UX design intelligence with searchable database of styles, palettes, fonts, and UX guidelines"
     features:
       - 67 UI styles (glassmorphism, claymorphism, brutalism, neumorphism, etc.)
@@ -172,7 +172,7 @@ agent-skills:
 
   - name: notebooklm
     repo: https://github.com/PleasePrompto/notebooklm-skill
-    applies-to: [claude, codex, copilot, gemini]
+    applies-to: [claude, codex, copilot, gemini, antigravity]
     purpose: "Query Google NotebookLM notebooks for source-grounded, citation-backed answers via browser automation"
     features:
       - Browser automation with Patchright for NotebookLM interaction
@@ -185,7 +185,7 @@ agent-skills:
   - name: scrapling-official
     source: "https://clawhub.ai/d4vinci/scrapling-official"
     version: "0.4.3"
-    applies-to: [claude, codex, copilot]
+    applies-to: [claude, codex, copilot, gemini, antigravity]
     purpose: "Adaptive web scraping with anti-bot bypass, stealth browsing, and spider framework"
     features:
       - Anti-bot bypass (Cloudflare Turnstile, etc.)
@@ -200,7 +200,7 @@ agent-skills:
 
   - name: fireworks-tech-graph
     repo: https://github.com/yizhiyanhua-ai/fireworks-tech-graph
-    applies-to: [claude, codex, copilot, gemini]
+    applies-to: [claude, codex, copilot, gemini, antigravity]
     purpose: "Generate publication-quality SVG+PNG technical diagrams across 14 diagram types and 7 visual styles"
     features:
       - 14 diagram types (architecture, flowchart, sequence, UML class, ER, use-case, timeline, mind map, data flow, memory arch, state machine, concept map, comparison matrix, agent architecture)
@@ -217,7 +217,7 @@ agent-skills:
     repo: https://github.com/antvis/Infographic
     version: "0.2.19"
     multi-subpath: skills
-    applies-to: [claude, codex, copilot, gemini]
+    applies-to: [claude, codex, copilot, gemini, antigravity]
     purpose: "AntV's declarative infographic generation + rendering engine — turn words/data into high-quality SVG infographics from ~200 templates, AI-friendly config, hand-drawn + gradient themes"
     multi-skill: true
     skills:
@@ -268,7 +268,7 @@ agent-skills:
       - plugins/stitch-utilities/skills
       - plugins/stitch-design/skills
       - plugins/stitch-build/skills
-    applies-to: [claude, codex, copilot, gemini]
+    applies-to: [claude, codex, copilot, gemini, antigravity]
     purpose: "Google Stitch design-to-code skills for UI generation, React components, and video walkthroughs"
     multi-skill: true
     skills:
@@ -302,7 +302,7 @@ agent-skills:
     homepage: "http://mcporter.dev"
     install: "npm install -g mcporter@latest"
     cli: mcporter
-    applies-to: [claude, codex, copilot]
+    applies-to: [claude, codex, copilot, gemini, antigravity]
     purpose: "List, configure, auth, and call MCP servers/tools directly (HTTP or stdio) without registering them into Claude Code context. Includes ad-hoc servers, config edits, and CLI/type generation."
     features:
       - HTTP and stdio MCP server invocation
@@ -317,7 +317,7 @@ agent-skills:
     version: "0.5.4"
     install: "uv tool install --force --upgrade graphifyy"
     cli: graphify
-    applies-to: [claude, codex, copilot]
+    applies-to: [claude, codex, copilot, gemini, antigravity]
     purpose: "Knowledge-graph builder over folders/repos with community detection — outputs interactive HTML + GraphRAG JSON + GRAPH_REPORT.md"
     features:
       - Multi-input ingestion (code, docs, papers, images, audio via Whisper)
@@ -544,11 +544,19 @@ claude-plugins:
   - name: caveman
     marketplace: JuliusBrussee/caveman
     marketplace_id: caveman
+    repo: "https://github.com/JuliusBrussee/caveman"
+    applies-to: [claude, codex, gemini, antigravity]
     install: |
       claude plugin marketplace add JuliusBrussee/caveman
       claude plugin install caveman@caveman
+    antigravity-install: |
+      # Cloned or extracted to ~/.gemini/skills/ (skills) or ~/.gemini/config/plugins/caveman (plugin)
+      # Native support via gemini-extension.json (GEMINI.md context) and PreInvocation hook
+    gemini-extension: "gemini-extension.json"
     purpose: "Token-efficient caveman-speak response and review/commit/compression skill family"
     has_skills: true
+    has_hooks: true  # UserPromptSubmit on Claude / PreInvocation on Antigravity
+    has_mcp: true    # src/mcp-servers/caveman-shrink
     multi-skill: true
     installed-to: ~/.claude/skills
     skills:
@@ -563,6 +571,8 @@ claude-plugins:
       - Code blocks, git commits, and PR descriptions remain unchanged unless a caveman-specific skill is explicitly requested
       - Companion compression tools for memory/context token optimization
       - Backup original files as FILE.original.md before compression
+      - PreInvocation / UserPromptSubmit per-turn reinforcement preventing verbosity drift
+      - Native Gemini extension support via gemini-extension.json (loads GEMINI.md)
     docs: "https://github.com/JuliusBrussee/caveman"
 
 # =============================================================================
@@ -713,7 +723,7 @@ npx-skills:
     repo: higgsfield-ai/skills
     version: "0.3.0"
     install: "npx skills add higgsfield-ai/skills --global --agent claude-code --agent codex --skill '*' --yes"
-    applies-to: [claude, codex]
+    applies-to: [claude, codex, gemini, antigravity]
     purpose: "Higgsfield AI generative-media skill family — image/video/3D/audio generation, product & marketplace photoshoots, Soul Character (face identity) training, and full-stack website build/deploy. Wraps the `higgsfield` CLI."
     multi-skill: true
     install-layout: "Source of truth ~/.agents/skills/; symlinked into ~/.claude/skills/ and ~/.codex/skills/ (codex links added manually — the CLI's 'universal: Codex' step does not populate ~/.codex/skills/)."
@@ -733,7 +743,7 @@ npx-skills:
     repo: openclaw/gogcli
     ref: main
     install: "npx skills add https://github.com/openclaw/gogcli --global --agent claude-code --agent codex --skill '*' --yes"
-    applies-to: [claude, codex]
+    applies-to: [claude, codex, gemini, antigravity]
     purpose: "Google Workspace skill family wrapping the `gog` CLI — per-service skills (Gmail, Calendar, Drive, Docs, Sheets, Slides, Tasks, Contacts, Keep, Chat, Meet, Groups, Forms, Classroom, Photos, Maps, YouTube, Analytics, Search Console, Sites, Apps Script, Admin) plus read-only workflow skills (inbox triage, weekly digest, meeting prep, Drive sharing audit, contacts cleanup, attachment archival)."
     multi-skill: true
     source-path: ".agents/skills/"
