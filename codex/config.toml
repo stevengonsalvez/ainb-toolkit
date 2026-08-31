@@ -6,8 +6,8 @@ project_doc_fallback_filenames = ["CLAUDE.md", "TEAM_GUIDE.md", ".agents.md"]
 
 # Allow larger combined guidance before truncation.
 project_doc_max_bytes = 65536
-model = "gpt-5.6-sol"
-model_reasoning_effort = "high"
+model = "gpt-5.6-terra"
+model_reasoning_effort = "xhigh"
 model_verbosity = "low"
 model_reasoning_summary = "none"
 hide_agent_reasoning = true
