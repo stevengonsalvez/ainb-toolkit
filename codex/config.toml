@@ -6,8 +6,8 @@ project_doc_fallback_filenames = ["CLAUDE.md", "TEAM_GUIDE.md", ".agents.md"]
 
 # Allow larger combined guidance before truncation.
 project_doc_max_bytes = 65536
-model = "gpt-5.6-terra"
-model_reasoning_effort = "xhigh"
+model = "gpt-5.6-sol"
+model_reasoning_effort = "high"
 model_verbosity = "low"
 model_reasoning_summary = "none"
 hide_agent_reasoning = true
@@ -19,9 +19,10 @@ plan_mode_reasoning_effort = "high"
 raw_output_mode = false
 animations = false
 show_tooltips = false
-status_line = []
+status_line = ["model-with-reasoning", "reasoning", "project-name", "permissions", "approval-mode", "context-used", "five-hour-limit", "weekly-limit", "fast-mode"]
 terminal_title = []
 notifications = false
+status_line_use_colors = true
 
 [notice]
 hide_full_access_warning = true
