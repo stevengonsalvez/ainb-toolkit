@@ -15,6 +15,9 @@ personality = "pragmatic"
 approvals_reviewer = "user"
 plan_mode_reasoning_effort = "high"
 
+# Skip the startup version check so a session opens without an update nag.
+check_for_update_on_startup = false
+
 [tui]
 raw_output_mode = false
 animations = false
@@ -27,6 +30,8 @@ status_line_use_colors = true
 [notice]
 hide_full_access_warning = true
 hide_rate_limit_model_nudge = true
+hide_world_writable_warning = true
+hide_gpt5_1_migration_prompt = true
 
 [features]
 memories = true
