@@ -28,7 +28,7 @@ set -euo pipefail
 # endpoint, path, credential or machine identifier.
 ALLOW_SECTIONS='^[[](tui|notice|features|desktop)[]]$'
 # Top-level (pre-first-section) keys safe to publish.
-ALLOW_TOPLEVEL='^(project_doc_fallback_filenames|project_doc_max_bytes|model|model_reasoning_effort|model_verbosity|model_reasoning_summary|hide_agent_reasoning|personality|approvals_reviewer|plan_mode_reasoning_effort)[[:space:]]*='
+ALLOW_TOPLEVEL='^(project_doc_fallback_filenames|project_doc_max_bytes|model|model_reasoning_effort|model_verbosity|model_reasoning_summary|hide_agent_reasoning|personality|approvals_reviewer|plan_mode_reasoning_effort|check_for_update_on_startup)[[:space:]]*='
 
 shareable() {
     # Comments/blank lines are buffered and emitted only when what FOLLOWS them
