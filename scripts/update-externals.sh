@@ -20,6 +20,9 @@
 
 set -euo pipefail
 
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+MANIFEST="$REPO_ROOT/external-dependencies.yaml"
+
 SCOPE="${1:-all}"
 DRY_RUN=0
 [ "${1:-}" = "--dry-run" ] && { DRY_RUN=1; SCOPE="all"; }
@@ -39,14 +42,33 @@ section() { echo; echo "=== $* ==="; }
 # ----- npx-skills (run install commands from manifest) -----
 update_npx() {
   section "npx-skills (re-installs latest)"
-  run "npx skills add vercel-labs/agent-browser --yes"
-  run "npx skills add vercel-labs/agent-skills --yes"
-  run "npx skills add pbakaus/impeccable --yes"
-  run "npx add-skill here-now"
-  run "npx add-skill find-skills"
-  run "npx add-skill summarize"
-  run "npx add-skill browserbase-skills"
-  run "npx add-skill gws-skills"
+  # Derived from the manifest, not hardcoded — a new npx-skills entry is picked
+  # up here automatically (this list drifted and silently skipped archify once).
+  # Prefer `install:`, else `npx skills add <repo> --yes` (as bootstrap.js does),
+  # else `npx add-skill <name>` for the legacy add-skill-only entries. Entries
+  # with none of the three are catalog-only and skipped.
+  local cmd
+  while IFS= read -r cmd; do
+    [ -n "$cmd" ] && run "$cmd"
+  done < <(awk '
+    /^npx-skills:/ { in_sec = 1; next }
+    in_sec && /^[a-zA-Z]/ { in_sec = 0 }
+    !in_sec { next }
+    function flush() {
+      if (name == "") return
+      if (catalog_only) { }
+      else if (install != "") print install
+      else if (repo != "") print "npx skills add " repo " --yes"
+      else if (source ~ /^npx add-skill/) print "npx add-skill " name
+      name = ""; install = ""; repo = ""; source = ""; catalog_only = 0
+    }
+    /^  - name:/ { flush(); name = $3; next }
+    /^    install:/ { sub(/^    install:[[:space:]]*/, ""); gsub(/^"|"$/, ""); install = $0; next }
+    /^    repo:/ { repo = $2; next }
+    /^    source:/ { sub(/^    source:[[:space:]]*/, ""); gsub(/^"|"$/, ""); source = $0; next }
+    /^    catalog-only:[[:space:]]*true/ { catalog_only = 1; next }
+    END { flush() }
+  ' "$MANIFEST")
 }
 
 # ----- claude-plugins -----

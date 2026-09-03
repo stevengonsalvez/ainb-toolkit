@@ -645,19 +645,26 @@ printf '%b\n %b' "$L1" "$L2"
 # end up under the parent repo's project hash, so cwd-based resolution misses).
 # Fallback resolves the latest installed reflect plugin dynamically so the
 # statusline keeps working across plugin version upgrades without manual edits.
-if [[ -n "${CLAUDE_PLUGIN_ROOT:-}" ]]; then
-  _REFLECT_ROOT="$CLAUDE_PLUGIN_ROOT/"
-else
-  _REFLECT_CACHE="$HOME/.claude/plugins/cache/agents-in-a-box/reflect"
-  _REFLECT_ROOT="$(ls -1d "$_REFLECT_CACHE"/*/ 2>/dev/null | sort -V | tail -1)"
-fi
-# v5.2+ flat layout ships it under plugin/scripts/; older releases at scripts/.
-# Empty root (plugin not installed) must NOT fall through to a cwd-relative
+# v5+ nests plugin content under plugin/; v4 kept it at the root. Try both.
+# Empty base (plugin not installed) must NOT fall through to a cwd-relative
 # path — that would execute a same-named script from whatever repo is open.
+_find_timeline() {
+  local base="$1"
+  for sub in plugin/scripts scripts; do
+    [[ -x "$base/$sub/reflect_timeline.sh" ]] && { printf '%s' "$base/$sub/reflect_timeline.sh"; return 0; }
+  done
+  return 1
+}
 TIMELINE_HELPER=""
-if [[ -n "$_REFLECT_ROOT" ]]; then
-  TIMELINE_HELPER="${_REFLECT_ROOT}plugin/scripts/reflect_timeline.sh"
-  [[ -x "$TIMELINE_HELPER" ]] || TIMELINE_HELPER="${_REFLECT_ROOT}scripts/reflect_timeline.sh"
+if [[ -n "${CLAUDE_PLUGIN_ROOT:-}" ]]; then
+  TIMELINE_HELPER="$(_find_timeline "$CLAUDE_PLUGIN_ROOT")"
+fi
+if [[ -z "$TIMELINE_HELPER" ]]; then
+  _REFLECT_CACHE="$HOME/.claude/plugins/cache/agents-in-a-box/reflect"
+  # newest version first; fall back to older ones that still ship the helper
+  while IFS= read -r _v; do
+    TIMELINE_HELPER="$(_find_timeline "${_v%/}")" && break
+  done < <(ls -1d "$_REFLECT_CACHE"/*/ 2>/dev/null | sort -Vr)
 fi
 if [[ "${REFLECT_TIMELINE_DISABLE:-0}" != "1" ]] && [[ -x "$TIMELINE_HELPER" ]]; then
   REFLECT_TIMELINE_SESSION_ID="$(_jq '.session_id')" \
