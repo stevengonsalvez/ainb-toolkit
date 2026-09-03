@@ -695,6 +695,23 @@ npx-skills:
       - Accessibility and WCAG compliance auditing
       - Design system extraction and normalization
 
+  - name: archify
+    repo: tt-a1i/archify
+    install: "npx skills add tt-a1i/archify -g --yes"
+    version: "2.17"
+    purpose: "Architecture, workflow, sequence, data-flow and state diagrams as standalone explorable HTML with inline SVG, dark/light themes and PNG/SVG/WebM export; also converts pasted Mermaid"
+    features:
+      - Accepts plain-language requirements or pasted Mermaid (flowchart, sequenceDiagram, stateDiagram)
+      - Inspects repository evidence when the diagram must reflect real code
+      - Standalone HTML output, no runtime deps
+    notes: >-
+      Fork/successor of Cocoon-AI/architecture-diagram-generator (see the
+      catalog-only `architecture-diagram` entry under agent-skills), so it
+      overlaps that entry and fireworks-tech-graph. Installs globally to
+      ~/.agents/skills/archify and symlinks into ~/.claude/skills.
+      The `-g` install reports one failure for the PromptScript harness,
+      which does not support global installs; harmless for claude/codex.
+
   - name: summarize
     source: "npx add-skill"
     homepage: "https://summarize.sh"
