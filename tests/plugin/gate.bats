@@ -46,7 +46,7 @@ setup() {
   # real gate from a stub. If this ever passes with STUB=1, the suite is lying.
   printf '#!/usr/bin/env bash\nexit 0\n' > stub-gate.sh && chmod +x stub-gate.sh
   run bash -c "jq --arg c '$REPO' '. + {cwd:\$c}' '$FX/stop-event.json' | '$PWD/stub-gate.sh'"
-  [ -z "$output" ]
+  [ -z "$output" ] || { printf 'stub emitted (status %s): %s\n' "$status" "$output" >&2; false; }
   run bash -c "echo '$output' | jq -se '.[0].decision == \"block\"'"
   [ "$status" -ne 0 ]
 }
