@@ -114,12 +114,15 @@ you want it.
 
 - **`webapp-testing/bin/browser-tools` does not travel.** APM's skill copier
   filters a skill-level `bin/` directory (`integration/skill_support.py`); its
-  executable support is scoped to a package-root `bin/`. Thirteen of the
-  seventeen `webapp-testing` files deploy; the four under `bin/` do not. The
-  deployed `SKILL.md` still documents `browser-tools`, so a consumer who wants
-  the Chrome DevTools Protocol helper must copy `skills/webapp-testing/bin/`
-  across by hand. The Python path (`scripts/with_server.py` plus `utils/`) is
-  fully deployed and is the primary interface.
+  executable support is scoped to a package-root `bin/`. Because nothing in
+  `bin/` could ever reach a consumer, the pack does not vendor it at all:
+  `.apm/skills/webapp-testing/` holds the thirteen files that do deploy, and
+  `scripts/sync-qe-agent-pack` excludes `bin/` from both the copy and the drift
+  check. The deployed `SKILL.md` still documents `browser-tools`, so a consumer
+  who wants the Chrome DevTools Protocol helper copies
+  `skills/webapp-testing/bin/` across by hand. The Python path
+  (`scripts/with_server.py` plus `utils/`) is fully deployed and is the primary
+  interface.
 - **Copilot and Claude Code are the whole supported surface.** `apm.yml`
   declares `targets: [copilot, claude]` and `apm-policy.yml` allows exactly that
   pair under `compilation.target.allow`. Nothing in the content is
