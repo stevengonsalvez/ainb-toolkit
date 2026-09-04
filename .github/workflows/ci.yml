@@ -94,6 +94,39 @@ jobs:
         working-directory: ${{ env.CONSUMER }}
         run: find .github .agents -type f | sort
 
+      # The local-path install above proves the pack deploys, but it pins
+      # nothing: a _local dependency has no commit to resolve, and its lockfile
+      # is compared against itself seconds later. Installing the same pack from
+      # a git ref at this commit exercises ref resolution and SHA pinning, and
+      # --frozen then proves the lockfile reproduces rather than being rewritten.
+      #
+      # Skipped for pull requests from forks: the head SHA does not exist in
+      # this repository, so there is nothing to resolve.
+      - name: Install from a git ref and prove the lockfile reproduces
+        if: >-
+          github.event_name != 'pull_request' ||
+          github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          PACK_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          PACK_REPO: ${{ github.repository }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/gitref-consumer"
+          cd "$RUNNER_TEMP/gitref-consumer"
+          apm install "${PACK_REPO}/packages/qe-agent-pack#${PACK_SHA}" --target copilot
+
+          echo "::group::resolved pins"
+          grep -E 'resolved_commit|resolved_ref|content_hash' apm.lock.yaml | head -3
+          echo "::endgroup::"
+
+          resolved=$(awk '/^  resolved_commit:/ {print $2; exit}' apm.lock.yaml)
+          if [ "$resolved" != "$PACK_SHA" ]; then
+            echo "lockfile pinned $resolved, expected $PACK_SHA" >&2
+            exit 1
+          fi
+
+          apm install --frozen
+          apm audit --ci
+
       - name: Audit against the pack policy
         working-directory: ${{ env.CONSUMER }}
         run: apm audit --ci --policy "$GITHUB_WORKSPACE/packages/qe-agent-pack/apm-policy.yml"
