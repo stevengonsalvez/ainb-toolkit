@@ -120,9 +120,19 @@ you want it.
   the Chrome DevTools Protocol helper must copy `skills/webapp-testing/bin/`
   across by hand. The Python path (`scripts/with_server.py` plus `utils/`) is
   fully deployed and is the primary interface.
-- **The pack pins two targets.** `targets: [copilot, claude]` in `apm.yml`.
-  Consumers on Cursor, Codex or Gemini opt in with `apm install -t <name>`;
-  nothing here is harness-specific beyond the deploy paths.
+- **Copilot and Claude Code are the whole supported surface.** `apm.yml`
+  declares `targets: [copilot, claude]` and `apm-policy.yml` allows exactly that
+  pair under `compilation.target.allow`. Nothing in the content is
+  harness-specific beyond the deploy paths, so the pack would compile to Cursor,
+  Codex or Gemini, but those are out of policy: widen
+  `compilation.target.allow` in a reviewed change before installing to one.
+- **That target allow list is weaker than it looks.** In APM 0.29.0
+  `_check_compilation_target` (`policy/policy_checks.py:508`) reads the
+  consuming repo's legacy singular `target:` key and ignores the plural
+  `targets:` list that `apm init` writes today. A consumer declaring
+  `targets: [cursor]` therefore passes `apm audit --ci --policy` clean; verified
+  by running it. Treat the allow list as a documented intent that the tooling
+  only partly enforces, not as a control.
 - **`apm audit` reports info-level unusual-character findings.** These come from
   box-drawing characters and typographic dashes inside the bundled skill bodies.
   They are informational, do not fail `--ci`, and are visible with
