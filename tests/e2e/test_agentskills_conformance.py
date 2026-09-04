@@ -8,6 +8,7 @@ deliberately broken fixture rather than passing everything.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -32,10 +33,30 @@ def test_every_shipped_skill_conforms() -> None:
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+SHIPPED_SKILL_COUNT = 94
+
+
+def count_skill_dirs() -> int:
+    """Count skill directories without reusing the script's own glob.
+
+    The script globs ``*/SKILL.md``. Asserting against that same expression
+    proves nothing, so this walks the directory listing instead.
+    """
+    skills = REPO_ROOT / "skills"
+    return sum(
+        1
+        for entry in os.listdir(skills)
+        if (skills / entry).is_dir() and (skills / entry / "SKILL.md").is_file()
+    )
+
+
 def test_shipped_skill_count_is_scanned() -> None:
     result = run_check(REPO_ROOT / "skills", as_json=True)
     payload = json.loads(result.stdout)
-    on_disk = len(list((REPO_ROOT / "skills").glob("*/SKILL.md")))
+    on_disk = count_skill_dirs()
+    # Pinned so silently dropping a skill fails here too, not only the ratio.
+    # Bump it deliberately in the same commit that adds or removes a skill.
+    assert on_disk == SHIPPED_SKILL_COUNT
     assert payload["scanned"] == on_disk
     assert payload["violations"] == {}
 
