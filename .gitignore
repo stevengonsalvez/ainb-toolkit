@@ -10,3 +10,7 @@ __pycache__/
 .agents/goals/
 .agents/evidence/
 .agents/specs/
+
+# CI clean-room APM consumer (created by .github/workflows/ci.yml)
+.apm-ci-consumer/
+apm-audit.sarif

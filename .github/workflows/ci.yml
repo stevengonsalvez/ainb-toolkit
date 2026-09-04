@@ -1,0 +1,122 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  skills-conformance:
+    name: agentskills.io conformance
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install test dependencies
+        run: pip install -r tests/requirements-test.txt
+
+      - name: Check every skill conforms
+        run: scripts/check-agentskills-conformance skills
+
+      - name: Prove the check fails on a broken fixture
+        run: |
+          if scripts/check-agentskills-conformance tests/fixtures/agentskills/broken; then
+            echo "conformance check passed a deliberately broken fixture" >&2
+            exit 1
+          fi
+          echo "conformance check correctly rejected the broken fixture"
+
+      - name: pytest
+        working-directory: tests
+        run: python -m pytest e2e -m "not heavy"
+
+  plugin-tests:
+    name: bats
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install bats
+        run: npm install -g bats@1.13.0
+
+      - name: Run plugin suites
+        run: bats tests/plugin
+
+  apm-audit:
+    name: APM install and audit
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    env:
+      # APM CLI version this pack was authored and verified against.
+      APM_VERSION: 0.29.0
+      # Clean-room consumer, inside the workspace so SARIF paths stay relative.
+      CONSUMER: .apm-ci-consumer
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install APM
+        run: |
+          pip install "apm-cli==${APM_VERSION}"
+          apm --version
+
+      - name: Check the pack is in sync with its toolkit sources
+        run: scripts/sync-qe-agent-pack --check
+
+      - name: Install the pack into a clean-room consumer
+        run: |
+          mkdir -p "$CONSUMER"
+          cat > "$CONSUMER/apm.yml" <<'YAML'
+          name: qe-agent-pack-ci-consumer
+          version: 1.0.0
+          description: Clean-room consumer used by CI to verify the QE agent pack installs, locks and audits.
+          license: MIT
+          targets:
+            - copilot
+          YAML
+          cd "$CONSUMER"
+          apm install "$GITHUB_WORKSPACE/packages/qe-agent-pack"
+
+      - name: Show what was deployed
+        working-directory: ${{ env.CONSUMER }}
+        run: find .github .agents -type f | sort
+
+      - name: Audit against the pack policy
+        working-directory: ${{ env.CONSUMER }}
+        run: apm audit --ci --policy "$GITHUB_WORKSPACE/packages/qe-agent-pack/apm-policy.yml"
+
+      - name: Emit SARIF
+        working-directory: ${{ env.CONSUMER }}
+        run: apm audit --format sarif -o "$GITHUB_WORKSPACE/apm-audit.sarif"
+
+      - name: Upload SARIF artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: apm-audit-sarif
+          path: apm-audit.sarif
+          if-no-files-found: error
+
+      # Best effort: the SARIF paths are relative to the clean-room consumer,
+      # not the repo root, so alerts land without a source link. The artifact
+      # above is the authoritative copy.
+      - name: Upload SARIF to code scanning
+        if: always()
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: apm-audit.sarif
+          category: apm-audit
