@@ -54,6 +54,14 @@ security:
     fail_on_drift: true
 
 executables:
-  # The pack ships no hooks, no bin/, and no canvas primitives. Anything
-  # executable appearing under it is drift, not a feature.
+  # deny_all covers APM's executable PRIMITIVES: hooks/, a package-root bin/,
+  # and canvas. The pack ships none of the three, so a hooks/ or bin/ directory
+  # appearing under it is drift, not a feature.
+  #
+  # Two things this deliberately does not cover. The playwright-test MCP server
+  # is governed by the mcp block above, which allows exactly that one stdio
+  # server; `apm audit --ci --policy` passes all 31 checks with both in force.
+  # And the +x bit on the bundled webapp-testing Python helpers under scripts/
+  # and examples/ is not an executable primitive: those are skill content and
+  # deploy as ordinary files.
   deny_all: true
