@@ -11,6 +11,12 @@
 #
 # The three playwright-test-*.agent.md files are NOT synced: they are generated
 # by `npx playwright init-agents --loop=claude` and checked in as-is.
+#
+# A skill's bin/ directory is never vendored. APM filters a skill-level bin/ at
+# install time, so copying it in ships dead weight: webapp-testing's bin/ holds
+# a 62 MB prebuilt arm64 binary that no consumer can ever receive through the
+# pack. `diff -x bin` and the rm below exclude any directory named bin at any
+# depth; today only webapp-testing has one, and it is top level.
 
 set -euo pipefail
 
@@ -27,15 +33,16 @@ CHECK=0
 sync_one() {
   local src="$1" dst="$2"
   if (( CHECK )); then
-    if ! diff -r -q "$src" "$dst" >/dev/null 2>&1; then
+    if ! diff -r -q -x bin "$src" "$dst" >/dev/null 2>&1; then
       echo "drift: $dst differs from $src" >&2
-      diff -r "$src" "$dst" >&2 || true
+      diff -r -x bin "$src" "$dst" >&2 || true
       return 1
     fi
   else
     rm -rf "$dst"
     mkdir -p "$(dirname "$dst")"
     cp -R "$src" "$dst"
+    find "$dst" -type d -name bin -prune -exec rm -rf {} +
   fi
 }
 
