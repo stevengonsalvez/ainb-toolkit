@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# Vendor the QE agent pack's skills and agents from the toolkit sources.
+#
+# APM refuses symlinks that escape the package root ("Only in-package symlinks
+# are dereferenced"), so packages/qe-agent-pack/.apm/ holds real copies. This
+# script is the single writer of those copies and the drift guard for CI.
+#
+# Usage:
+#   scripts/sync-qe-agent-pack            # copy sources into the package
+#   scripts/sync-qe-agent-pack --check    # exit 1 if the copies have drifted
+#
+# The three playwright-test-*.agent.md files are NOT synced: they are generated
+# by `npx playwright init-agents --loop=claude` and checked in as-is.
+
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PACK="$ROOT/packages/qe-agent-pack"
+
+SKILLS=(expect-test webapp-testing find-missing-tests test-driven-development)
+AGENT_SRC="agents/engineering/test-engineer.md"
+AGENT_DST=".apm/agents/test-engineer.agent.md"
+
+CHECK=0
+[[ "${1:-}" == "--check" ]] && CHECK=1
+
+sync_one() {
+  local src="$1" dst="$2"
+  if (( CHECK )); then
+    if ! diff -r -q "$src" "$dst" >/dev/null 2>&1; then
+      echo "drift: $dst differs from $src" >&2
+      diff -r "$src" "$dst" >&2 || true
+      return 1
+    fi
+  else
+    rm -rf "$dst"
+    mkdir -p "$(dirname "$dst")"
+    cp -R "$src" "$dst"
+  fi
+}
+
+status=0
+for skill in "${SKILLS[@]}"; do
+  sync_one "$ROOT/skills/$skill" "$PACK/.apm/skills/$skill" || status=1
+done
+sync_one "$ROOT/$AGENT_SRC" "$PACK/$AGENT_DST" || status=1
+
+if (( CHECK )); then
+  if (( status )); then
+    echo "QE agent pack is out of sync. Run: scripts/sync-qe-agent-pack" >&2
+  else
+    echo "QE agent pack is in sync with its toolkit sources."
+  fi
+else
+  echo "Synced ${#SKILLS[@]} skills and 1 agent into packages/qe-agent-pack/.apm/"
+fi
+exit $status

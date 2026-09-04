@@ -1,0 +1,32 @@
+name: qe-agent-pack
+version: 0.1.0
+description: Quality engineering agent pack. Ships four testing skills, four testing agents (including the three first-party Playwright agents), and three testing instructions to GitHub Copilot and Claude Code.
+author: stevengonsalvez
+license: MIT
+repository: https://github.com/stevengonsalvez/ainb-toolkit
+keywords: [testing, qe, playwright, quality]
+
+# hybrid: the skills install natively AND the instructions compile into the
+# harness context files. Neither half is optional for this pack.
+type: hybrid
+
+# Pinned so the pack deploys the same tree on every machine instead of
+# auto-detecting whichever harness the operator happens to have signalled.
+# 'claude' is APM's canonical slug for the Claude Code harness; it deploys
+# to .claude/. Consumers on another harness opt in with `apm install -t <name>`.
+targets:
+  - copilot
+  - claude
+
+dependencies:
+  apm: []
+  mcp:
+    # The three Playwright agents are inert without this server: every tool
+    # they name is an mcp__playwright-test__* tool. Declared self-defined
+    # (registry: false) because it ships inside the consumer's own
+    # @playwright/test install rather than a published MCP registry entry.
+    - name: playwright-test
+      registry: false
+      transport: stdio
+      command: npx
+      args: ["playwright", "run-test-mcp-server"]
