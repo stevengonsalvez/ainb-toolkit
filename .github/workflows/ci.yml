@@ -23,8 +23,13 @@ jobs:
       - name: Install test dependencies
         run: pip install -r tests/requirements-test.txt
 
+      # The vendored copies under the pack are what consumers actually install,
+      # so they get checked too, not just the sources in skills/.
       - name: Check every skill conforms
-        run: scripts/check-agentskills-conformance skills
+        run: |
+          scripts/check-agentskills-conformance \
+            skills \
+            packages/qe-agent-pack/.apm/skills
 
       - name: Prove the check fails on a broken fixture
         run: |

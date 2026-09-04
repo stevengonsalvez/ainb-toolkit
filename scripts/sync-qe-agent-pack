@@ -46,11 +46,27 @@ sync_one() {
   fi
 }
 
+# SKILLS is the manifest of what the pack ships. Comparing it against what is
+# actually on disk catches the two cases the per-skill diff cannot see: a skill
+# directory added to .apm/skills that nothing vendors, and one deleted from
+# .apm/skills that SKILLS still names.
+check_skill_listing() {
+  local expected actual
+  expected="$(printf '%s\n' "${SKILLS[@]}" | LC_ALL=C sort)"
+  actual="$(ls -1 "$PACK/.apm/skills" 2>/dev/null | LC_ALL=C sort)"
+  if [[ "$expected" != "$actual" ]]; then
+    echo "drift: .apm/skills does not match the SKILLS manifest" >&2
+    diff <(echo "$expected") <(echo "$actual") >&2 || true
+    return 1
+  fi
+}
+
 status=0
 for skill in "${SKILLS[@]}"; do
   sync_one "$ROOT/skills/$skill" "$PACK/.apm/skills/$skill" || status=1
 done
 sync_one "$ROOT/$AGENT_SRC" "$PACK/$AGENT_DST" || status=1
+check_skill_listing || status=1
 
 if (( CHECK )); then
   if (( status )); then
