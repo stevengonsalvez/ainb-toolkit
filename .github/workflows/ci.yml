@@ -14,9 +14,9 @@ jobs:
     name: agentskills.io conformance
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: '3.12'
 
@@ -47,7 +47,7 @@ jobs:
     name: bats
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Install bats
         run: sudo npm install -g bats@1.13.0
@@ -67,9 +67,9 @@ jobs:
       # Clean-room consumer, inside the workspace so SARIF paths stay relative.
       CONSUMER: .apm-ci-consumer
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: '3.12'
 
@@ -142,7 +142,7 @@ jobs:
 
       - name: Upload SARIF artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: apm-audit-sarif
           path: apm-audit.sarif
@@ -154,7 +154,7 @@ jobs:
       - name: Upload SARIF to code scanning
         if: always()
         continue-on-error: true
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@6f5948dfacef28e207b48d0905cf90c03365536d # v3.37.9
         with:
           sarif_file: apm-audit.sarif
           category: apm-audit
