@@ -5,7 +5,7 @@ description: >
   Manages hook configuration, credential verification, and connection testing.
 version: 1.0.0
 user-invocable: true
-allowed_tools:
+allowed-tools:
   - Bash
   - Read
   - Write

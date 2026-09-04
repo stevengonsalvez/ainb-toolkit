@@ -1,0 +1,160 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  skills-conformance:
+    name: agentskills.io conformance
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.12'
+
+      - name: Install test dependencies
+        run: pip install -r tests/requirements-test.txt
+
+      # The vendored copies under the pack are what consumers actually install,
+      # so they get checked too, not just the sources in skills/.
+      - name: Check every skill conforms
+        run: |
+          scripts/check-agentskills-conformance \
+            skills \
+            packages/qe-agent-pack/.apm/skills
+
+      - name: Prove the check fails on a broken fixture
+        run: |
+          if scripts/check-agentskills-conformance tests/fixtures/agentskills/broken; then
+            echo "conformance check passed a deliberately broken fixture" >&2
+            exit 1
+          fi
+          echo "conformance check correctly rejected the broken fixture"
+
+      - name: pytest
+        working-directory: tests
+        run: python -m pytest e2e -m "not heavy"
+
+  plugin-tests:
+    name: bats
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Install bats
+        run: sudo npm install -g bats@1.13.0
+
+      - name: Run plugin suites
+        run: bats tests/plugin
+
+  apm-audit:
+    name: APM install and audit
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    env:
+      # APM CLI version this pack was authored and verified against.
+      APM_VERSION: 0.29.0
+      # Clean-room consumer, inside the workspace so SARIF paths stay relative.
+      CONSUMER: .apm-ci-consumer
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.12'
+
+      - name: Install APM
+        run: |
+          pip install "apm-cli==${APM_VERSION}"
+          apm --version
+
+      - name: Check the pack is in sync with its toolkit sources
+        run: scripts/sync-qe-agent-pack --check
+
+      - name: Install the pack into a clean-room consumer
+        run: |
+          mkdir -p "$CONSUMER"
+          cat > "$CONSUMER/apm.yml" <<'YAML'
+          name: qe-agent-pack-ci-consumer
+          version: 1.0.0
+          description: Clean-room consumer used by CI to verify the QE agent pack installs, locks and audits.
+          license: MIT
+          targets:
+            - copilot
+          YAML
+          cd "$CONSUMER"
+          apm install "$GITHUB_WORKSPACE/packages/qe-agent-pack"
+
+      - name: Show what was deployed
+        working-directory: ${{ env.CONSUMER }}
+        run: find .github .agents -type f | sort
+
+      # The local-path install above proves the pack deploys, but it pins
+      # nothing: a _local dependency has no commit to resolve, and its lockfile
+      # is compared against itself seconds later. Installing the same pack from
+      # a git ref at this commit exercises ref resolution and SHA pinning, and
+      # --frozen then proves the lockfile reproduces rather than being rewritten.
+      #
+      # Skipped for pull requests from forks: the head SHA does not exist in
+      # this repository, so there is nothing to resolve.
+      - name: Install from a git ref and prove the lockfile reproduces
+        if: >-
+          github.event_name != 'pull_request' ||
+          github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          PACK_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          PACK_REPO: ${{ github.repository }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/gitref-consumer"
+          cd "$RUNNER_TEMP/gitref-consumer"
+          apm install "${PACK_REPO}/packages/qe-agent-pack#${PACK_SHA}" --target copilot
+
+          echo "::group::resolved pins"
+          grep -E 'resolved_commit|resolved_ref|content_hash' apm.lock.yaml | head -3
+          echo "::endgroup::"
+
+          resolved=$(awk '/^  resolved_commit:/ {print $2; exit}' apm.lock.yaml)
+          if [ "$resolved" != "$PACK_SHA" ]; then
+            echo "lockfile pinned $resolved, expected $PACK_SHA" >&2
+            exit 1
+          fi
+
+          apm install --frozen
+          apm audit --ci
+
+      - name: Audit against the pack policy
+        working-directory: ${{ env.CONSUMER }}
+        run: apm audit --ci --policy "$GITHUB_WORKSPACE/packages/qe-agent-pack/apm-policy.yml"
+
+      - name: Emit SARIF
+        working-directory: ${{ env.CONSUMER }}
+        run: apm audit --format sarif -o "$GITHUB_WORKSPACE/apm-audit.sarif"
+
+      - name: Upload SARIF artifact
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: apm-audit-sarif
+          path: apm-audit.sarif
+          if-no-files-found: error
+
+      # Best effort: the SARIF paths are relative to the clean-room consumer,
+      # not the repo root, so alerts land without a source link. The artifact
+      # above is the authoritative copy.
+      - name: Upload SARIF to code scanning
+        if: always()
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@6f5948dfacef28e207b48d0905cf90c03365536d # v3.37.9
+        with:
+          sarif_file: apm-audit.sarif
+          category: apm-audit

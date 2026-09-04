@@ -1,0 +1,67 @@
+# Repo-scoped APM policy for the QE agent pack.
+#
+# Inheritance in APM is tighten-only (policy/inheritance.py): a child policy
+# intersects allow lists, unions deny lists, takes max(enforcement) ordered
+# warn < block, and takes min(max_depth). Nothing here can widen a parent org
+# policy, so this file is safe to adopt underneath an enterprise hub policy.
+#
+# Wired into CI by `apm audit --ci --policy ./packages/qe-agent-pack/apm-policy.yml`.
+name: "QE agent pack policy"
+version: "1.0.0"
+enforcement: block
+
+dependencies:
+  # This pack ships no APM dependencies. An empty allow list is inert in APM
+  # (an allow list only constrains when non-empty), so the constraint that
+  # carries weight is max_depth: the pack must stay a leaf.
+  deny:
+    - "*/deprecated-*"
+  max_depth: 1
+  require_pinned_constraint: true
+
+mcp:
+  # Only the Playwright test MCP server, over stdio, and it is self-defined
+  # rather than registry-resolved, so self_defined must be permitted here.
+  allow:
+    - "playwright-test"
+  transport:
+    allow:
+      - stdio
+  self_defined: allow
+  trust_transitive: false
+
+compilation:
+  target:
+    allow:
+      - copilot
+      - claude
+
+manifest:
+  required_fields:
+    - name
+    - version
+    - description
+    - license
+  scripts: deny
+  content_types:
+    allow:
+      - hybrid
+
+security:
+  integrity:
+    require_hashes: true
+  audit:
+    fail_on_drift: true
+
+executables:
+  # deny_all covers APM's executable PRIMITIVES: hooks/, a package-root bin/,
+  # and canvas. The pack ships none of the three, so a hooks/ or bin/ directory
+  # appearing under it is drift, not a feature.
+  #
+  # Two things this deliberately does not cover. The playwright-test MCP server
+  # is governed by the mcp block above, which allows exactly that one stdio
+  # server; `apm audit --ci --policy` passes all 31 checks with both in force.
+  # And the +x bit on the bundled webapp-testing Python helpers under scripts/
+  # and examples/ is not an executable primitive: those are skill content and
+  # deploy as ordinary files.
+  deny_all: true

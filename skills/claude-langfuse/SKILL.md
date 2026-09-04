@@ -6,7 +6,7 @@ description: >
   agent/skill improvements based on historical data. Powers self-improvement
   through trace analysis of Claude Code sessions.
 version: 1.0.0
-allowed_tools:
+allowed-tools:
   - Bash
   - Read
   - Write

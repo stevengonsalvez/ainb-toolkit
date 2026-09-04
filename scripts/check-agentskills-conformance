@@ -1,0 +1,165 @@
+#!/usr/bin/env python3
+"""Mechanical agentskills.io conformance check for SKILL.md frontmatter.
+
+Checks every ``<root>/<skill-dir>/SKILL.md`` against the four rules that can
+be verified without reading the body:
+
+1. name pattern      lowercase alphanumeric plus single hyphens, 1-64 chars
+2. name/dir match    frontmatter ``name`` equals the parent directory name
+3. description       present, non-empty, at most 1024 characters
+4. allowed-tools     spelled with a hyphen, never ``allowed_tools``
+
+Usage:
+    check-agentskills-conformance [ROOT ...]   # default root: ./skills
+    check-agentskills-conformance --json ROOT
+
+Exit status: 0 when every skill conforms, 1 when any violation is found,
+2 when a root does not exist or holds no SKILL.md at all.
+
+Spec: https://agentskills.io  (name/description contract, 1024-char ceiling)
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import sys
+from pathlib import Path
+
+import yaml
+
+NAME_PATTERN = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+NAME_MAX = 64
+DESCRIPTION_MAX = 1024
+FRONTMATTER = re.compile(r"\A---\r?\n(.*?)\r?\n---\r?\n", re.DOTALL)
+
+# Misspellings of allowed-tools seen in the wild. Any key that normalises to
+# "allowedtools" but is not the canonical spelling is a violation.
+CANONICAL_ALLOWED_TOOLS = "allowed-tools"
+
+
+def normalise(key: str) -> str:
+    return key.replace("_", "").replace("-", "").lower()
+
+
+def check_skill(skill_md: Path) -> list[str]:
+    """Return a list of violation messages for one SKILL.md (empty when clean)."""
+    directory = skill_md.parent.name
+    try:
+        text = skill_md.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        return [f"SKILL.md is not valid UTF-8: {exc}"]
+
+    match = FRONTMATTER.match(text)
+    if match is None:
+        return ["missing YAML frontmatter (file must start with a --- block)"]
+
+    try:
+        frontmatter = yaml.safe_load(match.group(1))
+    except yaml.YAMLError as exc:
+        return [f"frontmatter is not valid YAML: {str(exc).splitlines()[0]}"]
+
+    if not isinstance(frontmatter, dict):
+        return ["frontmatter must be a YAML mapping"]
+
+    violations: list[str] = []
+
+    name = frontmatter.get("name")
+    if name is None:
+        violations.append("frontmatter is missing required field: name")
+    else:
+        name = str(name)
+        if not NAME_PATTERN.match(name):
+            violations.append(
+                f"name {name!r} must be lowercase alphanumeric with single "
+                "hyphens (pattern ^[a-z0-9]+(-[a-z0-9]+)*$)"
+            )
+        if len(name) > NAME_MAX:
+            violations.append(f"name is {len(name)} characters, limit is {NAME_MAX}")
+        if name != directory:
+            violations.append(
+                f"name {name!r} does not match its directory {directory!r}"
+            )
+
+    description = frontmatter.get("description")
+    if description is None:
+        violations.append("frontmatter is missing required field: description")
+    elif not str(description).strip():
+        violations.append("description is empty")
+    elif len(str(description)) > DESCRIPTION_MAX:
+        violations.append(
+            f"description is {len(str(description))} characters, "
+            f"limit is {DESCRIPTION_MAX}"
+        )
+
+    for key in frontmatter:
+        if (
+            normalise(str(key)) == normalise(CANONICAL_ALLOWED_TOOLS)
+            and str(key) != CANONICAL_ALLOWED_TOOLS
+        ):
+            violations.append(
+                f"key {key!r} must be spelled {CANONICAL_ALLOWED_TOOLS!r}"
+            )
+
+    return violations
+
+
+def scan(roots: list[Path]) -> tuple[dict[str, list[str]], int]:
+    """Return (violations keyed by repo-relative path, number of skills scanned)."""
+    findings: dict[str, list[str]] = {}
+    scanned = 0
+    for root in roots:
+        for skill_md in sorted(root.glob("*/SKILL.md")):
+            scanned += 1
+            problems = check_skill(skill_md)
+            if problems:
+                findings[str(skill_md)] = problems
+    return findings, scanned
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="check-agentskills-conformance",
+        description="Mechanical agentskills.io conformance check for SKILL.md files.",
+    )
+    parser.add_argument(
+        "roots",
+        nargs="*",
+        default=["skills"],
+        help="directories holding <skill>/SKILL.md (default: skills)",
+    )
+    parser.add_argument("--json", action="store_true", help="emit findings as JSON")
+    args = parser.parse_args(argv)
+
+    roots = [Path(r) for r in args.roots]
+    missing = [r for r in roots if not r.is_dir()]
+    if missing:
+        for root in missing:
+            print(f"error: not a directory: {root}", file=sys.stderr)
+        return 2
+
+    findings, scanned = scan(roots)
+    if scanned == 0:
+        print(
+            f"error: no SKILL.md found under {', '.join(str(r) for r in roots)}",
+            file=sys.stderr,
+        )
+        return 2
+
+    if args.json:
+        print(json.dumps({"scanned": scanned, "violations": findings}, indent=2))
+    else:
+        for path, problems in findings.items():
+            for problem in problems:
+                print(f"{path}: {problem}")
+        failed = len(findings)
+        print(
+            f"\nchecked {scanned} skills, {scanned - failed} conform, {failed} failed"
+        )
+
+    return 1 if findings else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

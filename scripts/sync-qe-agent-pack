@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# Vendor the QE agent pack's skills and agents from the toolkit sources.
+#
+# APM refuses symlinks that escape the package root ("Only in-package symlinks
+# are dereferenced"), so packages/qe-agent-pack/.apm/ holds real copies. This
+# script is the single writer of those copies and the drift guard for CI.
+#
+# Usage:
+#   scripts/sync-qe-agent-pack            # copy sources into the package
+#   scripts/sync-qe-agent-pack --check    # exit 1 if the copies have drifted
+#
+# The three playwright-test-*.agent.md files are NOT synced: they are generated
+# by `npx playwright init-agents --loop=claude` and checked in as-is.
+#
+# A skill's bin/ directory is never vendored. APM filters a skill-level bin/ at
+# install time, so copying it in ships dead weight: webapp-testing's bin/ holds
+# a 62 MB prebuilt arm64 binary that no consumer can ever receive through the
+# pack. `diff -x bin` and the rm below exclude any directory named bin at any
+# depth; today only webapp-testing has one, and it is top level.
+
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PACK="$ROOT/packages/qe-agent-pack"
+
+SKILLS=(expect-test webapp-testing find-missing-tests test-driven-development)
+AGENT_SRC="agents/engineering/test-engineer.md"
+AGENT_DST=".apm/agents/test-engineer.agent.md"
+
+CHECK=0
+[[ "${1:-}" == "--check" ]] && CHECK=1
+
+sync_one() {
+  local src="$1" dst="$2"
+  if (( CHECK )); then
+    if ! diff -r -q -x bin "$src" "$dst" >/dev/null 2>&1; then
+      echo "drift: $dst differs from $src" >&2
+      diff -r -x bin "$src" "$dst" >&2 || true
+      return 1
+    fi
+  else
+    rm -rf "$dst"
+    mkdir -p "$(dirname "$dst")"
+    cp -R "$src" "$dst"
+    find "$dst" -type d -name bin -prune -exec rm -rf {} +
+  fi
+}
+
+# SKILLS is the manifest of what the pack ships. Comparing it against what is
+# actually on disk catches the two cases the per-skill diff cannot see: a skill
+# directory added to .apm/skills that nothing vendors, and one deleted from
+# .apm/skills that SKILLS still names.
+check_skill_listing() {
+  local expected actual
+  expected="$(printf '%s\n' "${SKILLS[@]}" | LC_ALL=C sort)"
+  actual="$(ls -1 "$PACK/.apm/skills" 2>/dev/null | LC_ALL=C sort)"
+  if [[ "$expected" != "$actual" ]]; then
+    echo "drift: .apm/skills does not match the SKILLS manifest" >&2
+    diff <(echo "$expected") <(echo "$actual") >&2 || true
+    return 1
+  fi
+}
+
+status=0
+for skill in "${SKILLS[@]}"; do
+  sync_one "$ROOT/skills/$skill" "$PACK/.apm/skills/$skill" || status=1
+done
+sync_one "$ROOT/$AGENT_SRC" "$PACK/$AGENT_DST" || status=1
+check_skill_listing || status=1
+
+if (( CHECK )); then
+  if (( status )); then
+    echo "QE agent pack is out of sync. Run: scripts/sync-qe-agent-pack" >&2
+  else
+    echo "QE agent pack is in sync with its toolkit sources."
+  fi
+else
+  echo "Synced ${#SKILLS[@]} skills and 1 agent into packages/qe-agent-pack/.apm/"
+fi
+exit $status
