@@ -2,23 +2,19 @@
 name: explain-to-me
 description: |
   Produce a self-contained, richly styled HTML explainer for any topic the
-  user asks about. Picks the right template from a bundled set of 22
-  visual patterns (feature explainer, concept explainer, module map, PR
-  review, ADR, options paper / trade-off analysis, system diagram, flow-
-  chart, status report, slide deck, prototype, editor, etc.), fills it
-  with real content, augments with inline diagrams via sister skills
-  (/fireworks-tech-graph for architecture / flow / sequence diagrams,
-  /graphify for knowledge graphs), applies a Claude-brand polish layer,
-  and publishes it: by default onto the configured here.now custom
-  domain (path mount + searchable categorised index + password lock
-  per the config's protect rule, driven by ~/.herenow/explainers.json),
-  or a plain here.now URL, or a GitHub gist (--gist / --gist --public).
-  Local-only output is available with --local. Use when Stevie says
-  "/explain-to-me", "explain-to-me X", "make me an explainer for X",
-  "give me an HTML explainer", "render this as a webpage", "ADR for X",
-  "options paper for X", or asks for a rich visual writeup. The skill
-  picks the template, names the choice up-front, and reaches for
-  diagrams whenever the content shape needs them.
+  user asks about. Picks the best-fit template from a bundled set of 22
+  visual patterns (feature or concept explainer, module map, PR review,
+  ADR, options paper, system diagram, flowchart, status report, slide
+  deck, prototype, editor), fills it with real content, augments it with
+  inline diagrams via sister skills (/fireworks-tech-graph for
+  architecture, flow and sequence diagrams, /graphify for knowledge
+  graphs), applies a Claude-brand polish layer, and publishes it: by
+  default onto the configured here.now custom domain, or a plain here.now
+  URL, or a GitHub gist (--gist, --gist --public). Local-only output is
+  available with --local. Use when Stevie says "/explain-to-me",
+  "explain-to-me X", "make me an explainer for X", "give me an HTML
+  explainer", "render this as a webpage", "ADR for X", "options paper for
+  X", or asks for a rich visual writeup.
 argument-hint: "[topic — e.g. 'how rate limiting works in our api'] [--local] [--gist [--public]]"
 ---
 
