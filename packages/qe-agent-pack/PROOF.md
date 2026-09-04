@@ -246,3 +246,43 @@ checked 5 skills, 0 conform, 5 failed
 $ echo $?
 1
 ```
+
+## A note on the recorded commit
+
+The transcripts above pin `bdd7a3a1136a3d53967b3b3cefb3f960cdcac21e`, which is
+the commit immediately before this file was added. `PROOF.md` lives inside the
+package, so committing the transcript changes the package tree the transcript
+describes and would move the SHA it records. The recorded ref is exact and
+reproducible as written; the package's primitives (`apm.yml`, `apm-policy.yml`,
+`.apm/`) are unchanged since that commit.
+
+## CI evidence
+
+`.github/workflows/ci.yml` on pull request
+[#47](https://github.com/stevengonsalvez/ainb-toolkit/pull/47),
+[run 33890519174](https://github.com/stevengonsalvez/ainb-toolkit/actions/runs/33890519174):
+
+| Job | Result |
+|---|---|
+| agentskills.io conformance | pass, 94 skills clean and the broken fixture still rejected |
+| bats | pass, 75 tests |
+| APM install and audit | pass, clean-room install plus 31 policy checks |
+| apm-audit (code scanning) | pass |
+
+SARIF landed both ways:
+
+```console
+$ gh api repos/stevengonsalvez/ainb-toolkit/actions/runs/33890519174/artifacts
+apm-audit-sarif 861 bytes expired=false
+
+$ gh api repos/stevengonsalvez/ainb-toolkit/code-scanning/analyses
+category=apm-audit tool=apm-audit results_count=10 rules_count=1 error=""
+```
+
+The workflow log for the upload step:
+
+```console
+Uploading results
+Successfully uploaded results
+Analysis upload status is complete.
+```
