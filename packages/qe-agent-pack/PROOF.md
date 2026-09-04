@@ -1,18 +1,18 @@
 # Install proof
 
 Both installs below were run for real on 2026-09-04 against APM CLI 0.29.0 from
-empty temporary directories, installing the package from a git ref rather than a
-local path so the lockfile pins a commit SHA. Nothing here is reconstructed.
+empty temporary directories. The package is pinned to an immutable commit SHA
+rather than a branch, so these commands keep working after the branch is merged
+and deleted. Nothing here is reconstructed.
 
-Package ref: `stevengonsalvez/ainb-toolkit/packages/qe-agent-pack#f/slice-c-apm-qe-package`
-Resolved commit: `bdd7a3a1136a3d53967b3b3cefb3f960cdcac21e`
+Package ref: `stevengonsalvez/ainb-toolkit/packages/qe-agent-pack#c2fce145e08863c9688121e40f0a260b17f50001`
 
 Reproduce with:
 
 ```bash
 pip install apm-cli==0.29.0
 mkdir /tmp/qe-pack-copilot && cd /tmp/qe-pack-copilot
-apm install 'stevengonsalvez/ainb-toolkit/packages/qe-agent-pack#f/slice-c-apm-qe-package' --target copilot
+apm install 'stevengonsalvez/ainb-toolkit/packages/qe-agent-pack#c2fce145e08863c9688121e40f0a260b17f50001' --target copilot
 ```
 
 ## Summary
@@ -23,8 +23,9 @@ apm install 'stevengonsalvez/ainb-toolkit/packages/qe-agent-pack#f/slice-c-apm-q
 | Agents deployed | 4, under `.github/agents/` | 4, under `.claude/agents/` |
 | Instructions deployed | 3, under `.github/instructions/` | 3, under `.claude/rules/` |
 | MCP server configured | `playwright-test` in `.github/mcp.json` | `playwright-test` in `.mcp.json` |
-| `apm.lock.yaml` commit pin | `bdd7a3a1136a3d53967b3b3cefb3f960cdcac21e` | same |
+| `apm.lock.yaml` commit pin | `c2fce145e08863c9688121e40f0a260b17f50001` | same |
 | `apm.lock.yaml` sha256 entries | 47 | 47 |
+| `apm install --frozen` replay | reproduces, exit 0 | reproduces, exit 0 |
 | `apm audit --ci` | all 10 checks passed | all 10 checks passed |
 
 `claude` is APM's canonical target slug for the Claude Code harness. There is no
@@ -42,22 +43,24 @@ $ apm --version
 Agent Package Manager (APM) CLI version 0.29.0
 
 $ pwd
-<tmp>/proof-copilot
+<tmp>/proof2-copilot
 
 $ ls -A
 
-$ apm install 'stevengonsalvez/ainb-toolkit/packages/qe-agent-pack#f/slice-c-apm-qe-package' --target copilot
+$ apm install 'stevengonsalvez/ainb-toolkit/packages/qe-agent-pack#c2fce145e08863c9688121e40f0a260b17f50001' --target copilot
 [*] Created apm.yml
 [i] Targets set: copilot (persisted to apm.yml)
 [*] Validating 1 package...
-[+] stevengonsalvez/ainb-toolkit/packages/qe-agent-pack#f/slice-c-apm-qe-package
+[+] 
+stevengonsalvez/ainb-toolkit/packages/qe-agent-pack#c2fce145e08863c9688121e40f0a
+260b17f50001
 [*] Updated apm.yml with 1 new package(s)
 [>] Installing 1 new package...
 [>] Resolving ainb-toolkit-qe-agent-pack...
 [i] Targets: copilot  (source: --target flag)
   [+] 
-github.com/stevengonsalvez/ainb-toolkit/packages/qe-agent-pack#f/slice-c-apm-qe-
-package #f/slice-c-apm-qe-package @bdd7a3a1
+github.com/stevengonsalvez/ainb-toolkit/packages/qe-agent-pack#c2fce145e08863c96
+88121e40f0a260b17f50001 #c2fce145e08863c9688121e40f0a260b17f50001 @c2fce145
   |-- 4 agents integrated -> .github/agents/
   |-- 3 instruction(s) integrated -> .github/instructions/
   |-- 4 skill(s) integrated -> .agents/skills/
@@ -71,7 +74,7 @@ package #f/slice-c-apm-qe-package @bdd7a3a1
 |  [+]  playwright-test -> Copilot (configured)
 [*] Configured 1 server
 
-[*] Installed 1 APM dependency and 1 MCP server in 0.7s.
+[*] Installed 1 APM dependency and 1 MCP server in 2.4s.
 
 $ find . -type f -not -path './apm_modules/*' | sort
 ./.agents/skills/expect-test/SKILL.md
@@ -103,17 +106,19 @@ $ find . -type f -not -path './apm_modules/*' | sort
 ./apm.yml
 
 $ grep -E 'resolved_commit|resolved_ref|content_hash' apm.lock.yaml | head -3
-  resolved_commit: bdd7a3a1136a3d53967b3b3cefb3f960cdcac21e
-  resolved_ref: f/slice-c-apm-qe-package
-  content_hash: sha256:feee26aade37822995010734f617f1260bc8148d95dba293df2ed5ae2895791e
+  resolved_commit: c2fce145e08863c9688121e40f0a260b17f50001
+  resolved_ref: c2fce145e08863c9688121e40f0a260b17f50001
+  content_hash: sha256:e394b47745ec983d9abb0e3d041d94301289b4991f1c76095d1707d5a8341d54
 
 $ grep -c sha256 apm.lock.yaml
 47
 
+$ apm install --frozen
+
+[*] Installed 1 APM dependency in 0.5s.
+[i] Lockfile presence verified. Run 'apm audit' for on-disk content integrity.
+
 $ apm audit --ci
-│ [+]      │ includes-consent         │ No local content deployed -- includes  │
-│          │                          │ consent check skipped                  │
-│ [+]      │ drift                    │ no drift detected against lockfile     │
 └──────────┴──────────────────────────┴────────────────────────────────────────┘
 
 [*] All 10 check(s) passed
@@ -126,22 +131,24 @@ $ apm --version
 Agent Package Manager (APM) CLI version 0.29.0
 
 $ pwd
-<tmp>/proof-claude
+<tmp>/proof2-claude
 
 $ ls -A
 
-$ apm install 'stevengonsalvez/ainb-toolkit/packages/qe-agent-pack#f/slice-c-apm-qe-package' --target claude
+$ apm install 'stevengonsalvez/ainb-toolkit/packages/qe-agent-pack#c2fce145e08863c9688121e40f0a260b17f50001' --target claude
 [*] Created apm.yml
 [i] Targets set: claude (persisted to apm.yml)
 [*] Validating 1 package...
-[+] stevengonsalvez/ainb-toolkit/packages/qe-agent-pack#f/slice-c-apm-qe-package
+[+] 
+stevengonsalvez/ainb-toolkit/packages/qe-agent-pack#c2fce145e08863c9688121e40f0a
+260b17f50001
 [*] Updated apm.yml with 1 new package(s)
 [>] Installing 1 new package...
 [>] Resolving ainb-toolkit-qe-agent-pack...
 [i] Targets: claude  (source: --target flag)
   [+] 
-github.com/stevengonsalvez/ainb-toolkit/packages/qe-agent-pack#f/slice-c-apm-qe-
-package #f/slice-c-apm-qe-package @bdd7a3a1
+github.com/stevengonsalvez/ainb-toolkit/packages/qe-agent-pack#c2fce145e08863c96
+88121e40f0a260b17f50001 #c2fce145e08863c9688121e40f0a260b17f50001 @c2fce145
   |-- 4 agents integrated -> .claude/agents/
   |-- 3 rule(s) integrated -> .claude/rules/
   |-- 4 skill(s) integrated -> .claude/skills/
@@ -156,7 +163,7 @@ Successfully configured MCP server 'playwright-test' for Claude Code
 |  [+]  playwright-test -> Claude (configured)
 [*] Configured 1 server
 
-[*] Installed 1 APM dependency and 1 MCP server in 0.6s.
+[*] Installed 1 APM dependency and 1 MCP server in 0.7s.
 
 $ find . -type f -not -path './apm_modules/*' | sort
 ./.claude/agents/playwright-test-generator.md
@@ -188,17 +195,19 @@ $ find . -type f -not -path './apm_modules/*' | sort
 ./apm.yml
 
 $ grep -E 'resolved_commit|resolved_ref|content_hash' apm.lock.yaml | head -3
-  resolved_commit: bdd7a3a1136a3d53967b3b3cefb3f960cdcac21e
-  resolved_ref: f/slice-c-apm-qe-package
-  content_hash: sha256:feee26aade37822995010734f617f1260bc8148d95dba293df2ed5ae2895791e
+  resolved_commit: c2fce145e08863c9688121e40f0a260b17f50001
+  resolved_ref: c2fce145e08863c9688121e40f0a260b17f50001
+  content_hash: sha256:e394b47745ec983d9abb0e3d041d94301289b4991f1c76095d1707d5a8341d54
 
 $ grep -c sha256 apm.lock.yaml
 47
 
+$ apm install --frozen
+
+[*] Installed 1 APM dependency in 0.8s.
+[i] Lockfile presence verified. Run 'apm audit' for on-disk content integrity.
+
 $ apm audit --ci
-│ [+]      │ includes-consent         │ No local content deployed -- includes  │
-│          │                          │ consent check skipped                  │
-│ [+]      │ drift                    │ no drift detected against lockfile     │
 └──────────┴──────────────────────────┴────────────────────────────────────────┘
 
 [*] All 10 check(s) passed
@@ -226,12 +235,19 @@ $ python3 -c "import json; d=json.load(open('apm-audit.sarif')); print(d['versio
 The ten SARIF results are all `note` level: emoji variation selectors (U+FE0F)
 inside the bundled skill bodies. They do not fail `apm audit --ci`.
 
+One caveat found while testing the policy rather than assuming it: a consumer
+declaring `targets: [cursor]`, outside `compilation.target.allow`, also passes
+all 31 checks. APM 0.29.0's `_check_compilation_target`
+(`policy/policy_checks.py:508`) reads the legacy singular `target:` key and
+ignores the plural `targets:` list. The allow list is documented intent, not an
+enforced control. Recorded in the package README under Known limitations.
+
 ## Conformance proof
 
 ```console
-$ scripts/check-agentskills-conformance skills
+$ scripts/check-agentskills-conformance skills packages/qe-agent-pack/.apm/skills
 
-checked 94 skills, 94 conform, 0 failed
+checked 98 skills, 98 conform, 0 failed
 $ echo $?
 0
 
@@ -247,42 +263,12 @@ $ echo $?
 1
 ```
 
+The 98 count is the 94 shipped skills plus the 4 vendored copies under the pack.
+
 ## A note on the recorded commit
 
-The transcripts above pin `bdd7a3a1136a3d53967b3b3cefb3f960cdcac21e`, which is
-the commit immediately before this file was added. `PROOF.md` lives inside the
-package, so committing the transcript changes the package tree the transcript
-describes and would move the SHA it records. The recorded ref is exact and
-reproducible as written; the package's primitives (`apm.yml`, `apm-policy.yml`,
-`.apm/`) are unchanged since that commit.
-
-## CI evidence
-
-`.github/workflows/ci.yml` on pull request
-[#47](https://github.com/stevengonsalvez/ainb-toolkit/pull/47),
-[run 33890519174](https://github.com/stevengonsalvez/ainb-toolkit/actions/runs/33890519174):
-
-| Job | Result |
-|---|---|
-| agentskills.io conformance | pass, 94 skills clean and the broken fixture still rejected |
-| bats | pass, 75 tests |
-| APM install and audit | pass, clean-room install plus 31 policy checks |
-| apm-audit (code scanning) | pass |
-
-SARIF landed both ways:
-
-```console
-$ gh api repos/stevengonsalvez/ainb-toolkit/actions/runs/33890519174/artifacts
-apm-audit-sarif 861 bytes expired=false
-
-$ gh api repos/stevengonsalvez/ainb-toolkit/code-scanning/analyses
-category=apm-audit tool=apm-audit results_count=10 rules_count=1 error=""
-```
-
-The workflow log for the upload step:
-
-```console
-Uploading results
-Successfully uploaded results
-Analysis upload status is complete.
-```
+The transcripts pin the commit immediately before this file was rewritten.
+`PROOF.md` lives inside the package, so committing the transcript changes the
+package tree the transcript describes and would move the SHA it records. The
+recorded ref is exact and reproducible as written; the package's primitives
+(`apm.yml`, `apm-policy.yml`, `.apm/`) are unchanged since that commit.
