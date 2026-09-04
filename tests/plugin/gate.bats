@@ -44,7 +44,12 @@ setup() {
   # The suite's own honesty check. Every exemption test asserts absence of
   # output, which a stub satisfies; this proves at least one test can tell a
   # real gate from a stub. If this ever passes with STUB=1, the suite is lying.
-  printf '#!/usr/bin/env bash\nexit 0\n' > stub-gate.sh && chmod +x stub-gate.sh
+  # The stub drains stdin the way every real hook does. Exiting without
+  # reading leaves jq writing into a closed pipe, and on the CI runner jq
+  # loses that race and prints "writing output failed: Broken pipe" to
+  # stderr, which `run` folds into $output. Draining keeps the control
+  # honest (the stub still decides nothing) and removes the race.
+  printf '#!/usr/bin/env bash\ncat >/dev/null\nexit 0\n' > stub-gate.sh && chmod +x stub-gate.sh
   run bash -c "jq --arg c '$REPO' '. + {cwd:\$c}' '$FX/stop-event.json' | '$PWD/stub-gate.sh'"
   [ -z "$output" ] || { printf 'stub emitted (status %s): %s\n' "$status" "$output" >&2; false; }
   run bash -c "echo '$output' | jq -se '.[0].decision == \"block\"'"
