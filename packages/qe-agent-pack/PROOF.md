@@ -265,6 +265,42 @@ $ echo $?
 
 The 98 count is the 94 shipped skills plus the 4 vendored copies under the pack.
 
+## CI evidence
+
+`.github/workflows/ci.yml` on pull request
+[#47](https://github.com/stevengonsalvez/ainb-toolkit/pull/47),
+[run 33896620322](https://github.com/stevengonsalvez/ainb-toolkit/actions/runs/33896620322):
+
+| Job | Result |
+|---|---|
+| agentskills.io conformance | pass, 98 skills clean (94 shipped plus 4 vendored) and the broken fixture still rejected |
+| bats | pass, 75 tests |
+| APM install and audit | pass, every step success |
+| apm-audit (code scanning) | pass |
+
+The APM job installs twice. First from a local path into a clean-room consumer,
+then from the repository at the pull request head SHA, which is the install that
+exercises ref resolution and pinning:
+
+```console
+##[group]resolved pins
+  resolved_commit: 2d65a6a9088798fa4eb02206f9daf438d0e68f41
+  resolved_ref: 2d65a6a9088798fa4eb02206f9daf438d0e68f41
+```
+
+The job then asserts that pin equals the head SHA, reruns `apm install --frozen`
+to prove the lockfile reproduces, and audits the result.
+
+SARIF landed both ways:
+
+```console
+$ gh api repos/stevengonsalvez/ainb-toolkit/actions/runs/33896620322/artifacts
+apm-audit-sarif 861 bytes
+
+$ gh api repos/stevengonsalvez/ainb-toolkit/code-scanning/analyses
+category=apm-audit tool=apm-audit results=10
+```
+
 ## A note on the recorded commit
 
 The transcripts pin the commit immediately before this file was rewritten.
