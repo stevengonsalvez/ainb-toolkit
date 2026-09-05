@@ -39,19 +39,31 @@ const policy = EntityPolicies.allOf([
 
 // Every validator listed for a kind must accept the entity. Spec types are an
 // allowlist: an unknown spec.type is an error rather than a silent fall-through
-// to the permissive base kind schema, so a mistyped "skil" cannot pass.
-const SPEC_TYPES = {
-  System: { [undefined]: [systemEntityV1alpha1Validator] },
-  API: { 'mcp-server': [apiEntityV1alpha1Validator, mcpServerApiEntityValidator] },
-  AiResource: { skill: [aiResourceEntityV1alpha1Validator, skillAiResourceEntityV1alpha1Validator] },
-};
+// to the permissive base kind schema, so a mistyped "skil" cannot pass. The
+// tables have no prototype, so a spec.type of "constructor" is unknown rather
+// than a walk up Object.prototype, and a kind without a spec.type (System) is
+// keyed on an explicit sentinel instead of the string "undefined".
+const NO_SPEC_TYPE = Symbol('no spec.type');
+
+function table(entries) {
+  const out = Object.create(null);
+  for (const [key, value] of entries) out[key] = value;
+  return out;
+}
+
+const SPEC_TYPES = table([
+  ['System', table([[NO_SPEC_TYPE, [systemEntityV1alpha1Validator]]])],
+  ['API', table([['mcp-server', [apiEntityV1alpha1Validator, mcpServerApiEntityValidator]]])],
+  ['AiResource', table([['skill', [aiResourceEntityV1alpha1Validator, skillAiResourceEntityV1alpha1Validator]]])],
+]);
 
 function validatorsFor(entity) {
   const byType = SPEC_TYPES[entity.kind];
   if (!byType) throw new Error(`no validator for kind ${entity.kind}`);
-  const validators = byType[entity.spec?.type];
+  const specType = entity.spec?.type;
+  const validators = byType[typeof specType === 'string' ? specType : NO_SPEC_TYPE];
   if (!validators) {
-    throw new Error(`unknown spec.type ${JSON.stringify(entity.spec?.type)} for kind ${entity.kind}`);
+    throw new Error(`unknown spec.type ${JSON.stringify(specType)} for kind ${entity.kind}`);
   }
   return validators;
 }

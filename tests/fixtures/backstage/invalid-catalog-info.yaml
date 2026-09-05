@@ -3,8 +3,9 @@
 # The API carries a definition but an empty remotes list, which only the
 # mcp-server spec type schema rejects. The last AiResource is base-valid but
 # its disciplines is not an array, which only the skill spec type schema rejects.
-# The final one carries a mistyped spec.type, which must not fall through to
-# the base schema.
+# The next carries a mistyped spec.type, which must not fall through to the
+# base schema, and the last uses a spec.type that is an Object.prototype
+# property name, which must be reported as unknown rather than crash.
 apiVersion: backstage.io/v1alpha1
 kind: AiResource
 metadata:
@@ -41,5 +42,14 @@ metadata:
   name: mistyped-spec-type
 spec:
   type: skil
+  lifecycle: experimental
+  owner: user:nobody
+---
+apiVersion: backstage.io/v1alpha1
+kind: AiResource
+metadata:
+  name: prototype-spec-type
+spec:
+  type: constructor
   lifecycle: experimental
   owner: user:nobody

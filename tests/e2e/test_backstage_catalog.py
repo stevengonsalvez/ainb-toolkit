@@ -272,6 +272,8 @@ def test_validator_rejects_the_invalid_fixture() -> None:
     assert "remotes" in result.stderr
     assert "disciplines" in result.stderr
     assert 'unknown spec.type "skil"' in result.stderr
+    assert 'unknown spec.type "constructor"' in result.stderr
+    assert "TypeError" not in result.stderr
 
 
 # Skills index ------------------------------------------------------------------
