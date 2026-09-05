@@ -19,6 +19,13 @@ so the URL resolves to the exact bytes the entity describes. Regeneration
 therefore expects those sources to be committed first; pass --allow-dirty to
 override, or --sha to skip git entirely (tests do this on throwaway copies).
 
+--check does not derive the sha: it reads the one in the committed
+catalog-info.yaml, requires that commit to exist and the pack sources to be
+byte-identical to it, then compares the regenerated output. That keeps the
+check independent of how CI checks out a pull request (a merge ref is never
+the answer) and means the pinned commit must survive the merge: merge with a
+merge commit, since a squash or rebase merge rewrites it and every URL 404s.
+
 Only the standard library plus PyYAML (already in tests/requirements-test.txt).
 """
 
@@ -56,7 +63,10 @@ GENERATED_HEADER = (
 PROVENANCE_SOURCES = ["apm.yml", ".apm", "eval-score.json"]
 
 REQUIRED_METRICS = ("mutation_kill_rate", "seeded_defects_caught")
-MCP_TOOL_RE = re.compile(r"\bmcp__([A-Za-z0-9-]+)__")
+VERDICTS = ("PASS", "REGRESSION", "REFUSED")
+MCP_TOOL_RE = re.compile(r"\bmcp__([A-Za-z0-9_-]+?)__")
+SHA_RE = re.compile(r"[0-9a-f]{40}")
+SOURCE_LOCATION_RE = re.compile(r"backstage\.io/source-location: url:\S+/(?:tree|blob)/([0-9a-f]{40})/")
 
 
 class GenerateError(Exception):
@@ -87,8 +97,10 @@ def load_eval_score(path: Path) -> dict:
         raise GenerateError(f"{path}: source must be an https URL")
     try:
         date.fromisoformat(data["recorded"])
-    except ValueError as exc:
+    except (TypeError, ValueError) as exc:
         raise GenerateError(f"{path}: recorded must be an ISO date") from exc
+    if data["verdict"] not in VERDICTS:
+        raise GenerateError(f"{path}: verdict must be one of {VERDICTS}")
     metrics = data["metrics"]
     if not isinstance(metrics, dict) or not metrics:
         raise GenerateError(f"{path}: metrics must be a non-empty object")
@@ -101,6 +113,13 @@ def load_eval_score(path: Path) -> dict:
         for arm, score in value.items():
             if not isinstance(score, (int, float)) or isinstance(score, bool) or not 0 <= score <= 1:
                 raise GenerateError(f"{path}: metric {name!r} {arm} must be a number in [0, 1]")
+    # A PASS verdict is only claimable when every guarded signal held its baseline.
+    regressed = [
+        name for name in REQUIRED_METRICS
+        if metrics[name]["candidate"] < metrics[name].get("baseline", 0)
+    ]
+    if data["verdict"] == "PASS" and regressed:
+        raise GenerateError(f"{path}: verdict PASS but candidate below baseline on {regressed}")
     return data
 
 
@@ -113,9 +132,10 @@ def git(root: Path, *args: str) -> str:
     return result.stdout.strip()
 
 
-def resolve_sha(pack: Path, allow_dirty: bool, check: bool) -> str:
+def resolve_sha(pack: Path, allow_dirty: bool) -> str:
+    """Sha for a fresh generation: the last commit touching the pack sources."""
     sources = [str(pack / s) for s in PROVENANCE_SOURCES]
-    if not check and not allow_dirty:
+    if not allow_dirty:
         dirty = git(pack, "status", "--porcelain", "--", *sources)
         if dirty:
             raise GenerateError(
@@ -123,9 +143,39 @@ def resolve_sha(pack: Path, allow_dirty: bool, check: bool) -> str:
                 "would not resolve to them; commit first or pass --allow-dirty:\n" + dirty
             )
     sha = git(pack, "log", "-1", "--format=%H", "--", *sources)
-    if not re.fullmatch(r"[0-9a-f]{40}", sha):
+    if not SHA_RE.fullmatch(sha):
         raise GenerateError("could not resolve a commit touching the pack sources")
     return sha
+
+
+def committed_sha(pack: Path) -> str:
+    """Sha for --check: the one already pinned in the committed catalogue."""
+    catalog = pack / "catalog-info.yaml"
+    if not catalog.is_file():
+        raise GenerateError(f"{catalog}: missing; run the generator first")
+    found = set(SOURCE_LOCATION_RE.findall(catalog.read_text(encoding="utf-8")))
+    if len(found) != 1:
+        raise GenerateError(f"{catalog}: expected one provenance sha, found {sorted(found)}")
+    return found.pop()
+
+
+def verify_sources_match_sha(pack: Path, sha: str) -> None:
+    """The pinned commit must exist and hold exactly the pack sources on disk."""
+    sources = [str(pack / s) for s in PROVENANCE_SOURCES]
+    if subprocess.run(["git", "cat-file", "-e", f"{sha}^{{commit}}"], cwd=pack,
+                      capture_output=True).returncode != 0:
+        raise GenerateError(
+            f"provenance commit {sha} is not in this repository; the pack was probably "
+            "squash or rebase merged, regenerate against a reachable commit"
+        )
+    diff = subprocess.run(["git", "diff", "--stat", sha, "--", *sources], cwd=pack,
+                          capture_output=True, text=True)
+    if diff.returncode != 0:
+        raise GenerateError(f"git diff against {sha}: {diff.stderr.strip()}")
+    if diff.stdout.strip():
+        raise GenerateError(
+            f"pack sources differ from provenance commit {sha[:12]}; regenerate:\n{diff.stdout}"
+        )
 
 
 def eval_annotation(score: dict) -> str:
@@ -150,6 +200,17 @@ def eval_summary(score: dict) -> str:
 
 
 def list_files(root: Path) -> list[str]:
+    """Files git would commit under root: tracked plus untracked and not ignored.
+
+    Falls back to a directory walk when root is not inside a repository, which
+    is the case for the throwaway copies the tests generate into.
+    """
+    listing = subprocess.run(
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z", "--", "."],
+        cwd=root, capture_output=True, text=True,
+    )
+    if listing.returncode == 0:
+        return sorted(f for f in listing.stdout.split("\0") if f and (root / f).is_file())
     return sorted(
         p.relative_to(root).as_posix() for p in root.rglob("*") if p.is_file()
     )
@@ -159,8 +220,8 @@ def pack_relative_path(pack: Path) -> str:
     """Path of the pack inside the repository, as used in source-location URLs."""
     try:
         return pack.resolve().relative_to(REPO_ROOT).as_posix()
-    except ValueError:
-        return f"packages/{pack.name}"
+    except ValueError as exc:
+        raise GenerateError(f"{pack} is outside {REPO_ROOT}; pass --pack-rel") from exc
 
 
 class Catalog:
@@ -179,20 +240,27 @@ class Catalog:
         self.owner = f"user:{self.apm['author']}"
         self.system = self.apm["name"]
         self.tags = list(self.apm.get("keywords", []))
-        self.agents = [
-            TARGET_TO_AGENT[t] for t in self.apm.get("targets", []) if t in TARGET_TO_AGENT
-        ]
-        self.mcp_servers = {
-            d["name"]: d for d in (self.apm.get("dependencies") or {}).get("mcp") or []
-        }
+        targets = list(self.apm.get("targets") or [])
+        unknown_targets = [t for t in targets if t not in TARGET_TO_AGENT]
+        if unknown_targets:
+            raise GenerateError(f"apm.yml: targets not mapped to Backstage agents: {unknown_targets}")
+        self.agents = [TARGET_TO_AGENT[t] for t in targets]
+        self.mcp_servers = {}
+        for dep in (self.apm.get("dependencies") or {}).get("mcp") or []:
+            if not isinstance(dep, dict) or not dep.get("name"):
+                raise GenerateError("apm.yml: every dependencies.mcp entry needs a name")
+            self.mcp_servers[dep["name"]] = dep
 
     # Provenance helpers ---------------------------------------------------
 
-    def source_location(self, rel: str, is_dir: bool) -> str:
+    def source_url(self, rel: str, is_dir: bool) -> str:
         kind = "tree" if is_dir else "blob"
         path = f"{self.pack_rel}/{rel}" if rel else self.pack_rel
         suffix = "/" if is_dir else ""
-        return f"url:{self.repo_url}/{kind}/{self.sha}/{path}{suffix}"
+        return f"{self.repo_url}/{kind}/{self.sha}/{path}{suffix}"
+
+    def source_location(self, rel: str, is_dir: bool) -> str:
+        return "url:" + self.source_url(rel, is_dir)
 
     def annotations(self, rel: str, is_dir: bool, **extra: str) -> dict:
         base = {
@@ -205,7 +273,7 @@ class Catalog:
 
     def source_link(self, rel: str, is_dir: bool) -> dict:
         return {
-            "url": self.source_location(rel, is_dir)[len("url:"):],
+            "url": self.source_url(rel, is_dir),
             "title": "Source",
             "type": "source",
         }
@@ -387,11 +455,18 @@ def main(argv: list[str] | None = None) -> int:
 
     pack = args.pack.resolve()
     try:
-        sha = args.sha or resolve_sha(pack, args.allow_dirty, args.check)
-        if not re.fullmatch(r"[0-9a-f]{40}", sha):
-            raise GenerateError(f"--sha must be a 40 character hex sha, got {sha!r}")
+        if args.sha:
+            sha = args.sha
+            if not SHA_RE.fullmatch(sha):
+                raise GenerateError(f"--sha must be a 40 character hex sha, got {sha!r}")
+        elif args.check:
+            sha = committed_sha(pack)
+            verify_sources_match_sha(pack, sha)
+        else:
+            sha = resolve_sha(pack, args.allow_dirty)
         generated = outputs(pack, sha, args.pack_rel)
-    except (GenerateError, yaml.YAMLError, json.JSONDecodeError, OSError) as exc:
+    except (GenerateError, yaml.YAMLError, json.JSONDecodeError, OSError,
+            KeyError, TypeError, AttributeError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 

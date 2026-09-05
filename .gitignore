@@ -14,3 +14,6 @@ __pycache__/
 # CI clean-room APM consumer (created by .github/workflows/ci.yml)
 .apm-ci-consumer/
 apm-audit.sarif
+
+# macOS Finder metadata
+.DS_Store
