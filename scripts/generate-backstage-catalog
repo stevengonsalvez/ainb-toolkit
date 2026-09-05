@@ -202,18 +202,17 @@ def eval_summary(score: dict) -> str:
 def list_files(root: Path) -> list[str]:
     """Files git would commit under root: tracked plus untracked and not ignored.
 
-    Falls back to a directory walk when root is not inside a repository, which
-    is the case for the throwaway copies the tests generate into.
+    A directory walk would also list ignored build artefacts such as
+    __pycache__, making the output depend on what was last run, so a pack
+    outside a git repository is an error rather than a fallback.
     """
     listing = subprocess.run(
         ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z", "--", "."],
         cwd=root, capture_output=True, text=True,
     )
-    if listing.returncode == 0:
-        return sorted(f for f in listing.stdout.split("\0") if f and (root / f).is_file())
-    return sorted(
-        p.relative_to(root).as_posix() for p in root.rglob("*") if p.is_file()
-    )
+    if listing.returncode != 0:
+        raise GenerateError(f"{root} is not inside a git repository: {listing.stderr.strip()}")
+    return sorted(f for f in listing.stdout.split("\0") if f and (root / f).is_file())
 
 
 def pack_relative_path(pack: Path) -> str:

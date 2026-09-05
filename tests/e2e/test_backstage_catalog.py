@@ -162,41 +162,6 @@ def test_skill_source_location_points_at_the_skill_directory() -> None:
 # Drift check -------------------------------------------------------------------
 
 
-@pytest.fixture
-def pack_copy(tmp_path: Path) -> Path:
-    copy = tmp_path / "qe-agent-pack"
-    shutil.copytree(PACK, copy)
-    return copy
-
-
-def test_check_passes_on_a_faithful_copy_and_fails_after_adding_a_skill(pack_copy: Path) -> None:
-    sha, _ = source_location(entities()[0])
-    common = ["--pack", str(pack_copy), "--sha", sha, "--pack-rel", "packages/qe-agent-pack"]
-    assert run_generator("--check", *common).returncode == 0
-
-    new_skill = pack_copy / ".apm" / "skills" / "brand-new-skill"
-    new_skill.mkdir()
-    (new_skill / "SKILL.md").write_text(
-        "---\nname: brand-new-skill\ndescription: Added without regenerating.\n---\n# Body\n"
-    )
-    result = run_generator("--check", *common)
-    assert result.returncode == 1
-    assert "drift: catalog-info.yaml" in result.stderr
-    assert "drift: .well-known/skills/index.json" in result.stderr
-    assert "brand-new-skill" in result.stderr
-
-
-def test_generator_rejects_an_out_of_range_eval_score(pack_copy: Path) -> None:
-    score_file = pack_copy / "eval-score.json"
-    score = json.loads(score_file.read_text())
-    score["metrics"]["mutation_kill_rate"]["candidate"] = 1.5
-    score_file.write_text(json.dumps(score))
-    sha, _ = source_location(entities()[0])
-    result = run_generator("--pack", str(pack_copy), "--sha", sha, "--pack-rel", "packages/qe-agent-pack")
-    assert result.returncode == 2
-    assert "mutation_kill_rate" in result.stderr
-
-
 def git(cwd: Path, *args: str) -> str:
     return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, check=True).stdout.strip()
 
@@ -215,6 +180,44 @@ def pack_repo(tmp_path: Path) -> Path:
     git(repo, "add", ".")
     git(repo, "commit", "--quiet", "--no-gpg-sign", "-m", "pack sources")
     return pack
+
+
+def test_check_fails_after_adding_a_skill_without_regenerating(pack_repo: Path) -> None:
+    common = ["--pack", str(pack_repo), "--pack-rel", "packages/qe-agent-pack"]
+    assert run_generator(*common).returncode == 0
+    git(pack_repo, "add", ".")
+    git(pack_repo, "commit", "--quiet", "--no-gpg-sign", "-m", "generated catalogue")
+    assert run_generator("--check", *common).returncode == 0
+
+    new_skill = pack_repo / ".apm" / "skills" / "brand-new-skill"
+    new_skill.mkdir()
+    (new_skill / "SKILL.md").write_text(
+        "---\nname: brand-new-skill\ndescription: Added without regenerating.\n---\n# Body\n"
+    )
+    result = run_generator("--check", *common)
+    assert result.returncode == 1
+    assert "drift: catalog-info.yaml" in result.stderr
+    assert "drift: .well-known/skills/index.json" in result.stderr
+    assert "brand-new-skill" in result.stderr
+
+
+def test_generator_rejects_an_out_of_range_eval_score(pack_repo: Path) -> None:
+    score_file = pack_repo / "eval-score.json"
+    score = json.loads(score_file.read_text())
+    score["metrics"]["mutation_kill_rate"]["candidate"] = 1.5
+    score_file.write_text(json.dumps(score))
+    result = run_generator("--pack", str(pack_repo), "--pack-rel", "packages/qe-agent-pack", "--allow-dirty")
+    assert result.returncode == 2
+    assert "mutation_kill_rate" in result.stderr
+
+
+def test_generator_refuses_a_pack_outside_a_git_repository(tmp_path: Path) -> None:
+    copy = tmp_path / "qe-agent-pack"
+    shutil.copytree(PACK, copy)
+    sha, _ = source_location(entities()[0])
+    result = run_generator("--pack", str(copy), "--sha", sha, "--pack-rel", "packages/qe-agent-pack")
+    assert result.returncode == 2
+    assert "not inside a git repository" in result.stderr
 
 
 def test_check_pins_the_committed_sha_and_fails_when_sources_move_past_it(pack_repo: Path) -> None:
