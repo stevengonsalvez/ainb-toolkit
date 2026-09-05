@@ -1,7 +1,10 @@
 # Deliberately invalid: the AiResource has no spec.owner and its name carries
-# a space, so both the field-format policy and the kind schema must reject it.
+# a space, which the field-format policy rejects.
 # The API carries a definition but an empty remotes list, which only the
-# mcp-server spec type schema rejects.
+# mcp-server spec type schema rejects. The last AiResource is base-valid but
+# its disciplines is not an array, which only the skill spec type schema rejects.
+# The final one carries a mistyped spec.type, which must not fall through to
+# the base schema.
 apiVersion: backstage.io/v1alpha1
 kind: AiResource
 metadata:
@@ -21,3 +24,22 @@ spec:
   owner: user:nobody
   remotes: []
   definition: declared in apm.yml
+---
+apiVersion: backstage.io/v1alpha1
+kind: AiResource
+metadata:
+  name: skill-schema-probe
+spec:
+  type: skill
+  lifecycle: experimental
+  owner: user:nobody
+  disciplines: not-an-array
+---
+apiVersion: backstage.io/v1alpha1
+kind: AiResource
+metadata:
+  name: mistyped-spec-type
+spec:
+  type: skil
+  lifecycle: experimental
+  owner: user:nobody
