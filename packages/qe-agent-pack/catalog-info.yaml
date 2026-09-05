@@ -16,15 +16,15 @@ metadata:
   - playwright
   - quality
   annotations:
-    backstage.io/source-location: url:https://github.com/stevengonsalvez/ainb-toolkit/tree/ee0b86e45b3c532752d6b978dd45335e241e1591/packages/qe-agent-pack/
+    backstage.io/source-location: url:https://github.com/stevengonsalvez/ainb-toolkit/tree/422e8f6d59ee1677c81f291ac05e54efec309c02/packages/qe-agent-pack/
     wololo.dev/apm-package: qe-agent-pack@0.1.0
-    wololo.dev/eval-score: '{"metrics":{"mutation_kill_rate":{"baseline":0.2373,"candidate":0.3012},"qe_flake_resistance":{"baseline":1.0,"candidate":1.0},"seeded_defects_caught":{"baseline":0.25,"candidate":0.3636}},"recorded":"2026-09-04","source":"https://github.com/wololo-labs/wololo-evals/blob/497154ea09717fdc7e30c594a484279e9330b709/README.md#the-qe-benchmark-scoring-a-testing-skill","verdict":"PASS"}'
+    wololo.dev/eval-score: '{"metrics":{"mutation_kill_rate":{"baseline":0.2373,"candidate":0.3012},"qe_flake_resistance":{"baseline":1.0,"candidate":1.0},"seeded_defects_caught":{"baseline":0.25,"candidate":0.3636}},"recorded":"2026-09-04","source":"https://github.com/wololo-labs/wololo-evals/blob/497154ea09717fdc7e30c594a484279e9330b709/README.md#the-qe-benchmark-scoring-a-testing-skill","sourceVisibility":"internal","verdict":"PASS"}'
   links:
-  - url: https://github.com/stevengonsalvez/ainb-toolkit/tree/ee0b86e45b3c532752d6b978dd45335e241e1591/packages/qe-agent-pack/
+  - url: https://github.com/stevengonsalvez/ainb-toolkit/tree/422e8f6d59ee1677c81f291ac05e54efec309c02/packages/qe-agent-pack/
     title: Source
     type: source
   - url: https://github.com/wololo-labs/wololo-evals/blob/497154ea09717fdc7e30c594a484279e9330b709/README.md#the-qe-benchmark-scoring-a-testing-skill
-    title: Eval gate report
+    title: Eval gate report (internal, needs repository access)
     type: eval
 spec:
   owner: user:stevengonsalvez
@@ -43,11 +43,11 @@ metadata:
   - playwright
   - quality
   annotations:
-    backstage.io/source-location: url:https://github.com/stevengonsalvez/ainb-toolkit/tree/ee0b86e45b3c532752d6b978dd45335e241e1591/packages/qe-agent-pack/.apm/skills/expect-test/
+    backstage.io/source-location: url:https://github.com/stevengonsalvez/ainb-toolkit/tree/422e8f6d59ee1677c81f291ac05e54efec309c02/packages/qe-agent-pack/.apm/skills/expect-test/
     wololo.dev/apm-package: qe-agent-pack@0.1.0
     wololo.dev/eval-score-ref: system:default/qe-agent-pack
   links:
-  - url: https://github.com/stevengonsalvez/ainb-toolkit/tree/ee0b86e45b3c532752d6b978dd45335e241e1591/packages/qe-agent-pack/.apm/skills/expect-test/
+  - url: https://github.com/stevengonsalvez/ainb-toolkit/tree/422e8f6d59ee1677c81f291ac05e54efec309c02/packages/qe-agent-pack/.apm/skills/expect-test/
     title: Source
     type: source
 spec:
@@ -75,11 +75,11 @@ metadata:
   - playwright
   - quality
   annotations:
-    backstage.io/source-location: url:https://github.com/stevengonsalvez/ainb-toolkit/tree/ee0b86e45b3c532752d6b978dd45335e241e1591/packages/qe-agent-pack/.apm/skills/find-missing-tests/
+    backstage.io/source-location: url:https://github.com/stevengonsalvez/ainb-toolkit/tree/422e8f6d59ee1677c81f291ac05e54efec309c02/packages/qe-agent-pack/.apm/skills/find-missing-tests/
     wololo.dev/apm-package: qe-agent-pack@0.1.0
     wololo.dev/eval-score-ref: system:default/qe-agent-pack
   links:
-  - url: https://github.com/stevengonsalvez/ainb-toolkit/tree/ee0b86e45b3c532752d6b978dd45335e241e1591/packages/qe-agent-pack/.apm/skills/find-missing-tests/
+  - url: https://github.com/stevengonsalvez/ainb-toolkit/tree/422e8f6d59ee1677c81f291ac05e54efec309c02/packages/qe-agent-pack/.apm/skills/find-missing-tests/
     title: Source
     type: source
 spec:
@@ -108,11 +108,11 @@ metadata:
   - playwright
   - quality
   annotations:
-    backstage.io/source-location: url:https://github.com/stevengonsalvez/ainb-toolkit/tree/ee0b86e45b3c532752d6b978dd45335e241e1591/packages/qe-agent-pack/.apm/skills/test-driven-development/
+    backstage.io/source-location: url:https://github.com/stevengonsalvez/ainb-toolkit/tree/422e8f6d59ee1677c81f291ac05e54efec309c02/packages/qe-agent-pack/.apm/skills/test-driven-development/
     wololo.dev/apm-package: qe-agent-pack@0.1.0
     wololo.dev/eval-score-ref: system:default/qe-agent-pack
   links:
-  - url: https://github.com/stevengonsalvez/ainb-toolkit/tree/ee0b86e45b3c532752d6b978dd45335e241e1591/packages/qe-agent-pack/.apm/skills/test-driven-development/
+  - url: https://github.com/stevengonsalvez/ainb-toolkit/tree/422e8f6d59ee1677c81f291ac05e54efec309c02/packages/qe-agent-pack/.apm/skills/test-driven-development/
     title: Source
     type: source
 spec:
@@ -142,11 +142,11 @@ metadata:
   - playwright
   - quality
   annotations:
-    backstage.io/source-location: url:https://github.com/stevengonsalvez/ainb-toolkit/tree/ee0b86e45b3c532752d6b978dd45335e241e1591/packages/qe-agent-pack/.apm/skills/webapp-testing/
+    backstage.io/source-location: url:https://github.com/stevengonsalvez/ainb-toolkit/tree/422e8f6d59ee1677c81f291ac05e54efec309c02/packages/qe-agent-pack/.apm/skills/webapp-testing/
     wololo.dev/apm-package: qe-agent-pack@0.1.0
     wololo.dev/eval-score-ref: system:default/qe-agent-pack
   links:
-  - url: https://github.com/stevengonsalvez/ainb-toolkit/tree/ee0b86e45b3c532752d6b978dd45335e241e1591/packages/qe-agent-pack/.apm/skills/webapp-testing/
+  - url: https://github.com/stevengonsalvez/ainb-toolkit/tree/422e8f6d59ee1677c81f291ac05e54efec309c02/packages/qe-agent-pack/.apm/skills/webapp-testing/
     title: Source
     type: source
 spec:
@@ -180,13 +180,13 @@ metadata:
   - playwright
   - quality
   annotations:
-    backstage.io/source-location: url:https://github.com/stevengonsalvez/ainb-toolkit/blob/ee0b86e45b3c532752d6b978dd45335e241e1591/packages/qe-agent-pack/.apm/agents/playwright-test-generator.agent.md
+    backstage.io/source-location: url:https://github.com/stevengonsalvez/ainb-toolkit/blob/422e8f6d59ee1677c81f291ac05e54efec309c02/packages/qe-agent-pack/.apm/agents/playwright-test-generator.agent.md
     wololo.dev/apm-package: qe-agent-pack@0.1.0
     wololo.dev/eval-score-ref: system:default/qe-agent-pack
     wololo.dev/mcp-servers: playwright-test
     wololo.dev/agent-model: sonnet
   links:
-  - url: https://github.com/stevengonsalvez/ainb-toolkit/blob/ee0b86e45b3c532752d6b978dd45335e241e1591/packages/qe-agent-pack/.apm/agents/playwright-test-generator.agent.md
+  - url: https://github.com/stevengonsalvez/ainb-toolkit/blob/422e8f6d59ee1677c81f291ac05e54efec309c02/packages/qe-agent-pack/.apm/agents/playwright-test-generator.agent.md
     title: Source
     type: source
 spec:
@@ -215,13 +215,13 @@ metadata:
   - playwright
   - quality
   annotations:
-    backstage.io/source-location: url:https://github.com/stevengonsalvez/ainb-toolkit/blob/ee0b86e45b3c532752d6b978dd45335e241e1591/packages/qe-agent-pack/.apm/agents/playwright-test-healer.agent.md
+    backstage.io/source-location: url:https://github.com/stevengonsalvez/ainb-toolkit/blob/422e8f6d59ee1677c81f291ac05e54efec309c02/packages/qe-agent-pack/.apm/agents/playwright-test-healer.agent.md
     wololo.dev/apm-package: qe-agent-pack@0.1.0
     wololo.dev/eval-score-ref: system:default/qe-agent-pack
     wololo.dev/mcp-servers: playwright-test
     wololo.dev/agent-model: sonnet
   links:
-  - url: https://github.com/stevengonsalvez/ainb-toolkit/blob/ee0b86e45b3c532752d6b978dd45335e241e1591/packages/qe-agent-pack/.apm/agents/playwright-test-healer.agent.md
+  - url: https://github.com/stevengonsalvez/ainb-toolkit/blob/422e8f6d59ee1677c81f291ac05e54efec309c02/packages/qe-agent-pack/.apm/agents/playwright-test-healer.agent.md
     title: Source
     type: source
 spec:
@@ -251,13 +251,13 @@ metadata:
   - playwright
   - quality
   annotations:
-    backstage.io/source-location: url:https://github.com/stevengonsalvez/ainb-toolkit/blob/ee0b86e45b3c532752d6b978dd45335e241e1591/packages/qe-agent-pack/.apm/agents/playwright-test-planner.agent.md
+    backstage.io/source-location: url:https://github.com/stevengonsalvez/ainb-toolkit/blob/422e8f6d59ee1677c81f291ac05e54efec309c02/packages/qe-agent-pack/.apm/agents/playwright-test-planner.agent.md
     wololo.dev/apm-package: qe-agent-pack@0.1.0
     wololo.dev/eval-score-ref: system:default/qe-agent-pack
     wololo.dev/mcp-servers: playwright-test
     wololo.dev/agent-model: sonnet
   links:
-  - url: https://github.com/stevengonsalvez/ainb-toolkit/blob/ee0b86e45b3c532752d6b978dd45335e241e1591/packages/qe-agent-pack/.apm/agents/playwright-test-planner.agent.md
+  - url: https://github.com/stevengonsalvez/ainb-toolkit/blob/422e8f6d59ee1677c81f291ac05e54efec309c02/packages/qe-agent-pack/.apm/agents/playwright-test-planner.agent.md
     title: Source
     type: source
 spec:
@@ -291,12 +291,12 @@ metadata:
   - playwright
   - quality
   annotations:
-    backstage.io/source-location: url:https://github.com/stevengonsalvez/ainb-toolkit/blob/ee0b86e45b3c532752d6b978dd45335e241e1591/packages/qe-agent-pack/.apm/agents/test-engineer.agent.md
+    backstage.io/source-location: url:https://github.com/stevengonsalvez/ainb-toolkit/blob/422e8f6d59ee1677c81f291ac05e54efec309c02/packages/qe-agent-pack/.apm/agents/test-engineer.agent.md
     wololo.dev/apm-package: qe-agent-pack@0.1.0
     wololo.dev/eval-score-ref: system:default/qe-agent-pack
     wololo.dev/agent-model: sonnet
   links:
-  - url: https://github.com/stevengonsalvez/ainb-toolkit/blob/ee0b86e45b3c532752d6b978dd45335e241e1591/packages/qe-agent-pack/.apm/agents/test-engineer.agent.md
+  - url: https://github.com/stevengonsalvez/ainb-toolkit/blob/422e8f6d59ee1677c81f291ac05e54efec309c02/packages/qe-agent-pack/.apm/agents/test-engineer.agent.md
     title: Source
     type: source
 spec:
@@ -327,11 +327,11 @@ metadata:
   - quality
   - mcp
   annotations:
-    backstage.io/source-location: url:https://github.com/stevengonsalvez/ainb-toolkit/blob/ee0b86e45b3c532752d6b978dd45335e241e1591/packages/qe-agent-pack/apm.yml
+    backstage.io/source-location: url:https://github.com/stevengonsalvez/ainb-toolkit/blob/422e8f6d59ee1677c81f291ac05e54efec309c02/packages/qe-agent-pack/apm.yml
     wololo.dev/apm-package: qe-agent-pack@0.1.0
     wololo.dev/eval-score-ref: system:default/qe-agent-pack
   links:
-  - url: https://github.com/stevengonsalvez/ainb-toolkit/blob/ee0b86e45b3c532752d6b978dd45335e241e1591/packages/qe-agent-pack/apm.yml
+  - url: https://github.com/stevengonsalvez/ainb-toolkit/blob/422e8f6d59ee1677c81f291ac05e54efec309c02/packages/qe-agent-pack/apm.yml
     title: Source
     type: source
 spec:
