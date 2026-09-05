@@ -64,6 +64,7 @@ PROVENANCE_SOURCES = ["apm.yml", ".apm", "eval-score.json"]
 
 REQUIRED_METRICS = ("mutation_kill_rate", "seeded_defects_caught")
 VERDICTS = ("PASS", "REGRESSION", "REFUSED")
+VISIBILITIES = ("public", "internal")
 MCP_TOOL_RE = re.compile(r"\bmcp__([A-Za-z0-9_-]+?)__")
 SHA_RE = re.compile(r"[0-9a-f]{40}")
 SOURCE_LOCATION_RE = re.compile(r"backstage\.io/source-location: url:\S+/(?:tree|blob)/([0-9a-f]{40})/")
@@ -90,11 +91,13 @@ def load_eval_score(path: Path) -> dict:
     if not path.is_file():
         raise GenerateError(f"{path}: missing eval score file")
     data = json.loads(path.read_text(encoding="utf-8"))
-    for key in ("pack", "source", "recorded", "verdict", "metrics"):
+    for key in ("pack", "source", "visibility", "recorded", "verdict", "metrics"):
         if key not in data:
             raise GenerateError(f"{path}: missing key {key!r}")
     if not str(data["source"]).startswith("https://"):
         raise GenerateError(f"{path}: source must be an https URL")
+    if data["visibility"] not in VISIBILITIES:
+        raise GenerateError(f"{path}: visibility must be one of {VISIBILITIES}")
     try:
         date.fromisoformat(data["recorded"])
     except (TypeError, ValueError) as exc:
@@ -183,9 +186,17 @@ def eval_annotation(score: dict) -> str:
         "metrics": score["metrics"],
         "recorded": score["recorded"],
         "source": score["source"],
+        # internal means the URL needs access to the source repository.
+        "sourceVisibility": score["visibility"],
         "verdict": score["verdict"],
     }
     return json.dumps(payload, sort_keys=True, separators=(",", ":"))
+
+
+def eval_link_title(score: dict) -> str:
+    if score["visibility"] == "internal":
+        return "Eval gate report (internal, needs repository access)"
+    return "Eval gate report"
 
 
 def eval_summary(score: dict) -> str:
@@ -406,7 +417,7 @@ class Catalog:
                 },
                 "links": [
                     self.source_link("", True),
-                    {"url": self.score["source"], "title": "Eval gate report", "type": "eval"},
+                    {"url": self.score["source"], "title": eval_link_title(self.score), "type": "eval"},
                 ],
             },
             "spec": {"owner": self.owner},

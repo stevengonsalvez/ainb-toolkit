@@ -223,7 +223,7 @@ same ingestion pass.
 | Annotation | On | Value |
 |---|---|---|
 | `backstage.io/source-location` | every entity | `url:` plus the GitHub `tree` (directory) or `blob` (file) URL at the exact commit sha the entity was generated from; skills point at their directory, agents at their `.agent.md`, the MCP server at `apm.yml`, the System at the pack root |
-| `wololo.dev/eval-score` | the System | compact JSON with `metrics` (candidate and baseline per signal), `recorded` date, `source` URL of the gate report and `verdict`, copied from `eval-score.json` |
+| `wololo.dev/eval-score` | the System | compact JSON with `metrics` (candidate and baseline per signal), `recorded` date, `source` URL of the gate report, `sourceVisibility` and `verdict`, copied from `eval-score.json` |
 | `wololo.dev/eval-score-ref` | every other entity | entity reference to the System that carries the score, so the numbers are stored once |
 | `wololo.dev/apm-package` | every entity | `<name>@<version>` from `apm.yml` |
 | `wololo.dev/mcp-servers` | agents whose `tools` name `mcp__<server>__*` tools | comma-separated server names; the generator fails if a named server is not declared in `apm.yml` |
@@ -261,6 +261,13 @@ seeded-defect catch 0.3636 against 0.2500, flake resistance 1.0. Those numbers
 are recomputed at gate time from real mutation and seeded-defect runs; the
 recorded trajectories in that corpus are hand-authored fixtures, and the file
 says so. Update the file when a new gate run lands, then regenerate.
+
+The gate report lives in a private repository. `eval-score.json` marks it
+`"visibility": "internal"`, the annotation carries that as
+`sourceVisibility`, and the System's link is titled accordingly: the URL is
+the real location of the report, it resolves for anyone with access to that
+repository, and it returns 404 to an unauthenticated fetch. No public mirror
+exists, so none is claimed.
 
 ### Skills index
 

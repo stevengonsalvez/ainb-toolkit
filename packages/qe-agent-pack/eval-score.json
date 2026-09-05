@@ -3,6 +3,7 @@
   "benchmark": "qe-skill",
   "run": "examples/runs/qe-quoting-synthetic",
   "source": "https://github.com/wololo-labs/wololo-evals/blob/497154ea09717fdc7e30c594a484279e9330b709/README.md#the-qe-benchmark-scoring-a-testing-skill",
+  "visibility": "internal",
   "recorded": "2026-09-04",
   "verdict": "PASS",
   "metrics": {

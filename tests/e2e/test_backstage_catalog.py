@@ -133,6 +133,10 @@ def test_eval_annotation_matches_eval_score_json() -> None:
     assert payload["source"] == score["source"]
     assert payload["recorded"] == score["recorded"]
     assert payload["verdict"] == score["verdict"]
+    assert payload["sourceVisibility"] == score["visibility"] == "internal"
+    link = next(l for l in system["metadata"]["links"] if l["type"] == "eval")
+    assert link["url"] == score["source"]
+    assert "internal" in link["title"]
     for entity in entities():
         annotations = entity["metadata"]["annotations"]
         if entity["kind"] == "System":
