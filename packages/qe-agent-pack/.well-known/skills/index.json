@@ -1,0 +1,44 @@
+{
+  "skills": [
+    {
+      "name": "expect-test",
+      "description": "AI-powered browser testing using expect-cli. Auto-detects dev server, reads git diff, generates and executes browser tests via Playwright. Use when you need to verify UI changes in a real browser, test user flows, or validate fixes visually. Trigger on \"test this in the browser\", \"verify the UI\", \"run expect\", \"browser test\", or after completing UI fixes.",
+      "files": [
+        "SKILL.md"
+      ]
+    },
+    {
+      "name": "find-missing-tests",
+      "description": "Analyze codebase and identify missing test cases, then create GitHub issues for each gap",
+      "files": [
+        "SKILL.md"
+      ]
+    },
+    {
+      "name": "test-driven-development",
+      "description": "Use when implementing any feature or bugfix, before writing implementation code. Enforces RED-GREEN-REFACTOR cycle with test-first approach.",
+      "files": [
+        "SKILL.md"
+      ]
+    },
+    {
+      "name": "webapp-testing",
+      "description": "Toolkit for interacting with and testing local web applications using Playwright. Supports verifying frontend functionality, debugging UI behavior, capturing browser screenshots, and viewing browser logs.",
+      "files": [
+        "LICENSE.txt",
+        "SKILL.md",
+        "examples/console_logging.py",
+        "examples/element_discovery.py",
+        "examples/multi_step_registration.py",
+        "examples/static_html_automation.py",
+        "scripts/with_server.py",
+        "utils/browser_config.py",
+        "utils/form_helpers.py",
+        "utils/smart_selectors.py",
+        "utils/supabase.py",
+        "utils/ui_interactions.py",
+        "utils/wait_strategies.py"
+      ]
+    }
+  ]
+}
