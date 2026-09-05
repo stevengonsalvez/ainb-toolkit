@@ -1,0 +1,23 @@
+# Deliberately invalid: the AiResource has no spec.owner and its name carries
+# a space, so both the field-format policy and the kind schema must reject it.
+# The API carries a definition but an empty remotes list, which only the
+# mcp-server spec type schema rejects.
+apiVersion: backstage.io/v1alpha1
+kind: AiResource
+metadata:
+  name: broken skill
+  description: A skill entity that must never validate
+spec:
+  type: skill
+  lifecycle: experimental
+---
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata:
+  name: broken-mcp
+spec:
+  type: mcp-server
+  lifecycle: experimental
+  owner: user:nobody
+  remotes: []
+  definition: declared in apm.yml
