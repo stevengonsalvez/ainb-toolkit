@@ -265,7 +265,8 @@ class Catalog:
         base = {
             "backstage.io/source-location": self.source_location(rel, is_dir),
             f"{ANNOTATION_PREFIX}/apm-package": f"{self.apm['name']}@{self.apm['version']}",
-            f"{ANNOTATION_PREFIX}/eval-score": eval_annotation(self.score),
+            # The full score lives on the System once; members point at it.
+            f"{ANNOTATION_PREFIX}/eval-score-ref": f"system:default/{self.system}",
         }
         base.update({f"{ANNOTATION_PREFIX}/{k}": v for k, v in extra.items()})
         return base
@@ -399,7 +400,11 @@ class Catalog:
                 "title": f"{self.system} {self.apm['version']}",
                 "description": f"{str(self.apm['description']).strip()} {eval_summary(self.score)}",
                 "tags": list(self.tags),
-                "annotations": self.annotations("", True),
+                "annotations": {
+                    **{k: v for k, v in self.annotations("", True).items()
+                       if not k.endswith("/eval-score-ref")},
+                    f"{ANNOTATION_PREFIX}/eval-score": eval_annotation(self.score),
+                },
                 "links": [
                     self.source_link("", True),
                     {"url": self.score["source"], "title": "Eval gate report", "type": "eval"},

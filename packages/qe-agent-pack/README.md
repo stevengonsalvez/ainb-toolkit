@@ -223,7 +223,8 @@ same ingestion pass.
 | Annotation | On | Value |
 |---|---|---|
 | `backstage.io/source-location` | every entity | `url:` plus the GitHub `tree` (directory) or `blob` (file) URL at the exact commit sha the entity was generated from; skills point at their directory, agents at their `.agent.md`, the MCP server at `apm.yml`, the System at the pack root |
-| `wololo.dev/eval-score` | every entity | compact JSON with `metrics` (candidate and baseline per signal), `recorded` date, `source` URL of the gate report and `verdict`, copied from `eval-score.json` |
+| `wololo.dev/eval-score` | the System | compact JSON with `metrics` (candidate and baseline per signal), `recorded` date, `source` URL of the gate report and `verdict`, copied from `eval-score.json` |
+| `wololo.dev/eval-score-ref` | every other entity | entity reference to the System that carries the score, so the numbers are stored once |
 | `wololo.dev/apm-package` | every entity | `<name>@<version>` from `apm.yml` |
 | `wololo.dev/mcp-servers` | agents whose `tools` name `mcp__<server>__*` tools | comma-separated server names; the generator fails if a named server is not declared in `apm.yml` |
 | `wololo.dev/agent-model` | agents that declare a `model` | the `model` field from the agent frontmatter |

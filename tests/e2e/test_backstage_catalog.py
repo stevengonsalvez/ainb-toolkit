@@ -127,12 +127,19 @@ def test_playwright_agents_declare_their_mcp_dependency() -> None:
 
 def test_eval_annotation_matches_eval_score_json() -> None:
     score = json.loads((PACK / "eval-score.json").read_text())
+    system = next(e for e in entities() if e["kind"] == "System")
+    payload = json.loads(system["metadata"]["annotations"]["wololo.dev/eval-score"])
+    assert payload["metrics"] == score["metrics"]
+    assert payload["source"] == score["source"]
+    assert payload["recorded"] == score["recorded"]
+    assert payload["verdict"] == score["verdict"]
     for entity in entities():
-        payload = json.loads(entity["metadata"]["annotations"]["wololo.dev/eval-score"])
-        assert payload["metrics"] == score["metrics"]
-        assert payload["source"] == score["source"]
-        assert payload["recorded"] == score["recorded"]
-        assert payload["verdict"] == score["verdict"]
+        annotations = entity["metadata"]["annotations"]
+        if entity["kind"] == "System":
+            assert "wololo.dev/eval-score-ref" not in annotations
+        else:
+            assert "wololo.dev/eval-score" not in annotations
+            assert annotations["wololo.dev/eval-score-ref"] == "system:default/qe-agent-pack"
 
 
 def test_source_locations_resolve_to_real_files_at_one_commit() -> None:
