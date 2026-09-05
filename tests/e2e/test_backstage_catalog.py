@@ -146,11 +146,26 @@ def test_eval_annotation_matches_eval_score_json() -> None:
             assert annotations["wololo.dev/eval-score-ref"] == "system:default/qe-agent-pack"
 
 
+def ensure_commit_is_local(sha: str) -> None:
+    """Fetch the pinned commit when the clone cannot see it.
+
+    A squash or rebase merge leaves the pinned commit reachable only through
+    the pull request ref on GitHub, which serves it by sha on request.
+    """
+    if subprocess.run(["git", "cat-file", "-e", f"{sha}^{{commit}}"], cwd=REPO_ROOT,
+                      capture_output=True).returncode == 0:
+        return
+    fetched = subprocess.run(["git", "fetch", "--quiet", "origin", sha], cwd=REPO_ROOT,
+                             capture_output=True, text=True)
+    assert fetched.returncode == 0, f"pinned commit {sha} is neither local nor fetchable: {fetched.stderr}"
+
+
 def test_source_locations_resolve_to_real_files_at_one_commit() -> None:
     shas = set()
     for entity in entities():
         sha, path = source_location(entity)
         shas.add(sha)
+        ensure_commit_is_local(sha)
         if entity["kind"] == "System":
             assert path == "packages/qe-agent-pack"
         resolved = subprocess.run(
@@ -250,14 +265,44 @@ def test_check_pins_the_committed_sha_and_fails_when_sources_move_past_it(pack_r
     assert f"differ from provenance commit {sources_sha[:12]}" in result.stderr
 
 
-def test_check_fails_when_the_pinned_commit_is_unreachable(pack_repo: Path) -> None:
+def squash_onto_fresh_main(pack_repo: Path) -> None:
+    """Rewrite history the way a squash merge does: same tree, new single commit."""
     repo = pack_repo.parents[1]
-    assert run_generator("--pack", str(pack_repo), "--pack-rel", "packages/qe-agent-pack").returncode == 0
-    catalog = pack_repo / "catalog-info.yaml"
-    catalog.write_text(catalog.read_text().replace(git(repo, "rev-parse", "HEAD"), "0" * 40))
-    result = run_generator("--check", "--pack", str(pack_repo), "--pack-rel", "packages/qe-agent-pack")
-    assert result.returncode == 2
-    assert "not in this repository" in result.stderr
+    git(repo, "checkout", "--quiet", "--orphan", "squashed")
+    git(repo, "add", ".")
+    git(repo, "commit", "--quiet", "--no-gpg-sign", "-m", "squash merge of the pack")
+    for branch in git(repo, "branch", "--format=%(refname:short)").split():
+        if branch != "squashed":
+            git(repo, "branch", "-D", branch)
+    git(repo, "reflog", "expire", "--expire=now", "--all")
+    git(repo, "gc", "--quiet", "--prune=now")
+
+
+def test_check_tolerates_a_squash_merge_when_only_the_sha_is_stale(pack_repo: Path) -> None:
+    repo = pack_repo.parents[1]
+    pinned = git(repo, "rev-parse", "HEAD")
+    common = ["--pack", str(pack_repo), "--pack-rel", "packages/qe-agent-pack"]
+    assert run_generator(*common).returncode == 0
+    squash_onto_fresh_main(pack_repo)
+    assert subprocess.run(["git", "cat-file", "-e", pinned], cwd=repo, capture_output=True).returncode != 0
+
+    result = run_generator("--check", *common)
+    assert result.returncode == 0, result.stderr
+    assert f"pinned commit {pinned[:12]} is not an ancestor of HEAD" in result.stderr
+
+
+def test_check_still_fails_after_a_squash_merge_when_content_drifted(pack_repo: Path) -> None:
+    common = ["--pack", str(pack_repo), "--pack-rel", "packages/qe-agent-pack"]
+    assert run_generator(*common).returncode == 0
+    skill = pack_repo / ".apm" / "skills" / "find-missing-tests" / "SKILL.md"
+    skill.write_text(skill.read_text().replace("Analyze codebase", "Analyse codebase"))
+    squash_onto_fresh_main(pack_repo)
+
+    result = run_generator("--check", *common)
+    assert result.returncode == 1
+    assert "not an ancestor of HEAD" in result.stderr
+    assert "drift: catalog-info.yaml" in result.stderr
+    assert "Analyse codebase" in result.stderr
 
 
 def test_skills_index_ignores_untracked_build_artefacts() -> None:

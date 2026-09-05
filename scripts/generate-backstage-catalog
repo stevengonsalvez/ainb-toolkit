@@ -20,11 +20,13 @@ therefore expects those sources to be committed first; pass --allow-dirty to
 override, or --sha to skip git entirely (tests do this on throwaway copies).
 
 --check does not derive the sha: it reads the one in the committed
-catalog-info.yaml, requires that commit to exist and the pack sources to be
-byte-identical to it, then compares the regenerated output. That keeps the
-check independent of how CI checks out a pull request (a merge ref is never
-the answer) and means the pinned commit must survive the merge: merge with a
-merge commit, since a squash or rebase merge rewrites it and every URL 404s.
+catalog-info.yaml. When that commit is an ancestor of HEAD the pack sources
+must be byte-identical to it and the regenerated output must match exactly.
+When it is not (a squash or rebase merge rewrote it, or a fresh clone cannot
+see it), the check regenerates against HEAD and fails only if something other
+than the sha drifted, printing a notice to regenerate so the pin is refreshed.
+Either way the check never depends on how CI checked the tree out: a pull
+request merge ref is never the answer.
 
 Only the standard library plus PyYAML (already in tests/requirements-test.txt).
 """
@@ -162,15 +164,16 @@ def committed_sha(pack: Path) -> str:
     return found.pop()
 
 
+def is_ancestor_of_head(pack: Path, sha: str) -> bool:
+    """True when the pinned commit is reachable from HEAD in this clone."""
+    return subprocess.run(
+        ["git", "merge-base", "--is-ancestor", sha, "HEAD"], cwd=pack, capture_output=True
+    ).returncode == 0
+
+
 def verify_sources_match_sha(pack: Path, sha: str) -> None:
-    """The pinned commit must exist and hold exactly the pack sources on disk."""
+    """The pack sources on disk must be exactly what the pinned commit holds."""
     sources = [str(pack / s) for s in PROVENANCE_SOURCES]
-    if subprocess.run(["git", "cat-file", "-e", f"{sha}^{{commit}}"], cwd=pack,
-                      capture_output=True).returncode != 0:
-        raise GenerateError(
-            f"provenance commit {sha} is not in this repository; the pack was probably "
-            "squash or rebase merged, regenerate against a reachable commit"
-        )
     diff = subprocess.run(["git", "diff", "--stat", sha, "--", *sources], cwd=pack,
                           capture_output=True, text=True)
     if diff.returncode != 0:
@@ -468,6 +471,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     pack = args.pack.resolve()
+    stale_sha = None
     try:
         if args.sha:
             sha = args.sha
@@ -475,7 +479,16 @@ def main(argv: list[str] | None = None) -> int:
                 raise GenerateError(f"--sha must be a 40 character hex sha, got {sha!r}")
         elif args.check:
             sha = committed_sha(pack)
-            verify_sources_match_sha(pack, sha)
+            if is_ancestor_of_head(pack, sha):
+                verify_sources_match_sha(pack, sha)
+            else:
+                stale_sha, sha = sha, git(pack, "rev-parse", "HEAD")
+                print(
+                    f"notice: pinned commit {stale_sha[:12]} is not an ancestor of HEAD "
+                    f"(squash or rebase merge, or a partial clone); comparing against "
+                    f"{sha[:12]} instead, regenerate to refresh the pin",
+                    file=sys.stderr,
+                )
         else:
             sha = resolve_sha(pack, args.allow_dirty)
         generated = outputs(pack, sha, args.pack_rel)
@@ -488,6 +501,8 @@ def main(argv: list[str] | None = None) -> int:
         rel = path.relative_to(pack).as_posix()
         if args.check:
             current = path.read_text(encoding="utf-8") if path.is_file() else ""
+            if stale_sha:
+                current = current.replace(stale_sha, sha)
             if current != content:
                 drift = True
                 print(f"drift: {rel} differs from the generated output", file=sys.stderr)

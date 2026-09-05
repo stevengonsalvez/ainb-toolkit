@@ -233,10 +233,13 @@ The source-location sha is the last commit that touched `apm.yml`, `.apm/` or
 `eval-score.json`, not the commit that regenerated the file, so the URL always
 resolves to the bytes the entity describes. The generator refuses to run while
 those sources have uncommitted changes (`--allow-dirty` overrides). `--check`
-reads the sha already pinned in `catalog-info.yaml`, requires that commit to
-exist and the sources on disk to match it byte for byte, then compares the
-regenerated output, so a change to the sources without regenerating fails CI
-whichever way the pull request was checked out.
+reads the sha already pinned in `catalog-info.yaml` rather than deriving one.
+When that commit is an ancestor of `HEAD`, the sources on disk must match it
+byte for byte and the regenerated output must match exactly. When it is not,
+the check regenerates against `HEAD`, fails only if something other than the
+sha drifted, and prints a notice to regenerate so the pin is refreshed. A
+change to the sources without regenerating therefore fails CI whichever way
+the tree was checked out or merged.
 
 Merge pull requests that touch the pack with a merge commit. A squash or
 rebase merge rewrites the pinned commit: the drift check on `main` then reports
