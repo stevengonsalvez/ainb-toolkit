@@ -465,8 +465,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
             sha = resolve_sha(pack, args.allow_dirty)
         generated = outputs(pack, sha, args.pack_rel)
-    except (GenerateError, yaml.YAMLError, json.JSONDecodeError, OSError,
-            KeyError, TypeError, AttributeError) as exc:
+    except (GenerateError, yaml.YAMLError, json.JSONDecodeError, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 
