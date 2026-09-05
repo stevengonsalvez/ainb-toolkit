@@ -241,9 +241,13 @@ sha drifted, and prints a notice to regenerate so the pin is refreshed. A
 change to the sources without regenerating therefore fails CI whichever way
 the tree was checked out or merged.
 
-Merge pull requests that touch the pack with a merge commit. A squash or
-rebase merge rewrites the pinned commit: the drift check on `main` then reports
-the commit as unreachable and every published source-location URL breaks.
+Any merge method works. After a squash or rebase merge the pinned commit is
+no longer an ancestor of `main`, but the published source-location URLs keep
+resolving: GitHub retains pull request commits under `refs/pull/<n>/head`, so
+the `tree` and `blob` links still serve the pinned bytes. What does change is
+local resolution: a fresh clone cannot see the commit until it is fetched by
+sha, and `--check` runs in its tolerant mode until the catalogue is
+regenerated on `main`, which re-pins it to a commit in history.
 
 ### Derived versus supplied
 
