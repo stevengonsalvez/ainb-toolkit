@@ -171,10 +171,12 @@ asset with provenance and an eval score. It is generated, never hand-edited:
 
 The `AiResource` kind ships with Backstage's
 `@backstage/plugin-catalog-backend-module-ai-model` (catalog-model 1.10.0,
-Backstage 1.51 and later). Its documented spec types are `skill`, `rule`,
-`plugin` and `marketplace`; there is no `agent` type, so agents are
-`type: skill` with `agent` in `spec.categories`, which keeps them inside the
-validated skill schema rather than an undocumented type.
+Backstage 1.51 and later). The module README documents the `skill` and `rule`
+spec types; `@backstage/catalog-model` 1.10.0 also ships schemas for `plugin`
+and `marketplace` under `dist/schema/kinds/AiResource.v1alpha1.*.schema.json`.
+None of the four is an `agent` type, so agents are `type: skill` with `agent`
+in `spec.categories`, which keeps them inside the validated skill schema rather
+than an undocumented type.
 
 ```bash
 scripts/generate-backstage-catalog            # regenerate catalog-info.yaml and .well-known/skills/index.json
