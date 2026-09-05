@@ -37,33 +37,28 @@ const policy = EntityPolicies.allOf([
   new SchemaValidEntityPolicy(),
 ]);
 
-// Every validator listed for a kind must accept the entity. A validator
-// returns false when the kind or spec type is not its own, which is only a
-// failure when nothing else on the list claims the entity either.
+// Every validator listed for a kind must accept the entity. Spec types are an
+// allowlist: an unknown spec.type is an error rather than a silent fall-through
+// to the permissive base kind schema, so a mistyped "skil" cannot pass.
+const SPEC_TYPES = {
+  System: { [undefined]: [systemEntityV1alpha1Validator] },
+  API: { 'mcp-server': [apiEntityV1alpha1Validator, mcpServerApiEntityValidator] },
+  AiResource: { skill: [aiResourceEntityV1alpha1Validator, skillAiResourceEntityV1alpha1Validator] },
+};
+
 function validatorsFor(entity) {
-  switch (entity.kind) {
-    case 'System':
-      return [systemEntityV1alpha1Validator];
-    case 'API':
-      return entity.spec?.type === 'mcp-server'
-        ? [apiEntityV1alpha1Validator, mcpServerApiEntityValidator]
-        : [apiEntityV1alpha1Validator];
-    case 'AiResource':
-      return entity.spec?.type === 'skill'
-        ? [aiResourceEntityV1alpha1Validator, skillAiResourceEntityV1alpha1Validator]
-        : [aiResourceEntityV1alpha1Validator];
-    default:
-      return [];
+  const byType = SPEC_TYPES[entity.kind];
+  if (!byType) throw new Error(`no validator for kind ${entity.kind}`);
+  const validators = byType[entity.spec?.type];
+  if (!validators) {
+    throw new Error(`unknown spec.type ${JSON.stringify(entity.spec?.type)} for kind ${entity.kind}`);
   }
+  return validators;
 }
 
 async function validateEntity(entity) {
   await policy.enforce(entity);
-  const validators = validatorsFor(entity);
-  if (validators.length === 0) {
-    throw new Error(`no validator for kind ${entity.kind}`);
-  }
-  for (const validator of validators) {
+  for (const validator of validatorsFor(entity)) {
     if (!(await validator.check(entity))) {
       throw new Error(`kind ${entity.kind} spec.type ${entity.spec?.type} not accepted by its validator`);
     }
