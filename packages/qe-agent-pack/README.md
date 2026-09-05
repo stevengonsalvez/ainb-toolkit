@@ -226,13 +226,20 @@ same ingestion pass.
 | `wololo.dev/eval-score` | every entity | compact JSON with `metrics` (candidate and baseline per signal), `recorded` date, `source` URL of the gate report and `verdict`, copied from `eval-score.json` |
 | `wololo.dev/apm-package` | every entity | `<name>@<version>` from `apm.yml` |
 | `wololo.dev/mcp-servers` | agents whose `tools` name `mcp__<server>__*` tools | comma-separated server names; the generator fails if a named server is not declared in `apm.yml` |
-| `wololo.dev/agent-model` | agents | the `model` field from the agent frontmatter |
+| `wololo.dev/agent-model` | agents that declare a `model` | the `model` field from the agent frontmatter |
 
 The source-location sha is the last commit that touched `apm.yml`, `.apm/` or
 `eval-score.json`, not the commit that regenerated the file, so the URL always
 resolves to the bytes the entity describes. The generator refuses to run while
-those sources have uncommitted changes (`--allow-dirty` overrides), and a
-change to them without regenerating fails the CI drift check.
+those sources have uncommitted changes (`--allow-dirty` overrides). `--check`
+reads the sha already pinned in `catalog-info.yaml`, requires that commit to
+exist and the sources on disk to match it byte for byte, then compares the
+regenerated output, so a change to the sources without regenerating fails CI
+whichever way the pull request was checked out.
+
+Merge pull requests that touch the pack with a merge commit. A squash or
+rebase merge rewrites the pinned commit: the drift check on `main` then reports
+the commit as unreachable and every published source-location URL breaks.
 
 ### Derived versus supplied
 
@@ -244,7 +251,7 @@ change to them without regenerating fails the CI drift check.
 | `spec.agents` | derived: `targets` in `apm.yml`, mapped `claude` to `claude-code` and `copilot` to `github-copilot` |
 | `spec.license`, `spec.allowedTools` | derived: skill frontmatter, falling back to the `apm.yml` license |
 | MCP `remotes` and `definition` | derived: the `dependencies.mcp` entry, `command` plus `args` for stdio |
-| Eval score, gate report URL, date, verdict | supplied: `eval-score.json`, validated by the generator (required signals, numbers in `[0, 1]`, ISO date, https URL) |
+| Eval score, gate report URL, date, verdict | supplied: `eval-score.json`, validated by the generator (required signals, numbers in `[0, 1]`, ISO date, https URL, and a `PASS` verdict only when every guarded signal holds its baseline) |
 | `spec.lifecycle` (`experimental`), `spec.disciplines` (`quality-engineering`), categories (`testing`, `agent`) | supplied: constants at the top of `scripts/generate-backstage-catalog` |
 
 `eval-score.json` records the `qe-skill` benchmark gate for this pack from
