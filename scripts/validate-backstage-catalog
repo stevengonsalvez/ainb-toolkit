@@ -1,0 +1,107 @@
+#!/usr/bin/env node
+// Validate one or more catalog-info.yaml files against the Backstage entity
+// model, using the validators @backstage/catalog-model itself ships: the
+// default entity policies (field formats, namespace, root fields) plus the
+// kind schema for System, API (base and the mcp-server spec type) and
+// AiResource (base and the skill spec type).
+//
+// Usage: scripts/validate-backstage-catalog <catalog-info.yaml> [...more]
+// Exit 0 when every document in every file validates, 1 otherwise.
+
+import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import yaml from 'js-yaml';
+
+// The package's ESM build imports lodash subpaths without extensions, which
+// native Node ESM refuses to resolve, so load the CommonJS build instead.
+const require = createRequire(import.meta.url);
+const {
+  DefaultNamespaceEntityPolicy,
+  EntityPolicies,
+  FieldFormatEntityPolicy,
+  NoForeignRootFieldsEntityPolicy,
+  SchemaValidEntityPolicy,
+  apiEntityV1alpha1Validator,
+  systemEntityV1alpha1Validator,
+} = require('@backstage/catalog-model');
+const {
+  aiResourceEntityV1alpha1Validator,
+  mcpServerApiEntityValidator,
+  skillAiResourceEntityV1alpha1Validator,
+} = require('@backstage/catalog-model/alpha');
+
+const policy = EntityPolicies.allOf([
+  new DefaultNamespaceEntityPolicy(),
+  new FieldFormatEntityPolicy(),
+  new NoForeignRootFieldsEntityPolicy(),
+  new SchemaValidEntityPolicy(),
+]);
+
+// Every validator listed for a kind must accept the entity. A validator
+// returns false when the kind or spec type is not its own, which is only a
+// failure when nothing else on the list claims the entity either.
+function validatorsFor(entity) {
+  switch (entity.kind) {
+    case 'System':
+      return [systemEntityV1alpha1Validator];
+    case 'API':
+      return entity.spec?.type === 'mcp-server'
+        ? [apiEntityV1alpha1Validator, mcpServerApiEntityValidator]
+        : [apiEntityV1alpha1Validator];
+    case 'AiResource':
+      return entity.spec?.type === 'skill'
+        ? [aiResourceEntityV1alpha1Validator, skillAiResourceEntityV1alpha1Validator]
+        : [aiResourceEntityV1alpha1Validator];
+    default:
+      return [];
+  }
+}
+
+async function validateEntity(entity) {
+  await policy.enforce(entity);
+  const validators = validatorsFor(entity);
+  if (validators.length === 0) {
+    throw new Error(`no validator for kind ${entity.kind}`);
+  }
+  for (const validator of validators) {
+    if (!(await validator.check(entity))) {
+      throw new Error(`kind ${entity.kind} spec.type ${entity.spec?.type} not accepted by its validator`);
+    }
+  }
+}
+
+async function validateFile(file) {
+  const docs = yaml.loadAll(readFileSync(file, 'utf8')).filter(d => d !== null && d !== undefined);
+  if (docs.length === 0) {
+    return [`${file}: no entity documents`];
+  }
+  const errors = [];
+  for (const [index, entity] of docs.entries()) {
+    const label = `${file} document ${index + 1} (${entity?.kind ?? '?'}/${entity?.metadata?.name ?? '?'})`;
+    try {
+      if (typeof entity !== 'object') throw new Error('document is not an object');
+      await validateEntity(entity);
+    } catch (err) {
+      errors.push(`${label}: ${err.message}`);
+    }
+  }
+  return errors;
+}
+
+const files = process.argv.slice(2);
+if (files.length === 0) {
+  console.error('usage: validate-backstage-catalog <catalog-info.yaml> [...more]');
+  process.exit(2);
+}
+
+let failed = false;
+for (const file of files) {
+  const errors = await validateFile(file);
+  if (errors.length) {
+    failed = true;
+    for (const e of errors) console.error(`invalid: ${e}`);
+  } else {
+    console.log(`valid: ${file}`);
+  }
+}
+process.exit(failed ? 1 : 0);

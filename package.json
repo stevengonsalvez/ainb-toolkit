@@ -15,6 +15,7 @@
     "js-yaml": "^4.1.0"
   },
   "devDependencies": {
+    "@backstage/catalog-model": "^1.10.0",
     "jest": "^29.0.0"
   },
   "jest": {
