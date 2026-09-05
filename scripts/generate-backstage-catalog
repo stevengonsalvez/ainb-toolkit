@@ -297,7 +297,6 @@ class Catalog:
             "kind": "AiResource",
             "metadata": {
                 "name": name,
-                "title": name,
                 "description": description,
                 "tags": list(self.tags),
                 "annotations": self.annotations(rel, is_dir, **extra_ann),
