@@ -58,8 +58,12 @@ jobs:
 
       - name: Prove the validator fails on an invalid entity fixture
         run: |
-          if scripts/validate-backstage-catalog tests/fixtures/backstage/invalid-catalog-info.yaml; then
-            echo "validator passed a deliberately invalid fixture" >&2
+          set +e
+          scripts/validate-backstage-catalog tests/fixtures/backstage/invalid-catalog-info.yaml
+          status=$?
+          set -e
+          if [ "$status" -ne 1 ]; then
+            echo "expected exit 1 for a deliberately invalid fixture, got $status" >&2
             exit 1
           fi
           echo "validator correctly rejected the invalid fixture"
