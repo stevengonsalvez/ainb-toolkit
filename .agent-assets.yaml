@@ -1,0 +1,23 @@
+# Publishes this repository's agent assets to the skill-hub catalogue.
+#
+# This file is the only opt-in signal. A hub scanning the owners it is
+# configured with picks the repository up on its next sync, reads the globs
+# below at the current head commit, and emits one catalogue entity per match,
+# pinned to that commit. Delete this file and the entities disappear on the
+# following sync.
+#
+# The qe-agent-pack is published as a package rather than as its individual
+# files: APM installs a pack as a unit, the eval gate scored it as a unit, and
+# its skills and agents share names with the ones at the repository root.
+owner: team-ai-platform
+
+publish:
+  skills:
+    - skills/*/SKILL.md
+  agents:
+    - agents/*.md
+    - agents/**/*.md
+  hooks:
+    - utilities/hooks/*.py
+  packages:
+    - packages/*/apm.yml
