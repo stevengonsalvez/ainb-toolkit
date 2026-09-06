@@ -156,6 +156,139 @@ scripts/sync-qe-agent-pack --check   # fail if the copies have drifted
 CI runs the `--check` form, so a change to `skills/expect-test` that is not
 re-vendored fails the build rather than shipping a stale pack.
 
+## Backstage catalogue
+
+`catalog-info.yaml` describes the whole pack in the Backstage catalog model so
+that Roadie, or any Backstage, lists every skill and agent as a catalogued
+asset with provenance and an eval score. It is generated, never hand-edited:
+
+| Entity | Kind | One per |
+|---|---|---|
+| `qe-agent-pack` | `System` | the pack; carries the eval summary in its description and links to the gate report |
+| `expect-test`, `webapp-testing`, `find-missing-tests`, `test-driven-development` | `AiResource`, `spec.type: skill` | skill under `.apm/skills/` |
+| `test-engineer`, `playwright-test-planner`, `playwright-test-generator`, `playwright-test-healer` | `AiResource`, `spec.type: skill`, category `agent` | agent under `.apm/agents/` |
+| `playwright-test` | `API`, `spec.type: mcp-server` | entry in `dependencies.mcp` of `apm.yml` |
+
+The `AiResource` kind ships with Backstage's
+`@backstage/plugin-catalog-backend-module-ai-model` (catalog-model 1.10.0,
+Backstage 1.51 and later). The module README documents the `skill` and `rule`
+spec types; `@backstage/catalog-model` 1.10.0 also ships schemas for `plugin`
+and `marketplace` under `dist/schema/kinds/AiResource.v1alpha1.*.schema.json`.
+None of the four is an `agent` type, so agents are `type: skill` with `agent`
+in `spec.categories`, which keeps them inside the validated skill schema rather
+than an undocumented type.
+
+```bash
+scripts/generate-backstage-catalog            # regenerate catalog-info.yaml and .well-known/skills/index.json
+scripts/generate-backstage-catalog --check    # exit 1 if either file drifts from apm.yml, .apm/ or eval-score.json
+scripts/validate-backstage-catalog packages/qe-agent-pack/catalog-info.yaml   # Backstage entity model check
+```
+
+CI runs `--check`, validates the file with the validators that
+`@backstage/catalog-model` itself exports (entity policies plus the System, API,
+mcp-server and AiResource skill schemas), and proves the validator rejects
+`tests/fixtures/backstage/invalid-catalog-info.yaml`. The generator needs only
+Python 3 and PyYAML; the validator needs `npm ci` at the repo root.
+
+### Registering it in Roadie or Backstage
+
+Either route works; both read the file straight from GitHub, so nothing is
+built or hosted here.
+
+- **Catalog location.** Register the raw file URL once, from the catalog
+  import page or `app-config.yaml`:
+
+  ```yaml
+  catalog:
+    locations:
+      - type: url
+        target: https://github.com/stevengonsalvez/ainb-toolkit/blob/main/packages/qe-agent-pack/catalog-info.yaml
+  ```
+
+- **Discovery.** A GitHub discovery provider that scans for `catalog-info.yaml`
+  (the default filename) picks it up with no per-file registration; add the
+  repository or organisation to the provider's filters. Roadie's GitHub
+  autodiscovery does the same from its Roadie Settings page.
+
+Two prerequisites on the catalog side: the `AiResource` kind must be
+registered (the ai-model backend module, or the equivalent toggle on a hosted
+Backstage such as Roadie), and the owner `user:stevengonsalvez` should exist
+as a User entity or the `ownedBy` relation shows as unresolved. The `System`
+and `API` entities load on any Backstage without either.
+
+The multi-document file is split on `---`, and the `System` entity comes first
+so the `partOf` relations from every skill, agent and MCP server resolve in the
+same ingestion pass.
+
+### Annotation vocabulary
+
+| Annotation | On | Value |
+|---|---|---|
+| `backstage.io/source-location` | every entity | `url:` plus the GitHub `tree` (directory) or `blob` (file) URL at the exact commit sha the entity was generated from; skills point at their directory, agents at their `.agent.md`, the MCP server at `apm.yml`, the System at the pack root |
+| `wololo.dev/eval-score` | the System | compact JSON with `metrics` (candidate and baseline per signal), `recorded` date, `source` URL of the gate report, `sourceVisibility` and `verdict`, copied from `eval-score.json` |
+| `wololo.dev/eval-score-ref` | every other entity | entity reference to the System that carries the score, so the numbers are stored once |
+| `wololo.dev/apm-package` | every entity | `<name>@<version>` from `apm.yml` |
+| `wololo.dev/mcp-servers` | agents whose `tools` name `mcp__<server>__*` tools | comma-separated server names; the generator fails if a named server is not declared in `apm.yml` |
+| `wololo.dev/agent-model` | agents that declare a `model` | the `model` field from the agent frontmatter |
+
+The source-location sha is the last commit that touched `apm.yml`, `.apm/` or
+`eval-score.json`, not the commit that regenerated the file, so the URL always
+resolves to the bytes the entity describes. The generator refuses to run while
+those sources have uncommitted changes (`--allow-dirty` overrides). `--check`
+reads the sha already pinned in `catalog-info.yaml` rather than deriving one.
+When that commit is an ancestor of `HEAD`, the sources on disk must match it
+byte for byte and the regenerated output must match exactly. When it is not,
+the check regenerates against `HEAD`, fails only if something other than the
+sha drifted, and prints a notice to regenerate so the pin is refreshed. A
+change to the sources without regenerating therefore fails CI whichever way
+the tree was checked out or merged.
+
+Any merge method works. After a squash or rebase merge the pinned commit is
+no longer an ancestor of `main`, but the published source-location URLs keep
+resolving: GitHub retains pull request commits under `refs/pull/<n>/head`, so
+the `tree` and `blob` links still serve the pinned bytes. What does change is
+local resolution: a fresh clone cannot see the commit until it is fetched by
+sha, and `--check` runs in its tolerant mode until the catalogue is
+regenerated on `main`, which re-pins it to a commit in history.
+
+### Derived versus supplied
+
+| Value | Source |
+|---|---|
+| Entity names, titles, descriptions | derived: skill and agent frontmatter, `apm.yml` for the System and MCP server |
+| `spec.owner` | derived: `author` in `apm.yml`, as `user:<author>` |
+| `spec.system`, tags, `wololo.dev/apm-package` | derived: `name`, `keywords`, `version` in `apm.yml` |
+| `spec.agents` | derived: `targets` in `apm.yml`, mapped `claude` to `claude-code` and `copilot` to `github-copilot` |
+| `spec.license`, `spec.allowedTools` | derived: skill frontmatter, falling back to the `apm.yml` license |
+| MCP `remotes` and `definition` | derived: the `dependencies.mcp` entry, `command` plus `args` for stdio |
+| Eval score, gate report URL, date, verdict | supplied: `eval-score.json`, validated by the generator (required signals, numbers in `[0, 1]`, ISO date, https URL, and a `PASS` verdict only when every guarded signal holds its baseline) |
+| `spec.lifecycle` (`experimental`), `spec.disciplines` (`quality-engineering`), categories (`testing`, `agent`) | supplied: constants at the top of `scripts/generate-backstage-catalog` |
+
+`eval-score.json` records the `qe-skill` benchmark gate for this pack from
+wololo-evals: mutation kill rate 0.3012 against a 0.2373 no-agent baseline,
+seeded-defect catch 0.3636 against 0.2500, flake resistance 1.0. Those numbers
+are recomputed at gate time from real mutation and seeded-defect runs; the
+recorded trajectories in that corpus are hand-authored fixtures, and the file
+says so. Update the file when a new gate run lands, then regenerate.
+
+The gate report lives in a private repository. `eval-score.json` marks it
+`"visibility": "internal"`, the annotation carries that as
+`sourceVisibility`, and the System's link is titled accordingly: the URL is
+the real location of the report, it resolves for anyone with access to that
+repository, and it returns 404 to an unauthenticated fetch. No public mirror
+exists, so none is claimed.
+
+### Skills index
+
+`.well-known/skills/index.json` follows the Backstage skills convention
+(`{"skills": [{"name", "description", "files"}]}`, the same shape as
+`backstage.io/.well-known/skills/index.json`) so a skills installer can list
+the pack's skills without parsing `apm.yml`. Names match the skill directories,
+descriptions match the `SKILL.md` frontmatter, and `files` lists every file in
+the skill directory. It is generated and drift-checked alongside
+`catalog-info.yaml`. To serve it from a domain, publish the `.well-known/skills`
+directory together with the skill directories from `.apm/skills/`.
+
 ## Governance
 
 `apm-policy.yml` is a repo-scoped, tighten-only policy: it pins the allowed

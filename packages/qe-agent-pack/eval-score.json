@@ -1,0 +1,15 @@
+{
+  "pack": "qe-agent-pack",
+  "benchmark": "qe-skill",
+  "run": "examples/runs/qe-quoting-synthetic",
+  "source": "https://github.com/wololo-labs/wololo-evals/blob/497154ea09717fdc7e30c594a484279e9330b709/README.md#the-qe-benchmark-scoring-a-testing-skill",
+  "visibility": "internal",
+  "recorded": "2026-09-04",
+  "verdict": "PASS",
+  "metrics": {
+    "mutation_kill_rate": { "candidate": 0.3012, "baseline": 0.2373 },
+    "seeded_defects_caught": { "candidate": 0.3636, "baseline": 0.25 },
+    "qe_flake_resistance": { "candidate": 1.0, "baseline": 1.0 }
+  },
+  "note": "Every number is recomputed at gate time by really mutating the fixture, planting each seeded defect and running the suites. The recorded trajectories in the run directory are hand-authored fixtures, not captured model runs."
+}

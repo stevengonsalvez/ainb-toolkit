@@ -1,0 +1,114 @@
+#!/usr/bin/env node
+// Validate one or more catalog-info.yaml files against the Backstage entity
+// model, using the validators @backstage/catalog-model itself ships: the
+// default entity policies (field formats, namespace, root fields) plus the
+// kind schema for System, API (base and the mcp-server spec type) and
+// AiResource (base and the skill spec type).
+//
+// Usage: scripts/validate-backstage-catalog <catalog-info.yaml> [...more]
+// Exit 0 when every document in every file validates, 1 otherwise.
+
+import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import yaml from 'js-yaml';
+
+// The package's ESM build imports lodash subpaths without extensions, which
+// native Node ESM refuses to resolve, so load the CommonJS build instead.
+const require = createRequire(import.meta.url);
+const {
+  DefaultNamespaceEntityPolicy,
+  EntityPolicies,
+  FieldFormatEntityPolicy,
+  NoForeignRootFieldsEntityPolicy,
+  SchemaValidEntityPolicy,
+  apiEntityV1alpha1Validator,
+  systemEntityV1alpha1Validator,
+} = require('@backstage/catalog-model');
+const {
+  aiResourceEntityV1alpha1Validator,
+  mcpServerApiEntityValidator,
+  skillAiResourceEntityV1alpha1Validator,
+} = require('@backstage/catalog-model/alpha');
+
+const policy = EntityPolicies.allOf([
+  new DefaultNamespaceEntityPolicy(),
+  new FieldFormatEntityPolicy(),
+  new NoForeignRootFieldsEntityPolicy(),
+  new SchemaValidEntityPolicy(),
+]);
+
+// Every validator listed for a kind must accept the entity. Spec types are an
+// allowlist: an unknown spec.type is an error rather than a silent fall-through
+// to the permissive base kind schema, so a mistyped "skil" cannot pass. The
+// tables have no prototype, so a spec.type of "constructor" is unknown rather
+// than a walk up Object.prototype, and a kind without a spec.type (System) is
+// keyed on an explicit sentinel instead of the string "undefined".
+const NO_SPEC_TYPE = Symbol('no spec.type');
+
+function table(entries) {
+  const out = Object.create(null);
+  for (const [key, value] of entries) out[key] = value;
+  return out;
+}
+
+const SPEC_TYPES = table([
+  ['System', table([[NO_SPEC_TYPE, [systemEntityV1alpha1Validator]]])],
+  ['API', table([['mcp-server', [apiEntityV1alpha1Validator, mcpServerApiEntityValidator]]])],
+  ['AiResource', table([['skill', [aiResourceEntityV1alpha1Validator, skillAiResourceEntityV1alpha1Validator]]])],
+]);
+
+function validatorsFor(entity) {
+  const byType = SPEC_TYPES[entity.kind];
+  if (!byType) throw new Error(`no validator for kind ${entity.kind}`);
+  const specType = entity.spec?.type;
+  const validators = byType[typeof specType === 'string' ? specType : NO_SPEC_TYPE];
+  if (!validators) {
+    throw new Error(`unknown spec.type ${JSON.stringify(specType)} for kind ${entity.kind}`);
+  }
+  return validators;
+}
+
+async function validateEntity(entity) {
+  await policy.enforce(entity);
+  for (const validator of validatorsFor(entity)) {
+    if (!(await validator.check(entity))) {
+      throw new Error(`kind ${entity.kind} spec.type ${entity.spec?.type} not accepted by its validator`);
+    }
+  }
+}
+
+async function validateFile(file) {
+  const docs = yaml.loadAll(readFileSync(file, 'utf8')).filter(d => d !== null && d !== undefined);
+  if (docs.length === 0) {
+    return [`${file}: no entity documents`];
+  }
+  const errors = [];
+  for (const [index, entity] of docs.entries()) {
+    const label = `${file} document ${index + 1} (${entity?.kind ?? '?'}/${entity?.metadata?.name ?? '?'})`;
+    try {
+      if (typeof entity !== 'object') throw new Error('document is not an object');
+      await validateEntity(entity);
+    } catch (err) {
+      errors.push(`${label}: ${err.message}`);
+    }
+  }
+  return errors;
+}
+
+const files = process.argv.slice(2);
+if (files.length === 0) {
+  console.error('usage: validate-backstage-catalog <catalog-info.yaml> [...more]');
+  process.exit(2);
+}
+
+let failed = false;
+for (const file of files) {
+  const errors = await validateFile(file);
+  if (errors.length) {
+    failed = true;
+    for (const e of errors) console.error(`invalid: ${e}`);
+  } else {
+    console.log(`valid: ${file}`);
+  }
+}
+process.exit(failed ? 1 : 0);
