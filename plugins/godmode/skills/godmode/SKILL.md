@@ -47,6 +47,8 @@ STATE    beads (epic/feature nodes) + .agents/scratch/<slug>-state.json (working
 ```
 SIGNAL                   TTL    ONE model gathers CITED external evidence: comparable
         │                       products, user-reported gaps, constraining standards.
+        │                       Reads the append-only ledger first and returns only what is
+        │                       NEW; parked rows keep their reason and are never re-proposed.
         │                       /research if available, else WebSearch+WebFetch. Charter-gated;
         │                       unavailable degrades to repo-only discovery, never a failure.
         ▼
@@ -85,7 +87,10 @@ Perpetual progression: after each epic ships, start cumulative regression in
 an isolated lane. At the same time, the completeness critic re-enters Discover
 and creates evidence-backed candidates for the next generation, refreshing the
 external Signal first when it is stale, so a dry backlog is replenished from
-new outside evidence rather than from re-reading the same repo. A confirmed
+new outside evidence rather than from re-reading the same repo. The refresh
+appends to the signal ledger and dedupes against every row ever recorded,
+parked ones included, so the programme does not pay to rediscover a dead end it
+already rejected. A confirmed
 defect preempts the single mutation lane. Discovery and planning continue in
 parallel. An empty Court result enters adaptive-backoff research, never DONE.
 
