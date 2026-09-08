@@ -8,7 +8,7 @@ creates the next progression until hard safety, budget, or deadline limits fire.
 
 ![Godmode perpetual progression](assets/perpetual-loop.svg)
 
-**Ideate → create goal → execute → regress and repair → create next goal.**
+**Research → ideate → create goal → execute → regress and repair → next goal.**
 Planning and regression overlap. Mutation stays single-lane. Every creative
 decision carries independent model views, evidence, dissent, and synthesis.
 
@@ -65,6 +65,9 @@ manifests).
 ### Prerequisites
 
 - `git`, `jq`, `python3`, and `bd` (beads) on `PATH`.
+- **External research** (optional, for the Signal stage): the `/research` skill,
+  or WebSearch + WebFetch. Without either, or with `External research: forbidden`
+  in the charter, Signal reports unavailable and discovery runs repo-only.
 - **Publishing** (Claude, for the live dashboard + explainers): the sibling
   `here-now` and `explain-to-me` skills and a `~/.herenow/credentials` file
   (mode 0600). If any are missing, `/godmode status` prints
@@ -118,7 +121,12 @@ and the cross-machine sidecar + lease.
 /godmode "<north-star>"  --budget --deadline --fable
         │
         ▼
-   DISCOVER ......... brainstorm the nirvana landscape → feature REGISTRY
+   SIGNAL ........... cited external evidence (products, gaps, standards),
+        │               charter-gated, TTL-cached, degrades to repo-only
+        │
+        ▼
+   DISCOVER ......... brainstorm the nirvana landscape, informed by SIGNAL
+        │               → feature REGISTRY (provenance: repo | signal | user)
         │
         ▼
    FEASIBILITY COURT  every idea → feasible | downgrade | park+blocker
