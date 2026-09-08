@@ -30,6 +30,35 @@ model-name strings from the charter policy; `REVIEW_SCHEMA` /
 objects at the top of the script. A script with an unresolved placeholder is
 a bug, not a convention.
 
+## Signal (external evidence, feeds Discover)
+
+Purpose: give Discover a view of the world outside this repo. Without it the
+registry can only contain what the models already believe, which is stale by
+construction and uncitable. Signal is evidence gathering, NOT a creative
+decision: it runs on ONE model, not the creative quorum.
+
+Gated on `external_research` authority in the charter plus a host capability.
+Prefer the `/research` skill (multi-source, cited); fall back to WebSearch +
+WebFetch; if neither is available or the charter forbids outbound fetching,
+set `lanes.signal.status: unavailable`, `log()` it, and run Discover repo-only.
+Never fail the programme for a missing signal, and never let a brain present a
+recalled claim as a current one.
+
+```js
+// SIGNAL_SCHEMA: {rows:[{id, claim, kind:'product'|'gap'|'standard',
+//   source_url, fetched_at, confidence:'high'|'medium'|'low'}]}
+phase('Signal')
+const signal = SIGNAL_ALLOWED ? await agent(`${ground} You are the SIGNAL scout.
+  North star: <north-star>. Gather CURRENT external evidence for this product
+  space: (1) comparable products and what they actually ship today, (2) capability
+  gaps their users complain about, (3) standards, APIs or protocols that constrain
+  or unlock features. Use /research if available, else WebSearch + WebFetch.
+  EVERY row carries source_url and fetched_at. Drop anything you cannot cite.
+  No speculation, no recalled-from-memory claims dressed as current.`,
+  {model: CREATIVE_QUORUM.models[0], schema: SIGNAL_SCHEMA, effort:'high'})
+  : (log('signal lane unavailable: discovery is repo-only this generation'), null)
+```
+
 ## Discover
 
 Purpose: create the feature REGISTRY the Court consumes. Pair the host primary
@@ -39,21 +68,32 @@ with its routed creative peer, then synthesise evidence and dissent:
 phase('Discover')
 const proposals = await parallel(CREATIVE_QUORUM.models.map(model => () => agent(`${ground} You are the DISCOVERY brain. North
   star: <north-star>. (1) Scan the repo (structure, manifests, existing docs/
-  backlog/beads) to understand what exists. (2) Brainstorm the NIRVANA feature
-  landscape — beyond MVP, end-game thinking: every capability a finished
-  product would have, grouped by space. Append any user-supplied feature list
-  verbatim (marked user-requested). (3) WRITE .agents/plans/<slug>-registry.md
-  as a numbered table: id, name, one-line description, space, rough tier.
+  backlog/beads) to understand what exists. (2) Read the SIGNAL rows (may be
+  empty): ${signal}. Treat them as the only current external facts you have.
+  (3) Brainstorm the NIRVANA feature landscape — beyond MVP, end-game thinking:
+  every capability a finished product would have, grouped by space. Append any
+  user-supplied feature list verbatim (marked user-requested). (4) WRITE
+  .agents/plans/<slug>-registry.md as a numbered table: id, name, one-line
+  description, space, rough tier, provenance (repo | signal | user), and for
+  signal rows the source_url that justifies it.
   Aim wide — the Court prunes, you don't.`, {model, effort:'high'})))
 const registry = await agent(`${ground} Synthesize these independent proposals.
   Preserve disagreement, cite evidence, score confidence, and reject any idea
-  lacking a value hypothesis: ${proposals}`, {model: CREATIVE_QUORUM.synthesizer,
+  lacking a value hypothesis. Keep provenance per row and never relabel an
+  uncited idea as signal-backed: ${proposals}`, {model: CREATIVE_QUORUM.synthesizer,
   schema: REGISTRY_SCHEMA, effort:'high'})
 ```
 
 Replenishment runs after every ship. In perpetual mode, an empty critic result
 sets `lanes.discovery.status: backoff` and a future `next_at`; it never marks
 the programme DONE. New candidates enter the Court as generation N+1.
+
+Signal is cached, because web research is the expensive node and a perpetual
+programme runs forever: reuse `lanes.signal` while `fetched_at` is inside the
+charter TTL (default 7 days), and refresh when it is stale, when a new
+generation opens, or when the Court parks every candidate. A dry backlog
+refreshes Signal FIRST, so replenishment can be driven by new external
+evidence rather than by re-reading the same repo.
 
 ## Feasibility Court (W0)
 
