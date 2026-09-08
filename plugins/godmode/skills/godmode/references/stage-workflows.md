@@ -44,6 +44,10 @@ set `lanes.signal.status: unavailable`, `log()` it, and run Discover repo-only.
 Never fail the programme for a missing signal, and never let a brain present a
 recalled claim as a current one.
 
+`LEDGER_SEEN` is resolved by the driver before launch: every claim the
+programme has ever recorded, with its verdict, rendered as lines. The scout is
+told what is already known so it spends its budget on what is not.
+
 ```js
 // SIGNAL_SCHEMA: {rows:[{id, claim, kind:'product'|'gap'|'standard',
 //   source_url, fetched_at, confidence:'high'|'medium'|'low'}]}
@@ -54,10 +58,28 @@ const signal = SIGNAL_ALLOWED ? await agent(`${ground} You are the SIGNAL scout.
   gaps their users complain about, (3) standards, APIs or protocols that constrain
   or unlock features. Use /research if available, else WebSearch + WebFetch.
   EVERY row carries source_url and fetched_at. Drop anything you cannot cite.
-  No speculation, no recalled-from-memory claims dressed as current.`,
+  No speculation, no recalled-from-memory claims dressed as current.
+  ALREADY SEEN by earlier generations, INCLUDING rows that were parked or
+  rejected. Do not re-report these, and do not re-argue a parked one unless you
+  have NEW evidence that changes it, in which case say what changed and cite it:
+  ${LEDGER_SEEN}
+  Return ONLY rows that are new or genuinely changed.`,
   {model: CREATIVE_QUORUM.models[0], schema: SIGNAL_SCHEMA, effort:'high'})
   : (log('signal lane unavailable: discovery is repo-only this generation'), null)
 ```
+
+The workflow returns rows; the DRIVER appends them to the signal ledger at
+`.agents/plans/<slug>-signal-ledger.md`, which is append-only and rides the
+sidecar ref so it survives a crash and a machine handover. Row shape: `id`,
+`claim`, `source_url`, `fetched_at`, `gen`, `verdict`
+(`used | parked | superseded`). The Court writes verdicts back, so a parked
+idea stays parked WITH its reason instead of returning every generation to be
+rejected again. That is the whole point of keeping it: a loop that only
+remembers what it accepted pays to rediscover its dead ends forever.
+
+Compaction, because the ledger only grows: when it passes the charter's row
+cap, collapse `superseded` rows into a single dated summary line per space and
+keep every `parked` row intact. Parked rows are the ones doing the work.
 
 ## Discover
 
@@ -91,7 +113,9 @@ the programme DONE. New candidates enter the Court as generation N+1.
 Signal is cached, because web research is the expensive node and a perpetual
 programme runs forever: reuse `lanes.signal` while `fetched_at` is inside the
 charter TTL (default 7 days), and refresh when it is stale, when a new
-generation opens, or when the Court parks every candidate. A dry backlog
+generation opens, or when the Court parks every candidate. A refresh never
+replaces the ledger, it appends to it: the TTL decides when to go looking
+again, the ledger decides what is already known. A dry backlog
 refreshes Signal FIRST, so replenishment can be driven by new external
 evidence rather than by re-reading the same repo.
 
