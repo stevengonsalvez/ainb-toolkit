@@ -3,7 +3,9 @@ name: coding-agent
 description: >
   Spin off a coding agent. `ainb run` is the primary spawn path for any session
   that runs in a terminal: it creates an isolated git worktree, records the
-  session, and makes it visible to the TUI, fleet and ATC tooling. Fall back to
+  session, and makes it visible to the TUI, fleet and ATC tooling. Point it at a
+  remote with `--remote-repo owner/repo` (e.g. `shotclubhouse/shotclubhouse`) and
+  ainb clones and fetches for you, so never hand-clone a repo first. Fall back to
   the Task tool for bounded in-session work, and to raw tmux only when ainb is
   unavailable. NOT for simple single-file edits, do those directly.
 user-invocable: true
@@ -21,8 +23,9 @@ trigger. If you cannot name the trigger, use Pattern 1.
 | Situation | Pattern |
 |-----------|---------|
 | Any coding session that needs its own terminal, in any git repo | **Pattern 1: `ainb run`** |
+| The repo lives on GitHub and you have no local checkout you must reuse | **Pattern 1** with `--remote-repo owner/repo` |
 | Several independent fixes at once | **Pattern 1**, one `--create-branch` per fix (Pattern 5) |
-| PR review | **Pattern 1** into a disposable `/tmp` clone (Pattern 4) |
+| PR review | **Pattern 1** with `--remote-repo`, then `gh pr checkout` (Pattern 4) |
 | Claude Code capped or erroring | **Pattern 1** with `--tool codex` (Pattern 6) |
 | Bounded work, no terminal needed, fine to die with this turn | Pattern 2: Task tool (fallback) |
 | `ainb` not on PATH, or the target directory is not a git repo | Pattern 3: raw tmux (fallback) |
@@ -37,15 +40,63 @@ session store, and shows up in the `ainb` TUI, `ainb fleet standup` and ATC.
 
 ### The contract
 
+Two ways to name the repo. Pick `--remote-repo` unless you need a specific local
+checkout (uncommitted work, a branch that only exists on this box).
+
 ```bash
+# Remote (preferred): ainb clones or fetches for you, no hand-cloning
 ainb run \
-  --repo /absolute/path/to/repo-root \
+  --remote-repo shotclubhouse/shotclubhouse \
   --worktree --create-branch fix/issue-101 \
   --tool claude \
   --model opus \
   --dangerously-skip-permissions \
   -p "$(cat /tmp/task-101.md)"
+
+# Local checkout you must reuse
+ainb run \
+  --repo /absolute/path/to/repo-root \
+  --worktree --create-branch fix/issue-101 \
+  --tool claude \
+  --dangerously-skip-permissions \
+  -p "$(cat /tmp/task-101.md)"
 ```
+
+### `--remote-repo`, what it actually does
+
+`owner/repo` expands to `https://github.com/owner/repo.git`; a full `https://`
+or `git@` URL is passed through unchanged. ainb then manages a single cache
+clone per repo at `~/.agents-in-a-box/repo-cache/<repo-name>`:
+
+```
+--remote-repo owner/repo
+        │
+        ▼
+┌──────────────────────────────┐   exists    ┌──────────────────┐
+│ ~/.agents-in-a-box/          │────────────▶│ git fetch --all  │
+│   repo-cache/<repo-name>     │             └──────────────────┘
+└──────────────────────────────┘   missing   ┌──────────────────┐
+        │                        ───────────▶│ git clone        │
+        ▼                                    └──────────────────┘
+   treated as the repo root, then --worktree / --create-branch
+   isolates off it as usual
+```
+
+So the clone happens once, every later run just fetches, and the session still
+lands in its own worktree under
+`~/.agents-in-a-box/worktrees/by-name/<workspace>--<branch>--<shortid>`. Do NOT
+`git clone` into `/tmp` yourself and pass that as `--repo`: that is a second
+copy ainb does not manage, and nothing cleans it up.
+
+Two things to know:
+
+- **`--repo` wins.** Pass both and `--remote-repo` is ignored silently, no
+  warning. Pass one.
+- **The cache key is the repo NAME, not `owner/repo`.** `a/tools` and `b/tools`
+  both resolve to `~/.agents-in-a-box/repo-cache/tools`, so the second one runs
+  against the first one's clone. When two owners share a repo name, pass the
+  full URL for one of them and check
+  `git -C ~/.agents-in-a-box/repo-cache/<name> remote -v` before trusting it.
 
 If a task worktree **already exists**, point `--repo` at the worktree and drop
 the isolation flags (adding `--worktree` again would nest a worktree inside a
@@ -59,7 +110,8 @@ ainb run --repo /absolute/path/to/existing/worktree --tool claude -p "$(cat task
 
 | Flag | Why |
 |------|-----|
-| `--repo <abs-path>` | Repo root for a fresh session, or an existing task worktree. Absolute path, always. |
+| `--remote-repo <owner/repo>` | Preferred source. Clones once into `~/.agents-in-a-box/repo-cache/<repo-name>`, fetches on later runs. Takes `owner/repo` or a full URL, never a path. |
+| `--repo <abs-path>` | A local checkout you must reuse: repo root for a fresh session, or an existing task worktree. Absolute path, always. |
 | `--worktree` | Isolation. Creates a git worktree under `~/.agents-in-a-box/worktrees/by-name/<repo>--<branch>--<shortid>`. |
 | `--create-branch <branch>` | Implies `--worktree` and names the branch. Prefer this over bare `--worktree`, which invents `ainb/session-<shortid>`. |
 | `--tool claude\|codex\|gemini\|copilot` | Which CLI to launch. Defaults to `claude`. |
@@ -358,46 +410,53 @@ substitution. The same rule applies to `ainb run -p "$(cat file)"`.
 
 ## Pattern 4: PR review
 
-Review a pull request without touching the live project. Always clone to `/tmp`,
-then spawn with Pattern 1 against that clone.
+Review a pull request without touching the live project. `--remote-repo` gives
+the reviewer a fresh worktree off the managed cache clone, so there is no
+hand-clone to make and no directory to delete afterwards.
 
 ```bash
-TIMESTAMP=$(date +%s)
 PR_NUMBER="42"
 REPO="owner/repo"
-WORK_DIR="/tmp/pr-review-${TIMESTAMP}"
 
-# Clone and checkout the PR branch
-git clone "https://github.com/${REPO}.git" "$WORK_DIR"
-git -C "$WORK_DIR" fetch origin "pull/${PR_NUMBER}/head:review/pr-${PR_NUMBER}"
-
-# Spawn the reviewer in an isolated worktree off that clone
 ainb run \
-  --repo "$WORK_DIR" \
+  --remote-repo "$REPO" \
   --worktree --create-branch "review/pr-${PR_NUMBER}" \
   --tool claude \
   --dangerously-skip-permissions \
-  -p "Review PR #${PR_NUMBER}. Check correctness, security, test coverage, and style. Summarise findings."
+  -p "Run 'gh pr checkout ${PR_NUMBER}' in this worktree, then review PR #${PR_NUMBER} against its base: correctness, security, test coverage, style. Summarise findings. Do not push and do not merge."
 
 ainb list --format json | jq -r '.[] | "\(.session_id)\t\(.workspace_name)"'
 ```
 
+`gh pr checkout` inside the worktree is what puts the PR head in front of the
+reviewer, and it works for fork PRs too. Fetching the PR ref yourself is only
+worth it when the agent has no `gh` auth:
+
+```bash
+git -C ~/.agents-in-a-box/repo-cache/"${REPO##*/}" \
+  fetch origin "pull/${PR_NUMBER}/head:review/pr-${PR_NUMBER}"
+```
+
 **Rules for PR reviews:**
-- NEVER run the agent inside the live project directory, contamination risk
-- Clone to `/tmp/pr-review-{timestamp}`, isolated and disposable
-- Clean up after: `ainb kill <id> --force`, **verify the session is gone**, then
-  `rm -rf /tmp/pr-review-${TIMESTAMP}`. Without `--force` the kill silently
-  cancels and you delete the checkout out from under a live agent:
+- NEVER run the agent inside the live project directory, contamination risk. The
+  worktree ainb creates already satisfies this, whether the source was
+  `--remote-repo` or a local `--repo`.
+- Clean up with `ainb kill <id> --force`, then `ainb git cleanup --force`. Leave
+  `~/.agents-in-a-box/repo-cache/` alone: it is shared by every later run of that
+  repo, and deleting it just forces the next clone.
+- Never `rm -rf` a worktree until `ainb list` shows the session actually gone.
+  Without `--force` the kill silently cancels and still exits 0, so you would be
+  deleting the checkout out from under a live agent:
 
   ```bash
   ainb kill "$ID" --force
   ainb list --format json | jq -e --arg id "$ID" 'all(.session_id != $id)' >/dev/null \
-    && rm -rf "/tmp/pr-review-${TIMESTAMP}" \
-    || echo "session $ID still present, NOT deleting the checkout"
+    && echo "gone, safe to clean worktrees" \
+    || echo "session $ID still present, NOT deleting anything"
   ```
 
-If `ainb` is unavailable, fall back to Pattern 3 with `-c "$WORK_DIR"` and the
-same `/tmp` rules.
+If `ainb` is unavailable, fall back to Pattern 3 against a `/tmp` clone you make
+and delete yourself, since nothing else is managing it then.
 
 ---
 
@@ -565,8 +624,9 @@ projects. Kill by exact session name only.
    dangling worktree pointer) means respawn. A real repo name does **not** prove
    you isolated it, check the flags you passed.
 
-5. **PR reviews always use `/tmp`.** Never run an agent inside the live project
-   directory for review work, contamination risk.
+5. **PR reviews never touch the live project.** Spawn with `--remote-repo` and
+   let ainb's worktree be the isolation. Hand-cloning to `/tmp` is the Pattern 3
+   fallback only, and then you own the cleanup.
 
 6. **Never block.** After starting a session, report the identifier and move on.
    Use `ainb logs` / `tmux capture-pane` to check progress, never `ainb attach`
@@ -574,8 +634,9 @@ projects. Kill by exact session name only.
 
 7. **One task per session.** Do not reuse a session for unrelated work.
 
-8. **Absolute paths only.** `--repo` and `tmux -c` both need absolute paths;
-   neither inherits your working directory reliably.
+8. **Absolute paths only, except `--remote-repo`.** `--repo` and `tmux -c` both
+   need absolute paths; neither inherits your working directory reliably.
+   `--remote-repo` is the opposite: it takes `owner/repo` or a URL, never a path.
 
 9. **Literal key sending.** Use `tmux send-keys -t SESSION -l "text"` (the `-l`
    flag) for any prompt text containing special characters. Without `-l`,
