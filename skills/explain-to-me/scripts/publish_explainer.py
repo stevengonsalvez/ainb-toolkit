@@ -83,15 +83,40 @@ def publish_site(files, key, slug=None):
     return slug
 
 
-def fetch_index(cfg):
-    """Return (index_html_bytes, data_dict) from the live index site."""
-    base = f"https://{cfg['index_slug']}.here.now"
-    cb = f"?cb={os.urandom(6).hex()}"  # bust CDN cache; stale data.json loses entries
-    html = req("GET", f"{base}/{cb}", raw=True)
-    data = json.loads(req("GET", f"{base}/data.json{cb}", raw=True))
+def fetch_index(cfg, key=None):
+    """Return (index_html_bytes, data_dict) from the live index site.
+
+    Reads through the owner API (GET /publish/:slug/files/:path), which serves the
+    live version for password-protected and restricted Sites without needing the
+    visitor password. A bare public GET breaks the moment the index is locked, and
+    it breaks halfway through a publish, after the page is already live.
+    Falls back to the public origin when no key is supplied.
+    """
+    if key:
+        base = f"{API}/api/v1/publish/{cfg['index_slug']}/files"
+        html = req("GET", f"{base}/index.html", key, raw=True)
+        data = json.loads(req("GET", f"{base}/data.json", key, raw=True))
+    else:
+        base = f"https://{cfg['index_slug']}.here.now"
+        cb = f"?cb={os.urandom(6).hex()}"  # bust CDN cache; stale data.json loses entries
+        html = req("GET", f"{base}/{cb}", raw=True)
+        data = json.loads(req("GET", f"{base}/data.json{cb}", raw=True))
     if "entries" not in data:
         die("index data.json has no 'entries' — refusing to touch it")
     return html, data
+
+
+def password_for(cfg, category):
+    """Per-category password, falling back to _default then the legacy flat 'password'.
+
+    One password across every category means a link handed to a client also opens
+    every other client's locked pages, and your personal ones. Keyed by category so
+    a leak is contained to that audience.
+    """
+    pw = cfg.get("passwords") or {}
+    if category in pw and pw[category] is None:
+        return None          # explicitly open: an OS project, never gate it
+    return pw.get(category) or pw.get("_default") or cfg.get("password")
 
 
 def upsert_entry(data, entry):
@@ -136,7 +161,7 @@ def main():
     cfg, key = load_cfg()
 
     if a.remove:
-        html, data = fetch_index(cfg)
+        html, data = fetch_index(cfg, key)
         n0 = len(data["entries"])
         data["entries"] = [e for e in data["entries"] if e["path"] != a.remove]
         if a.dry_run:
@@ -158,10 +183,22 @@ def main():
         die("--path must be lowercase hyphen-case")
     if a.category not in cfg.get("categories", {}):
         die(f"--category '{a.category}' not in config: {list(cfg['categories'])}")
+    # Resolve the password BEFORE publishing. This check used to sit after
+    # publish_site(), so --lock on a category declared open died with the page
+    # already live and UNLOCKED — the exact failure the flag exists to prevent.
+    lock_pw = password_for(cfg, a.category) if a.lock else None
+    if a.lock and not lock_pw:
+        die(f"--lock set but category '{a.category}' is declared open in config "
+            f"(passwords.{a.category} is null). Set a password there, or drop --lock.")
+
     content = open(a.file, "rb").read()
 
     if a.dry_run:
-        print(f"DRY: publish {a.file} -> new site; lock={a.lock}; "
+        pwmap = cfg.get("passwords") or {}
+        src = ("category '%s'" % a.category) if pwmap.get(a.category) else \
+              ("_default" if a.lock else "n/a")
+        print(f"DRY: publish {a.file} -> new site; lock={a.lock}"
+              + (f" using the {src} password" if a.lock else " (page will be PUBLIC)") + "; "
               f"mount /{a.path}/ on {cfg['domain']}; index upsert "
               f"{{path:{a.path}, cat:{a.category}, date:{a.date}}}")
         return
@@ -169,13 +206,10 @@ def main():
     slug = publish_site({"index.html": content}, key)
     print(f"site: https://{slug}.here.now/")
     if a.lock:
-        if not cfg.get("password"):
-            die("--lock set but no 'password' in config")
-        req("PATCH", f"{API}/api/v1/publish/{slug}/metadata", key,
-            {"password": cfg["password"]})
+        req("PATCH", f"{API}/api/v1/publish/{slug}/metadata", key, {"password": lock_pw})
         print("locked")
     mount(cfg, key, a.path, slug)
-    html, data = fetch_index(cfg)
+    html, data = fetch_index(cfg, key)
     verb = upsert_entry(data, {"path": a.path, "title": a.title, "desc": a.desc,
                                "date": a.date, "locked": a.lock, "cat": a.category})
     save_index(cfg, key, html, data)

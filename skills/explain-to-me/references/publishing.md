@@ -40,6 +40,21 @@ never in the config, never in chat.
 }
 ```
 
+- `passwords`: per-category map, e.g. `{"shot": "…", "popajob": "…", "_default": "…",
+  "index": "…"}`. `password_for(cfg, category)` picks by `--category`, falling back to
+  `_default` then the legacy flat `password`. One password across every category means a
+  link handed to a client also opens every other client's locked pages — keyed by
+  category, a leak is contained to that audience. **Applies to new publishes only:**
+  an already-published Site keeps whatever password it was locked with until re-PATCHed
+  (`PATCH /api/v1/publish/:slug/metadata {"password": "…"}`).
+- `passwords.index`: set when the domain index itself is gated. The index lists every
+  title and description regardless of per-page locks, so leaving it open advertises what
+  locked work exists. `fetch_index(cfg, key)` reads it through the owner API, so a locked
+  index does not break publishing — but only when the key is passed.
+- Keep `~/.herenow/explainers.json` at mode 600: it holds passwords in plaintext.
+- Mirrored in Bitwarden as the secure note **"here.now explainer passwords"** (one custom
+  field per category). The config file stays the source of truth the publisher reads;
+  Bitwarden is the copy a human looks up. Update both when a password changes.
 - `protect_rule`: prose predicate the **agent** evaluates against the explainer's
   content to decide `--lock`. The script never guesses; judgment is the agent's.
 - `categories`: allowed `--category` values (key → human description). The agent
