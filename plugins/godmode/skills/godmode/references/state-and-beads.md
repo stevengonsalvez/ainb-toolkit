@@ -25,7 +25,10 @@ tick that changes anything.
   "lanes": {
     "mutation": {"owner": "e02-entity-resolution | repair-17 | null"},
     "regression": {"status": "idle | queued | running | passed | failed"},
-    "discovery": {"status": "idle | queued | running | backoff", "next_at": null}
+    "discovery": {"status": "idle | queued | running | backoff", "next_at": null},
+    "signal": {"status": "idle | queued | running | fresh | stale | unavailable",
+                "fetched_at": null, "next_at": null, "gen": 0,
+                "ledger": ".agents/plans/<slug>-signal-ledger.md", "ledger_rows": 0}
   },
   "creative_quorum": {"status": "ready | deferred", "models": ["claude:fable", "codex:rescue"],
                         "receipt": "path or URL"},
@@ -43,8 +46,19 @@ check against STOP RULES before re-arming. `finite` may enable `backlog_dry`.
 of completion. `programme_policy.py validate-state` runs from the state-write
 hook and rejects impossible transitions without rewriting state.
 
-The mutation lane has one owner only. Regression and discovery may run in
-parallel. A confirmed incident replaces the current mutation owner until its
+The mutation lane has one owner only. Regression, discovery and signal may run
+in parallel; none of them may take the mutation lane. `signal` is external
+evidence gathering: `unavailable` means no research capability or no charter
+authority, which is a degraded run and not a failure, and `stale` means the
+charter TTL has expired so the next discovery generation must refresh it before
+brainstorming.
+
+The signal ledger is append-only and rides the sidecar ref alongside state,
+charter and lease, so research survives a crash and a machine handover. A
+refresh appends; it never rewrites history. `gen` counts generations so a row
+records when it was first seen, and `ledger_rows` drives compaction against the
+charter cap. Deleting a `parked` row is a bug: parked rows are what stop the
+programme re-proposing an idea it already rejected. A confirmed incident replaces the current mutation owner until its
 repair and cumulative verification finish. `creative_quorum.status: ready`
 requires two distinct model identifiers and a receipt containing both views,
 their disagreement, evidence, and synthesis.

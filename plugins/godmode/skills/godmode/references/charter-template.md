@@ -14,6 +14,8 @@ programme runs. Base branch: {{BASE_BRANCH}}. Worktree: {{WORKTREE_PATH}}.
 · Mode: {{finite | perpetual}}. Approval policy: {{none | roadmap}}.
 · Provider capability receipts: {{scheduler + peer-model adapters per host}}.
 · External integration authority: {{configured integrations only}}.
+· External research: {{allowed | forbidden}}. Domains: {{allowlist}}.
+  Signal TTL: {{7d}}. Forbidden means Discover runs repo-only, on purpose.
 · Production policy: {{progressive rollout, health signals, automatic rollback}}.
 
 — OUTCOME —
@@ -23,7 +25,8 @@ parked with a Feasibility Court verdict (downgraded tier + named blocker).
 Fold in any pre-existing backlog items by ID with their required disposition.}}
 
 — PIPELINE (state machine per epic) —
-Creative-quorum Discover → Feasibility Court ({{once | every generation}}) →
+Signal (cited external evidence, TTL-cached) → Creative-quorum Discover →
+Feasibility Court ({{once | every generation}}) →
 Roadmap + epic beads → {{optional roadmap approval}} → per epic: Plan (planner →
 adversarial review → revise → verify-the-revise) → Execute (build-pair →
 pair review → adversarial epic review → VERIFY → fix loop ≤2 → build gate)

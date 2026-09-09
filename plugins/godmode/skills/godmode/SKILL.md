@@ -45,10 +45,18 @@ STATE    beads (epic/feature nodes) + .agents/scratch/<slug>-state.json (working
 ## Pipeline (stage names are the primary vocabulary; W-numbers are aliases)
 
 ```
+SIGNAL                   TTL    ONE model gathers CITED external evidence: comparable
+        │                       products, user-reported gaps, constraining standards.
+        │                       Reads the append-only ledger first and returns only what is
+        │                       NEW; parked rows keep their reason and are never re-proposed.
+        │                       /research if available, else WebSearch+WebFetch. Charter-gated;
+        │                       unavailable degrades to repo-only discovery, never a failure.
+        ▼
 DISCOVER                 once   BRAIN brainstorms the nirvana landscape from the
-        │                       north-star + a repo scan + any existing backlog →
-        │                       writes the feature REGISTRY (.agents/plans/<slug>-registry.md).
-        │                       User-supplied feature lists are appended, not replaced.
+        │                       north-star + a repo scan + the SIGNAL rows + any existing
+        │                       backlog → writes the feature REGISTRY
+        │                       (.agents/plans/<slug>-registry.md), provenance per row
+        │                       (repo | signal | user). User lists appended, not replaced.
         ▼
 FEASIBILITY COURT (W0)   once   every REGISTRY idea → verdict: feasible | downgrade | park+blocker
         │                       skipped only by explicit --no-court (registry taken verbatim)
@@ -68,15 +76,21 @@ per epic, serial on stacked branches:
    SHIP           stacked PR (labelled for review) → close epic+feature beads with
         │         evidence notes → dashboard update
         ▼
-PERPETUAL         after every ship: full regression + next discovery/plan
-                  backlog-dry becomes adaptive evidence research, never DONE
+PERPETUAL         after every ship: full regression + refresh SIGNAL if stale +
+                  next discovery/plan. Backlog-dry refreshes SIGNAL first and
+                  becomes adaptive evidence research, never DONE
 TERMINATION       finite backlog-dry | --budget exhausted | --deadline reached |
                   security, production-safety, authority, or lease loss
 ```
 
 Perpetual progression: after each epic ships, start cumulative regression in
 an isolated lane. At the same time, the completeness critic re-enters Discover
-and creates evidence-backed candidates for the next generation. A confirmed
+and creates evidence-backed candidates for the next generation, refreshing the
+external Signal first when it is stale, so a dry backlog is replenished from
+new outside evidence rather than from re-reading the same repo. The refresh
+appends to the signal ledger and dedupes against every row ever recorded,
+parked ones included, so the programme does not pay to rediscover a dead end it
+already rejected. A confirmed
 defect preempts the single mutation lane. Discovery and planning continue in
 parallel. An empty Court result enters adaptive-backoff research, never DONE.
 
@@ -84,7 +98,9 @@ parallel. An empty Court result enters adaptive-backoff research, never DONE.
 
 Every creative decision has two independent model perspectives: Discover,
 Feasibility Court, Roadmap, completeness critic, incident root-cause analysis,
-and strategic reprioritisation. Resolve the route before launching work with:
+and strategic reprioritisation. Signal is not one of them: gathering cited
+external evidence is retrieval, so it runs on one model and is judged by its
+citations, not by quorum. Resolve the route before launching work with:
 
 ```bash
 ${CLAUDE_PLUGIN_ROOT}/scripts/programme_policy.py creative-route <availability.json>
@@ -154,7 +170,7 @@ worktrees available; otherwise serialise (single worktree = single checkout).
    your stop until its receipt exists).
 5. Ask `programme_policy.py next-action <state>` which lane owns the next
    action. Confirmed defects own mutation, shipped epics queue regression, and
-   perpetual empty backlogs queue research. Re-arm: ScheduleWakeup ~600s,
+   perpetual empty backlogs refresh Signal then queue research. Re-arm: ScheduleWakeup ~600s,
    reason = current phase, prompt = the DRIVER
    RE-ENTRY PROMPT verbatim (below). Honour STOP RULES first.
 

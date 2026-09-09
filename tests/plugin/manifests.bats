@@ -9,10 +9,10 @@ load helpers
   [ "$V1" = "$V3" ]
 }
 
-@test "Godmode 0.3.1 removes false Claude-only driving claims" {
-  jq -e '.version == "0.3.1"' "$REPO_ROOT/plugins/godmode/.claude-plugin/plugin.json"
-  jq -e '.version == "0.3.1"' "$REPO_ROOT/plugins/godmode/.codex-plugin/plugin.json"
-  jq -e '.version == "0.3.1"' "$REPO_ROOT/.github/plugin/plugin.json"
+@test "Godmode 0.4.0 removes false Claude-only driving claims" {
+  jq -e '.version == "0.4.0"' "$REPO_ROOT/plugins/godmode/.claude-plugin/plugin.json"
+  jq -e '.version == "0.4.0"' "$REPO_ROOT/plugins/godmode/.codex-plugin/plugin.json"
+  jq -e '.version == "0.4.0"' "$REPO_ROOT/.github/plugin/plugin.json"
   ! grep -qi 'driving the loop is Claude-only' "$REPO_ROOT/plugins/godmode/.codex-plugin/plugin.json"
   ! grep -qi 'driving the loop is Claude-only' "$REPO_ROOT/.github/plugin/marketplace.json"
 }
