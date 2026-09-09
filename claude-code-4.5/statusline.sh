@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# {{HOME_TOOL_DIR}}/statusline.sh — Claude Code rich two-line statusline
+# ~/.claude/statusline.sh — Claude Code rich two-line statusline
 # Line 1: model · cwd · git branch+changes · session health · beads
 # Line 2: ctx bar · 5h bar · wk bar · cost
 #
@@ -31,7 +31,7 @@ _cache_age() {
   [[ ! -f "$CACHE_FILE" ]] && echo 9999 && return
   local now mtime
   now=$(date +%s)
-  # ponytail: GNU first — on Linux `stat -f` succeeds but prints filesystem
+  # ponytail: GNU first: on Linux `stat -f` succeeds but prints filesystem
   # info, so the BSD-first order never falls through and breaks the arithmetic.
   mtime=$(stat -c %Y "$CACHE_FILE" 2>/dev/null || stat -f %m "$CACHE_FILE" 2>/dev/null || echo 0)
   echo $(( now - mtime ))
@@ -341,7 +341,7 @@ COST_DISPLAY=""
 if [[ -n "$SESSION_COST" && "$SESSION_COST" =~ ^[0-9] ]]; then
   SESSION_COST_FMT=$(printf "\$%.2f" "$SESSION_COST" 2>/dev/null || echo "")
   TODAY_COST_FMT=""
-  COSTS_FILE="$HOME/{{TOOL_DIR}}/metrics/costs.jsonl"
+  COSTS_FILE="$HOME/.claude/metrics/costs.jsonl"
   if [[ -f "$COSTS_FILE" ]]; then
     TODAY=$(date +%Y-%m-%d)
     TODAY_COST=$(grep "\"${TODAY}" "$COSTS_FILE" 2>/dev/null \
@@ -510,8 +510,8 @@ _bar_fg() {
 CAVEMAN_BADGE=""
 CAVEMAN_SAVINGS=""
 CAVEMAN_MODE=""
-_CAVEMAN_FLAG="${CLAUDE_CONFIG_DIR:-$HOME/{{TOOL_DIR}}}/.caveman-active"
-_CAVEMAN_SUFFIX="${CLAUDE_CONFIG_DIR:-$HOME/{{TOOL_DIR}}}/.caveman-statusline-suffix"
+_CAVEMAN_FLAG="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/.caveman-active"
+_CAVEMAN_SUFFIX="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/.caveman-statusline-suffix"
 if [[ -f "$_CAVEMAN_FLAG" ]] && [[ ! -L "$_CAVEMAN_FLAG" ]]; then
   CAVEMAN_MODE=$(head -c 64 "$_CAVEMAN_FLAG" 2>/dev/null | tr -d '\n\r' | tr -cd 'a-z0-9-')
   case "$CAVEMAN_MODE" in
@@ -627,12 +627,12 @@ fi
 # Rounded pill on line 2 when this session's Claude Code has the RTK (Rust
 # Token Killer) PreToolUse hook wired. ainb wires it project-locally into
 # <project_dir>/.claude/settings.json; `rtk init -g` wires it globally into
-# {{HOME_TOOL_DIR}}/settings.json. Cheap literal grep for the hook command — no rtk
+# ~/.claude/settings.json. Cheap literal grep for the hook command — no rtk
 # subprocess. Reflects ACTUAL wiring, mirroring the HR badge above.
 _RTK_DIR=$(_jq '.workspace.project_dir // .workspace.current_dir')
 [[ -z "$_RTK_DIR" ]] && _RTK_DIR="$CWD"
 if grep -qsF 'rtk hook claude' "${_RTK_DIR}/.claude/settings.json" 2>/dev/null \
-   || grep -qsF 'rtk hook claude' "$HOME/{{TOOL_DIR}}/settings.json" 2>/dev/null; then
+   || grep -qsF 'rtk hook claude' "$HOME/.claude/settings.json" 2>/dev/null; then
   _rtk_capL=$'\ue0b6'; _rtk_capR=$'\ue0b4'
   L2+=" \033[38;2;${C_GREEN}m${_rtk_capL}\033[48;2;${C_GREEN}m\033[38;2;${C_BLACK}m RTK ${RESET}\033[38;2;${C_GREEN}m${_rtk_capR}${RESET}"
 fi
@@ -650,7 +650,7 @@ printf '%b\n %b' "$L1" "$L2"
 if [[ -n "${CLAUDE_PLUGIN_ROOT:-}" ]]; then
   _REFLECT_ROOT="$CLAUDE_PLUGIN_ROOT/"
 else
-  _REFLECT_CACHE="$HOME/{{TOOL_DIR}}/plugins/cache/agents-in-a-box/reflect"
+  _REFLECT_CACHE="$HOME/.claude/plugins/cache/agents-in-a-box/reflect"
   _REFLECT_ROOT="$(ls -1d "$_REFLECT_CACHE"/*/ 2>/dev/null | sort -V | tail -1)"
 fi
 # v5.2+ flat layout ships it under plugin/scripts/; older releases at scripts/.
