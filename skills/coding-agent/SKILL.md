@@ -262,11 +262,16 @@ Task({ description: "Integration test for auth + config", prompt: "..." })
 
 ---
 
-## Pattern 3: raw tmux (FALLBACK ONLY)
+## Pattern 3: raw tmux / direct execution (FALLBACK ONLY)
 
 **Use this instead of ainb only when** `command -v ainb` fails, or the target
-directory is not a git repo (ainb needs a repo to build a worktree from). Check
-first:
+directory is not a git repo (ainb needs a repo to build a worktree from). If the
+user explicitly asked for an ainb session and `ainb` is missing, do not pretend a
+session was spawned: state the tool absence in the final report, then continue
+with the safest viable fallback. For read-only investigations such as PR/history
+root-cause analysis, direct local commands are acceptable and better than
+creating an unnecessary raw tmux agent. For code changes or long-running work,
+use the tmux fallback and report the session name. Check first:
 
 ```bash
 command -v ainb >/dev/null && git -C "$WORK_DIR" rev-parse --git-dir >/dev/null 2>&1 \
