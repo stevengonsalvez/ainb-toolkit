@@ -38,6 +38,24 @@ You need three things from the target project:
 pip install --quiet matplotlib   # only if you want the chart at the end
 ```
 
+### Access triage before claiming evidence
+
+Do this before saying “checked PostHog”. If any required auth is missing, report the blocker explicitly and continue with repo/GitHub evidence instead of inventing replay confirmation.
+
+```bash
+# Personal/session API auth. Public project keys are not enough for replay reads.
+find "$HOME" -maxdepth 4 \( -name '.env*' -o -path '*/.secrets/*' \) -type f 2>/dev/null \
+  | while read -r f; do grep -IlE 'POSTHOG_PERSONAL|POSTHOG_API|PH_TOKEN|PH_PROJECT|PH_HOST' "$f" 2>/dev/null; done
+
+# Browser fallback viability. In containers, Chrome often needs --no-sandbox.
+command -v agent-browser || true
+```
+
+Important distinctions:
+- `VITE_PUBLIC_POSTHOG_KEY` / `NEXT_PUBLIC_POSTHOG_KEY` is a public ingest key. It cannot read session recordings.
+- GitHub Actions/repo variables may reveal only variable names; do not print or preserve secret values.
+- If browser automation fails with `No usable sandbox` / `DevToolsActivePort`, the UI path is blocked unless the browser tool can be relaunched with `--no-sandbox` or an authenticated storage state is available.
+
 If the project has a config skill (e.g. `shot-debug-auth`, `incident-investigate`, or similar), check it first — common IDs and token paths may already be documented there.
 
 Export for convenience (substitute your own values):
@@ -225,6 +243,8 @@ fig.savefig('timeline.png', dpi=140, bbox_inches='tight')
 ```
 
 ## Canonical Incident Report
+
+If PostHog access is blocked, use `references/replay-access-blockers.md` for the exact distinction between public ingest keys, personal API keys, browser auth state, and the report wording to use.
 
 For a complete write-up, attach:
 1. The timeline chart (`timeline.png`)
