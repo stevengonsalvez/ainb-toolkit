@@ -15,7 +15,6 @@ description: |
   "explain-to-me X", "make me an explainer for X", "give me an HTML
   explainer", "render this as a webpage", "ADR for X", "options paper for
   X", or asks for a rich visual writeup.
-  diagrams whenever the content shape needs them.
 argument-hint: "[topic — e.g. 'how rate limiting works in our api'] [--local] [--gist [--public]]"
 ---
 
