@@ -64,39 +64,49 @@ ainb run \
 
 ### `--remote-repo`, what it actually does
 
-`owner/repo` expands to `https://github.com/owner/repo.git`; a full `https://`
-or `git@` URL is passed through unchanged. ainb then manages a single cache
-clone per repo at `~/.agents-in-a-box/repo-cache/<repo-name>`:
+`owner/repo` expands to `https://github.com/owner/repo.git`; an `https://` or
+`git@host:owner/repo` URL is taken as given. ainb keeps ONE shared clone per
+repo at `~/.agents-in-a-box/repos/<host>/<owner>/<repo>`, the same root the TUI
+uses, and adds a real git worktree off it per session:
 
 ```
---remote-repo owner/repo
+--remote-repo shotclubhouse/shotclubhouse
         │
         ▼
-┌──────────────────────────────┐   exists    ┌──────────────────┐
-│ ~/.agents-in-a-box/          │────────────▶│ git fetch --all  │
-│   repo-cache/<repo-name>     │             └──────────────────┘
-└──────────────────────────────┘   missing   ┌──────────────────┐
-        │                        ───────────▶│ git clone        │
-        ▼                                    └──────────────────┘
-   treated as the repo root, then --worktree / --create-branch
-   isolates off it as usual
+┌────────────────────────────────────────┐  exists  ┌─────────────┐
+│ ~/.agents-in-a-box/repos/              │─────────▶│ fetch       │
+│   github.com/shotclubhouse/            │          └─────────────┘
+│   shotclubhouse                        │  missing ┌─────────────┐
+└────────────────────────────────────────┘─────────▶│ clone       │
+        │                                           └─────────────┘
+        ▼  git worktree add
+~/.agents-in-a-box/worktrees/by-name/<workspace>--<branch>--<shortid>
+        (.git is a FILE pointing back at the shared clone's gitdir)
 ```
 
-So the clone happens once, every later run just fetches, and the session still
-lands in its own worktree under
-`~/.agents-in-a-box/worktrees/by-name/<workspace>--<branch>--<shortid>`. Do NOT
-`git clone` into `/tmp` yourself and pass that as `--repo`: that is a second
-copy ainb does not manage, and nothing cleans it up.
+Verified by spawning it: `--remote-repo shotclubhouse/shotclubhouse --worktree
+--create-branch chore/x` produced
+`worktrees/by-name/shotclubhouse--chore-x--<shortid>` whose gitdir is
+`repos/github.com/shotclubhouse/shotclubhouse/.git/worktrees/...`, on the named
+branch, with `origin` pointing at the GitHub URL.
 
-Two things to know:
+So the transfer happens once and every later run is a fetch. Do NOT `git clone`
+into `/tmp` yourself and pass that as `--repo`: that is a second copy ainb does
+not manage, nothing cleans it up, and the workspace list keys its groups on the
+source repo path, so the same repo shows up as two identically-named rows.
+
+Three things to know:
 
 - **`--repo` wins.** Pass both and `--remote-repo` is ignored silently, no
   warning. Pass one.
-- **The cache key is the repo NAME, not `owner/repo`.** `a/tools` and `b/tools`
-  both resolve to `~/.agents-in-a-box/repo-cache/tools`, so the second one runs
-  against the first one's clone. When two owners share a repo name, pass the
-  full URL for one of them and check
-  `git -C ~/.agents-in-a-box/repo-cache/<name> remote -v` before trusting it.
+- **A local path is rejected, by design.** `--remote-repo /home/me/proj` fails
+  with `--remote-repo needs a remote`, and path-traversal values are refused.
+  Local checkouts go through `--repo`.
+- **Owner case makes a second root.** The path is owner-scoped, so `a/tools` and
+  `b/tools` no longer collide, but `Owner/repo` and `owner/repo` clone twice, to
+  two roots that then render as two workspace rows. Match the case used in
+  `ainb favorites list`. (A flat `~/.agents-in-a-box/repo-cache/<repo>` left on
+  an older box is pre-1.25 residue and is no longer read.)
 
 If a task worktree **already exists**, point `--repo` at the worktree and drop
 the isolation flags (adding `--worktree` again would nest a worktree inside a
@@ -110,7 +120,7 @@ ainb run --repo /absolute/path/to/existing/worktree --tool claude -p "$(cat task
 
 | Flag | Why |
 |------|-----|
-| `--remote-repo <owner/repo>` | Preferred source. Clones once into `~/.agents-in-a-box/repo-cache/<repo-name>`, fetches on later runs. Takes `owner/repo` or a full URL, never a path. |
+| `--remote-repo <owner/repo>` | Preferred source. Clones once into `~/.agents-in-a-box/repos/<host>/<owner>/<repo>`, fetches on later runs. Takes `owner/repo`, an `https://` URL or `git@host:owner/repo`, never a local path. |
 | `--repo <abs-path>` | A local checkout you must reuse: repo root for a fresh session, or an existing task worktree. Absolute path, always. |
 | `--worktree` | Isolation. Creates a git worktree under `~/.agents-in-a-box/worktrees/by-name/<repo>--<branch>--<shortid>`. |
 | `--create-branch <branch>` | Implies `--worktree` and names the branch. Prefer this over bare `--worktree`, which invents `ainb/session-<shortid>`. |
@@ -433,7 +443,7 @@ reviewer, and it works for fork PRs too. Fetching the PR ref yourself is only
 worth it when the agent has no `gh` auth:
 
 ```bash
-git -C ~/.agents-in-a-box/repo-cache/"${REPO##*/}" \
+git -C ~/.agents-in-a-box/repos/github.com/"${REPO}" \
   fetch origin "pull/${PR_NUMBER}/head:review/pr-${PR_NUMBER}"
 ```
 
@@ -441,9 +451,12 @@ git -C ~/.agents-in-a-box/repo-cache/"${REPO##*/}" \
 - NEVER run the agent inside the live project directory, contamination risk. The
   worktree ainb creates already satisfies this, whether the source was
   `--remote-repo` or a local `--repo`.
-- Clean up with `ainb kill <id> --force`, then `ainb git cleanup --force`. Leave
-  `~/.agents-in-a-box/repo-cache/` alone: it is shared by every later run of that
-  repo, and deleting it just forces the next clone.
+- Clean up with `ainb kill <id> --force`, then `ainb git cleanup --force`. Note
+  `ainb kill` prints `Worktree ... was not removed` and leaves it: finish with
+  `git -C ~/.agents-in-a-box/repos/github.com/<owner>/<repo> worktree remove
+  --force <path>` plus `branch -D <branch>` if you want it gone. Leave
+  `~/.agents-in-a-box/repos/` itself alone: it is the shared clone every later
+  run of that repo reuses.
 - Never `rm -rf` a worktree until `ainb list` shows the session actually gone.
   Without `--force` the kill silently cancels and still exits 0, so you would be
   deleting the checkout out from under a live agent:
