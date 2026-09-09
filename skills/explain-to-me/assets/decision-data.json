@@ -1,0 +1,25 @@
+{
+  "_comment": "Copy to <sitedir>/.herenow/data.json and edit. Max 10 collections, 50 fields each; names ^[a-z][a-z0-9_]*$. Reserved (never declare): id, site_slug, collection, data, status, created_at, updated_at, created_by_account_id. created_at is stamped automatically. Keep insert-only: an append log means the newest record per item is the standing answer and nobody can rewrite someone else's.",
+  "collections": {
+    "decisions": {
+      "fields": {
+        "item":   { "type": "string", "required": true, "maxLength": 16,   "trim": true },
+        "choice": { "type": "string", "required": true, "maxLength": 4,    "trim": true },
+        "note":   { "type": "string",                   "maxLength": 2000, "trim": true },
+        "who":    { "type": "string", "required": true, "maxLength": 60,   "trim": true }
+      },
+      "access":    { "read": "public", "insert": "public", "update": "owner", "delete": "owner" },
+      "rateLimit": "60/hour/ip"
+    },
+    "feedback": {
+      "fields": {
+        "item":   { "type": "string", "required": true, "maxLength": 16,   "trim": true },
+        "stance": { "type": "string", "required": true, "maxLength": 24,   "trim": true },
+        "note":   { "type": "string",                   "maxLength": 2000, "trim": true },
+        "who":    { "type": "string", "required": true, "maxLength": 60,   "trim": true }
+      },
+      "access":    { "read": "public", "insert": "public", "update": "owner", "delete": "owner" },
+      "rateLimit": "60/hour/ip"
+    }
+  }
+}

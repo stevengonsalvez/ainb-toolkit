@@ -15,6 +15,7 @@ description: |
   "explain-to-me X", "make me an explainer for X", "give me an HTML
   explainer", "render this as a webpage", "ADR for X", "options paper for
   X", or asks for a rich visual writeup.
+  diagrams whenever the content shape needs them.
 argument-hint: "[topic — e.g. 'how rate limiting works in our api'] [--local] [--gist [--public]]"
 ---
 
@@ -22,6 +23,10 @@ argument-hint: "[topic — e.g. 'how rate limiting works in our api'] [--local] 
 
 Turn a topic into ONE self-contained HTML file, Claude-branded, using the
 best-fit bundled template, then publish it and return a shareable URL.
+
+Explainers are read-only by default. When the page's job is to get a **decision made**,
+add interview-style questions that record answers server-side — see
+[`references/decisions.md`](references/decisions.md) and step 4b.
 
 **Fixed constraints (do not violate):**
 - Palette is fixed: `#FAF9F5` ivory, `#141413` slate, `#D97757` clay, `#E3DACC` oat, `#788C5D` olive. Do not rewrite CSS variables unless the user explicitly asks for a different look.
@@ -89,6 +94,20 @@ Tell Stevie the template and why, so a wrong pick can be redirected before you s
 
 Treat the template as the SHAPE. For each named region (TL;DR, steps, options, scores, FAQ, glossary, timeline, consequences…), fill with real content from: current repo files → prior conversation → your own knowledge. Drop any region you can't fill honestly.
 
+### 3b. Cut it (MANDATORY — read [`references/brevity.md`](references/brevity.md))
+
+Real content is not the same as a lot of content. Target **~50 words per finding**, not 500.
+
+```
+thing ──▶ thing ✗          one flow line beats a paragraph
+DO / SPLIT / ⚠ / BLOCKED   ≤3 lines each
+[evidence ▸]               citations collapse, uncapped
+```
+
+Cut, never compress — over budget means drop the point, not reword it smaller. Boxes only
+when two things differ. Red/clay marks the problem only. Too complex for the block? Draw a
+flowchart with the hard region filled `#B85C3E`; a finding needing three flows is three findings.
+
 ### 4. Augment with diagrams (only when load-bearing)
 
 If a template has a big-diagram slot and the diagram carries real weight, generate it via a sister skill instead of hand-drawing SVG:
@@ -101,6 +120,45 @@ If a template has a big-diagram slot and the diagram carries real weight, genera
 Steps: (1) pick the region needing the diagram; (2) invoke the skill with a tight prompt (boxes, arrows, labels) asking for inlineable SVG; (3) replace the placeholder SVG, keeping the outer `<svg>` `viewBox`/sizing so layout holds; (4) cite the generator at the section bottom.
 
 Do NOT delegate small bespoke SVG (icons, hero glyphs) — author inline. Do NOT replace the intentionally sketch-like mini-architecture SVGs in ADR option cards.
+
+### 4b. Interactive decisions (only when the page must be answered on)
+
+If the explainer exists to get a decision made — an options paper, a triage list, a plan
+awaiting approval — make it answerable in place rather than ending with "let me know".
+**Read [`references/decisions.md`](references/decisions.md) first**; it carries the
+manifest schema, the browser API, the identity caveat, and one trap that silently
+destroys recorded answers.
+
+Skip this entirely for a pure reference page. Controls on a page nobody has to answer
+are noise.
+
+Wiring, in short:
+
+1. `assets/decision-data.json` → `<sitedir>/.herenow/data.json`, fields edited.
+2. `assets/decision-widget.css` into the page's `<style>`;
+   `assets/decision-widget.js` in a `<script>` at the end of `<body>`.
+3. One `.decision[data-item]` block per question; optional `.feedback[data-item]` per item.
+4. Publish with `scripts/publish_interactive.py` (NOT the default publisher — see below).
+5. Read answers back with `scripts/read_decisions.py --name <pin>`.
+
+**Every decision gets a figure.** A decision rendered as prose plus radio buttons gets
+skimmed. Lead each one with an inline SVG that shows *why the decision exists* — the two
+options, the relationship between them, the measured numbers under each, and a banner
+stating the cost of not deciding. Inline SVG is the default because it needs no library
+and survives the static host; mermaid is fine where the renderer supports it, but never
+make the argument depend on a script that may not load. Skeleton and colour rules:
+`assets/decision-figure-template.svg`. Real measured numbers only, with the date measured
+— a figure with invented numbers is worse than no figure.
+
+**Present the options the way a good interview does**: two or three, never padded to
+four; the recommendation marked and placed first; every option carrying its own concrete
+downside and cost, not just the one you dislike. An option list where only the losers
+have caveats is a decision already taken, dressed as a question.
+
+**State the identity model when you hand over the page.** A shared password is access
+control, not identity — a typed name is self-declared and unverifiable. If the answers
+need real provenance, switch the Site to restricted access with an email allowlist
+(`references/decisions.md`).
 
 ### 5. Render
 
@@ -127,6 +185,27 @@ The local file is always written. The flag picks the target:
 | `--gist` (opt `--public`) | GitHub gist (secret by default). See publishing reference. |
 | (none, config present) | here.now domain mode — publish + password-lock per `protect_rule` + mount on custom domain + append to searchable index. |
 | (none, no config) | Plain 3-word here.now URL, then offer one-time config setup once per session (template: `assets/explainers.template.json`); drop it if declined. |
+
+**Interactive explainers must publish with `scripts/publish_interactive.py`.** The default
+`publish_explainer.py` mints a NEW here.now Site on every run (it passes `slug=None`), and
+Site Data records are scoped to a slug — so a republish silently strands every answer
+anyone recorded. `publish_interactive.py` pins the slug and prints
+`slug reused: <slug> (records preserved)`. Check that line every time.
+
+**Choosing the password is not a choice — it follows from `--category`.** You pick the
+category and you evaluate `protect_rule` to decide `--lock`; the publisher resolves which
+password to apply. Never pass a password on the command line and never invent one.
+
+| Category in config | `--lock` | Result |
+|---|---|---|
+| has a password (`shot`, `popajob`, `biolift`) | yes | that category's password |
+| explicitly `null` (`ainb`, `reflect`) | yes | **refused before publishing** — open-source work |
+| explicitly `null` | no | published public, which is correct for it |
+| not listed (`decision`, `other`) | yes | falls back to `_default` |
+
+So a leaked password is contained to one audience: a link given to a client opens their
+pages and nothing of yours. Get the category right and the rest follows. `--dry-run`
+names the password it would use, so check it there when unsure.
 
 **Read [`references/publishing.md`](references/publishing.md) before publishing** — config schema, per-target pipelines, bootstrap flow, troubleshooting.
 
@@ -162,3 +241,9 @@ On herenow-domain, ALWAYS state whether the page was locked and the `protect_rul
 - **Never regenerate/hand-edit the domain index page.** It's data-driven; `publish_explainer.py` upserts into `data.json`. Rebuilding index.html loses the other 80+ entries.
 - **Never paste the here.now token into chat or config.** It lives only in `~/.herenow/credentials` (0600). If Stevie pastes one, save it there and don't echo it.
 - **Output goes in the user's cwd `./explainers/`, never inside the toolkit repo.**
+- **Site Data 401s under `curl` are expected** on a password-locked Site: the data endpoints
+  sit behind the same gate as the page. A real browser holds the session cookie and the
+  same-origin fetch carries it. To test from a shell, POST the password to `/` with a
+  cookie jar first (`references/decisions.md`).
+- **Never declare a timestamp field** in a Site Data collection — `created_at` is stamped
+  for you and is one of the reserved names that will reject the manifest.
