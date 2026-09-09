@@ -26,9 +26,11 @@ These scripts run inside the `Workflow` tool — `agent()`, `parallel()`,
 `pipeline()`, `phase()`, `log()` are the tool's built-ins (no imports).
 Before launching, resolve every placeholder: `BRAIN` / `BUILD_MODEL` are
 model-name strings from the charter policy; `REVIEW_SCHEMA` /
-`VERDICTS_SCHEMA` / `VAL_SCHEMA` must be defined as literal JSON Schema
-objects at the top of the script. A script with an unresolved placeholder is
-a bug, not a convention.
+`VERDICTS_SCHEMA` / `VAL_SCHEMA` / `SIGNAL_SCHEMA` must be defined as literal
+JSON Schema objects at the top of the script; `SIGNAL_ALLOWED` is a boolean the
+driver computes from charter authority plus host capability; `LEDGER_SEEN` is
+the rendered seen-set, an empty string when the ledger is empty. A script with
+an unresolved placeholder is a bug, not a convention.
 
 ## Signal (external evidence, feeds Discover)
 
@@ -90,8 +92,9 @@ with its routed creative peer, then synthesise evidence and dissent:
 phase('Discover')
 const proposals = await parallel(CREATIVE_QUORUM.models.map(model => () => agent(`${ground} You are the DISCOVERY brain. North
   star: <north-star>. (1) Scan the repo (structure, manifests, existing docs/
-  backlog/beads) to understand what exists. (2) Read the SIGNAL rows (may be
-  empty): ${signal}. Treat them as the only current external facts you have.
+  backlog/beads) to understand what exists. (2) Read the SIGNAL rows: ${signal
+  ?? 'none this generation, discovery is repo-only'}. Treat them as the only
+  current external facts you have, and claim nothing external without one.
   (3) Brainstorm the NIRVANA feature landscape — beyond MVP, end-game thinking:
   every capability a finished product would have, grouped by space. Append any
   user-supplied feature list verbatim (marked user-requested). (4) WRITE
