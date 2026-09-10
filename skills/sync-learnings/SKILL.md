@@ -326,6 +326,16 @@ Receipt:
 
 User-level files have resolved paths (`~/.claude`, `$HOME/.claude`). Convert them BACK to placeholders before writing to the repo.
 
+**Two files are EXEMPT and must keep literal paths: `claude-code-4.5/statusline.sh` and
+`claude-code-4.5/settings.json`.** `bootstrap.js` deploys `toolSpecificFiles` with the lookup
+`templateSubstitutions[fileName] || (fileName.endsWith('.md') ? templateSubstitutions['**/*.md'] : null)`.
+There is no `statusline.sh` / `settings.json` key and neither is `.md`, so the `**/*.sh` and
+`**/*.json` globs never apply: those two are copied VERBATIM. A placeholder written into them
+ships as a literal `$HOME/\{\{TOOL_DIR\}\}/...` that no substitution ever resolves, and every use of
+it is guarded by `[[ -f ]]` / `grep -qs` / `2>/dev/null`, so the feature dies SILENTLY on a fresh
+install. Check with `grep -c TOOL_DIR claude-code-4.5/statusline.sh` after syncing: expect 0.
+`CLAUDE.md` IS templated (it is `.md`) and does take placeholders.
+
 > The replacement side MUST emit literal `{{HOME_TOOL_DIR}}`/`{{TOOL_DIR}}`. In THIS SKILL.md source those placeholders are written ESCAPED (`\{\{HOME_TOOL_DIR\}\}`) so the deploy-time (TO_HOME) perl pass does NOT eat the example. If you ever see `s|...|~/.claude|g` in this section, the example was corrupted by a buggy reverse-interp pass — restore from git history.
 
 ```bash

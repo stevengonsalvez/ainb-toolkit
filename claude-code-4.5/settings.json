@@ -228,7 +228,11 @@
     "ainb-hooks@agents-in-a-box": true,
     "caveman-stats@agents-in-a-box": true,
     "caveman@caveman": true,
-    "ponytail@ponytail": true
+    "ponytail@ponytail": true,
+    "codex@openai-codex": true,
+    "godmode@ainb-toolkit": true,
+    "impeccable@impeccable": true,
+    "rust-analyzer-lsp@claude-plugins-official": true
   },
   "extraKnownMarketplaces": {
     "agents-in-a-box": {
@@ -247,6 +251,24 @@
       "source": {
         "source": "github",
         "repo": "DietrichGebert/ponytail"
+      }
+    },
+    "ainb-toolkit": {
+      "source": {
+        "source": "github",
+        "repo": "stevengonsalvez/ainb-toolkit"
+      }
+    },
+    "impeccable": {
+      "source": {
+        "source": "github",
+        "repo": "pbakaus/impeccable"
+      }
+    },
+    "openai-codex": {
+      "source": {
+        "source": "github",
+        "repo": "openai/codex-plugin-cc"
       }
     }
   },
