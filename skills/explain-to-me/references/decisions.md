@@ -63,6 +63,30 @@ which pins the slug in `~/.herenow/<name>-slug` and PUTs to it. It prints
 4. Publish with `scripts/publish_interactive.py <file.html> --name <pin-name> --path <mount>`.
 5. Read answers back with `scripts/read_decisions.py --name <pin-name>`.
 
+## Several questions on one item
+
+Like `/interview`: one item can carry 2-4 questions, rendered as tabs, each recorded
+separately. Use it when a decision has a second half people forget to settle — the choice
+AND who owns it, the approach AND the deadline.
+
+```
+┌ Which register ─┬ Who asks Holly ─┐   tabs; a ✓ appears once answered
+│  ◉ A clubportal  (recommended)    │   one set of options per tab
+│  ○ B SHOT app                     │   own note + own Record button
+│  [ note… ]        [Record]        │   badge on the row: "1/2 answered"
+└───────────────────────────────────┘
+```
+
+Markup: `.qtabs > .qtab[data-q]` plus one `.qpane[data-q]` each (all but the first
+`hidden`). Omit both for a single question and the widget treats the block as one pane.
+
+Records carry a `question` field, so the standing answer is the newest record per
+**(item, question)**. Add the field to the manifest; leave it unset for single-question items.
+
+Same discipline as the options themselves: 2-3 per question, recommendation first and
+marked, every option carrying its own downside. Do not invent a second question to fill a
+tab — one real question beats two padded ones.
+
 ## Manifest
 
 Up to **10 collections**, **50 fields** each. Collection and field names must match
@@ -111,6 +135,19 @@ await fetch('./.herenow/data/decisions', {
 
 Create and read return `{ record }`; list returns `{ records, nextCursor }`. Errors
 carry `code`, `message`, and sometimes `retry_after`.
+
+### A password change plus a republish drops open sessions
+
+Reproduced twice. Changing the site password alone does not drop a visitor's session, and
+republishing alone did not across three cycles — but **a password change followed by a
+republish does**. Best guess at the mechanism (inference, not documented): the session
+encodes a password generation that only rotates when a new version is finalized. The already-rendered page keeps working, so the first
+sign is a 401 the moment someone submits — after they have typed their answer.
+
+If the page is on a refresh schedule, this WILL bite. Handle 401/403 explicitly: stash the
+payload in `localStorage`, say the session expired, offer a reload. `decision-widget.js`
+does this and restores the draft into the form after they sign in again. Never let a 401
+surface as a raw HTTP error — that reads as "your answer was rejected", not "sign in again".
 
 ### Password-protected Sites
 

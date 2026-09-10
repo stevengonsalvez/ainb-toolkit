@@ -134,9 +134,11 @@ are noise.
 Wiring, in short:
 
 1. `assets/decision-data.json` → `<sitedir>/.herenow/data.json`, fields edited.
-2. `assets/decision-widget.css` into the page's `<style>`;
+2. `assets/decision-widget.css` + `assets/crisp-block.css` into the page's `<style>`;
    `assets/decision-widget.js` in a `<script>` at the end of `<body>`.
-3. One `.decision[data-item]` block per question; optional `.feedback[data-item]` per item.
+3. One `.decision[data-item]` per item; for several questions add `.qtabs` + a `.qpane[data-q]`
+   each and the widget renders tabs, recording one answer per (item, question).
+   Optional `.feedback[data-item]` per item.
 4. Publish with `scripts/publish_interactive.py` (NOT the default publisher — see below).
 5. Read answers back with `scripts/read_decisions.py --name <pin>`.
 

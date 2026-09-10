@@ -54,3 +54,16 @@
   border:1px solid transparent; }
 .answer-badge.decided  { background:#E8EDE0; color:#5C6F44; border-color:#CFDAC0; }
 .answer-badge.commented{ background:var(--gray-50); color:var(--gray-800); border-color:var(--gray-200); }
+
+/* multi-question tabs — one decision block, several questions */
+.qtabs { display:flex; gap:4px; flex-wrap:wrap; margin-bottom:11px;
+  border-bottom:1.5px solid var(--gray-200); padding-bottom:0; }
+.qtab { font-family:var(--mono); font-size:11px; padding:6px 12px; cursor:pointer;
+  background:transparent; border:1.5px solid transparent; border-bottom:none;
+  border-radius:7px 7px 0 0; color:var(--gray-500); margin-bottom:-1.5px; }
+.qtab:hover { color:var(--slate); }
+.qtab.on { background:#fff; border-color:var(--gray-200); color:var(--slate); font-weight:600; }
+.qtab .tick { color:#5C6F44; margin-left:5px; }
+.qpane[hidden] { display:none; }
+.qpane > h4 { font-family:var(--serif); font-size:14px; font-weight:500; text-transform:none;
+  letter-spacing:0; color:var(--slate); margin:0 0 9px; }
