@@ -18,6 +18,16 @@
  *     <div class="answer-log"></div>
  *   </div>
  *
+ *   Several questions on one item — tabs. Omit .qtabs/.qpane for a single question.
+ *   <div class="decision" data-item="B4">
+ *     <nav class="qtabs">
+ *       <button class="qtab on" data-q="register">Which register</button>
+ *       <button class="qtab" data-q="owner">Who takes it to Holly</button>
+ *     </nav>
+ *     <div class="qpane" data-q="register"><h4>Which register…?</h4> …opts… …submit… …log…</div>
+ *     <div class="qpane" data-q="owner" hidden> … </div>
+ *   </div>
+ *
  *   <div class="feedback" data-item="B4"> … .stance[data-value] buttons … </div>
  *   <span class="answer-badge" data-badge="B4"></span>   (optional, anywhere)
  *
@@ -31,6 +41,40 @@
   var BASE = './.herenow/data/';           // MUST stay relative: works on slug, handle,
                                            // custom domain and mounted path alike.
   var WHO  = document.getElementById('who-input');
+  var MSGCLS = 'submit-msg';
+  // A republish invalidates the visitor session cookie, so an open page's writes start
+  // 401ing while the already-rendered HTML still looks fine. We cannot re-auth from here
+  // (no password in the page, by design), so stash what they typed, tell them plainly,
+  // and restore it after they reload and sign in again.
+  var DRAFT = 'explainer-draft';
+  function stash(coll, payload) {
+    try { localStorage.setItem(DRAFT, JSON.stringify({ coll: coll, payload: payload })); } catch (e) {}
+  }
+  function restore() {
+    var d;
+    try { d = JSON.parse(localStorage.getItem(DRAFT) || 'null'); } catch (e) { return; }
+    if (!d || !d.payload || !d.payload.item) return;
+    var sel = (d.coll === 'feedback' ? '.feedback' : '.decision') + '[data-item="' + d.payload.item + '"]';
+    var box = document.querySelector(sel) || document.querySelector(
+      (d.coll === 'feedback' ? '.act.fb' : '.act.decide') + '[data-code="' + d.payload.item + '"]');
+    if (!box) return;
+    var ta = box.querySelector('textarea');
+    if (ta && d.payload.note) ta.value = d.payload.note;
+    if (d.payload.choice) {
+      var r = box.querySelector('input[type=radio][value="' + d.payload.choice + '"]');
+      if (r) r.checked = true;
+    }
+    if (d.payload.stance) {
+      var b = box.querySelector('[data-v="' + d.payload.stance + '"], [data-value="' + d.payload.stance + '"]');
+      if (b) { box.querySelectorAll('.st, .stance').forEach(function (o) { o.classList.remove('on'); }); b.classList.add('on'); }
+    }
+    var det = box.closest('details'); if (det) det.open = true;
+    var m = box.querySelector('.msg, .submit-msg');
+    if (m) { m.className = (m.className.split(' ')[0]) + ''; m.textContent = 'Restored — press the button again to save'; }
+    try { localStorage.removeItem(DRAFT); } catch (e) {}
+    box.scrollIntoView({ block: 'center' });
+  }
+
   var STANCE_LABEL = { agree: 'looks right', wrong: 'disagrees', discuss: 'needs discussion' };
 
   if (WHO) {
@@ -63,13 +107,45 @@
   }
 
   // Insert-only log: newest record for an item is the standing answer.
+  function key(item, q) { return item + '\u0000' + (q || ''); }
+
   function paint(coll, sel, recs) {
     var by = {};
     recs.slice().sort(function (a, b) { return b.createdAt.localeCompare(a.createdAt); })
-        .forEach(function (r) { (by[r.data.item] = by[r.data.item] || []).push(r); });
+        .forEach(function (r) {
+          var k = key(r.data.item, r.data.question);
+          (by[k] = by[k] || []).push(r);
+        });
 
     document.querySelectorAll(sel + '[data-item]').forEach(function (box) {
-      var rows = by[box.dataset.item] || [];
+      // A pane per question, or the box itself when there is only one.
+      var panes = box.querySelectorAll('.qpane');
+      if (!panes.length) panes = [box];
+      var answered = 0;
+      Array.prototype.forEach.call(panes, function (pane) {
+        var q = pane.dataset ? pane.dataset.q : '';
+        var rows = by[key(box.dataset.item, q)] || [];
+        if (rows.length) answered++;
+        var tab = box.querySelector('.qtab[data-q="' + q + '"]');
+        if (tab) {
+          var t = tab.querySelector('.tick');
+          if (rows.length && !t) { t = document.createElement('span'); t.className = 'tick'; t.textContent = '\u2713'; tab.appendChild(t); }
+          else if (!rows.length && t) { t.remove(); }
+        }
+        paintPane(coll, pane, rows);
+      });
+      var badge = document.querySelector('.answer-badge[data-badge="' + box.dataset.item + '"]');
+      if (badge && answered) {
+        badge.className = 'answer-badge ' + (coll === DEC ? 'decided' : 'commented');
+        badge.textContent = panes.length > 1
+          ? answered + '/' + panes.length + ' answered'
+          : (coll === DEC ? 'decided' : answered + ' comment' + (answered > 1 ? 's' : ''));
+      }
+    });
+  }
+
+  function paintPane(coll, box, rows) {
+    {
       var log  = box.querySelector('.answer-log');
       // Append-only: show EVERY answer, newest first, never just the winner.
       // People need to see they disagreed, and who else has already answered.
@@ -85,17 +161,7 @@
                when(r.createdAt) + (r.data.note ? '<br>' + esc(r.data.note) : '') + '</div>';
       }).join('');
 
-      var badge = document.querySelector('.answer-badge[data-badge="' + box.dataset.item + '"]');
-      if (badge && rows.length) {
-        if (coll === DEC) {
-          badge.className = 'answer-badge decided';
-          badge.textContent = 'decided: ' + rows[0].data.choice;
-        } else if (!badge.classList.contains('decided')) {
-          badge.className = 'answer-badge commented';
-          badge.textContent = rows.length + ' comment' + (rows.length > 1 ? 's' : '');
-        }
-      }
-    });
+    }
   }
 
   async function refresh() {
@@ -111,6 +177,7 @@
       WHO.focus(); return;
     }
     payload.item = box.dataset.item;
+    if (payload.question === undefined && box.dataset.q) payload.question = box.dataset.q;
     if (who) payload.who = who;
     btn.disabled = true;
     msg.className = 'submit-msg'; msg.textContent = 'Saving…';
@@ -124,6 +191,15 @@
         },
         body: JSON.stringify(payload)
       });
+        if (res.status === 401 || res.status === 403) {
+          stash(coll, payload);
+          msg.className = MSGCLS + ' err';
+          msg.innerHTML = 'Session expired (the page was republished). ' +
+            '<a href="#" class="relink">Reload and sign in</a> — your answer is saved.';
+          var a = msg.querySelector('.relink');
+          if (a) a.addEventListener('click', function (ev) { ev.preventDefault(); location.reload(); });
+          return;
+        }
       if (!res.ok) {
         var body = await res.json().catch(function () { return {}; });
         throw new Error(body.message || body.error || ('HTTP ' + res.status));
@@ -138,14 +214,28 @@
   }
 
   document.querySelectorAll('.decision[data-item]').forEach(function (box) {
-    var btn = box.querySelector('.submit');
-    if (!btn) return;
-    btn.addEventListener('click', function () {
-      var picked = box.querySelector('input[type=radio]:checked');
-      var msg = box.querySelector('.submit-msg');
-      if (!picked) { msg.className = 'submit-msg err'; msg.textContent = 'Pick an option'; return; }
-      var ta = box.querySelector('textarea');
-      send(box, DEC, { choice: picked.value, note: ta ? ta.value.trim() : '' }, btn);
+    var tabs  = box.querySelectorAll('.qtab');
+    var panes = box.querySelectorAll('.qpane');
+    Array.prototype.forEach.call(tabs, function (tab) {
+      tab.addEventListener('click', function () {
+        Array.prototype.forEach.call(tabs, function (t) { t.classList.toggle('on', t === tab); });
+        Array.prototype.forEach.call(panes, function (p) { p.hidden = p.dataset.q !== tab.dataset.q; });
+      });
+    });
+    var targets = panes.length ? panes : [box];
+    Array.prototype.forEach.call(targets, function (pane) {
+      var btn = pane.querySelector('.submit');
+      if (!btn) return;
+      btn.addEventListener('click', function () {
+        var picked = pane.querySelector('input[type=radio]:checked');
+        var msg = pane.querySelector('.submit-msg');
+        if (!picked) { msg.className = 'submit-msg err'; msg.textContent = 'Pick an option'; return; }
+        var ta = pane.querySelector('textarea');
+        // send() reads data-item off the element it is given, so pass the item down.
+        pane.dataset.item = box.dataset.item;
+        send(pane, DEC, { choice: picked.value, note: ta ? ta.value.trim() : '',
+                          question: pane.dataset.q || undefined }, btn);
+      });
     });
   });
 
@@ -167,5 +257,6 @@
     });
   });
 
+  restore();
   refresh();
 })();
