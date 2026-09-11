@@ -1,0 +1,27 @@
+/* Crisp finding block — pairs with references/brevity.md.
+   One flow line, optional contrast boxes, capped slots, evidence collapsed. */
+.flow { font-family:var(--mono); font-size:12px; line-height:1.6; color:var(--slate);
+  background:var(--gray-50); border-left:2px solid var(--clay); border-radius:0 6px 6px 0;
+  padding:9px 12px; margin:0 0 11px; overflow-x:auto; white-space:pre; }
+
+.bxs { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:11px; }
+.bx { flex:1 1 190px; border:1.5px solid var(--gray-200); border-radius:8px; padding:9px 11px; background:#fff; }
+.bx h5 { font-family:var(--serif); font-size:13.5px; font-weight:500; margin:0 0 5px; color:var(--slate); }
+.bx span { display:block; font-family:var(--mono); font-size:11px; color:var(--gray-800); line-height:1.65; }
+
+.slots { display:grid; grid-template-columns:auto 1fr; gap:5px 12px; margin:0; align-items:baseline; }
+.slots dt { font-family:var(--mono); font-size:10px; letter-spacing:.06em; font-weight:600;
+  padding-top:2px; white-space:nowrap; }
+.slots dt.do   { color:#5C6F44; }
+.slots dt.warn { color:#B85C3E; }   /* red marks the problem only, never decoration */
+.slots dt.blk  { color:var(--gray-500); }
+.slots dd { margin:0; font-size:13.5px; line-height:1.55; color:var(--gray-800); }
+
+.evd { margin-top:12px; }
+.evd > summary { cursor:pointer; font-family:var(--mono); font-size:10.5px; letter-spacing:.06em;
+  color:var(--gray-500); list-style:none; }
+.evd > summary::-webkit-details-marker { display:none; }
+.evd > summary::before { content:'\25b8 '; }
+.evd[open] > summary::before { content:'\25be '; }
+.evd > summary:hover { color:var(--slate); }
+.evb { border-left:1.5px solid var(--gray-200); padding-left:12px; margin-top:9px; }
