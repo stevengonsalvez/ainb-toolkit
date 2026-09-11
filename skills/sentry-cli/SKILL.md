@@ -333,6 +333,32 @@ sentry event view abc123def456
 sentry event view abc123def456 -w
 ```
 
+#### Discover event search via `sentry api`
+
+Use Events/Discover API when searching by user, URL, transaction, breadcrumb evidence, or recent individual events. Do not try `sentry api ... --query`; `sentry api` has no `--query` flag. Put `query=` and repeated `field=` params in endpoint URL.
+
+```bash
+python3 - <<'PY'
+import json, subprocess, urllib.parse
+org='my-org'; project_id='123456'; q='user.email:person@example.com "Auth recovery failed"'
+fields=['id','timestamp','title','message','transaction','user.display']
+endpoint=(f'/organizations/{org}/events/?project={project_id}&environment=production&per_page=20&'
+          + '&'.join(f'field={f}' for f in fields)
+          + '&query=' + urllib.parse.quote(q))
+r=subprocess.run(['sentry','api',endpoint],text=True,capture_output=True,check=True)
+for e in json.loads(r.stdout).get('data',[]):
+    print(e.get('timestamp'), e.get('user.display'), e.get('transaction'), e.get('title'), e.get('message'))
+PY
+```
+
+Fetch exact event JSON without `event view` if CLI hangs or prints sparse fields:
+
+```bash
+sentry api /projects/<org>/<project>/events/<event-id>/ > event.json
+```
+
+See `references/discover-event-search.md` for auth/navigation incident workflow and breadcrumb extraction.
+
 ### Api
 
 Make an authenticated API request
