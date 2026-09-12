@@ -808,3 +808,64 @@ describe('Ainb scoped Codex home (~/.agents-in-a-box/codex-home)', () => {
         expect(fs.existsSync(path.join(mockHomeDir, '.agents-in-a-box'))).toBe(false);
     });
 });
+
+describe('setup-external.sh npx install list', () => {
+    const tempDir = path.join(__dirname, 'tmp-npx-install-test');
+    const yaml = require('js-yaml');
+
+    beforeEach(() => {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+        fs.mkdirSync(tempDir, { recursive: true });
+    });
+
+    afterEach(() => {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    });
+
+    const generate = () => {
+        const mockHomeDir = path.join(tempDir, 'home');
+        fs.mkdirSync(mockHomeDir, { recursive: true });
+        execSync(`node bootstrap.js --tool=claude-code-4.5 --homeDir=${mockHomeDir}`, {
+            cwd: __dirname,
+            stdio: 'pipe',
+            env: { ...process.env },
+        });
+        const script = fs.readFileSync(
+            path.join(mockHomeDir, '.claude', 'setup-external.sh'), 'utf8');
+        return script.split('\n').filter(l => l.startsWith('npx '));
+    };
+
+    const npxEntries = () => yaml.load(
+        fs.readFileSync(path.join(__dirname, 'external-dependencies.yaml'), 'utf8')
+    )['npx-skills'].filter(e => !e['catalog-only']);
+
+    it('never interpolates a missing repo into the command', () => {
+        // Regression: entries with no `repo:` used to render as
+        // `npx skills add undefined` on the project path.
+        expect(generate().join('\n')).not.toContain('undefined');
+    });
+
+    it('installs add-skill-only entries instead of dropping them', () => {
+        // Regression: an `install || repo` filter silently skipped every entry
+        // that documents only a `source:`, so those packs never installed.
+        const lines = generate();
+        const addSkillOnly = npxEntries()
+            .filter(e => !e.install && !e.repo && /^npx add-skill\b/.test(e.source || ''));
+        expect(addSkillOnly.length).toBeGreaterThan(0);
+        for (const e of addSkillOnly) {
+            expect(lines).toContain(`npx add-skill ${e.name}`);
+        }
+    });
+
+    it('emits exactly one command per installable manifest entry', () => {
+        expect(generate()).toHaveLength(npxEntries().length);
+    });
+
+    it('keeps every generated command non-interactive', () => {
+        // A command that prompts blocks setup-external.sh under ssh/CI, where
+        // the surrounding `|| true` hides the failure.
+        for (const line of generate().filter(l => l.startsWith('npx skills add'))) {
+            expect(line).toContain('--yes');
+        }
+    });
+});
