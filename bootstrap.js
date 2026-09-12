@@ -592,6 +592,22 @@ const ALWAYS_COPY_RULES = [
     'rulestyle-rule.md',
 ];
 
+// Build the install command for one npx-skills manifest entry, or null when the
+// entry cannot be installed. Resolution order matches scripts/update-externals.sh:
+// explicit `install:`, else the modern non-interactive `npx skills add <repo> --yes`,
+// else the legacy `npx add-skill <name>` for entries that only carry a `source:`.
+// Returning null (rather than interpolating an absent field) is what keeps
+// `npx skills add undefined` out of the generated setup-external.sh.
+function npxInstallCommand(skill) {
+    if (!skill || skill['catalog-only']) return null;
+    if (skill.install) return skill.install;
+    if (skill.repo) return `npx skills add ${skill.repo} --yes`;
+    if (typeof skill.source === 'string' && /^npx add-skill\b/.test(skill.source)) {
+        return `npx add-skill ${skill.name}`;
+    }
+    return null;
+}
+
 // Discover available packages for interactive selection
 function discoverPackages(packagesDir) {
     const packages = {
@@ -629,7 +645,9 @@ function discoverPackages(packagesDir) {
                         name: skill.name,
                         repo: skill.repo,
                         purpose: skill.purpose || skill.name,
-                        install: skill.install
+                        install: skill.install,
+                        source: skill.source,
+                        'catalog-only': skill['catalog-only']
                     });
                 }
             }
@@ -1573,11 +1591,12 @@ async function handlePackagesStructureCopy(tool, config, overrideHomeDir = null,
                 scriptLines.push('');
             }
 
-            if (npxSkills.length > 0) {
+            const npxCommands = npxSkills.map(npxInstallCommand).filter(Boolean);
+            if (npxCommands.length > 0) {
                 scriptLines.push('echo "Installing npx skills..."');
                 scriptLines.push('');
-                for (const skill of npxSkills) {
-                    scriptLines.push(skill.install || `npx skills add ${skill.repo}`);
+                for (const cmd of npxCommands) {
+                    scriptLines.push(cmd);
                 }
                 scriptLines.push('');
             }
@@ -1670,15 +1689,15 @@ async function handlePackagesStructureCopy(tool, config, overrideHomeDir = null,
                         // Filter out catalog-only entries (aggregate bundles with
                         // no install command or repo — e.g. gws-skills, browserbase-skills).
                         // These live in the manifest for discoverability only.
-                        const installable = npxSkills.filter(s => s.install || s.repo);
-                        if (installable.length > 0) {
+                        // Entries with no install/repo/source resolve to null and are
+                        // skipped; previously they were dropped by an install||repo
+                        // filter, so add-skill-only packs never installed at all.
+                        const installCommands = npxSkills.map(npxInstallCommand).filter(Boolean);
+                        if (installCommands.length > 0) {
                             scriptLines.push('echo "Installing npx agent skills..."');
                             scriptLines.push('');
-                            for (const s of installable) {
-                                // Prefer explicit install command; fall back to modern
-                                // `npx skills add ... --yes` (non-interactive) rather than
-                                // the deprecated interactive `npx add-skill`.
-                                scriptLines.push(s.install || `npx skills add ${s.repo} --yes`);
+                            for (const cmd of installCommands) {
+                                scriptLines.push(cmd);
                             }
                             scriptLines.push('');
                         }
