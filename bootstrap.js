@@ -394,6 +394,10 @@ const TOOL_CONFIG = {
         targetSubdir: '.gemini',
         usePackagesStructure: true,
         forceHomeInstall: true,
+        // The Antigravity CLI (`agy`) reads global customizations from
+        // ~/.gemini/config/, NOT from the ~/.gemini/skills tree deployed here,
+        // so without this pointer it loads none of them. See writeAgySkillsConfig.
+        agySkillsConfig: 'config/skills.json',
         copyClaudeMd: false,
         copySettings: false,
         externalDepTypes: ['claude-plugins', 'npx-skills', 'agent-skills'],
@@ -461,6 +465,10 @@ const TOOL_CONFIG = {
         targetSubdir: '.gemini',
         usePackagesStructure: true,
         forceHomeInstall: true,
+        // The Antigravity CLI (`agy`) reads global customizations from
+        // ~/.gemini/config/, NOT from the ~/.gemini/skills tree deployed here,
+        // so without this pointer it loads none of them. See writeAgySkillsConfig.
+        agySkillsConfig: 'config/skills.json',
         copyClaudeMd: false,
         copySettings: false,
         externalDepTypes: ['claude-plugins', 'npx-skills', 'agent-skills'],
@@ -591,6 +599,35 @@ const ALWAYS_COPY_RULES = [
     'rule-interpreter-rule.md',
     'rulestyle-rule.md',
 ];
+
+// Point the Antigravity CLI (`agy`) at the skills this installer just deployed.
+//
+// `agy` discovers global customizations under ~/.gemini/config/ only, so the
+// ~/.gemini/skills tree written here is invisible to it: a clean install still
+// loads zero skills. Rather than relocate the tree (the Gemini CLI reads the
+// default location, and a moved tree would break it), register the paths via
+// the documented skills.json, which takes a list of directories to scan.
+//
+// Never overwrites an existing file; that one is the user's, and it may inherit
+// from or exclude paths we know nothing about. Only existing directories are
+// listed, so a machine without ~/.agents/skills does not get a dead entry.
+function writeAgySkillsConfig(destDir, relConfigPath) {
+    const homeRoot = path.dirname(destDir);
+    const candidates = [
+        path.join(destDir, 'skills'),
+        path.join(homeRoot, '.agents', 'skills'),
+    ];
+    const entries = candidates.filter(p => fs.existsSync(p)).map(p => ({ path: p }));
+    if (entries.length === 0) return { written: false, reason: 'no skills directories to register' };
+
+    const configPath = path.join(destDir, relConfigPath);
+    if (fs.existsSync(configPath)) {
+        return { written: false, reason: `kept existing ${relConfigPath}`, configPath };
+    }
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(configPath, JSON.stringify({ entries }, null, 2) + '\n');
+    return { written: true, configPath, entries };
+}
 
 // Build the install command for one npx-skills manifest entry, or null when the
 // entry cannot be installed. Resolution order matches scripts/update-externals.sh:
@@ -2099,6 +2136,17 @@ async function handlePackagesStructureCopy(tool, config, overrideHomeDir = null,
         fs.writeFileSync(scriptPath, config._externalDepsScript);
         fs.chmodSync(scriptPath, 0o755);
         completeProgress(`Generated setup-external.sh (${config._externalDepsCount} external deps)`);
+    }
+
+    // Register the deployed skills with the Antigravity CLI, which does not
+    // read the default tree (see writeAgySkillsConfig).
+    if (shouldUseHome && config.agySkillsConfig) {
+        const result = writeAgySkillsConfig(destDir, config.agySkillsConfig);
+        if (result.written) {
+            console.log(`\x1b[32m✓\x1b[0m  Registered ${result.entries.length} skills path(s) for the Antigravity CLI in ${config.agySkillsConfig}`);
+        } else if (result.configPath) {
+            console.log(`\x1b[33m⚠\x1b[0m  ${result.reason}; verify it lists this install's skills directory`);
+        }
     }
 
     // Deploy the reflect-kb package + per-harness adapter so ai-coder-rules
