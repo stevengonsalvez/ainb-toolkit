@@ -9,7 +9,12 @@ autonomy: ask                         # or merge_on_verdict; set this deliberate
 allow_fork_prs: false                 # a fork head is refused unless this is true
 signing: {required: true, key: "<your-signing-key-id>"}
 attribution_guard: true
-attribution_patterns: "co-authored-by|generated with|assisted by"   # append your vendor strings, pipe separated
+# Anchored to the SHAPE of a trailer, not to words a sentence can contain: the
+# bare substring "generated with" refuses an honest body such as
+# "Generated with UPDATE_PARITY_FRAMES=1 so the frames match."
+# Append your own tool names anchored the same way, pipe separated, for example
+#   |^[[:space:]]*generated with <your-tool-name>
+attribution_patterns: "^[[:space:]]*co-authored-by:[[:space:]]"
 ci: ignore                            # or gate, which reads the pinned head's checks
 
 # REQUIRED. The checkout the merge gate reads its evidence from. Without it the
@@ -21,7 +26,7 @@ gh_repo: ""                           # owner/name; derived from origin when emp
 default_agent: claude
 send: {max_chars: 2000}               # a message is one line, capped here
 
-loop: {mode: self_paced, every: 20m, max_ticks: 0, max_hours: 0}
+loop: {every: 20m, max_ticks: 0, max_hours: 0, tick_timeout: 0}   # tick_timeout 0 means twice the cadence
 compact: {at_pct: 85, keep: "keep the goal, the branch, the open PR and the last decision"}
 handover: {credit_threshold_pct: 85, notify: true}
 
@@ -39,7 +44,9 @@ placement:
 metrics: {beszel_hub: "", token_ref: ""}   # cut 2; empty means the Orca probe rung
 
 scrub:
-  deny: "co-authored-by|generated with|assisted by"
+  # Refuses a post outright. Add the vendor and tool names this programme must
+  # never publish; anchor anything that could appear in ordinary prose.
+  deny: "^[[:space:]]*co-authored-by:[[:space:]]"
 
 review:
   default: {mode: orchestrator, kinds: [code], verdict: "line1 in {MERGE, MERGE WITH FOLLOW-UPS}"}
