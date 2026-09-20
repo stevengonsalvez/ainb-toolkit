@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Stub tmux for the test runner. Records its argv one element per line so a test
+# can prove the loop driver hands over an argv and never a shell string. Starts
+# nothing, so a test can never leave a real session behind.
+set -uo pipefail
+S="${STUB_STATE:?STUB_STATE not set}"
+[ "${1:-}" = has-session ] && exit 1
+: > "$S/tmux-args.txt"
+for a in "$@"; do printf '%s\n' "$a" >> "$S/tmux-args.txt"; done
+exit 0
