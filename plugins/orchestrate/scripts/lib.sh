@@ -9,6 +9,11 @@ ORCHESTRATE_HOME="${ORCHESTRATE_HOME:-$HOME/.claude/orchestrator}"
 ORCHESTRATE_SESSION="${ORCHESTRATE_SESSION:-$$@$(uname -n 2>/dev/null || echo host)}"
 ORCHESTRATE_HARNESS="${ORCHESTRATE_HARNESS:-unknown}"
 ORCA_TIMEOUT="${ORCA_TIMEOUT:-25}"
+SEND_MAX_CHARS_DEFAULT=2000
+
+# The index holds message text, decisions and host readings. Nothing here is a
+# secret, but none of it is anyone else's business either.
+umask 077
 
 now() { date -u +%FT%TZ; }
 epoch() { date -u +%s; }
@@ -58,6 +63,7 @@ prog_open() {
   [ -d "$PROG" ] || die "no programme dir at $PROG (run: orchestrate.sh init $PROGRAMME)" 2
   touch "$LANES" "$EVENTS" "$HOSTS"
   mkdir -p "$REVIEWS"
+  chmod 700 "$PROG" 2>/dev/null
 }
 
 # ----------------------------------------------------------------- tiny yaml
@@ -158,11 +164,11 @@ ev() {
   local name="$1"; shift
   local filter='{t: $t, ev: $ev}'
   local args=(-nc --arg t "$(now)" --arg ev "$name")
-  local i=0 k
+  local i=0
   while [ "$#" -ge 2 ]; do
-    i=$((i + 1)); k="v$i"
-    args+=(--arg "$k" "$2")
-    filter="$filter + {\"$1\": \$$k}"
+    i=$((i + 1))
+    args+=(--arg "k$i" "$1" --arg "v$i" "$2")
+    filter="$filter + {(\$k$i): \$v$i}"
     shift 2
   done
   jq "${args[@]}" "$filter" >> "$EVENTS"
@@ -247,16 +253,20 @@ lane_reresolve() {
 
 # A lane's state comes from its own screen, matched against patterns that live
 # in agents.yaml so a TUI change is a config edit, not a code edit.
+# The window is deliberately short. A diff, a README or a PR body shown in a
+# lane's terminal is CONTENT, and a wide window lets that content decide the
+# lane's state: "Do you want" in a quoted file would mark a busy lane `asking`,
+# and a shell prompt in a code sample would mark a live lane `dead`.
 classify() {
   local kind="$1" text="$2" pat
   pat="$(agent_cfg "$kind" shell_prompt)"
-  if [ -n "$pat" ] && printf '%s\n' "$text" | tail -3 | grep -Eq -- "$pat"; then printf 'dead'; return 0; fi
+  if [ -n "$pat" ] && printf '%s\n' "$text" | tail -2 | grep -Eq -- "$pat"; then printf 'dead'; return 0; fi
   pat="$(agent_cfg "$kind" asking)"
-  if [ -n "$pat" ] && printf '%s\n' "$text" | tail -25 | grep -Eq -- "$pat"; then printf 'asking'; return 0; fi
+  if [ -n "$pat" ] && printf '%s\n' "$text" | tail -6 | grep -Eq -- "$pat"; then printf 'asking'; return 0; fi
   pat="$(agent_cfg "$kind" busy)"
-  if [ -n "$pat" ] && printf '%s\n' "$text" | tail -25 | grep -Eq -- "$pat"; then printf 'working'; return 0; fi
+  if [ -n "$pat" ] && printf '%s\n' "$text" | tail -6 | grep -Eq -- "$pat"; then printf 'working'; return 0; fi
   pat="$(agent_cfg "$kind" idle)"
-  if [ -n "$pat" ] && printf '%s\n' "$text" | tail -25 | grep -Eq -- "$pat"; then printf 'idle'; return 0; fi
+  if [ -n "$pat" ] && printf '%s\n' "$text" | tail -6 | grep -Eq -- "$pat"; then printf 'idle'; return 0; fi
   printf 'unknown'
 }
 
@@ -277,36 +287,78 @@ ctx_pct() {
 # One recorded path for every message. Refuses to type into a shell prompt,
 # confirms delivery on the screen, and records delivered, unconfirmed or
 # dead-shell either way.
+# A message is ONE literal line or it is not sent. The orchestrator composes
+# messages out of lane screens, PR titles and review reports, all of which are
+# content that something else wrote. A newline in that content is a second
+# submission in the receiving agent, which runs without permission prompts, so
+# multi-line text is refused rather than flattened: hand it over as a file the
+# lane reads instead. Escape sequences are stripped, the line is capped, and
+# what is recorded is what was actually typed.
+#
+# Only the ESC-introduced C1 forms are stripped, never raw bytes in 0x80-0x9f:
+# those are the continuation bytes of ordinary UTF-8 text.
+sanitise_line() {
+  local text="$1" esc out max
+  case "$text" in
+    *$'\n'*|*$'\r'*) return 3 ;;
+  esac
+  case "$text" in
+    -*) return 4 ;;
+  esac
+  esc="$(printf '\033')"
+  out="$(printf '%s' "$text" \
+    | LC_ALL=C sed -E "s#${esc}\\[[0-9;?]*[ -/]*[@-~]##g; s#${esc}[@-_]##g; s#${esc}##g" \
+    | LC_ALL=C tr -d '\000-\010\013\014\016-\037\177')"
+  max="$(cfg send.max_chars "$SEND_MAX_CHARS_DEFAULT")"
+  printf '%s' "$out" | cut -c1-"$max"
+}
+
+# One recorded path for every message. Refuses to type into a shell prompt,
+# refuses anything that is not a single sanitised line, confirms delivery on the
+# screen, and records the outcome either way.
 lane_send() {
-  local lane="$1" pr="$2" text="$3" retry="${4:-retry}"
-  local handle env res probe
+  local lane="$1" pr="$2" raw="$3" retry="${4:-retry}"
+  local handle env res probe text rc resp
   handle="$(lane_field "$lane" handle)"
   [ -n "$handle" ] || { printf 'unknown lane %s\n' "$lane" >&2; return 2; }
   env="$(lane_field "$lane" env)"
 
-  if printf '%s\n' "$(orca_screen "$handle" "$env")" | tail -3 \
+  text="$(sanitise_line "$raw")"; rc=$?
+  case "$rc" in
+    3) refuse send-multiline "a message to $lane spans lines; hand multi-line content over as a file"; return 3 ;;
+    4) refuse send-leading-dash "a message to $lane starts with a dash, which a CLI reads as a flag"; return 3 ;;
+  esac
+  [ -n "$text" ] || { refuse send-empty "a message to $lane is empty after sanitising"; return 3; }
+
+  if printf '%s\n' "$(orca_screen "$handle" "$env")" | tail -2 \
      | grep -Eq -- "$(agent_cfg "$(lane_field "$lane" agent)" shell_prompt '\$ $')"; then
-    ev notified lane "$lane" pr "$pr" result dead-shell msg "$(printf '%s' "$text" | cut -c1-160)"
+    ev notified lane "$lane" pr "$pr" result dead-shell msg "$text"
     printf 'dead-shell -> %s\n' "$lane"
     [ "$retry" = retry ] || return 4
     lane_restart "$lane" || return 4
-    lane_send "$lane" "$pr" "$text" noretry
+    lane_send "$lane" "$pr" "$raw" noretry
     return $?
   fi
 
   orca_env_args "$env"
-  timeout "$ORCA_TIMEOUT" "$ORCA" terminal send --terminal "$handle" "${ORCA_ENV_ARGS[@]}" \
-    --text "$text" --enter --json >/dev/null 2>&1
+  resp="$(timeout "$ORCA_TIMEOUT" "$ORCA" terminal send --terminal "$handle" "${ORCA_ENV_ARGS[@]}" \
+    --text "$text" --enter --json 2>/dev/null)"; rc=$?
+  if [ "$rc" != 0 ] || printf '%s' "$resp" | jq -e '.ok == false' >/dev/null 2>&1; then
+    ev notified lane "$lane" pr "$pr" result transport-error msg "$text"
+    printf 'transport-error -> %s\n' "$lane"
+    return 4
+  fi
   sleep "${SEND_SETTLE_S:-3}"
   probe="$(printf '%s' "$text" | cut -c1-40)"
   if printf '%s\n' "$(orca_screen "$handle" "$env")" | tail -60 | grep -qF -- "$probe"; then res=delivered; else res=unconfirmed; fi
-  ev notified lane "$lane" pr "$pr" result "$res" msg "$(printf '%s' "$text" | cut -c1-160)"
+  ev notified lane "$lane" pr "$pr" result "$res" msg "$text"
   printf '%s -> %s\n' "$res" "$lane"
   [ "$res" = delivered ]
 }
 
 # Restart a lane in place: re-resolve the handle first, then send the agent
-# kind's resume command. Never kills anything.
+# kind's resume command. Never kills anything. The command comes from
+# agents.yaml and is sanitised like any other typed text.
 lane_restart() {
   local lane="$1" handle env kind resume
   env="$(lane_field "$lane" env)"; kind="$(lane_field "$lane" agent)"
@@ -315,7 +367,7 @@ lane_restart() {
     lane_set "$lane" handle "$handle"
     ev restart lane "$lane" action rehandle handle "$handle"
   fi
-  resume="$(agent_cfg "$kind" resume)"
+  resume="$(sanitise_line "$(agent_cfg "$kind" resume)")" || return 1
   [ -n "$resume" ] || return 1
   orca_env_args "$env"
   timeout "$ORCA_TIMEOUT" "$ORCA" terminal send --terminal "$(lane_field "$lane" handle)" \
@@ -336,10 +388,36 @@ owner_age_s() {
   printf '%s' "$(( $(epoch) - $(iso_epoch "$last") ))"
 }
 
-owner_write() {
+owner_json() {
   jq -nc --arg s "$ORCHESTRATE_SESSION" --arg h "$(uname -n 2>/dev/null || echo host)" \
-    --arg a "$ORCHESTRATE_HARNESS" --arg t "$(now)" \
-    '{session: $s, host: $h, harness: $a, t: $t, last_tick: $t}' > "$OWNER"
+    --arg a "$ORCHESTRATE_HARNESS" --arg t "$(now)" --arg p "$$" --arg c "$(cfg_fingerprint)" \
+    '{session: $s, host: $h, harness: $a, pid: ($p | tonumber), t: $t, last_tick: $t, config: $c}'
+}
+
+# A fingerprint of the policy file, recorded when the lock is claimed. The walls
+# live in programme.yaml, and anything running as this user can edit it, so an
+# edit cannot be prevented here. It can be made visible, which is what a tick
+# reports.
+cfg_fingerprint() {
+  [ -f "$CFG" ] || { printf 'none'; return 0; }
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$CFG" | cut -c1-16
+  elif command -v shasum >/dev/null 2>&1; then shasum -a 256 "$CFG" | cut -c1-16
+  else cksum "$CFG" | cut -d' ' -f1; fi
+}
+
+cfg_changed() {
+  [ -s "$OWNER" ] || return 1
+  local was; was="$(jq -r '.config // ""' "$OWNER")"
+  [ -n "$was" ] || return 1
+  [ "$was" != "$(cfg_fingerprint)" ]
+}
+
+# Atomic: noclobber makes the create fail rather than race, so two ticks cannot
+# both believe they won.
+owner_claim_new() {
+  ( set -o noclobber; owner_json > "$OWNER" ) 2>/dev/null || return 1
+  ev owner action claim session "$ORCHESTRATE_SESSION" harness "$ORCHESTRATE_HARNESS"
+  printf 'owner %s\n' "$ORCHESTRATE_SESSION"
 }
 
 owner_touch() {
@@ -348,9 +426,29 @@ owner_touch() {
   jq --arg t "$(now)" '.last_tick = $t' "$OWNER" > "$tmp" && mv "$tmp" "$OWNER"
 }
 
-# One owner at a time (D13). A second orchestrator is refused unless the lock is
-# stale past twice the cadence, or it asks for a takeover outright.
-owner_claim() {
+# An absent lock is NOT permission. It means nobody has claimed the programme,
+# and a verb that writes must not proceed on that basis: two unowned sessions
+# double-merge and double-message, which is the whole reason the lock exists.
+owner_require() {
+  if [ ! -s "$OWNER" ]; then
+    refuse owner-unclaimed "no owner for $PROGRAMME; claim it with: orchestrate.sh takeover $PROGRAMME"
+    return 3
+  fi
+  local held; held="$(owner_session)"
+  [ "$held" = "$ORCHESTRATE_SESSION" ] && return 0
+  refuse owner-held "$held owns this programme"
+  return 3
+}
+
+# Claim it if it is free, otherwise require that it is already ours.
+owner_ensure() {
+  owner_claim_new >/dev/null 2>&1 && return 0
+  owner_require
+}
+
+# Take a lock that is released, or one that is stale past twice the cadence, or
+# one the caller explicitly asks for. Recorded either way.
+owner_takeover() {
   local force="${1:-}" held age
   held="$(owner_session)"
   age="$(owner_age_s)"
@@ -361,67 +459,153 @@ owner_claim() {
     fi
     ev takeover outgoing "$held" incoming "$ORCHESTRATE_SESSION" harness "$ORCHESTRATE_HARNESS" \
       reason "$([ "$force" = --takeover ] && echo requested || echo "stale ${age}s")"
+    local tmp; tmp="$(mktemp)" || return 1
+    owner_json > "$tmp" && mv "$tmp" "$OWNER"
+    printf 'owner %s\n' "$ORCHESTRATE_SESSION"
+    return 0
   fi
-  owner_write
-  printf 'owner %s\n' "$ORCHESTRATE_SESSION"
-}
-
-owner_require() {
-  local held; held="$(owner_session)"
-  if [ -z "$held" ] || [ "$held" = "$ORCHESTRATE_SESSION" ]; then return 0; fi
-  refuse owner-held "$held owns this programme"
-  return 3
+  owner_claim_new && return 0
+  owner_require
 }
 
 # ---------------------------------------------------------------- scrubber
 
-# Every outward post goes through here. Host paths are stripped, attribution
-# words and U+2014 are refused outright: nothing is posted after a hit.
+# Secrets are REFUSED, never rewritten. A redacted secret is still a secret that
+# reached a file, and a rewrite invites a report to be posted anyway.
+ORCHESTRATE_SECRET_RE='gh[opsu]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|xox[abprs]-[A-Za-z0-9-]{10,}|Authorization:[[:space:]]*Bearer[[:space:]]+[A-Za-z0-9._~+/=-]{8,}|-----BEGIN [A-Z ]*PRIVATE KEY-----|100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.[0-9]{1,3}\.[0-9]{1,3}'
+
+# Every outward post goes through here. Host paths are stripped; secrets,
+# attribution words and U+2014 are refused outright, so nothing part-clean is
+# ever posted.
 scrub() {
-  local in="$1" out="${2:-${1%.md}-clean.md}" deny hits
+  local in="$1" out="${2:-${1%.md}-clean.md}" deny hits dir tmp
   [ -f "$in" ] || { printf 'no such file: %s\n' "$in" >&2; return 1; }
+  # Reports are written by reviewer lanes into shared worktrees, so the output
+  # path is attacker-reachable: never follow a symlink and never clobber.
+  if [ -L "$out" ]; then refuse scrub-unsafe-output "$out is a symlink"; return 3; fi
+  dir="$(dirname "$out")"
+  tmp="$(mktemp "$dir/.scrub.XXXXXX")" || return 1
   sed -E \
-    -e 's#/(home|Users)/[A-Za-z0-9._-]+/#~/#g' \
+    -e 's#/private/tmp/[A-Za-z0-9._/-]*##g' \
     -e 's#/tmp/[A-Za-z0-9._-]+/[A-Za-z0-9._/-]*/scratchpad/##g' \
+    -e 's#[A-Za-z]:\\Users\\[A-Za-z0-9._-]+\\#~\\#g' \
+    -e 's#%2[Ff](home|Users)%2[Ff][A-Za-z0-9._-]+(%2[Ff])?#~%2F#g' \
+    -e 's#/(home|Users)/[A-Za-z0-9._-]+#~#g' \
     -e 's#/(var|opt|srv)/[A-Za-z0-9._/-]*/(worktrees|workspaces)/##g' \
-    "$in" > "$out"
+    "$in" > "$tmp"
+  if grep -Eqi -- "$ORCHESTRATE_SECRET_RE" "$tmp"; then
+    grep -Ein -- "$ORCHESTRATE_SECRET_RE" "$tmp" | cut -c1-60 | head -3 >&2
+    rm -f "$tmp"
+    refuse scrub-secret "credential-shaped string in $in"
+    return 3
+  fi
   deny="$(cfg scrub.deny "$(cfg attribution_patterns 'co-authored-by|generated with|assisted by')")"
-  hits="$(grep -Eic -- "$deny" "$out")"
+  hits="$(grep -Eic -- "$deny" "$tmp")"
   if [ "${hits:-0}" != 0 ]; then
-    grep -Ein -- "$deny" "$out" | head -5 >&2
-    refuse scrub-vendor "$hits vendor or attribution hits in $out"
+    grep -Ein -- "$deny" "$tmp" | head -5 >&2
+    rm -f "$tmp"
+    refuse scrub-vendor "$hits vendor or attribution hits in $in"
     return 3
   fi
-  if grep -q $'\xe2\x80\x94' "$out"; then
-    refuse scrub-emdash "U+2014 present in $out"
+  if grep -q $'\xe2\x80\x94' "$tmp"; then
+    rm -f "$tmp"
+    refuse scrub-emdash "U+2014 present in $in"
     return 3
   fi
+  mv -f "$tmp" "$out" || { rm -f "$tmp"; return 1; }
   printf '%s\n' "$out"
 }
 
 # --------------------------------------------------------------- merge gate
 
-# Walls that config cannot lift: the base must be the declared trunk, must not
-# be a never_merge_into branch, and no commit may be unsigned or attributed.
-# There is no force-push path anywhere in this plugin.
+valid_pr() { printf '%s' "${1:-}" | grep -Eq '^[0-9]+$'; }
+valid_sha() { printf '%s' "${1:-}" | grep -Eq '^[0-9a-f]{40}$'; }
+
+# One commit's signature row: "%G?<tab>%GK". Only G counts. U is a good
+# signature by an unknown key, which is no statement about who made the commit,
+# so it is refused. When signing.key is set, the signer must be that key.
+sig_row_ok() {
+  local status="${1:-}" keyid="${2:-}" want="${3:-}"
+  [ "$status" = G ] || return 1
+  [ -n "$want" ] || return 0
+  case "$want" in
+    '<'*) return 0 ;;                       # an unedited template placeholder
+  esac
+  local a b
+  a="$(printf '%s' "$keyid" | tr 'a-f' 'A-F')"
+  b="$(printf '%s' "$want" | tr 'a-f' 'A-F')"
+  [ "$a" = "$b" ] || [ "${a%"$b"}" != "$a" ]
+}
+
+# The checkout the gate reads its evidence from. Required: defaulting it to the
+# caller's cwd means the signatures checked and the PR merged can be different
+# repositories.
+gate_repo() {
+  local repo; repo="$(cfg repo)"
+  if [ -z "$repo" ]; then
+    refuse merge-repo "programme.yaml has no repo; the gate needs the checkout it must read"
+    return 3
+  fi
+  if ! git -C "$repo" rev-parse --git-dir >/dev/null 2>&1; then
+    refuse merge-repo "programme.yaml repo is not a git checkout: $repo"
+    return 3
+  fi
+  printf '%s' "$repo"
+}
+
+# Checks are read for the PR whose head is already pinned to the reviewed sha,
+# so a green run on an older commit cannot stand in for this one.
+ci_gate() {
+  local pr="$1" s bad
+  s="$(gh pr checks "$pr" --json name,bucket 2>/dev/null)"
+  if [ -z "$s" ] || [ "$(printf '%s' "$s" | jq -r 'length' 2>/dev/null)" = "" ]; then
+    refuse merge-ci "#$pr has no check data and ci is set to gate"
+    return 3
+  fi
+  bad="$(printf '%s' "$s" | jq -r '[.[] | select(.bucket != "pass" and .bucket != "skipping") | "\(.bucket):\(.name)"] | join(" ")')"
+  [ -z "$bad" ] || { refuse merge-ci "#$pr checks are not green: $bad"; return 3; }
+}
+
+# Walls that config cannot lift: the base must be the declared trunk and must
+# not be a never_merge_into branch. Evidence is bound to the commit the PR
+# actually proposes, fetched from refs/pull/<n>/head, never to a branch name a
+# fork can also carry. There is no force-push path anywhere in this plugin.
 merge_gate() {
-  local pr="$1" want_sha="${2:-}" trunk base head branch never unsigned attributed pat repo
+  local pr="${1:-}" want="${2:-}"
+  valid_pr "$pr" || { refuse merge-pr-format "a PR number must be digits, got: $pr"; return 3; }
+  if [ -z "$want" ] || [ "$want" = "-" ]; then
+    refuse merge-sha-required "#$pr needs the sha the verdict was reached on; an unpinned merge is not reviewed"
+    return 3
+  fi
+  valid_sha "$want" || { refuse merge-sha-format "a reviewed sha must be 40 hex characters, got: $want"; return 3; }
+
+  local trunk repo
   trunk="$(cfg trunk)"
   [ -n "$trunk" ] || { printf 'programme.yaml has no trunk\n' >&2; return 1; }
-  # The gate runs from the programme dir, so the checkout it gates is named in
-  # programme.yaml rather than inferred from the caller's cwd.
-  repo="$(cfg repo .)"
-  [ -d "$repo/.git" ] || [ -d "$repo" ] || { printf 'programme.yaml repo is not a checkout: %s\n' "$repo" >&2; return 1; }
+  repo="$(gate_repo)" || return 3
   local gh_repo; gh_repo="$(cfg gh_repo)"
   [ -n "$gh_repo" ] && export GH_REPO="$gh_repo"
 
-  local view
-  view="$(gh pr view "$pr" --json baseRefName,headRefName,headRefOid,state 2>/dev/null)"
+  local view state draft fork base branch head
+  view="$(gh pr view "$pr" --json state,isDraft,isCrossRepository,baseRefName,headRefName,headRefOid 2>/dev/null)"
   [ -n "$view" ] || { printf 'cannot read PR #%s\n' "$pr" >&2; return 1; }
-  base="$(printf '%s' "$view" | jq -r .baseRefName)"
-  branch="$(printf '%s' "$view" | jq -r .headRefName)"
-  head="$(printf '%s' "$view" | jq -r .headRefOid)"
+  state="$(printf '%s' "$view" | jq -r '.state // ""')"
+  draft="$(printf '%s' "$view" | jq -r '.isDraft // false')"
+  fork="$(printf '%s' "$view" | jq -r '.isCrossRepository // false')"
+  base="$(printf '%s' "$view" | jq -r '.baseRefName // ""')"
+  branch="$(printf '%s' "$view" | jq -r '.headRefName // ""')"
+  head="$(printf '%s' "$view" | jq -r '.headRefOid // ""')"
 
+  [ "$state" = OPEN ] || { refuse merge-not-open "#$pr is $state"; return 3; }
+  # Draft is the author saying "not ready". The gate reads it, it does not clear it.
+  [ "$draft" != true ] || { refuse merge-draft "#$pr is a draft; the author has not marked it ready"; return 3; }
+  if [ "$fork" = true ] && [ "$(cfg allow_fork_prs false)" != true ]; then
+    refuse merge-fork "#$pr comes from a fork; set allow_fork_prs to accept those deliberately"
+    return 3
+  fi
+  [ "$head" = "$want" ] || { refuse merge-sha-mismatch "#$pr head is $head, the verdict was on $want"; return 3; }
+
+  local never
   never="$(cfg never_merge_into)"
   local -a never_list=()
   read -r -a never_list <<< "$never"
@@ -431,33 +615,69 @@ merge_gate() {
     [ "$base" = "$b" ] && { refuse merge-never-base "#$pr targets $base, which is on never_merge_into"; return 3; }
   done
   [ "$base" = "$trunk" ] || { refuse merge-wrong-base "#$pr targets $base, trunk is $trunk"; return 3; }
-  if [ -n "$want_sha" ] && [ "$want_sha" != "-" ] && [ "${head#"$want_sha"}" = "$head" ]; then
-    refuse merge-head-moved "#$pr head is $head, the verdict was on $want_sha"
+
+  # Evidence follows the head commit, not the branch name.
+  local ref="refs/orchestrate/pr/$pr" fetched
+  if ! git -C "$repo" fetch -q --no-tags origin "+refs/pull/$pr/head:$ref" 2>/dev/null; then
+    refuse merge-no-head-ref "#$pr head commit could not be fetched from refs/pull/$pr/head"
     return 3
   fi
+  fetched="$(git -C "$repo" rev-parse "$ref" 2>/dev/null)"
+  [ "$fetched" = "$head" ] || { refuse merge-head-mismatch "#$pr head is $head, refs/pull/$pr/head is $fetched"; return 3; }
 
-  git -C "$repo" fetch -q origin "$branch" "$trunk" 2>/dev/null
-  if ! git -C "$repo" merge-tree --write-tree "origin/$trunk" "origin/$branch" >/dev/null 2>&1; then
+  if ! git -C "$repo" fetch -q --no-tags origin "+refs/heads/$trunk:refs/remotes/origin/$trunk" 2>/dev/null; then
+    refuse merge-fetch "cannot fetch $trunk from origin"
+    return 3
+  fi
+  local base_sha mb n
+  base_sha="$(git -C "$repo" rev-parse "origin/$trunk" 2>/dev/null)"
+  [ -n "$base_sha" ] || { refuse merge-fetch "cannot resolve origin/$trunk"; return 3; }
+  mb="$(git -C "$repo" merge-base "$base_sha" "$head" 2>/dev/null)"
+  [ -n "$mb" ] || { refuse merge-unrelated "#$pr shares no history with $trunk"; return 3; }
+  n="$(git -C "$repo" rev-list --count "$mb..$head" 2>/dev/null)"
+  # An empty range satisfies every "no bad commits" check vacuously.
+  [ "${n:-0}" -gt 0 ] || { refuse merge-empty-range "#$pr adds no commits over $trunk"; return 3; }
+
+  if ! git -C "$repo" merge-tree --write-tree "$base_sha" "$head" >/dev/null 2>&1; then
     refuse merge-conflict "#$pr does not merge cleanly into $trunk"
     return 3
   fi
+
   if [ "$(cfg signing.required true)" = true ]; then
-    unsigned="$(git -C "$repo" log --format='%G?' "origin/$trunk..origin/$branch" 2>/dev/null | grep -vc '^[GU]$')"
-    [ "${unsigned:-0}" = 0 ] || { refuse merge-unsigned "#$pr has $unsigned unsigned commits"; return 3; }
+    local want_key st kid bad=0
+    want_key="$(cfg signing.key)"
+    while IFS="$(printf '\t')" read -r st kid; do
+      [ -n "$st" ] || continue
+      sig_row_ok "$st" "$kid" "$want_key" || bad=$((bad + 1))
+    done < <(git -C "$repo" log --format='%G?%x09%GK' "$mb..$head" 2>/dev/null)
+    [ "$bad" = 0 ] || { refuse merge-unsigned "#$pr has $bad commits without a good signature from the configured key"; return 3; }
   fi
   if [ "$(cfg attribution_guard true)" = true ]; then
+    local pat attributed
     pat="$(cfg attribution_patterns 'co-authored-by|generated with|assisted by')"
-    attributed="$(git -C "$repo" log --format='%B' "origin/$trunk..origin/$branch" 2>/dev/null | grep -Eic -- "$pat")"
+    attributed="$(git -C "$repo" log --format='%B' "$mb..$head" 2>/dev/null | grep -Eic -- "$pat")"
     [ "${attributed:-0}" = 0 ] || { refuse merge-attributed "#$pr has $attributed attribution lines"; return 3; }
   fi
+
+  [ "$(cfg ci ignore)" != gate ] || ci_gate "$pr" || return 3
 
   if [ "$(cfg autonomy merge_on_verdict)" != merge_on_verdict ]; then
     printf 'ASK: #%s passes the gate, autonomy is %s, so ask before merging\n' "$pr" "$(cfg autonomy)"
     ev decision topic "merge #$pr" text "gate passed, autonomy requires asking" source gate
     return 4
   fi
-  gh pr ready "$pr" >/dev/null 2>&1
-  if gh pr merge "$pr" --merge >/dev/null 2>&1; then
+
+  # The owning lane can push at any moment. Re-read immediately before merging
+  # and pin the merge to the commit that was actually reviewed.
+  local view2
+  view2="$(gh pr view "$pr" --json state,baseRefName,headRefOid 2>/dev/null)"
+  if [ "$(printf '%s' "$view2" | jq -r '.headRefOid // ""')" != "$head" ] \
+     || [ "$(printf '%s' "$view2" | jq -r '.baseRefName // ""')" != "$base" ] \
+     || [ "$(printf '%s' "$view2" | jq -r '.state // ""')" != OPEN ]; then
+    refuse merge-moved "#$pr changed between the gate and the merge"
+    return 3
+  fi
+  if gh pr merge "$pr" --merge --match-head-commit "$head" >/dev/null 2>&1; then
     ev merged pr "$pr" branch "$branch" base "$trunk" sha "$head"
     printf '#%s merged into %s\n' "$pr" "$trunk"
     return 0
