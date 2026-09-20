@@ -12,6 +12,12 @@
       "source": "./plugins/godmode",
       "description": "Autonomous product factory: hook-enforced status, beads-synced cross-machine state, single-driver lease",
       "category": "orchestration"
+    },
+    {
+      "name": "orchestrate",
+      "source": "./plugins/orchestrate",
+      "description": "Own N agent lanes across Orca hosts: recorded message path, stateless tick, refusing merge gate, handover any session can pick up",
+      "category": "orchestration"
     }
   ]
 }
