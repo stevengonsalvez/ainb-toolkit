@@ -4,6 +4,8 @@
 #   checks/<n>.json  check rows for `pr checks`, falling back to checks/default.json
 #   posted/<n>.md    what `pr comment` was asked to post
 #   merged.txt       PRs `pr merge` was asked to merge
+#   prs/<n>.move     present: the head moves after the first `pr view`, which is
+#                    a lane pushing while the gate is reading
 set -uo pipefail
 S="${STUB_STATE:?STUB_STATE not set}"
 mkdir -p "$S/prs" "$S/posted"
@@ -32,7 +34,12 @@ done
 case "$verb" in
   view)
     [ -f "$S/prs/$num.json" ] || exit 1
-    if [ -n "$jqf" ]; then jq -r "$jqf" "$S/prs/$num.json"; else cat "$S/prs/$num.json"; fi ;;
+    if [ -n "$jqf" ]; then jq -r "$jqf" "$S/prs/$num.json"; else cat "$S/prs/$num.json"; fi
+    if [ -f "$S/prs/$num.move" ]; then
+      jq '.headRefOid = "1111111111111111111111111111111111111111"' "$S/prs/$num.json" > "$S/prs/$num.tmp" \
+        && mv "$S/prs/$num.tmp" "$S/prs/$num.json"
+      rm -f "$S/prs/$num.move"
+    fi ;;
   list)
     jq -sc --arg st "${state:-open}" --arg hd "$head" \
       '[.[] | select(($st == "" or $st == "all" or (.state | ascii_downcase) == ($st | ascii_downcase)))
