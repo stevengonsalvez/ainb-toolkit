@@ -10,7 +10,12 @@ ${CLAUDE_PLUGIN_ROOT}/scripts/orchestrate.sh handover <programme> "<reason>"
 ```
 
 Writes `HANDOVER.md` in the programme dir, records a `handover` event with the
-reason, and deletes `owner.json`.
+reason, and releases the lock last.
+
+The ownership token is spent by this. The programme is left deliberately
+unclaimed, and the next orchestrator claims a fresh token through
+`orchestrate:takeover`, which is recorded. A tick will not quietly pick a
+handed-over programme back up.
 
 ## The brief is generated, never authored
 
@@ -32,11 +37,15 @@ whom.
 3. Then run handover, and tell whoever is next the one line they need:
    `orchestrate:takeover <programme>`.
 
-## Credit guard
+## Credit guard: yours, not the script's
 
-When `handover.credit_threshold_pct` in `programme.yaml` is crossed and the
-harness exposes its own usage, run this yourself rather than waiting to run out,
-and notify with the takeover command.
+No code reads `handover.credit_threshold_pct`. Nothing checks your usage, and
+no tick will run handover for you. If your harness does not expose the
+orchestrator's own usage number, that key does nothing at all.
+
+Where the harness does expose it: watch it yourself, and run this verb before
+you run out rather than after. A session that runs out mid-loop is recovered by
+`orchestrate:takeover`, not prevented.
 
 ## The programme dir is host-local
 
