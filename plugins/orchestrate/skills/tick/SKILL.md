@@ -90,7 +90,8 @@ versus what is left to you, is in
 2. Every `asking` lane: `orchestrate.sh read <programme> <lane> 40`, answer from
    the house rules, the lane's goal and the `decision` events in `events.jsonl`.
    Send it back through the recorded path:
-   `orchestrate.sh send <programme> <lane> - "<answer>"`. Escalate to a human
+   `orchestrate.sh send <programme> <lane> - "<answer>"`. Append `--observe` to
+   see exactly what would be typed without typing it. Escalate to a human
    only when the decision is genuinely theirs.
 3. New PR: record who owns it the first time you see it,
    `orchestrate.sh pr <programme> <pr> <lane>`. Lesson learned the hard way: a
