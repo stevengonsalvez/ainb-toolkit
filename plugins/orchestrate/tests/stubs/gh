@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# Stub gh for the test runner. State lives under $STUB_STATE:
+#   prs/<n>.json     one PR object per file
+#   posted/<n>.md    what `pr comment` was asked to post
+#   merged.txt       PRs `pr merge` was asked to merge
+set -uo pipefail
+S="${STUB_STATE:?STUB_STATE not set}"
+mkdir -p "$S/prs" "$S/posted"
+
+[ "${1:-}" = pr ] || { printf '{}\n'; exit 0; }
+verb="${2:-}"; shift 2 2>/dev/null || true
+
+num=""; jqf=""; body=""; state=""; head=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --jq) jqf="${2:-}"; shift 2 ;;
+    --json) shift 2 ;;
+    --body-file) body="${2:-}"; shift 2 ;;
+    --state) state="${2:-}"; shift 2 ;;
+    --head) head="${2:-}"; shift 2 ;;
+    --merge|--squash|--rebase) shift ;;
+    -*) shift ;;
+    *) [ -z "$num" ] && num="$1"; shift ;;
+  esac
+done
+
+case "$verb" in
+  view)
+    [ -f "$S/prs/$num.json" ] || exit 1
+    if [ -n "$jqf" ]; then jq -r "$jqf" "$S/prs/$num.json"; else cat "$S/prs/$num.json"; fi ;;
+  list)
+    jq -sc --arg st "${state:-open}" --arg hd "$head" \
+      '[.[] | select(($st == "" or $st == "all" or (.state | ascii_downcase) == ($st | ascii_downcase)))
+             | select($hd == "" or .headRefName == $hd)]' "$S"/prs/*.json 2>/dev/null > "$S/.list.json" \
+      || printf '[]' > "$S/.list.json"
+    if [ -n "$jqf" ]; then jq -r "$jqf" "$S/.list.json"; else cat "$S/.list.json"; fi ;;
+  ready) printf 'ready\n' ;;
+  comment)
+    [ -n "$body" ] && cp "$body" "$S/posted/$num.md"
+    printf 'https://example.invalid/pr/%s#comment\n' "$num" ;;
+  merge)
+    printf '%s\n' "$num" >> "$S/merged.txt"
+    [ -f "$S/prs/$num.json" ] && jq '.state = "MERGED"' "$S/prs/$num.json" > "$S/prs/$num.tmp" && mv "$S/prs/$num.tmp" "$S/prs/$num.json"
+    printf 'merged\n' ;;
+  *) printf '{}\n' ;;
+esac
