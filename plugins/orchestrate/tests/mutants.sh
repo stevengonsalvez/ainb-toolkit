@@ -82,6 +82,22 @@ mutate "token ownership" scripts/lib.sh \
   '  owner_is_ours && return 0' \
   '  return 0'
 
+mutate "observe refuses to send" scripts/lib.sh \
+  '  if [ "$ORCHESTRATE_OBSERVE" = 1 ] || [ "$ORCHESTRATE_RO" = 1 ]; then
+    printf '"'"'observe: would send to %s, sending nothing\n'"'"' "$1"
+    return 5
+  fi' \
+  '  :'
+
+mutate "read verbs write nothing" scripts/lib.sh \
+  'ev() {
+  [ "$ORCHESTRATE_RO" = 1 ] && return 0' \
+  'ev() {'
+
+mutate "PR counting scoped to the trunk" scripts/lib.sh \
+  'n="$(gh pr list --state open --base "$trunk" --json number --jq '"'"'length'"'"' 2>/dev/null)"; rc=$?' \
+  'n="$(gh pr list --state open --json number --jq '"'"'length'"'"' 2>/dev/null)"; rc=$?'
+
 printf '\n%s killed, %s survived\n' "$KILLED" "$SURVIVED"
 [ "$SURVIVED" = 0 ] || exit 1
 exit 0
