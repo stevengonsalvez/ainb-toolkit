@@ -21,11 +21,13 @@ review classes are read by you, as text, not by the scripts.
 | `never_merge_into` | merge gate | branches that refuse before anything else is checked |
 | `autonomy` | merge gate | `merge_on_verdict` merges on a passing verdict; `ask` stops at the gate and exits 4. Set it deliberately at adopt time |
 | `signing.required` | merge gate | true refuses any commit in the range that is not signed |
-| `signing.key` | you | recorded so a resign is possible by hand. Never used to sign automatically |
+| `signing.key` | merge gate | the ONLY signer accepted. A good signature from any other key is refused. Left as the `<...>` placeholder it is treated as unset, and any good signature passes. Never used to sign automatically |
 | `attribution_guard`, `attribution_patterns` | merge gate | refuses commit messages matching the pattern |
-| `ci` | you | `gate` means wait on the head sha's checks; `ignore` means report and proceed |
-| `repo` | merge gate | the local checkout the gate runs git in, so a tick works from the programme dir alone |
+| `ci` | merge gate | `gate` reads the checks in code and refuses anything not green; `ignore` leaves CI to your judgment |
+| `repo` | merge gate | REQUIRED. The local checkout the gate reads evidence from. Never defaulted: an unset `repo` refuses the merge rather than reading the caller's cwd |
 | `gh_repo` | merge gate | exported as `GH_REPO` so gh resolves the right repository |
+| `allow_fork_prs` | merge gate | a fork head is refused unless this is `true` |
+| `send.max_chars` | send path | a message is one sanitised line, capped at this many characters |
 | `default_agent` | adopt | agent kind assumed for a lane discovered with no profile |
 | `loop.every` | tick, loop | cadence. Also the watchdog's unit: a gap past twice this is reported |
 | `loop.max_ticks`, `loop.max_hours` | loop | bounds, `0` for none |
@@ -69,8 +71,10 @@ signing: {required: true, key: "ABCD1234EF567890"}
 attribution_guard: true
 attribution_patterns: "co-authored-by|generated with|assisted by|acme-tool"
 ci: ignore
+allow_fork_prs: false
 repo: /home/example/work/my-project
 gh_repo: example-org/my-project
+send: {max_chars: 2000}
 
 default_agent: claude
 
