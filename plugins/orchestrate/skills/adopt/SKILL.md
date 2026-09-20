@@ -18,9 +18,11 @@ ${CLAUDE_PLUGIN_ROOT}/scripts/orchestrate.sh adopt <programme> \
 ${CLAUDE_PLUGIN_ROOT}/scripts/orchestrate.sh adopt <programme> --include-new
 ```
 
-Needs a programme dir. Create one first with `orchestrate.sh init <programme>
---trunk <branch> --never-merge-into <branch>`, then edit `programme.yaml`:
-`autonomy` must be set deliberately, never left to a default.
+Needs a programme dir and the ownership token. Create the dir with
+`orchestrate.sh init <programme> --trunk <branch> --repo <checkout>`, edit
+`programme.yaml` (`autonomy` and `repo` must both be set deliberately, never
+left to a default), then claim it with `orchestrate:takeover`, which prints the
+token once. A dry run needs no token; writing does.
 
 Columns: `lane, env, worktree, agent, handle, status, ctx`.
 
@@ -54,9 +56,20 @@ Columns: `lane, env, worktree, agent, handle, status, ctx`.
 | a lane reads `needs-rebind` | its worktree holds several terminals and none is uniquely titled for it. Set `title` in `lanes.jsonl` to that terminal's title, then adopt again. Nothing is sent to a lane in this state |
 | an `UNINDEXED` row appears | decide whether it is a lane. If it is, name it and adopt with `--include-new`, then fill its `branch` and `goal` |
 
-Fill `branch`, `goal` and `exclusive` in `lanes.jsonl` by hand after adopting:
-adopt cannot know them, and the merge gate and retirement guard both read
-`branch`.
+Fill `branch`, `goal`, `exclusive` and `title` in `lanes.jsonl` by hand after
+adopting: adopt cannot know them, they survive every later adopt, and the
+retirement guard refuses outright when `branch` is unknown. `title` is what
+binds a lane to its own terminal when a worktree holds more than one.
+
+## Before the first unattended run
+
+Fill `attribution_patterns` and `scrub.deny` in `programme.yaml` with the tool
+and vendor names this programme must never publish, anchored as the template
+shows. The shipped defaults match one trailer shape and nothing else, so until
+you set them a report naming a vendor in prose scrubs clean and posts.
+
+Every policy key, and which of them are walls:
+`${CLAUDE_PLUGIN_ROOT}/references/programme-yaml.md`.
 
 ## Next
 
