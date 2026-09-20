@@ -5,6 +5,13 @@ Everything specific to a programme lives here: trunk, signing key, hosts, review
 policy. The plugin itself holds none of it, so a second programme needs no code
 change.
 
+## Ownership is not in this file
+
+`ORCHESTRATE_SESSION` holds the token that proves ownership, minted and printed
+once by `orchestrate:takeover` and stored nowhere. `owner.json` keeps only its
+hash and a derived label. Every verb that writes needs the token, in the
+environment or as `--session`. See the takeover skill.
+
 ## What reads it
 
 Read by a small flat parser, not a YAML library. It understands top-level
@@ -33,7 +40,7 @@ review classes are read by you, as text, not by the scripts.
 | `loop.max_ticks`, `loop.max_hours` | loop | bounds, `0` for none |
 | `loop.tick_timeout` | loop | seconds a single tick may take before it is stopped and the loop moves on. Defaults to twice the cadence |
 | `compact.at_pct`, `compact.keep` | tick | an idle lane over this percentage of context used is sent its compact command with the keep list |
-| `handover.credit_threshold_pct` | you | run handover yourself once the harness reports usage over this |
+| `handover.credit_threshold_pct` | you | NO code reads this. Run handover yourself once your harness reports usage over it; where a harness exposes no usage number, this key does nothing |
 | `exit` | tick | see below |
 | `placement.*` | preflight, cut 2 | floors, weights, lane cap, exclusive resources |
 | `metrics.*` | cut 2 | Beszel hub rung. Empty means the Orca probe rung |
