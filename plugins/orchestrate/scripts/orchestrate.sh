@@ -7,7 +7,7 @@
 #   orchestrate.sh adopt     <programme> [--dry-run] [--include-new] [--environment E]...
 #   orchestrate.sh status    <programme>
 #   orchestrate.sh read      <programme> <lane> [lines]
-#   orchestrate.sh send      <programme> <lane> <pr|-> <text>
+#   orchestrate.sh send      <programme> <lane> <pr|-> <text> [--observe]
 #   orchestrate.sh pr        <programme> <pr> <lane>
 #   orchestrate.sh mark      <programme> <lane> <working|idle|asking|done|dead>
 #   orchestrate.sh owed      <programme>
@@ -208,9 +208,13 @@ v_read() {
 }
 
 v_send() {
-  prog_open "${1:-}"
+  local prog_arg="${1:-}" lane="${2:-}" pr="${3:--}" text="${4:-}"
+  case "${5:-}" in
+    --observe) ORCHESTRATE_OBSERVE=1 ;;
+  esac
+  prog_open "$prog_arg"
   owner_require || return 3
-  lane_send "${2:-}" "${3:--}" "${4:-}"
+  lane_send "$lane" "$pr" "$text"
 }
 
 v_pr() {
