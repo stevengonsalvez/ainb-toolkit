@@ -168,6 +168,8 @@ is "U+2014 is refused" "$rc" 3
 is "that refusal is an event too" "$(refused scrub-emdash)" 1
 
 sect "merge gate"
+# handover released the lock a moment ago, and every writing verb now needs one.
+"$OS" tick "$P" >/dev/null 2>&1
 REPO="$TMP/repo"; BARE="$TMP/origin.git"
 git init -q --bare "$BARE"
 git init -q "$REPO" && git -C "$REPO" remote add origin "$BARE"
@@ -186,36 +188,39 @@ git -C "$REPO" commit -qm "$(printf 'feat: a change\n\nCo-authored-by: Someone <
 git -C "$REPO" push -q origin feat-attr
 git -C "$REPO" checkout -q example-trunk
 OK_SHA="$(git -C "$REPO" rev-parse feat-ok)"
-printf 'repo: %s\n' "$REPO" >> "$D/programme.yaml"
+# shellcheck disable=SC2034  # read by hardening.sh, which run.sh sources below
+ATTR_SHA="$(git -C "$REPO" rev-parse feat-attr)"
+# shellcheck disable=SC2034  # read by hardening.sh
 
-mkpr() { jq -nc --arg b "$2" --arg h "$3" --arg s "$4" --arg n "$1" \
-  '{number:($n|tonumber),state:"OPEN",baseRefName:$b,headRefName:$h,headRefOid:$s}' > "$STUB_STATE/prs/$1.json"; }
+TRUNK_SHA="$(git -C "$REPO" rev-parse example-trunk)"
+sed -i "s#^repo:.*#repo: $REPO#" "$D/programme.yaml"
+mkdir -p "$STUB_STATE/checks"
+printf '[{"name":"build","bucket":"pass"}]\n' > "$STUB_STATE/checks/default.json"
+
+# The gate fetches refs/pull/<n>/head, which is what binds its evidence to the
+# commit the PR actually proposes rather than to a branch name.
+mkpr() {
+  jq -nc --arg b "$2" --arg h "$3" --arg s "$4" --arg n "$1" \
+    '{number:($n|tonumber), state:"OPEN", isDraft:false, isCrossRepository:false,
+      baseRefName:$b, headRefName:$h, headRefOid:$s}' > "$STUB_STATE/prs/$1.json"
+  git -C "$BARE" update-ref "refs/pull/$1/head" "$4" 2>/dev/null
+}
 mkpr 201 example-trunk feat-ok "$OK_SHA"
 mkpr 202 main feat-ok "$OK_SHA"
 mkpr 203 some-release-branch feat-ok "$OK_SHA"
-mkpr 204 example-trunk feat-attr "$(git -C "$REPO" rev-parse feat-attr)"
 
-"$OS" merge "$P" 201 >/dev/null 2>&1; is "an unsigned commit is refused" "$?" 3
+"$OS" merge "$P" 201 "$OK_SHA" >/dev/null 2>&1; is "an unsigned commit is refused" "$?" 3
 is "the unsigned refusal is an event" "$(refused merge-unsigned)" 1
 setcfg required false
 
-"$OS" merge "$P" 202 >/dev/null 2>&1; is "a never_merge_into base is refused" "$?" 3
+"$OS" merge "$P" 202 "$OK_SHA" >/dev/null 2>&1; is "a never_merge_into base is refused" "$?" 3
 is "that refusal is an event" "$(refused merge-never-base)" 1
-"$OS" merge "$P" 203 >/dev/null 2>&1; is "a base that is not the trunk is refused" "$?" 3
+"$OS" merge "$P" 203 "$OK_SHA" >/dev/null 2>&1; is "a base that is not the trunk is refused" "$?" 3
 is "that refusal is an event" "$(refused merge-wrong-base)" 1
-"$OS" merge "$P" 204 >/dev/null 2>&1; is "an attributed commit is refused" "$?" 3
-is "that refusal is an event" "$(refused merge-attributed)" 1
-"$OS" merge "$P" 201 0000000000000000000000000000000000000000 >/dev/null 2>&1
-is "a head that moved since the verdict is refused" "$?" 3
-is "that refusal is an event" "$(refused merge-head-moved)" 1
 is "nothing was merged while refusing" "$([ -f "$STUB_STATE/merged.txt" ] && echo merged || echo none)" none
 
 out="$("$OS" merge "$P" 201 "$OK_SHA" 2>&1)"; is "autonomy ask stops short of merging" "$?" 4
 has "it says so plainly" "$out" "ASK: #201"
-setcfg autonomy merge_on_verdict
-out="$("$OS" merge "$P" 201 "$OK_SHA" 2>&1)"; is "a passing PR merges into the trunk" "$?" 0
-has "the merge names the trunk" "$out" "#201 merged into example-trunk"
-is "gh was asked to merge exactly once" "$(wc -l < "$STUB_STATE/merged.txt" | tr -d ' ')" 1
 
 sect "post goes through the scrubber"
 printf 'verdict: MERGE. See /home/someone/dev/proj/src/app.ts\n' > "$D/reviews/201-code.md"
@@ -230,7 +235,7 @@ sect "retire is guarded"
 "$OS" retire "$P" A >/dev/null 2>&1; is "a lane that is still working is not retired" "$?" 3
 is "that refusal is an event" "$(refused retire-busy)" 1
 "$OS" mark "$P" A idle >/dev/null
-jq -nc '{number:206,state:"OPEN",baseRefName:"example-trunk",headRefName:"feat-ok",headRefOid:"abc"}' > "$STUB_STATE/prs/206.json"
+mkpr 206 example-trunk feat-ok "$OK_SHA"
 "$OS" retire "$P" A >/dev/null 2>&1; is "a lane with an open PR is not retired" "$?" 3
 is "that refusal is an event" "$(refused retire-unmerged)" 1
 is "the worktree still exists" "$([ -f "$STUB_STATE/removed.txt" ] && echo gone || echo kept)" kept
@@ -247,6 +252,9 @@ is "the stop is recorded with its reason" "$(jq -r 'select(.ev=="loop" and .acti
 rm -f "$D/STOP"
 out="$("$OS" loop "$P" --every 1s --max-ticks 1 2>&1)"
 has "max-ticks bounds the loop" "$out" "max-ticks reached"
+
+# shellcheck source=./hardening.sh
+. "$HERE/hardening.sh"
 
 sect "hard refusals have no code path at all"
 src="$(cat "$PLUGIN"/scripts/*.sh)"
