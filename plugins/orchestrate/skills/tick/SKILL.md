@@ -9,8 +9,13 @@ A tick is `f(programme dir) -> events`. Nothing it needs lives in a
 conversation, so a fresh session on any harness produces the same result.
 
 ```bash
-${CLAUDE_PLUGIN_ROOT}/scripts/orchestrate.sh tick <programme>
+ORCHESTRATE_SESSION=<token> \
+  ${CLAUDE_PLUGIN_ROOT}/scripts/orchestrate.sh tick <programme>
 ```
+
+The token comes from `orchestrate:takeover` and proves ownership. Without it a
+tick on an owned programme is refused; on an unclaimed one it claims and prints
+a new token once.
 
 Exit `0` normal, `3` refused (another session owns the programme), `10` the
 exit condition in `programme.yaml` now holds.
@@ -22,6 +27,7 @@ Steps 1 to 5, 6a and 10 are the script. The rest is yours.
 | # | step | who |
 |---|---|---|
 | 1 | owner check, and the watchdog: a gap past twice the cadence is reported first | script |
+| 1b | `DEGRADED` or `CONFIG CHANGED` lines: a counter that could not be read, or a policy file edited since the lock was claimed | script |
 | 2 | read every indexed handle, classify, record `ctx_pct` | script |
 | 3 | dead or stale handle: re-resolve by worktree, resume the agent, rewrite the row | script |
 | 4 | context over `compact.at_pct` and idle: send that agent's compact with a keep list | script |
@@ -41,6 +47,10 @@ L     host-a   claude opus   idle     61   -
 M     host-b   claude opus   dead     -    restarted
 N     host-b   codex         asking   44   rehandled
 ```
+
+An `exit=undecidable` line means something could not be read. The exit condition
+is deliberately NOT evaluated in that state, because "GitHub did not answer"
+must never read as "nothing left to do".
 
 `note` is what the script already did: `rehandled`, `restarted`,
 `compacted at N%`. `DISK:` lines name a host under the floor; ask its lanes to
