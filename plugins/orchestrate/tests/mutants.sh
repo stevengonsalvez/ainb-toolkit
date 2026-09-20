@@ -69,6 +69,19 @@ mutate "pre-merge re-read" scripts/lib.sh \
   '  view2="$(gh pr view "$pr" --json state,baseRefName,headRefOid 2>/dev/null)"' \
   '  view2="$(printf '"'"'{"state":"OPEN","baseRefName":"%s","headRefOid":"%s"}'"'"' "$base" "$head")"'
 
+mutate "STOP read during the wait" scripts/orchestrate.sh \
+  '      [ -f "$STOP" ] && break
+      sleep 1; slept=$((slept + 1))' \
+  '      sleep 1; slept=$((slept + 1))'
+
+mutate "owed state exhaustiveness" scripts/lib.sh \
+  '      *) printf '"'"'%s\t%s\t%s\n'"'"' "$lane" "$pr" "owed-unknown" ;;' \
+  '      *) ;;'
+
+mutate "token ownership" scripts/lib.sh \
+  '  owner_is_ours && return 0' \
+  '  return 0'
+
 printf '\n%s killed, %s survived\n' "$KILLED" "$SURVIVED"
 [ "$SURVIVED" = 0 ] || exit 1
 exit 0
