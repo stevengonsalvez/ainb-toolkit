@@ -8,6 +8,9 @@ set -uo pipefail
 S="${STUB_STATE:?STUB_STATE not set}"
 mkdir -p "$S/prs" "$S/posted"
 
+# A GitHub that cannot answer, so a test can prove the counters go unknown
+# rather than zero.
+[ -z "${STUB_GH_FAIL:-}" ] || exit 1
 [ "${1:-}" = pr ] || { printf '{}\n'; exit 0; }
 verb="${2:-}"; shift 2 2>/dev/null || true
 
