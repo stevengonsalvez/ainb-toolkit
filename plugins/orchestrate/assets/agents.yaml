@@ -41,7 +41,14 @@ claude:
 codex:
   start: "codex"
   resume: "codex resume --last"
-  headless: "codex exec"
+  # The prompt arrives on stdin, which is how the loop driver feeds it. Run
+  # without the built-in sandbox: on Linux hosts where bubblewrap may not create
+  # user namespaces, the sandbox cannot start and no command runs at all. The
+  # walls that matter here are the plugin's own (owner token, merge gate,
+  # never-do list), and lanes run without permission prompts anyway. On a host
+  # where the sandbox works and you want it, use:
+  #   codex exec --skip-git-repo-check -s workspace-write
+  headless: "codex exec --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox"
   compact: "/compact"                       # UNVERIFIED
   idle: "^[[:space:]]*[>▌][[:space:]]*$"    # UNVERIFIED
   busy: "esc to interrupt"                  # UNVERIFIED
