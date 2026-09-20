@@ -8,13 +8,27 @@
   "plugins": [
     {
       "name": "godmode",
-  "description": "Perpetual autonomous product factory for Copilot CLI",
+      "description": "Perpetual autonomous product factory for Copilot CLI",
       "source": "./plugins/godmode",
       "category": "orchestration",
-      "tags": ["orchestration", "automation"],
+      "tags": [
+        "orchestration",
+        "automation"
+      ],
       "commands": "commands/",
       "skills": "skills/",
       "hooks": "hooks/copilot-hooks.json"
+    },
+    {
+      "name": "orchestrate",
+      "description": "Own N agent lanes across Orca hosts: recorded message path, stateless tick, refusing merge gate, handover any session can pick up",
+      "source": "./plugins/orchestrate",
+      "category": "orchestration",
+      "tags": [
+        "orchestration",
+        "automation"
+      ],
+      "skills": "skills/"
     }
   ]
 }
