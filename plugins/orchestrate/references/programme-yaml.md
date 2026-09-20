@@ -5,6 +5,14 @@ Everything specific to a programme lives here: trunk, signing key, hosts, review
 policy. The plugin itself holds none of it, so a second programme needs no code
 change.
 
+## Two things that are not keys
+
+`--harness <name>` names the agent runtime when detection gets it wrong; it is
+otherwise read from the environment and recorded on the owner and on every
+takeover. `--observe` makes a tick or a loop report without acting. Neither
+belongs in policy: one is about where the orchestrator runs, the other about
+what this particular run is for.
+
 ## Ownership is not in this file
 
 `ORCHESTRATE_SESSION` holds the token that proves ownership, minted and printed
