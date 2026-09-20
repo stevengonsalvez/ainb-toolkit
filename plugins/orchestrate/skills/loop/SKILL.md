@@ -40,6 +40,7 @@ ${CLAUDE_PLUGIN_ROOT}/scripts/orchestrate.sh loop <programme> --tmux \
 | `--every <20m\|2h\|90s>` | cadence, defaults to `loop.every` in programme.yaml |
 | `--max-ticks N` | stop after N ticks |
 | `--max-hours N` | stop after N hours |
+| `--tick-timeout S` | seconds one tick may take before it is stopped and the loop moves on. Defaults to twice the cadence. Without it a wedged tick hangs the loop and STOP never gets read |
 | `--tmux` | run detached in a session named `orchestrate-<programme>` |
 | `--agent-cmd "<cmd>"` | feed `assets/tick-prompt.md` to a headless agent each tick instead of running the mechanical tick alone |
 
@@ -57,7 +58,9 @@ orchestrate.sh loop <programme> --tmux --every 20m \
 touch ~/.claude/orchestrator/<programme>/STOP
 ```
 
-The loop ends at the next check and records why. A STOP already present makes
+The loop ends at the next check and records why. STOP is read before each tick,
+after each tick and during the wait between them, so it works even when a tick
+has just been stopped for running long. A STOP already present makes
 `loop` refuse to arm, so remove it before restarting. To stop the tmux driver
 directly, kill that one session by its exact name:
 `tmux kill-session -t orchestrate-<programme>`. Never a bulk or server-level
