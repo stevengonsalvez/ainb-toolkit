@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Stub gh for the test runner. State lives under $STUB_STATE:
 #   prs/<n>.json     one PR object per file
+#   checks/<n>.json  check rows for `pr checks`, falling back to checks/default.json
 #   posted/<n>.md    what `pr comment` was asked to post
 #   merged.txt       PRs `pr merge` was asked to merge
 set -uo pipefail
@@ -10,7 +11,7 @@ mkdir -p "$S/prs" "$S/posted"
 [ "${1:-}" = pr ] || { printf '{}\n'; exit 0; }
 verb="${2:-}"; shift 2 2>/dev/null || true
 
-num=""; jqf=""; body=""; state=""; head=""
+num=""; jqf=""; body=""; state=""; head=""; match=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --jq) jqf="${2:-}"; shift 2 ;;
@@ -18,6 +19,7 @@ while [ "$#" -gt 0 ]; do
     --body-file) body="${2:-}"; shift 2 ;;
     --state) state="${2:-}"; shift 2 ;;
     --head) head="${2:-}"; shift 2 ;;
+    --match-head-commit) match="${2:-}"; shift 2 ;;
     --merge|--squash|--rebase) shift ;;
     -*) shift ;;
     *) [ -z "$num" ] && num="$1"; shift ;;
@@ -34,11 +36,16 @@ case "$verb" in
              | select($hd == "" or .headRefName == $hd)]' "$S"/prs/*.json 2>/dev/null > "$S/.list.json" \
       || printf '[]' > "$S/.list.json"
     if [ -n "$jqf" ]; then jq -r "$jqf" "$S/.list.json"; else cat "$S/.list.json"; fi ;;
-  ready) printf 'ready\n' ;;
+  checks)
+    f="$S/checks/$num.json"; [ -f "$f" ] || f="$S/checks/default.json"
+    [ -f "$f" ] || exit 1
+    if [ -n "$jqf" ]; then jq -r "$jqf" "$f"; else cat "$f"; fi ;;
+  ready) printf '%s\n' "$num" >> "$S/readied.txt"; printf 'ready\n' ;;
   comment)
     [ -n "$body" ] && cp "$body" "$S/posted/$num.md"
     printf 'https://example.invalid/pr/%s#comment\n' "$num" ;;
   merge)
+    printf '%s --match-head-commit %s\n' "$num" "$match" >> "$S/merge-args.txt"
     printf '%s\n' "$num" >> "$S/merged.txt"
     [ -f "$S/prs/$num.json" ] && jq '.state = "MERGED"' "$S/prs/$num.json" > "$S/prs/$num.tmp" && mv "$S/prs/$num.tmp" "$S/prs/$num.json"
     printf 'merged\n' ;;
