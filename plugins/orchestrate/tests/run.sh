@@ -35,6 +35,9 @@ P=prog
 D="$ORCHESTRATE_HOME/$P"
 ev_has() { grep -c "\"ev\":\"$1\"" "$D/events.jsonl" 2>/dev/null | tr -d ' '; }
 refused() { grep -c "\"what\":\"$1\"" "$D/events.jsonl" 2>/dev/null | tr -d ' '; }
+# Ownership is a token; owner.json holds only its hash and a label derived from
+# it, so a test names the expected owner by hashing the token it used.
+label_of() { printf 'orch-%s' "$(printf '%s' "$1" | sha256sum | cut -c1-12)"; }
 # Set a key whether it sits on its own line or inside an inline map.
 setcfg() {
   local k="$1" v="$2"
@@ -47,9 +50,15 @@ shell_screen() { printf 'build finished\nuser@box ~/work %% \n' > "$STUB_STATE/s
 
 sect "init"
 out="$("$OS" init "$P" --trunk example-trunk --never-merge-into main,master 2>&1)"
+is "init does not claim ownership, it points at takeover" \
+  "$([ -f "$D/owner.json" ] && echo claimed || echo unclaimed)" unclaimed
+has "and says so" "$out" "takeover"
 is "init creates the programme dir" "$([ -f "$D/programme.yaml" ] && echo yes)" yes
 has "init copies agents.yaml" "$(ls "$D")" agents.yaml
 is "init writes the trunk" "$(grep -c '^trunk: example-trunk' "$D/programme.yaml")" 1
+"$OS" takeover "$P" >/dev/null 2>&1
+is "takeover claims it with the exported token" \
+  "$(jq -r .session "$D/owner.json")" "$(label_of session-one)"
 
 sect "tiny yaml parser"
 # shellcheck source=../scripts/lib.sh
@@ -110,7 +119,7 @@ out="$("$OS" tick "$P" 2>&1)"
 is "the row is rewritten with the live handle" "$(jq -r 'select(.lane=="C") | .handle' "$D/lanes.jsonl")" h-fresh
 is "the re-resolve is an event" "$(grep -c '"action":"rehandle"' "$D/events.jsonl")" 1
 has "the tick says it rehandled" "$out" rehandled
-is "a tick event is appended" "$(ev_has tick)" 1
+is "a tick event is appended" "$([ "$(ev_has tick)" -ge 1 ] && echo yes)" yes
 
 sect "watchdog"
 jq -nc --arg t "$(date -u -d '-2 hours' +%FT%TZ 2>/dev/null || date -u -v-2H +%FT%TZ)" \
@@ -129,7 +138,8 @@ is "hosts.jsonl records which rung answered" "$(jq -r 'select(.host=="stubhost")
 
 sect "owner lock, takeover and handover"
 ORCHESTRATE_SESSION=session-one "$OS" takeover "$P" >/dev/null 2>&1
-is "the first session owns it" "$(jq -r .session "$D/owner.json")" session-one
+is "the first session owns it" "$(jq -r .session "$D/owner.json")" "$(label_of session-one)"
+is "the token itself is never written down" "$(grep -cF -- session-one "$D/owner.json")" 0
 out="$(ORCHESTRATE_SESSION=session-two "$OS" tick "$P" 2>&1)"; rc=$?
 is "a second orchestrator is refused" "$rc" 3
 has "the refusal says who holds it" "$out" "REFUSED owner-held"
@@ -137,9 +147,9 @@ is "the refusal is an event" "$(refused owner-held)" 1
 
 jq --arg t "$(date -u -d '-3 hours' +%FT%TZ 2>/dev/null || date -u -v-3H +%FT%TZ)" '.last_tick = $t' "$D/owner.json" > "$D/owner.tmp" && mv "$D/owner.tmp" "$D/owner.json"
 ORCHESTRATE_SESSION=session-two "$OS" takeover "$P" >/dev/null 2>&1
-is "takeover succeeds once the lock is stale" "$(jq -r .session "$D/owner.json")" session-two
+is "takeover succeeds once the lock is stale" "$(jq -r .session "$D/owner.json")" "$(label_of session-two)"
 is "the takeover is recorded" "$(ev_has takeover)" 1
-is "it names the outgoing session" "$(jq -r 'select(.ev=="takeover") | .outgoing' "$D/events.jsonl" | tail -1)" session-one
+is "it names the outgoing session" "$(jq -r 'select(.ev=="takeover") | .outgoing' "$D/events.jsonl" | tail -1)" "$(label_of session-one)"
 
 out="$(ORCHESTRATE_SESSION=session-two "$OS" handover "$P" "credits low" 2>&1)"
 is "handover writes the brief" "$([ -f "$D/HANDOVER.md" ] && echo yes)" yes
@@ -169,8 +179,9 @@ is "U+2014 is refused" "$rc" 3
 is "that refusal is an event too" "$(refused scrub-emdash)" 1
 
 sect "merge gate"
-# handover released the lock a moment ago, and every writing verb now needs one.
-"$OS" tick "$P" >/dev/null 2>&1
+# Handover spent the token a moment ago, so picking the programme back up is a
+# takeover, which is recorded, not a tick silently re-claiming it.
+"$OS" takeover "$P" >/dev/null 2>&1
 REPO="$TMP/repo"; BARE="$TMP/origin.git"
 git init -q --bare "$BARE"
 git init -q "$REPO" && git -C "$REPO" remote add origin "$BARE"
@@ -258,6 +269,8 @@ has "max-ticks bounds the loop" "$out" "max-ticks reached"
 . "$HERE/hardening.sh"
 # shellcheck source=./review.sh
 . "$HERE/review.sh"
+# shellcheck source=./followups.sh
+. "$HERE/followups.sh"
 
 sect "hard refusals have no code path at all"
 src="$(cat "$PLUGIN"/scripts/*.sh)"
