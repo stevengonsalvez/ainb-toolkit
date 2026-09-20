@@ -6,6 +6,8 @@
 #   merged.txt       PRs `pr merge` was asked to merge
 #   prs/<n>.move     present: the head moves after the first `pr view`, which is
 #                    a lane pushing while the gate is reading
+#   state-override   present: `pr view --jq .state` answers with its contents,
+#                    at exit 0, which is how an unrecognised state arrives
 set -uo pipefail
 S="${STUB_STATE:?STUB_STATE not set}"
 mkdir -p "$S/prs" "$S/posted"
@@ -33,6 +35,7 @@ done
 
 case "$verb" in
   view)
+    if [ -f "$S/state-override" ] && [ "$jqf" = ".state" ]; then cat "$S/state-override"; printf '\n'; exit 0; fi
     [ -f "$S/prs/$num.json" ] || exit 1
     if [ -n "$jqf" ]; then jq -r "$jqf" "$S/prs/$num.json"; else cat "$S/prs/$num.json"; fi
     if [ -f "$S/prs/$num.move" ]; then
