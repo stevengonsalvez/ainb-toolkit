@@ -2,7 +2,7 @@
 # One entry point for every orchestrate verb. Transport is Orca only: there is
 # no ssh path, no force-push path and no bulk-kill path anywhere in this plugin.
 #
-#   orchestrate.sh init      <programme> [--trunk B] [--never-merge-into B,B]
+#   orchestrate.sh init      <programme> [--trunk B] [--never-merge-into B,B] [--repo DIR]
 #   orchestrate.sh discover  [--environment E]...
 #   orchestrate.sh adopt     <programme> [--dry-run] [--environment E]...
 #   orchestrate.sh status    <programme>
@@ -33,10 +33,11 @@ usage() { sed -n '2,21p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 v_init() {
   local programme="${1:-}"; shift || true
   [ -n "$programme" ] || die "init needs a programme name" 2
-  local dir="$ORCHESTRATE_HOME/$programme" trunk="" never=""
+  local dir="$ORCHESTRATE_HOME/$programme" trunk="" never="" repo=""
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --trunk) trunk="${2:-}"; shift 2 ;;
+      --repo) repo="${2:-}"; shift 2 ;;
       --never-merge-into) never="${2:-}"; shift 2 ;;
       *) shift ;;
     esac
@@ -49,8 +50,11 @@ v_init() {
   touch "$dir/lanes.jsonl" "$dir/events.jsonl" "$dir/hosts.jsonl"
   [ -n "$trunk" ] && sed -i.bak -E "s#^trunk:.*#trunk: $trunk#" "$dir/programme.yaml" && rm -f "$dir/programme.yaml.bak"
   [ -n "$never" ] && sed -i.bak -E "s#^never_merge_into:.*#never_merge_into: [${never//,/, }]#" "$dir/programme.yaml" && rm -f "$dir/programme.yaml.bak"
+  [ -n "$repo" ] && sed -i.bak -E "s#^repo:.*#repo: $repo#" "$dir/programme.yaml" && rm -f "$dir/programme.yaml.bak"
+  ORCHESTRATE_PROGRAMME="$programme" prog_open "$programme"
+  owner_ensure >/dev/null || true
   printf '%s\n' "$dir"
-  printf 'edit programme.yaml (autonomy must be set deliberately) and ORCHESTRATION.md, then run adopt\n'
+  printf 'edit programme.yaml (autonomy and repo must both be set deliberately), then run adopt\n'
 }
 
 # ----------------------------------------------------------------- discover
@@ -94,6 +98,7 @@ v_adopt() {
     esac
   done
   prog_open "$programme"
+  [ "$dry" = 1 ] || owner_ensure >/dev/null || return 3
   [ "${#envs[@]}" -gt 0 ] || envs=(local)
 
   printf 'lane\tenv\tworktree\tagent\thandle\tstatus\tctx\n'
@@ -181,6 +186,7 @@ v_send() {
 
 v_pr() {
   prog_open "${1:-}"
+  owner_require || return 3
   ev pr pr "${2:-}" lane "${3:-}"
 }
 
@@ -188,6 +194,7 @@ v_pr() {
 # the screen at the next tick.
 v_mark() {
   prog_open "${1:-}"
+  owner_require || return 3
   local lane="${2:-}" st="${3:-}"
   case "$st" in
     working|idle|asking|done|dead) : ;;
@@ -217,6 +224,7 @@ v_merge() {
 
 v_post() {
   prog_open "${1:-}"
+  owner_require || return 3
   local pr="${2:-}" f="${3:-}" clean
   clean="$(scrub "$f")" || return 3
   gh pr comment "$pr" --body-file "$clean" >/dev/null || return 1
@@ -236,7 +244,8 @@ v_scrub() {
 # skill describes them. Everything here runs from the programme dir alone.
 v_tick() {
   prog_open "${1:-}"
-  owner_require || return 3
+  owner_ensure || return 3
+  cfg_changed && printf 'CONFIG CHANGED: programme.yaml differs from the copy fingerprinted when the lock was claimed\n'
 
   # 1. watchdog: a gap past twice the cadence is the first thing reported.
   local last gap cad n
@@ -368,14 +377,18 @@ v_loop() {
     # STOP file, or with kill-session on exactly this name.
     local session="orchestrate-$PROGRAMME"
     tmux has-session -t "$session" 2>/dev/null && die "tmux session $session already exists; stop it with: tmux kill-session -t $session" 1
-    ORCHESTRATE_AGENT_CMD="$agent_cmd" tmux new-session -d -s "$session" -n loop -e "ORCHESTRATE_HOME=$ORCHESTRATE_HOME" \
-      "'$HERE/orchestrate.sh' loop '$PROGRAMME' --every '$every' --max-ticks '$max_ticks' --max-hours '$max_hours' 2>&1 | tee '$PROG/loop.log'"
+    local -a inner=("$HERE/orchestrate.sh" loop "$PROGRAMME" --every "$every" \
+      --max-ticks "$max_ticks" --max-hours "$max_hours")
+    [ -n "$agent_cmd" ] && inner+=(--agent-cmd "$agent_cmd")
+    tmux new-session -d -s "$session" -n loop \
+      -e "ORCHESTRATE_HOME=$ORCHESTRATE_HOME" -e "ORCHESTRATE_LOOP_LOG=$PROG/loop.log" \
+      "${inner[@]}"
     printf 'loop armed in tmux session %s; stop it with: touch %s\n' "$session" "$STOP"
     return 0
   fi
 
   local interval deadline i=0 rc
-  [ -n "$agent_cmd" ] || agent_cmd="${ORCHESTRATE_AGENT_CMD:-}"
+  [ -z "${ORCHESTRATE_LOOP_LOG:-}" ] || exec >> "$ORCHESTRATE_LOOP_LOG" 2>&1
   interval="$(dur_s "$every")"
   [ "${interval:-0}" -gt 0 ] 2>/dev/null || interval=60
   deadline=0
@@ -440,7 +453,7 @@ v_handover() {
 v_takeover() {
   local programme="${1:-}" force="${2:-}"
   prog_open "$programme"
-  owner_claim "$force" || return 3
+  owner_takeover "$force" || return 3
   printf '\n== re-verifying every handle before any send\n'
   v_adopt "$programme" --dry-run | while IFS=$'\t' read -r a b c d e f g; do printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$a" "$b" "$c" "$d" "$f" "$g"; done
   printf '\n== one tick\n'
