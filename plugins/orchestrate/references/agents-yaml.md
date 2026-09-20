@@ -37,7 +37,8 @@ own `--help`. `UNVERIFIED` means neither, and the file marks those inline too.
 | claude | busy | `esc to interrupt` | observed |
 | claude | asking | numbered choice, or `Do you want` | cli-help |
 | claude | ctx, ctx_means | bar-and-percentage readout, `used` | observed on lanes running a custom status line |
-| codex | start, resume, headless | `codex`, `codex resume --last`, `codex exec` | cli-help |
+| codex | start, resume | `codex`, `codex resume --last` | cli-help |
+| codex | headless | `codex exec --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox`, prompt on stdin | run for real, 2026-09-20: one observe tick from files alone classified ten live lanes identically to the reference |
 | codex | compact, idle, busy, asking, ctx, ctx_means | as written | UNVERIFIED |
 | agy | start, resume, headless | `agy`, `agy --continue`, `agy --print` | cli-help |
 | agy | compact, idle, busy, asking, ctx | as written, `ctx` left empty rather than guessed | UNVERIFIED |
@@ -80,3 +81,16 @@ orchestrate.sh read <programme> <lane> 40 | grep -E '<your pattern>'
 `classify` tries `shell_prompt`, then `asking`, then `busy`, then `idle`, and
 returns `unknown` when none match. `unknown` is a signal that a pattern needs
 fixing, not a state to act on.
+
+## Headless Codex and its sandbox
+
+`codex exec` reads the prompt from stdin; given the prompt as an argument with stdin left open it
+waits on "Reading additional input from stdin". The loop driver already feeds it on stdin.
+
+On Linux, Codex sandboxes commands with bubblewrap. Where the host forbids unprivileged user
+namespaces (for example `kernel.apparmor_restrict_unprivileged_userns = 1` with a `bwrap` that has no
+AppArmor profile) the sandbox cannot start and EVERY command fails with
+`bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted`. The shipped profile therefore runs the
+headless tick without the built-in sandbox. If you would rather keep it, fix the host (an AppArmor
+profile for that `bwrap`) and switch the profile to `-s workspace-write`.
+
