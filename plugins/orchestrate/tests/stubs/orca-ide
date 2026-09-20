@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# Stub Orca for the test runner. State lives under $STUB_STATE:
+#   screens/<handle>.txt      what a screen read returns; missing means stale
+#   terminals/<worktree>      handle<TAB>title rows, one per terminal
+#   noecho/<handle>           present: accept the send but show nothing back
+#   worktrees.json            what `worktree list --json` returns
+#   sent/<handle>.txt         every text this stub was asked to type
+#   removed.txt               worktrees `worktree rm` was asked to remove
+set -uo pipefail
+S="${STUB_STATE:?STUB_STATE not set}"
+mkdir -p "$S/screens" "$S/terminals" "$S/sent"
+
+group="${1:-}"; verb="${2:-}"; shift 2 2>/dev/null || true
+handle=""; worktree=""; text=""; screen=0; command=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --terminal) handle="${2:-}"; shift 2 ;;
+    --worktree) worktree="${2:-}"; shift 2 ;;
+    --text) text="${2:-}"; shift 2 ;;
+    --command) command="${2:-}"; shift 2 ;;
+    --screen) screen=1; shift ;;
+    --environment|--title|--for|--timeout-ms|--limit|--cursor) shift 2 ;;
+    *) shift ;;
+  esac
+done
+
+json_tail() {
+  local f="$1"
+  if [ ! -f "$f" ]; then printf '{"result":{"terminal":{"tail":[]}}}\n'; return 0; fi
+  jq -Rs '{result: {terminal: {tail: (split("\n") | map(select(length > 0)))}}}' < "$f"
+}
+
+case "$group/$verb" in
+  terminal/read)
+    [ "$screen" = 1 ] || true
+    json_tail "$S/screens/$handle.txt" ;;
+  terminal/send)
+    if [ ! -f "$S/screens/$handle.txt" ]; then printf '{"ok":false,"error":"terminal_handle_stale"}\n'; exit 1; fi
+    printf '%s\n' "$text" >> "$S/sent/$handle.txt"
+    # A real composer does not always echo a submitted line back onto the
+    # screen. Without this mode the confirmation check can never fail.
+    [ -f "$S/noecho/$handle" ] || printf '%s\n' "$text" >> "$S/screens/$handle.txt"
+    printf '{"ok":true,"result":{"accepted":true}}\n' ;;
+  terminal/list)
+    wt="${worktree#id:}"; wt="${wt#name:}"; wt="${wt##*/}"
+    if [ -f "$S/terminals/$wt" ]; then
+      jq -Rn --rawfile rows "$S/terminals/$wt" \
+        '{result: {terminals: ($rows | split("\n") | map(select(length > 0))
+          | map(split("\t") | {handle: .[0], title: (.[1] // "")}))}}'
+    else
+      printf '{"result":{"terminals":[]}}\n'
+    fi ;;
+  terminal/create)
+    h="probe-$$"
+    printf '%s\n' "${STUB_DF:-/dev/sda1 157286400 94371840 52428800 65% /}" > "$S/screens/$h.txt"
+    printf '%s\n' "$command" >> "$S/sent/$h.txt"
+    jq -nc --arg h "$h" '{result:{terminal:{handle:$h}}}' ;;
+  terminal/wait) printf '{"result":{"wait":{"satisfied":true}}}\n' ;;
+  terminal/close) rm -f "$S/screens/$handle.txt"; printf '{"ok":true}\n' ;;
+  worktree/list)
+    if [ -f "$S/worktrees.json" ]; then cat "$S/worktrees.json"; else printf '{"result":{"worktrees":[]}}\n'; fi ;;
+  worktree/rm)
+    printf '%s\n' "$worktree" >> "$S/removed.txt"; printf '{"ok":true}\n' ;;
+  *) printf '{"ok":false,"error":"stub does not implement %s %s"}\n' "$group" "$verb"; exit 1 ;;
+esac

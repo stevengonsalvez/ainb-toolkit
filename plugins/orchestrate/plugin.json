@@ -1,0 +1,13 @@
+{
+  "name": "orchestrate",
+  "version": "0.1.0",
+  "description": "Own N agent lanes across Orca hosts: one recorded path for every message, a stateless tick, a merge gate that refuses, and handover any session can pick up",
+  "author": {
+    "name": "Steven Gonsalvez",
+    "url": "https://github.com/stevengonsalvez"
+  },
+  "homepage": "https://github.com/stevengonsalvez/ainb-toolkit",
+  "repository": "https://github.com/stevengonsalvez/ainb-toolkit",
+  "license": "Apache-2.0",
+  "skills": "./skills/"
+}

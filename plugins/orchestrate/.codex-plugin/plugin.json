@@ -1,0 +1,30 @@
+{
+  "name": "orchestrate",
+  "version": "0.1.0",
+  "description": "Cross-host, cross-agent lane orchestration over Orca, driven from files so any harness can run a tick",
+  "author": {
+    "name": "Steven Gonsalvez",
+    "url": "https://github.com/stevengonsalvez"
+  },
+  "homepage": "https://github.com/stevengonsalvez/ainb-toolkit",
+  "repository": "https://github.com/stevengonsalvez/ainb-toolkit",
+  "license": "Apache-2.0",
+  "keywords": [
+    "orchestration",
+    "orca",
+    "lanes",
+    "handover"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Orchestrate",
+    "shortDescription": "Adopt, tick, gate merges and hand over a programme of agent lanes",
+    "category": "orchestration",
+    "capabilities": [
+      "Instructions"
+    ],
+    "defaultPrompt": [
+      "orchestrate:takeover <programme>"
+    ]
+  }
+}
