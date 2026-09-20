@@ -1,6 +1,6 @@
 {
   "name": "orchestrate",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Cross-host, cross-agent lane orchestration over Orca, driven from files so any harness can run a tick",
   "author": {
     "name": "Steven Gonsalvez",
