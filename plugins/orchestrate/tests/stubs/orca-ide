@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Stub Orca for the test runner. State lives under $STUB_STATE:
 #   screens/<handle>.txt      what a screen read returns; missing means stale
-#   terminals/<worktree>      the handle a worktree currently resolves to
+#   terminals/<worktree>      handle<TAB>title rows, one per terminal
+#   noecho/<handle>           present: accept the send but show nothing back
 #   worktrees.json            what `worktree list --json` returns
 #   sent/<handle>.txt         every text this stub was asked to type
 #   removed.txt               worktrees `worktree rm` was asked to remove
@@ -36,12 +37,16 @@ case "$group/$verb" in
   terminal/send)
     if [ ! -f "$S/screens/$handle.txt" ]; then printf '{"ok":false,"error":"terminal_handle_stale"}\n'; exit 1; fi
     printf '%s\n' "$text" >> "$S/sent/$handle.txt"
-    printf '%s\n' "$text" >> "$S/screens/$handle.txt"
+    # A real composer does not always echo a submitted line back onto the
+    # screen. Without this mode the confirmation check can never fail.
+    [ -f "$S/noecho/$handle" ] || printf '%s\n' "$text" >> "$S/screens/$handle.txt"
     printf '{"ok":true,"result":{"accepted":true}}\n' ;;
   terminal/list)
     wt="${worktree#id:}"; wt="${wt#name:}"; wt="${wt##*/}"
     if [ -f "$S/terminals/$wt" ]; then
-      jq -nc --arg h "$(cat "$S/terminals/$wt")" '{result:{terminals:[{handle:$h}]}}'
+      jq -Rn --rawfile rows "$S/terminals/$wt" \
+        '{result: {terminals: ($rows | split("\n") | map(select(length > 0))
+          | map(split("\t") | {handle: .[0], title: (.[1] // "")}))}}'
     else
       printf '{"result":{"terminals":[]}}\n'
     fi ;;
