@@ -1,6 +1,6 @@
 {
   "name": "orchestrate",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Own N agent lanes across Orca hosts: one recorded path for every message, a stateless tick, a merge gate that refuses, and handover any session can pick up",
   "author": {
     "name": "Steven Gonsalvez",
