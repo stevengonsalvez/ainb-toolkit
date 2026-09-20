@@ -89,7 +89,6 @@ prog_open() {
   STOP="$PROG/STOP"
   HANDOVER="$PROG/HANDOVER.md"
   REVIEWS="$PROG/reviews"
-  SESSION_FILE="$PROG/.session"
   CFG_FLAT=""
   AGENTS_FLAT=""
   [ -d "$PROG" ] || die "no programme dir at $PROG (run: orchestrate.sh init $PROGRAMME)" 2
@@ -97,11 +96,16 @@ prog_open() {
   # whatever directory the agent happened to start in.
   local gh_repo; gh_repo="$(cfg gh_repo)"
   [ -z "$gh_repo" ] && gh_repo="$(gh_repo_from_origin)"
-  [ -n "$gh_repo" ] && export GH_REPO="$gh_repo"
+  if [ -n "$gh_repo" ]; then
+    export GH_REPO="$gh_repo"; GH_REPO_UNRESOLVED=0
+  else
+    GH_REPO_UNRESOLVED=1
+  fi
   touch "$LANES" "$EVENTS" "$HOSTS"
   mkdir -p "$REVIEWS"
   chmod 700 "$PROG" 2>/dev/null
-  session_resolve
+  [ -n "$ORCHESTRATE_SESSION" ] && export ORCHESTRATE_SESSION
+  return 0
 }
 
 # ----------------------------------------------------------------- tiny yaml
@@ -195,23 +199,33 @@ agent_cfg() {
   [ -n "$v" ] && printf '%s' "$v" || printf '%s' "${3:-}"
 }
 
-# The identity of THIS orchestrator, stable across the many invocations one
-# orchestrator makes. An explicit ORCHESTRATE_SESSION always wins; two
-# orchestrators sharing one programme dir must set it, because a persisted file
-# cannot tell them apart.
-session_resolve() {
-  [ -z "$ORCHESTRATE_SESSION" ] || return 0
-  if [ -s "$SESSION_FILE" ]; then
-    ORCHESTRATE_SESSION="$(head -1 "$SESSION_FILE")"
-    return 0
+# Ownership is proven by a token the orchestrator HOLDS, never by anything a
+# process can read out of the programme directory. A persisted identity file
+# would make the lock per directory: any process opening that directory would
+# inherit the owner's identity and could send and merge under it.
+#
+# Only the token's hash is stored. A same-user process that steals the token is
+# inside the documented trust boundary; one that merely runs the script in the
+# same directory is not an owner.
+token_mint() {
+  if [ -r /dev/urandom ]; then
+    head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n'
+  else
+    printf '%s%s' "$(date -u +%s)" "$$" | token_hash_stdin
   fi
-  ORCHESTRATE_SESSION="orch-$(date -u +%Y%m%dT%H%M%SZ)-$$"
 }
 
-session_persist() {
-  printf '%s\n' "$ORCHESTRATE_SESSION" > "$SESSION_FILE"
-  chmod 600 "$SESSION_FILE" 2>/dev/null
+token_hash_stdin() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum
+  elif command -v shasum >/dev/null 2>&1; then shasum -a 256
+  else cksum; fi | awk '{ print $1 }'
 }
+
+token_hash() { printf '%s' "$1" | token_hash_stdin; }
+
+# A short readable label for events and briefs. It identifies the owner without
+# being usable as proof.
+owner_label() { printf 'orch-%s' "$(token_hash "$ORCHESTRATE_SESSION" | cut -c1-12)"; }
 
 cadence_s() { dur_s "$(cfg loop.every 20m)"; }
 
@@ -499,6 +513,12 @@ lane_restart() {
 
 owner_session() { [ -s "$OWNER" ] && jq -r '.session // ""' "$OWNER" || printf ''; }
 
+owner_is_ours() {
+  [ -s "$OWNER" ] || return 1
+  [ -n "$ORCHESTRATE_SESSION" ] || return 1
+  [ "$(token_hash "$ORCHESTRATE_SESSION")" = "$(jq -r '.session_hash // ""' "$OWNER")" ]
+}
+
 owner_age_s() {
   [ -s "$OWNER" ] || { printf '999999'; return 0; }
   local last
@@ -508,9 +528,18 @@ owner_age_s() {
 }
 
 owner_json() {
-  jq -nc --arg s "$ORCHESTRATE_SESSION" --arg h "$(uname -n 2>/dev/null || echo host)" \
+  jq -nc --arg s "$(owner_label)" --arg sh "$(token_hash "$ORCHESTRATE_SESSION")" \
+    --arg h "$(uname -n 2>/dev/null || echo host)" \
     --arg a "$ORCHESTRATE_HARNESS" --arg t "$(now)" --arg p "$$" --arg c "$(cfg_fingerprint)" \
-    '{session: $s, host: $h, harness: $a, pid: ($p | tonumber), t: $t, last_tick: $t, config: $c}'
+    '{session: $s, session_hash: $sh, host: $h, harness: $a, pid: ($p | tonumber),
+      t: $t, last_tick: $t, config: $c}'
+}
+
+# Printed once, by whichever verb minted it. It is not stored anywhere.
+token_announce() {
+  printf 'export ORCHESTRATE_SESSION=%s\n' "$ORCHESTRATE_SESSION"
+  printf 'That token is the proof of ownership for %s. It is shown once and stored nowhere.\n' "$PROGRAMME"
+  printf 'Every verb that writes needs it, in the environment or as --session.\n'
 }
 
 # A fingerprint of the policy file, recorded when the lock is claimed. The walls
@@ -534,10 +563,14 @@ cfg_changed() {
 # Atomic: noclobber makes the create fail rather than race, so two ticks cannot
 # both believe they won.
 owner_claim_new() {
+  local minted=0
+  if [ -z "$ORCHESTRATE_SESSION" ]; then ORCHESTRATE_SESSION="$(token_mint)"; minted=1; fi
+  export ORCHESTRATE_SESSION
   ( set -o noclobber; owner_json > "$OWNER" ) 2>/dev/null || return 1
-  session_persist
-  ev owner action claim session "$ORCHESTRATE_SESSION" harness "$ORCHESTRATE_HARNESS"
-  printf 'owner %s\n' "$ORCHESTRATE_SESSION"
+  ev owner action claim session "$(owner_label)" harness "$ORCHESTRATE_HARNESS"
+  printf 'owner %s\n' "$(owner_label)"
+  [ "$minted" = 1 ] && token_announce
+  return 0
 }
 
 owner_touch() {
@@ -554,14 +587,23 @@ owner_require() {
     refuse owner-unclaimed "no owner for $PROGRAMME; claim it with: orchestrate.sh takeover $PROGRAMME"
     return 3
   fi
-  local held; held="$(owner_session)"
-  [ "$held" = "$ORCHESTRATE_SESSION" ] && return 0
-  refuse owner-held "$held owns this programme"
+  if [ -z "$ORCHESTRATE_SESSION" ]; then
+    refuse owner-no-token "$PROGRAMME is owned by $(owner_session) and ownership is proven by a token; run: orchestrate.sh takeover $PROGRAMME"
+    return 3
+  fi
+  owner_is_ours && return 0
+  refuse owner-held "$(owner_session) owns this programme and this is not its token"
   return 3
 }
 
-# Claim it if it is free, otherwise require that it is already ours.
+# Claim it if it is free, otherwise require that it is already ours. After a
+# handover the programme is deliberately unowned and the old token is spent:
+# picking it up again is a takeover, which is recorded, not a silent re-claim.
 owner_ensure() {
+  if [ ! -s "$OWNER" ] && [ -f "$PROG/.handed-over" ]; then
+    refuse owner-unclaimed "$PROGRAMME was handed over; claim it with: orchestrate.sh takeover $PROGRAMME"
+    return 3
+  fi
   owner_claim_new >/dev/null 2>&1 && return 0
   owner_require
 }
@@ -569,22 +611,31 @@ owner_ensure() {
 # Take a lock that is released, or one that is stale past twice the cadence, or
 # one the caller explicitly asks for. Recorded either way.
 owner_takeover() {
-  local force="${1:-}" held age
+  local force="${1:-}" held age minted=0
   held="$(owner_session)"
   age="$(owner_age_s)"
-  if [ -n "$held" ] && [ "$held" != "$ORCHESTRATE_SESSION" ]; then
+  if [ -s "$OWNER" ] && owner_is_ours; then
+    owner_touch
+    printf 'owner %s\n' "$(owner_label)"
+    return 0
+  fi
+  if [ -n "$held" ]; then
     if [ "$force" != "--takeover" ] && [ "$age" -le "$(( 2 * $(cadence_s) ))" ]; then
       refuse owner-held "$held owns this programme, last tick ${age}s ago"
       return 3
     fi
-    ev takeover outgoing "$held" incoming "$ORCHESTRATE_SESSION" harness "$ORCHESTRATE_HARNESS" \
+    if [ -z "$ORCHESTRATE_SESSION" ] || owner_is_ours; then ORCHESTRATE_SESSION="$(token_mint)"; minted=1; fi
+    export ORCHESTRATE_SESSION
+    rm -f "$PROG/.handed-over"
+    ev takeover outgoing "$held" incoming "$(owner_label)" harness "$ORCHESTRATE_HARNESS" \
       reason "$([ "$force" = --takeover ] && echo requested || echo "stale ${age}s")"
     local tmp; tmp="$(mktemp)" || return 1
     owner_json > "$tmp" && mv "$tmp" "$OWNER"
-    session_persist
-    printf 'owner %s\n' "$ORCHESTRATE_SESSION"
+    printf 'owner %s\n' "$(owner_label)"
+    [ "$minted" = 1 ] && token_announce
     return 0
   fi
+  rm -f "$PROG/.handed-over"
   owner_claim_new && return 0
   owner_require
 }
@@ -593,7 +644,7 @@ owner_takeover() {
 
 # Secrets are REFUSED, never rewritten. A redacted secret is still a secret that
 # reached a file, and a rewrite invites a report to be posted anyway.
-ORCHESTRATE_SECRET_RE='gh[opsu]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|xox[abprs]-[A-Za-z0-9-]{10,}|Authorization:[[:space:]]*Bearer[[:space:]]+[A-Za-z0-9._~+/=-]{8,}|-----BEGIN [A-Z ]*PRIVATE KEY-----|100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.[0-9]{1,3}\.[0-9]{1,3}'
+ORCHESTRATE_SECRET_RE='[A-Za-z0-9][A-Za-z0-9-]*\.ts\.net|(api[_-]?key|secret|passwd|password|auth[_-]?token)[[:space:]]*[:=][[:space:]]*[A-Za-z0-9._/+-]{8,}|gh[opsu]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|xox[abprs]-[A-Za-z0-9-]{10,}|Authorization:[[:space:]]*Bearer[[:space:]]+[A-Za-z0-9._~+/=-]{8,}|-----BEGIN [A-Z ]*PRIVATE KEY-----|100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.[0-9]{1,3}\.[0-9]{1,3}'
 
 # Every outward post goes through here. Host paths are stripped; secrets,
 # attribution words and U+2014 are refused outright, so nothing part-clean is
@@ -679,7 +730,7 @@ gate_repo() {
 ci_gate() {
   local pr="$1" s bad
   s="$(gh pr checks "$pr" --json name,bucket 2>/dev/null)"
-  if [ -z "$s" ] || [ "$(printf '%s' "$s" | jq -r 'length' 2>/dev/null)" = "" ]; then
+  if [ -z "$s" ] || ! printf '%s' "$s" | jq -e 'type == "array"' >/dev/null 2>&1; then
     refuse merge-ci "#$pr has no check data and ci is set to gate"
     return 3
   fi
@@ -830,7 +881,9 @@ owed_list() {
       continue
     fi
     case "$st" in
+      OPEN) ;;
       MERGED|CLOSED) printf '%s\t%s\t%s\n' "$lane" "$pr" "$st" ;;
+      *) printf '%s\t%s\t%s\n' "$lane" "$pr" "owed-unknown" ;;
     esac
   done
 }
