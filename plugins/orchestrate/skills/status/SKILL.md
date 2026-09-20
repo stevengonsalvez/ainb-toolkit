@@ -9,8 +9,10 @@ description: Print a programme's lanes, owner, host pressure, PR ownership, owed
 ${CLAUDE_PLUGIN_ROOT}/scripts/orchestrate.sh status <programme>
 ```
 
-Reads files only. It touches no host, sends nothing, and changes nothing, so it
-is safe while another session owns the programme.
+Reads files only. It touches no host, sends nothing, creates nothing and writes
+nothing at all, not even an event, so it is safe while another session owns the
+programme. The same holds for `discover`, `read`, `owed` and
+`adopt --dry-run`.
 
 | section | source | read it for |
 |---|---|---|
