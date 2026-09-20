@@ -105,14 +105,16 @@ printf 'h-a\tA\n' > "$STUB_STATE/terminals/wt-a"
 
 sect "the surviving mutant: STOP is read during the wait, not only between ticks"
 rm -f "$D/STOP"
-( sleep 2; touch "$D/STOP" ) &
+# The offset must land AFTER the first tick finishes, or the check before the
+# sleep catches it and the in-gap slicing is never exercised.
+( sleep 6; touch "$D/STOP" ) &
 stopper=$!
 start="$(date +%s)"
-"$OS" loop "$P" --every 30s --max-ticks 5 >/dev/null 2>&1
+"$OS" loop "$P" --observe --every 40s --max-ticks 5 >/dev/null 2>&1
 took=$(( $(date +%s) - start ))
 wait "$stopper" 2>/dev/null
 is "a STOP arriving mid-gap ends the loop without waiting out the cadence" \
-  "$([ "$took" -lt 12 ] && echo prompt || echo "waited ${took}s")" prompt
+  "$([ "$took" -lt 25 ] && echo prompt || echo "waited ${took}s")" prompt
 is "and the stop is recorded" \
   "$(jq -r 'select(.ev=="loop" and .action=="stop") | .reason' "$D/events.jsonl" | tail -1)" stop-file
 rm -f "$D/STOP"

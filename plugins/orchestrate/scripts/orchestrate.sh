@@ -7,16 +7,17 @@
 #   orchestrate.sh adopt     <programme> [--dry-run] [--include-new] [--environment E]...
 #   orchestrate.sh status    <programme>
 #   orchestrate.sh read      <programme> <lane> [lines]
-#   orchestrate.sh send      <programme> <lane> <pr|-> <text>
+#   orchestrate.sh send      <programme> <lane> <pr|-> <text> [--observe]
 #   orchestrate.sh pr        <programme> <pr> <lane>
 #   orchestrate.sh mark      <programme> <lane> <working|idle|asking|done|dead>
 #   orchestrate.sh owed      <programme>
 #   orchestrate.sh merge     <programme> <pr> [expected-sha]
 #   orchestrate.sh post      <programme> <pr> <report.md>
 #   orchestrate.sh scrub     <programme> <file.md> [out.md]
-#   orchestrate.sh tick      <programme> [--once]
+#   orchestrate.sh tick      <programme> [--observe]
 #   orchestrate.sh loop      <programme> [--every 20m] [--max-ticks N] [--max-hours N]
-#                            [--tick-timeout S] [--agent-cmd CMD] [--tmux]
+#                            [--tick-timeout S] [--agent-cmd CMD] [--observe] [--tmux]
+#   any verb also takes       [--session <token>] [--harness <name>]
 #   orchestrate.sh handover  <programme> [reason]
 #   orchestrate.sh takeover  <programme> [--takeover]
 #   orchestrate.sh retire    <programme> <lane>
@@ -63,6 +64,8 @@ v_init() {
 # Ask Orca, never ssh (lesson 2: an ssh probe raised a false outage). Liveness
 # is never inferred from a terminal listing alone; adopt reads each handle.
 v_discover() {
+  # shellcheck disable=SC2034  # read by lib.sh, which this script sources
+  ORCHESTRATE_RO=1
   local -a envs=()
   while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -99,6 +102,9 @@ v_adopt() {
       *) shift ;;
     esac
   done
+  # A dry run reports; it does not act. No event, no index rewrite, no terminal.
+  # shellcheck disable=SC2034  # read by lib.sh, which this script sources
+  [ "$dry" = 1 ] && ORCHESTRATE_RO=1
   prog_open "$programme"
   [ "$dry" = 1 ] || owner_ensure >/dev/null || return 3
   [ "${#envs[@]}" -gt 0 ] || envs=(local)
@@ -173,6 +179,8 @@ adopt_candidates() {
 # ----------------------------------------------------------------- status
 
 v_status() {
+  # shellcheck disable=SC2034  # read by lib.sh, which this script sources
+  ORCHESTRATE_RO=1
   prog_open "${1:-}"
   printf '== lanes\n'
   jq -r '[.lane, .env, .worktree, .agent, .status, (.ctx_pct // "-"), (.last_seen // "-")] | @tsv' "$LANES" \
@@ -193,14 +201,20 @@ v_status() {
 # ----------------------------------------------------------------- messaging
 
 v_read() {
+  # shellcheck disable=SC2034  # read by lib.sh, which this script sources
+  ORCHESTRATE_RO=1
   prog_open "${1:-}"
   lane_screen "${2:-}" | tail -"${3:-12}" | cut -c1-180
 }
 
 v_send() {
-  prog_open "${1:-}"
+  local prog_arg="${1:-}" lane="${2:-}" pr="${3:--}" text="${4:-}"
+  case "${5:-}" in
+    --observe) ORCHESTRATE_OBSERVE=1 ;;
+  esac
+  prog_open "$prog_arg"
   owner_require || return 3
-  lane_send "${2:-}" "${3:--}" "${4:-}"
+  lane_send "$lane" "$pr" "$text"
 }
 
 v_pr() {
@@ -225,6 +239,8 @@ v_mark() {
 }
 
 v_owed() {
+  # shellcheck disable=SC2034  # read by lib.sh, which this script sources
+  ORCHESTRATE_RO=1
   prog_open "${1:-}"
   local n=0
   while IFS=$'\t' read -r lane pr st; do
@@ -262,7 +278,14 @@ v_scrub() {
 # lane, reaching a verdict, deciding to merge) are the agent's, and the tick
 # skill describes them. Everything here runs from the programme dir alone.
 v_tick() {
-  prog_open "${1:-}"
+  local prog_arg="${1:-}"; shift || true
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --observe) ORCHESTRATE_OBSERVE=1; shift ;;
+      *) shift ;;
+    esac
+  done
+  prog_open "$prog_arg"
   # Two ticks running together each rewrite lanes.jsonl, and the slower one
   # discards the faster one's updates. mkdir is the atomic test-and-set.
   if ! mkdir "$PROG/.tick.lock" 2>/dev/null; then
@@ -271,6 +294,7 @@ v_tick() {
   fi
   trap 'rmdir "$PROG/.tick.lock" 2>/dev/null' EXIT INT TERM
   owner_ensure || { rmdir "$PROG/.tick.lock" 2>/dev/null; return 3; }
+  [ "$ORCHESTRATE_OBSERVE" = 1 ] && printf 'OBSERVE: classifying and measuring only, nothing will be sent, restarted or created\n'
   cfg_changed && printf 'CONFIG CHANGED: programme.yaml differs from the copy fingerprinted when the lock was claimed\n'
 
   # 1. watchdog: a gap past twice the cadence is the first thing reported.
@@ -317,12 +341,22 @@ v_tick() {
     lane_set "$lane" status "$st"
     lane_set "$lane" ctx_pct "$ctx"
     lane_set "$lane" last_seen "$(now)"
+    # Under observe the note says what a normal tick WOULD have done, which is
+    # the whole point of reading one before acting.
     if [ "$st" = dead ]; then
-      note="dead, restarting"
-      lane_restart "$lane" >/dev/null 2>&1 && note="restarted"
+      if [ "$ORCHESTRATE_OBSERVE" = 1 ]; then
+        note="dead, would restart"
+      else
+        note="dead, restarting"
+        lane_restart "$lane" >/dev/null 2>&1 && note="restarted"
+      fi
     elif [ "$st" = "idle" ] && [ -n "$ctx" ] && [ "$ctx" -ge "$thr" ] 2>/dev/null; then
-      lane_send "$lane" - "$(agent_cfg "$kind" compact) $(cfg compact.keep 'keep the goal, the branch, the open PR and the last decision')" >/dev/null 2>&1
-      note="compacted at ${ctx}%"
+      if [ "$ORCHESTRATE_OBSERVE" = 1 ]; then
+        note="would compact at ${ctx}%"
+      else
+        lane_send "$lane" - "$(agent_cfg "$kind" compact) $(cfg compact.keep 'keep the goal, the branch, the open PR and the last decision')" >/dev/null 2>&1
+        note="compacted at ${ctx}%"
+      fi
     fi
     case "$st" in
       working) working=$((working + 1)) ;;
@@ -368,10 +402,11 @@ v_tick() {
   # 10. record the tick, then say whether the exit condition holds.
   ev_json tick "$(jq -nc --arg n "$n" --arg w "$working" --arg i "$idle" --arg a "$asking" \
     --arg d "$done_n" --arg x "$dead" --arg p "$open_prs" --arg o "$owed_n" --arg g "$gap" \
+    --arg ob "$ORCHESTRATE_OBSERVE" \
     '{n: ($n | tonumber), lanes: {working: ($w | tonumber), idle: ($i | tonumber), asking: ($a | tonumber),
       done: ($d | tonumber), dead: ($x | tonumber)},
       open_prs: (if $p == "" then null else ($p | tonumber) end), owed: ($o | tonumber),
-      gap_s: ($g | tonumber)}')"
+      gap_s: ($g | tonumber), observe: ($ob == "1")}')"
   owner_touch
 
   local verdict
@@ -400,7 +435,7 @@ v_owed_report() {
 # instead. STOP ends it, and so do max-ticks, max-hours and the exit condition.
 v_loop() {
   local programme="${1:-}"; shift || true
-  local every="" max_ticks=0 max_hours=0 use_tmux=0 agent_cmd="" tick_timeout=""
+  local every="" max_ticks=0 max_hours=0 use_tmux=0 agent_cmd="" tick_timeout="" observe=0
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --every) every="${2:-}"; shift 2 ;;
@@ -408,6 +443,7 @@ v_loop() {
       --max-hours) max_hours="${2:-0}"; shift 2 ;;
       --agent-cmd) agent_cmd="${2:-}"; shift 2 ;;
       --tick-timeout) tick_timeout="${2:-}"; shift 2 ;;
+      --observe) observe=1; shift ;;
       --tmux) use_tmux=1; shift ;;
       *) shift ;;
     esac
@@ -429,6 +465,7 @@ v_loop() {
     tmux has-session -t "$session" 2>/dev/null && die "tmux session $session already exists; stop it with: tmux kill-session -t $session" 1
     local -a inner=("$HERE/orchestrate.sh" loop "$PROGRAMME" --every "$every" \
       --max-ticks "$max_ticks" --max-hours "$max_hours" --tick-timeout "$tick_timeout")
+    [ "$observe" = 1 ] && inner+=(--observe)
     [ -n "$agent_cmd" ] && inner+=(--agent-cmd "$agent_cmd")
     tmux new-session -d -s "$session" -n loop \
       -e "ORCHESTRATE_HOME=$ORCHESTRATE_HOME" -e "ORCHESTRATE_LOOP_LOG=$PROG/loop.log" \
@@ -460,7 +497,11 @@ v_loop() {
         bash -c "$agent_cmd < '$PLUGIN_ROOT/assets/tick-prompt.md'"
       rc=$?
     else
-      run_bounded "$tick_timeout" "$HERE/orchestrate.sh" tick "$PROGRAMME"
+      if [ "$observe" = 1 ]; then
+        run_bounded "$tick_timeout" "$HERE/orchestrate.sh" tick "$PROGRAMME" --observe
+      else
+        run_bounded "$tick_timeout" "$HERE/orchestrate.sh" tick "$PROGRAMME"
+      fi
       rc=$?
     fi
     if [ "$rc" = 124 ]; then
@@ -525,10 +566,14 @@ v_takeover() {
   owner_takeover "$force" || return 3
   printf '\n== re-verifying every handle before any send\n'
   v_adopt "$programme" --dry-run | while IFS=$'\t' read -r a b c d e f g; do printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$a" "$b" "$c" "$d" "$f" "$g"; done
-  printf '\n== one tick\n'
-  v_tick "$programme"
+  # The first tick after a takeover observes. A lane misclassified from a stale
+  # handle would otherwise have a resume command typed into a live session.
+  printf '\n== one tick, observing only\n'
+  v_tick "$programme" --observe
   local rc=$?
-  printf '\nNow arm the loop for this harness: Claude Code uses /loop, anything else runs\n'
+  printf '\nThat tick observed only. Read it, then run a tick that acts:\n'
+  printf '  orchestrate.sh tick %s\n' "$programme"
+  printf 'Then arm the loop for this harness: Claude Code uses /loop, anything else runs\n'
   printf '  orchestrate.sh loop %s --tmux\n' "$programme"
   return "$rc"
 }
@@ -555,7 +600,7 @@ v_retire() {
     return 3
   fi
   local open_n rc
-  open_n="$(gh pr list --head "$branch" --state open --json number --jq 'length' 2>/dev/null)"; rc=$?
+  open_n="$(gh pr list --head "$branch" --base "$(cfg trunk)" --state open --json number --jq 'length' 2>/dev/null)"; rc=$?
   if [ "$rc" != 0 ] || ! printf '%s' "$open_n" | grep -Eq '^[0-9]+$'; then
     refuse retire-unknown-state "cannot read the PR state for $branch; not retiring on a guess"
     return 3
@@ -581,6 +626,7 @@ ARGS=()
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --session) ORCHESTRATE_SESSION="${2:-}"; export ORCHESTRATE_SESSION; shift 2 ;;
+    --harness) ORCHESTRATE_HARNESS_SET="${2:-}"; export ORCHESTRATE_HARNESS_SET; shift 2 ;;
     *) ARGS+=("$1"); shift ;;
   esac
 done

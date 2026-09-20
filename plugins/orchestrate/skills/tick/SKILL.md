@@ -17,6 +17,23 @@ The token comes from `orchestrate:takeover` and proves ownership. Without it a
 tick on an owned programme is refused; on an unclaimed one it claims and prints
 a new token once.
 
+## Observe first, act second
+
+```bash
+orchestrate.sh tick <programme> --observe
+```
+
+Classify, measure, audit and report; send nothing, restart nothing, create
+nothing. The tick event records `observe: true`.
+
+Run this as the FIRST tick after any takeover, and after any gap where handles
+may have gone stale. A normal tick restarts what it classifies as dead, and a
+lane misclassified from a stale handle gets a resume command typed into a live
+session. `orchestrate:takeover` already runs its own tick in this mode.
+
+Read the table, satisfy yourself the classifications are right, then run a tick
+that acts.
+
 Exit `0` normal, `3` refused (another session owns the programme), `10` the
 exit condition in `programme.yaml` now holds.
 
@@ -31,8 +48,9 @@ Steps 1 to 5, 6a and 10 are the script. The rest is yours.
 | 2 | read every indexed handle, classify, record `ctx_pct` | script |
 | 3 | dead or stale handle: re-resolve by worktree, resume the agent, rewrite the row | script |
 | 4 | context over `compact.at_pct` and idle: send that agent's compact with a keep list | script |
-| 5 | host disk through the Orca probe rung; under the floor it prints `DISK:` | script |
-| 6a | open PRs and the owed audit | script |
+|   | steps 3 and 4 do nothing under `--observe`, and say what they would have done | script |
+| 5 | host disk through one reused probe terminal per host; under the floor it prints `DISK:`. Remote hosts read `not-measured` under `--observe`, because a reading costs a send | script |
+| 6a | open PRs and the owed audit, both scoped to the programme's `trunk` | script |
 | 6b | apply the review policy for each PR's class and nudge per mode | you |
 | 7 | passing verdict: run the merge gate, then tell the owning lane | you |
 | 8 | failing verdict: scrub, post, send the findings, record the decision | you |
@@ -72,7 +90,8 @@ versus what is left to you, is in
 2. Every `asking` lane: `orchestrate.sh read <programme> <lane> 40`, answer from
    the house rules, the lane's goal and the `decision` events in `events.jsonl`.
    Send it back through the recorded path:
-   `orchestrate.sh send <programme> <lane> - "<answer>"`. Escalate to a human
+   `orchestrate.sh send <programme> <lane> - "<answer>"`. Append `--observe` to
+   see exactly what would be typed without typing it. Escalate to a human
    only when the decision is genuinely theirs.
 3. New PR: record who owns it the first time you see it,
    `orchestrate.sh pr <programme> <pr> <lane>`. Lesson learned the hard way: a

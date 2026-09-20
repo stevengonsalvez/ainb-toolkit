@@ -271,6 +271,8 @@ has "max-ticks bounds the loop" "$out" "max-ticks reached"
 . "$HERE/review.sh"
 # shellcheck source=./followups.sh
 . "$HERE/followups.sh"
+# shellcheck source=./dogfood.sh
+. "$HERE/dogfood.sh"
 
 sect "hard refusals have no code path at all"
 src="$(cat "$PLUGIN"/scripts/*.sh)"

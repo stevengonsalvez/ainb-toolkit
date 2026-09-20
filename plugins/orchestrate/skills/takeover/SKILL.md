@@ -50,7 +50,10 @@ else needs to be in context.
    Taking a programme you already hold is a no-op, not a fight.
 2. Re-verifies every handle BEFORE anything is sent. A host may have restarted
    while nobody was watching, and a send into a stale handle lands nowhere.
-3. Runs one tick.
+3. Runs one tick in OBSERVE mode: it classifies, measures and audits, and sends,
+   restarts and creates nothing. A lane misclassified from a handle that went
+   stale while nobody was watching would otherwise have a resume command typed
+   into a live session. Read that tick, then run one that acts.
 4. Tells you what to arm for this harness.
 
 ## Then, in order

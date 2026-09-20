@@ -49,6 +49,7 @@ ${CLAUDE_PLUGIN_ROOT}/scripts/orchestrate.sh loop <programme> --tmux \
 | `--max-ticks N` | stop after N ticks |
 | `--max-hours N` | stop after N hours |
 | `--tick-timeout S` | seconds one tick may take before it is stopped and the loop moves on. Defaults to twice the cadence. Without it a wedged tick hangs the loop and STOP never gets read |
+| `--observe` | every tick classifies and reports, and sends, restarts and creates nothing. Use it to watch a programme without touching it |
 | `--tmux` | run detached in a session named `orchestrate-<programme>` |
 | `--agent-cmd "<cmd>"` | feed `assets/tick-prompt.md` to a headless agent each tick instead of running the mechanical tick alone |
 

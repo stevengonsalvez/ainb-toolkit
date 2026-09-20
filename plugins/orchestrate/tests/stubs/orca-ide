@@ -10,16 +10,18 @@ set -uo pipefail
 S="${STUB_STATE:?STUB_STATE not set}"
 mkdir -p "$S/screens" "$S/terminals" "$S/sent"
 
+printf '%s %s\n' "${1:-}" "${2:-}" >> "$S/calls.log"
 group="${1:-}"; verb="${2:-}"; shift 2 2>/dev/null || true
-handle=""; worktree=""; text=""; screen=0; command=""
+handle=""; worktree=""; text=""; screen=0; command=""; title=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --terminal) handle="${2:-}"; shift 2 ;;
+    --title) title="${2:-}"; shift 2 ;;
     --worktree) worktree="${2:-}"; shift 2 ;;
     --text) text="${2:-}"; shift 2 ;;
     --command) command="${2:-}"; shift 2 ;;
     --screen) screen=1; shift ;;
-    --environment|--title|--for|--timeout-ms|--limit|--cursor) shift 2 ;;
+    --environment|--for|--timeout-ms|--limit|--cursor) shift 2 ;;
     *) shift ;;
   esac
 done
@@ -40,6 +42,9 @@ case "$group/$verb" in
     # A real composer does not always echo a submitted line back onto the
     # screen. Without this mode the confirmation check can never fail.
     [ -f "$S/noecho/$handle" ] || printf '%s\n' "$text" >> "$S/screens/$handle.txt"
+    case "$text" in
+      df*) printf '%s\n' "${STUB_DF:-/dev/sda1 157286400 94371840 52428800 65% /}" >> "$S/screens/$handle.txt" ;;
+    esac
     printf '{"ok":true,"result":{"accepted":true}}\n' ;;
   terminal/list)
     wt="${worktree#id:}"; wt="${wt#name:}"; wt="${wt##*/}"
@@ -51,9 +56,12 @@ case "$group/$verb" in
       printf '{"result":{"terminals":[]}}\n'
     fi ;;
   terminal/create)
-    h="probe-$$"
-    printf '%s\n' "${STUB_DF:-/dev/sda1 157286400 94371840 52428800 65% /}" > "$S/screens/$h.txt"
-    printf '%s\n' "$command" >> "$S/sent/$h.txt"
+    h="probe-$$-$RANDOM"
+    printf '%s\t%s\n' "$h" "$title" >> "$S/created.txt"
+    : > "$S/screens/$h.txt"
+    [ -n "$command" ] && printf '%s\n' "$command" >> "$S/sent/$h.txt"
+    wt="${worktree#id:}"; wt="${wt#name:}"; wt="${wt##*/}"
+    [ -n "$wt" ] && printf '%s\t%s\n' "$h" "$title" >> "$S/terminals/$wt"
     jq -nc --arg h "$h" '{result:{terminal:{handle:$h}}}' ;;
   terminal/wait) printf '{"result":{"wait":{"satisfied":true}}}\n' ;;
   terminal/close) rm -f "$S/screens/$handle.txt"; printf '{"ok":true}\n' ;;

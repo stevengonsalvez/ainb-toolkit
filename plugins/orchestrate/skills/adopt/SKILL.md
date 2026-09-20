@@ -26,6 +26,9 @@ token once. A dry run needs no token; writing does.
 
 Columns: `lane, env, worktree, agent, handle, status, ctx`.
 
+A dry run writes nothing at all: no event, no index rewrite, no terminal, not
+even a re-resolved handle. It reports what it would do and stops.
+
 ## What it does
 
 - Reads EVERY handle in screen mode. Liveness is never inferred from a terminal

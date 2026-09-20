@@ -13,12 +13,29 @@ ORCHESTRATE_HOME="${ORCHESTRATE_HOME:-$HOME/.claude/orchestrator}"
 ORCHESTRATE_SESSION="${ORCHESTRATE_SESSION:-}"
 ORCHESTRATE_HARNESS="${ORCHESTRATE_HARNESS:-unknown}"
 ORCA_TIMEOUT="${ORCA_TIMEOUT:-25}"
+# Set by the read verbs and by a dry run. Nothing may be created, appended or
+# rewritten while it is on: a verb that reports must not also act.
+ORCHESTRATE_RO="${ORCHESTRATE_RO:-0}"
+# Set by tick --observe. Classification and recording still happen; sending,
+# restarting, compacting and creating do not.
+ORCHESTRATE_OBSERVE=0
 TIMEOUT_BIN="$(command -v timeout 2>/dev/null || command -v gtimeout 2>/dev/null || true)"
 SEND_MAX_CHARS_DEFAULT=2000
 
 # The index holds message text, decisions and host readings. Nothing here is a
 # secret, but none of it is anyone else's business either.
 umask 077
+
+# Which agent runtime is driving. Recorded on the owner and on every takeover,
+# because "unknown" tells the next orchestrator nothing about how to resume.
+harness_detect() {
+  if [ -n "${ORCHESTRATE_HARNESS_SET:-}" ]; then printf '%s' "$ORCHESTRATE_HARNESS_SET"; return 0; fi
+  if [ -n "${CLAUDECODE:-}${CLAUDE_CODE_ENTRYPOINT:-}" ]; then printf 'claude-code'
+  elif [ -n "${CODEX_HOME:-}${CODEX_SANDBOX:-}${CODEX_COMPANION_SESSION_ID:-}" ]; then printf 'codex'
+  elif [ -n "${AGY_HOME:-}${AGY_SESSION:-}" ]; then printf 'agy'
+  elif [ -n "${GEMINI_CLI:-}${GEMINI_API_KEY:-}" ]; then printf 'gemini'
+  else printf 'shell'; fi
+}
 
 now() { date -u +%FT%TZ; }
 epoch() { date -u +%s; }
@@ -92,6 +109,7 @@ prog_open() {
   CFG_FLAT=""
   AGENTS_FLAT=""
   [ -d "$PROG" ] || die "no programme dir at $PROG (run: orchestrate.sh init $PROGRAMME)" 2
+  ORCHESTRATE_HARNESS="$(harness_detect)"
   # Every gh call in every verb must address the programme's repository, not
   # whatever directory the agent happened to start in.
   local gh_repo; gh_repo="$(cfg gh_repo)"
@@ -101,9 +119,12 @@ prog_open() {
   else
     GH_REPO_UNRESOLVED=1
   fi
-  touch "$LANES" "$EVENTS" "$HOSTS"
-  mkdir -p "$REVIEWS"
-  chmod 700 "$PROG" 2>/dev/null
+  if [ "$ORCHESTRATE_RO" != 1 ]; then
+    local f
+    for f in "$LANES" "$EVENTS" "$HOSTS"; do [ -f "$f" ] || : > "$f"; done
+    [ -d "$REVIEWS" ] || mkdir -p "$REVIEWS"
+    chmod 700 "$PROG" 2>/dev/null
+  fi
   [ -n "$ORCHESTRATE_SESSION" ] && export ORCHESTRATE_SESSION
   return 0
 }
@@ -207,18 +228,19 @@ agent_cfg() {
 # Only the token's hash is stored. A same-user process that steals the token is
 # inside the documented trust boundary; one that merely runs the script in the
 # same directory is not an owner.
+# A guessable token is not a lock. Both of these refuse rather than degrade: a
+# time-plus-pid token or a cksum digest would look like ownership and not be it.
 token_mint() {
-  if [ -r /dev/urandom ]; then
-    head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n'
-  else
-    printf '%s%s' "$(date -u +%s)" "$$" | token_hash_stdin
+  if [ -n "${ORCHESTRATE_NO_URANDOM:-}" ] || [ ! -r /dev/urandom ]; then
+    die "refusing to mint a token: no random source at /dev/urandom" 1
   fi
+  head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n'
 }
 
 token_hash_stdin() {
-  if command -v sha256sum >/dev/null 2>&1; then sha256sum
-  elif command -v shasum >/dev/null 2>&1; then shasum -a 256
-  else cksum; fi | awk '{ print $1 }'
+  if [ -z "${ORCHESTRATE_NO_SHA256:-}" ] && command -v sha256sum >/dev/null 2>&1; then sha256sum
+  elif [ -z "${ORCHESTRATE_NO_SHA256:-}" ] && command -v shasum >/dev/null 2>&1; then shasum -a 256
+  else die "refusing to hash a token: no sha256sum and no shasum on this host" 1; fi | awk '{ print $1 }'
 }
 
 token_hash() { printf '%s' "$1" | token_hash_stdin; }
@@ -242,6 +264,7 @@ gh_repo_from_origin() {
 
 # ev <name> [key value]... : append one event, every value a string.
 ev() {
+  [ "$ORCHESTRATE_RO" = 1 ] && return 0
   local name="$1"; shift
   local filter='{t: $t, ev: $ev}'
   local args=(-nc --arg t "$(now)" --arg ev "$name")
@@ -257,6 +280,7 @@ ev() {
 
 # ev_json <name> <json-object> : append an event with nested fields.
 ev_json() {
+  [ "$ORCHESTRATE_RO" = 1 ] && return 0
   jq -nc --arg t "$(now)" --arg ev "$1" --argjson body "$2" '{t: $t, ev: $ev} + $body' >> "$EVENTS"
 }
 
@@ -275,6 +299,7 @@ lane_field() {
 }
 
 lane_set() {
+  [ "$ORCHESTRATE_RO" = 1 ] && return 0
   local lane="$1" field="$2" value="$3" tmp
   tmp="$(mktemp)" || return 1
   jq -c --arg l "$lane" --arg f "$field" --arg v "$value" \
@@ -282,6 +307,7 @@ lane_set() {
 }
 
 lane_upsert() {
+  [ "$ORCHESTRATE_RO" = 1 ] && return 0
   local row="$1" lane tmp
   lane="$(printf '%s' "$row" | jq -r .lane)"
   tmp="$(mktemp)" || return 1
@@ -430,6 +456,10 @@ sanitise_line() {
 # refuses anything that is not a single sanitised line, confirms delivery on the
 # screen, and records the outcome either way.
 lane_send() {
+  if [ "$ORCHESTRATE_OBSERVE" = 1 ] || [ "$ORCHESTRATE_RO" = 1 ]; then
+    printf 'observe: would send to %s, sending nothing\n' "$1"
+    return 5
+  fi
   local lane="$1" pr="$2" raw="$3" retry="${4:-retry}"
   local handle env res probe text rc resp
   handle="$(lane_field "$lane" handle)"
@@ -493,6 +523,10 @@ lane_send() {
 # kind's resume command. Never kills anything. The command comes from
 # agents.yaml and is sanitised like any other typed text.
 lane_restart() {
+  if [ "$ORCHESTRATE_OBSERVE" = 1 ] || [ "$ORCHESTRATE_RO" = 1 ]; then
+    printf 'observe: would restart %s, restarting nothing\n' "$1"
+    return 5
+  fi
   local lane="$1" handle env kind resume
   env="$(lane_field "$lane" env)"; kind="$(lane_field "$lane" agent)"
   handle="$(lane_reresolve "$lane")"
@@ -871,7 +905,8 @@ merge_gate() {
 # exists because a lane waited hours on a merged PR; reporting zero owed because
 # the network was down is the same failure wearing a success.
 owed_list() {
-  local pr lane st rc
+  local pr lane st rc base trunk
+  trunk="$(cfg trunk)"
   jq -r 'select(.ev == "pr") | "\(.pr) \(.lane)"' "$EVENTS" 2>/dev/null | sort -u | while read -r pr lane; do
     [ -n "$pr" ] || continue
     jq -e --arg pr "$pr" 'select(.ev == "notified" and .pr == $pr and .result == "delivered")' "$EVENTS" >/dev/null 2>&1 && continue
@@ -880,6 +915,9 @@ owed_list() {
       printf '%s\t%s\t%s\n' "$lane" "$pr" "owed-unknown"
       continue
     fi
+    # A PR on another base is not this programme's to owe a notice about.
+    base="$(gh pr view "$pr" --json baseRefName --jq .baseRefName 2>/dev/null)"
+    [ -n "$base" ] && [ -n "$trunk" ] && [ "$base" != "$trunk" ] && continue
     case "$st" in
       OPEN) ;;
       MERGED|CLOSED) printf '%s\t%s\t%s\n' "$lane" "$pr" "$st" ;;
@@ -888,10 +926,14 @@ owed_list() {
   done
 }
 
-# Open PR count, or the empty string when GitHub could not be asked.
+# Open PR count for THIS programme, which means PRs against its trunk. A
+# repository can carry a long tail of open PRs on other bases, and counting them
+# makes every exit condition permanently false.
 open_pr_count() {
-  local n rc
-  n="$(gh pr list --state open --json number --jq 'length' 2>/dev/null)"; rc=$?
+  local n rc trunk
+  trunk="$(cfg trunk)"
+  [ -n "$trunk" ] || { printf ''; return 1; }
+  n="$(gh pr list --state open --base "$trunk" --json number --jq 'length' 2>/dev/null)"; rc=$?
   { [ "$rc" = 0 ] && printf '%s' "$n" | grep -Eq '^[0-9]+$'; } || { printf ''; return 1; }
   printf '%s' "$n"
 }
@@ -900,33 +942,66 @@ open_pr_count() {
 
 # Host metrics, cut 1 rung: an Orca probe terminal running df on the host.
 # The Beszel rung is cut 2; hosts.jsonl records which rung answered.
+# Host metrics, cut 1 rung: one probe terminal per host, found by its title and
+# reused. Creating a fresh terminal every cadence litters a remote host with one
+# more tab per tick, which an unattended loop turns into hundreds.
+#
+# The probe is a plain shell, not a terminal created with --command: Orca
+# documents --command as "Command to run in the terminal on startup" and does
+# not say whether it is shell-interpreted, so the command is typed into the
+# shell instead, where it certainly is. No pipe is used either; the answer is
+# parsed here.
+ORCHESTRATE_PROBE_TITLE=orchestrate-probe
+
 host_disk() {
-  local env="${1:-local}" wt th out free
+  local env="${1:-local}" wt sel th out free
   if [ "$env" = local ]; then
     free="$(df -P / 2>/dev/null | awk 'NR == 2 { printf "%.0f", $4 / 1048576 }')"
-    [ -n "$free" ] && { host_record "$env" probe "$free"; printf '%s' "$free"; return 0; }
-    host_record "$env" unknown ""; return 1
+    [ -n "$free" ] && { host_record "$env" probe "$free" ""; printf '%s' "$free"; return 0; }
+    host_record "$env" unknown "" ""; return 1
+  fi
+  # A remote reading costs a send into the probe terminal, and observe sends
+  # nothing. The local host is still measured, because df runs here.
+  if [ "$ORCHESTRATE_OBSERVE" = 1 ] || [ "$ORCHESTRATE_RO" = 1 ]; then
+    host_record "$env" not-measured "" ""
+    return 1
   fi
   wt="$(jq -r --arg e "$env" 'select(.env == $e) | .worktree' "$LANES" 2>/dev/null | head -1)"
-  [ -n "$wt" ] || { host_record "$env" unknown ""; return 1; }
+  [ -n "$wt" ] || { host_record "$env" unknown "" ""; return 1; }
   orca_env_args "$env"
-  th="$(orca_call terminal create --worktree "name:$wt" "${ORCA_ENV_ARGS[@]}" \
-    --title orchestrate-probe --command 'df -P / | tail -1' --json 2>/dev/null | jq -r '.result.terminal.handle // empty')"
-  [ -n "$th" ] || { host_record "$env" unknown ""; return 1; }
-  orca_call terminal wait --terminal "$th" "${ORCA_ENV_ARGS[@]}" --for exit --timeout-ms 15000 --json >/dev/null 2>&1
+  sel="name:$wt"
+
+  # Reuse: the recorded handle first, then any terminal in the worktree that
+  # carries the probe title.
+  th="$(jq -r --arg h "$env" 'select(.host == $h) | .probe // ""' "$HOSTS" 2>/dev/null | grep -v '^$' | tail -1)"
+  if [ -n "$th" ] && ! orca_screen "$th" "$env" >/dev/null 2>&1; then th=""; fi
+  if [ -z "$th" ]; then
+    th="$(orca_call terminal list --worktree "$sel" "${ORCA_ENV_ARGS[@]}" --json 2>/dev/null \
+      | jq -r --arg t "$ORCHESTRATE_PROBE_TITLE" '.result.terminals[]? | select((.title // "") == $t) | .handle' | head -1)"
+  fi
+  if [ -z "$th" ]; then
+    th="$(orca_call terminal create --worktree "$sel" "${ORCA_ENV_ARGS[@]}" \
+      --title "$ORCHESTRATE_PROBE_TITLE" --json 2>/dev/null | jq -r '.result.terminal.handle // empty')"
+    [ -n "$th" ] || { host_record "$env" unknown "" ""; return 1; }
+  fi
+
+  orca_call terminal send --terminal "$th" "${ORCA_ENV_ARGS[@]}" --text 'df -P /' --enter --json >/dev/null 2>&1
+  sleep "${PROBE_SETTLE_S:-2}"
   out="$(orca_screen "$th" "$env")"
-  orca_call terminal close --terminal "$th" "${ORCA_ENV_ARGS[@]}" --json >/dev/null 2>&1
-  free="$(printf '%s\n' "$out" | awk '/^\// { printf "%.0f", $4 / 1048576; exit }')"
-  [ -n "$free" ] || { host_record "$env" unknown ""; return 1; }
-  host_record "$env" probe "$free"
+  free="$(printf '%s\n' "$out" | awk '$1 ~ /^\// && $4 ~ /^[0-9]+$/ { v = $4 } END { if (v != "") printf "%.0f", v / 1048576 }')"
+  [ -n "$free" ] || { host_record "$env" unknown "" "$th"; return 1; }
+  host_record "$env" probe "$free" "$th"
   printf '%s' "$free"
 }
 
 host_record() {
-  local env="$1" src="$2" free="$3" lanes
+  [ "$ORCHESTRATE_RO" = 1 ] && return 0
+  local env="$1" src="$2" free="$3" probe="${4:-}" lanes
   lanes="$(jq -r --arg e "$env" 'select(.env == $e) | .lane' "$LANES" 2>/dev/null | wc -l | tr -d ' ')"
-  jq -nc --arg host "$env" --arg env "$env" --arg src "$src" --arg d "$free" --arg l "$lanes" --arg t "$(now)" \
-    '{host: $host, env: $env, src: $src, disk_free_gb: (if $d == "" then null else ($d | tonumber) end), lanes: ($l | tonumber), t: $t}' >> "$HOSTS"
+  jq -nc --arg host "$env" --arg env "$env" --arg src "$src" --arg d "$free" --arg l "$lanes" \
+    --arg p "$probe" --arg t "$(now)" \
+    '{host: $host, env: $env, src: $src, disk_free_gb: (if $d == "" then null else ($d | tonumber) end),
+      lanes: ($l | tonumber), probe: $p, t: $t}' >> "$HOSTS"
 }
 
 # --------------------------------------------------------------- exit expr
