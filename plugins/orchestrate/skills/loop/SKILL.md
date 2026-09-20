@@ -18,6 +18,14 @@ current harness has.
 └──────────────┘
 ```
 
+## The loop holds the token
+
+Arming a loop needs the ownership token from `orchestrate:takeover`, exported or
+passed as `--session`. The driver hands it to every tick it spawns, and the
+tmux form passes it into the session it creates. On Claude Code, keep it
+exported in the session that arms `/loop`; the prompt below runs in that
+session, so it inherits it.
+
 ## Claude Code
 
 Arm `/loop` in dynamic mode with this prompt, re-entered each wake:
@@ -67,6 +75,10 @@ directly, kill that one session by its exact name:
 kill, never `pkill`.
 
 ## It also stops on its own
+
+The per-tick bound stops the TICK, not necessarily everything the tick started:
+an `--agent-cmd` that forks leaves its children running. Prefer a command that
+exits cleanly, and check for strays after a run that timed out.
 
 `max-ticks`, `max-hours`, and the `exit` expression in `programme.yaml` turning
 true. Each records a `loop` event with its reason, so the next orchestrator can
