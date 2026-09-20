@@ -1,0 +1,111 @@
+# programme.yaml
+
+One file per programme, at `${ORCHESTRATE_HOME:-~/.claude/orchestrator}/<programme>/`.
+Everything specific to a programme lives here: trunk, signing key, hosts, review
+policy. The plugin itself holds none of it, so a second programme needs no code
+change.
+
+## What reads it
+
+Read by a small flat parser, not a YAML library. It understands top-level
+scalars, nested blocks, inline maps and inline lists. It does NOT process escape
+sequences: write a regular expression with single backslashes, as in
+`agents.yaml`. Block lists (`- ...`) are skipped by the parser deliberately; the
+review classes are read by you, as text, not by the scripts.
+
+## Keys
+
+| key | read by | meaning |
+|---|---|---|
+| `trunk` | merge gate | the only branch a merge may target |
+| `never_merge_into` | merge gate | branches that refuse before anything else is checked |
+| `autonomy` | merge gate | `merge_on_verdict` merges on a passing verdict; `ask` stops at the gate and exits 4. Set it deliberately at adopt time |
+| `signing.required` | merge gate | true refuses any commit in the range that is not signed |
+| `signing.key` | you | recorded so a resign is possible by hand. Never used to sign automatically |
+| `attribution_guard`, `attribution_patterns` | merge gate | refuses commit messages matching the pattern |
+| `ci` | you | `gate` means wait on the head sha's checks; `ignore` means report and proceed |
+| `repo` | merge gate | the local checkout the gate runs git in, so a tick works from the programme dir alone |
+| `gh_repo` | merge gate | exported as `GH_REPO` so gh resolves the right repository |
+| `default_agent` | adopt | agent kind assumed for a lane discovered with no profile |
+| `loop.every` | tick, loop | cadence. Also the watchdog's unit: a gap past twice this is reported |
+| `loop.max_ticks`, `loop.max_hours` | loop | bounds, `0` for none |
+| `compact.at_pct`, `compact.keep` | tick | an idle lane over this percentage of context used is sent its compact command with the keep list |
+| `handover.credit_threshold_pct` | you | run handover yourself once the harness reports usage over this |
+| `exit` | tick | see below |
+| `placement.*` | preflight, cut 2 | floors, weights, lane cap, exclusive resources |
+| `metrics.*` | cut 2 | Beszel hub rung. Empty means the Orca probe rung |
+| `scrub.deny` | scrubber | pattern that refuses a post outright. Defaults to `attribution_patterns` |
+| `review.*` | you | see `review-policy.md` |
+
+## The exit expression
+
+Evaluated once per tick. It may use only these counters:
+
+| token | value |
+|---|---|
+| `open_prs` | open PRs on the repository |
+| `owed` | lanes never told their PR merged or closed |
+| `lanes_done` | lanes whose status is `done` |
+| `lanes_total` | rows in `lanes.jsonl` |
+| `scope_done` | 1 when a `SCOPE_DONE` file exists in the programme dir, else 0 |
+
+Comparison and boolean operators only. Anything else makes the expression
+`undecidable`, which is reported and never treated as true. A true expression
+makes the tick exit 10 and the loop stop with reason `exit-condition`.
+
+Marking scope finished is deliberate and manual:
+
+```bash
+touch ~/.claude/orchestrator/<programme>/SCOPE_DONE
+```
+
+## A filled example
+
+```yaml
+trunk: release-2
+never_merge_into: [main, master]
+autonomy: merge_on_verdict
+signing: {required: true, key: "ABCD1234EF567890"}
+attribution_guard: true
+attribution_patterns: "co-authored-by|generated with|assisted by|acme-tool"
+ci: ignore
+repo: /home/example/work/my-project
+gh_repo: example-org/my-project
+
+default_agent: claude
+
+loop: {mode: self_paced, every: 20m, max_ticks: 0, max_hours: 12}
+compact: {at_pct: 85, keep: "keep the goal, the branch, the open PR and the last decision"}
+handover: {credit_threshold_pct: 85, notify: true}
+
+exit: "open_prs == 0 && owed == 0 && scope_done"
+
+placement:
+  floors: {disk_free_gb: 20, mem_free_gb: 4}
+  weights: {disk: 40, ram: 30, load: 20, lanes: 10}
+  max_lanes_per_host: 6
+  exclusive: [e2e, proof]
+
+metrics: {beszel_hub: "", token_ref: ""}
+
+scrub:
+  deny: "co-authored-by|generated with|assisted by|acme-tool"
+
+review:
+  default: {mode: orchestrator, kinds: [code], verdict: "line1 in {MERGE, MERGE WITH FOLLOW-UPS}"}
+  nudge: {stale_pr: "PR #{pr} has had no review for {age}. Run {how} and post the verdict."}
+  classes:
+    - {match: {paths: ["**/proto/**", "**/migrations/**"]}, mode: orchestrator, kinds: [code, security]}
+    - {match: {label: docs}, mode: none}
+```
+
+## Checking what the parser sees
+
+```bash
+awk '...'   # not needed: source the library and ask
+bash -c '. scripts/lib.sh; prog_open <programme>; cfg trunk; cfg placement.floors.disk_free_gb'
+```
+
+A key that reads empty when you expected a value is almost always an inline map
+nested more deeply than two levels, or an escape sequence the parser did not
+process. Flatten it, or quote it plainly.
