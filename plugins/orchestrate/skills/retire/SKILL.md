@@ -14,6 +14,8 @@ Three guards, all refusals, each recorded as a `refuse` event:
 | guard | refuses when |
 |---|---|
 | `retire-busy` | the lane's status is not `idle` or `done` |
+| `retire-unknown-branch` | no `branch` is recorded, so nothing can say its work landed |
+| `retire-unknown-state` | the PR state could not be read, so the answer is unknown rather than clear |
 | `retire-unmerged` | its `branch` still has an open PR |
 | `retire-live` | its screen still shows a live agent and it is not marked `done` |
 
@@ -25,8 +27,8 @@ process is killed, and there is no force.
 1. Run a tick, so the lane's status is current rather than a stale reading.
 2. Check `owed` is zero for that lane. Retiring a lane that was never told its
    PR merged loses the notice permanently.
-3. Confirm the branch field in `lanes.jsonl` is filled. An empty `branch` means
-   the unmerged guard cannot check anything, so check it yourself.
+3. Confirm the branch field in `lanes.jsonl` is filled. An empty one is refused
+   outright rather than waved through.
 
 ## When a refusal fires
 
