@@ -12,12 +12,42 @@ ${CLAUDE_PLUGIN_ROOT}/scripts/orchestrate.sh takeover <programme>
 ${CLAUDE_PLUGIN_ROOT}/scripts/orchestrate.sh takeover <programme> --takeover
 ```
 
+## The token it prints is the ownership
+
+Taking a programme mints a token and prints it once, with the export line:
+
+```
+export ORCHESTRATE_SESSION=<token>
+```
+
+Export it immediately. It is stored NOWHERE: `owner.json` holds only its hash.
+Every verb that writes (`send`, `merge`, `post`, `mark`, `pr`, `retire`, `tick`,
+`loop`) refuses without it and names this verb as the way in. A harness that
+cannot set an environment variable passes `--session <token>` instead.
+
+That is what makes the lock per ORCHESTRATOR rather than per directory. An
+identity kept in the programme directory would be readable by any process that
+opens it, and two orchestrators on one host would silently share one lock and
+double-merge, which is the thing the lock exists to stop.
+
+| situation | what to do |
+|---|---|
+| you lost the token | the programme stays locked until the lock goes stale, then `takeover` again. There is no recovery path that reads it back, by design |
+| you are arming a loop | the driver passes the token to the ticks it spawns. Keep it exported in the session that armed the loop |
+| the harness has no environment | pass `--session <token>` on every call |
+| someone handed the programme over | the old token is spent; claim a new one here |
+
+A same-user process that steals the token is inside the documented trust
+boundary (`${CLAUDE_PLUGIN_ROOT}/references/never-do.md`). One that merely runs
+the script in the same directory is not an owner.
+
 This is the whole start-up sequence for a fresh session on any harness. Nothing
 else needs to be in context.
 
-1. Claims `owner.json`. A lock held by another session is refused unless it is
-   stale past twice the cadence, or `--takeover` is passed. Either way the
-   takeover is recorded with both session names and the reason.
+1. Claims `owner.json` and mints the token above. A lock held by another session
+   is refused unless it is stale past twice the cadence, or `--takeover` is
+   passed. Either way the takeover is recorded with both labels and the reason.
+   Taking a programme you already hold is a no-op, not a fight.
 2. Re-verifies every handle BEFORE anything is sent. A host may have restarted
    while nobody was watching, and a send into a stale handle lands nowhere.
 3. Runs one tick.
