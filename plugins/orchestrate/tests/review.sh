@@ -4,16 +4,20 @@
 # has hasnt sect refused ev_has setcfg mkpr
 
 sect "C1 the same orchestrator can run two commands in a row"
-# No ORCHESTRATE_SESSION anywhere: this is how an agent actually invokes it.
+# The failure this guards: an identity derived per process, so takeover claimed
+# as one id and the next invocation arrived as another and was refused.
 P2=prog2; D2="$ORCHESTRATE_HOME/$P2"
 env -u ORCHESTRATE_SESSION "$OS" init "$P2" --trunk example-trunk --repo "$REPO" >/dev/null 2>&1
-env -u ORCHESTRATE_SESSION "$OS" takeover "$P2" >/dev/null 2>&1
-env -u ORCHESTRATE_SESSION "$OS" tick "$P2" >/dev/null 2>&1
+claim2="$(env -u ORCHESTRATE_SESSION "$OS" takeover "$P2" 2>&1)"
+TOK2="$(printf '%s\n' "$claim2" | sed -n 's/^export ORCHESTRATE_SESSION=//p' | head -1)"
+ORCHESTRATE_SESSION="$TOK2" "$OS" tick "$P2" >/dev/null 2>&1
 is "a tick after a takeover is not refused" "$?" 0
-env -u ORCHESTRATE_SESSION "$OS" mark "$P2" nosuch idle >/dev/null 2>&1
+ORCHESTRATE_SESSION="$TOK2" "$OS" mark "$P2" nosuch idle >/dev/null 2>&1
 is "a later verb is not refused either" "$([ "$?" = 3 ] && echo refused || echo allowed)" allowed
-is "the identity is persisted, not regenerated per process" \
-  "$(cat "$D2/.session" 2>/dev/null)" "$(jq -r .session "$D2/owner.json" 2>/dev/null)"
+ORCHESTRATE_SESSION="$TOK2" "$OS" takeover "$P2" >/dev/null 2>&1
+is "and takeover by the holder is a no-op, not a fight" "$?" 0
+is "the owner label is derived from the token" \
+  "$(jq -r .session "$D2/owner.json")" "$(label_of "$TOK2")"
 out="$(ORCHESTRATE_SESSION=a-different-orchestrator "$OS" tick "$P2" 2>&1)"
 is "an explicitly different orchestrator is still refused" "$?" 3
 has "and told who holds it" "$out" "REFUSED owner-held"
@@ -28,6 +32,7 @@ rm -f "$D2/owner.json"
   wait ) >/dev/null 2>&1
 is "exactly one of six concurrent claims wins" "$(grep -c win "$TMP/wins" 2>/dev/null || echo 0)" 1
 is "and one owner file names one session" "$(jq -r '.session' "$D2/owner.json" | wc -l | tr -d ' ')" 1
+ORCHESTRATE_SESSION="$TOK2" "$OS" takeover "$P2" --takeover >/dev/null 2>&1
 
 sect "C2 re-adopt preserves what adopt does not own"
 "$OS" mark "$P" A idle >/dev/null 2>&1
