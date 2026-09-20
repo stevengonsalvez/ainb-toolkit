@@ -94,6 +94,17 @@ is "that refusal is an event" "$(refused merge-sha-format)" 1
 is "a full sha that is not the head is refused" "$?" 3
 is "that refusal is an event" "$(refused merge-sha-mismatch)" 1
 
+sect "H2 a head that moves between the gate and the merge is refused"
+setcfg autonomy merge_on_verdict
+git -C "$BARE" update-ref "refs/pull/211/head" "$OK_SHA"
+mkpr 211 example-trunk feat-ok "$OK_SHA"
+touch "$STUB_STATE/prs/211.move"
+"$OS" merge "$P" 211 "$OK_SHA" >/dev/null 2>&1
+is "a push during the gate is caught by the re-read" "$?" 3
+is "that refusal is an event" "$(refused merge-moved)" 1
+is "and nothing was merged" "$(grep -c '^211$' "$STUB_STATE/merged.txt" 2>/dev/null || echo 0)" 0
+setcfg autonomy ask
+
 sect "M4 a draft is not silently made ready"
 git -C "$BARE" update-ref "refs/pull/205/head" "$OK_SHA"
 jq -nc --arg s "$OK_SHA" '{number:205,state:"OPEN",isDraft:true,isCrossRepository:false,
