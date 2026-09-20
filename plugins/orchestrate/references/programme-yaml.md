@@ -22,7 +22,7 @@ review classes are read by you, as text, not by the scripts.
 | `autonomy` | merge gate | `merge_on_verdict` merges on a passing verdict; `ask` stops at the gate and exits 4. Set it deliberately at adopt time |
 | `signing.required` | merge gate | true refuses any commit in the range that is not signed |
 | `signing.key` | merge gate | the ONLY signer accepted. A good signature from any other key is refused. Left as the `<...>` placeholder it is treated as unset, and any good signature passes. Never used to sign automatically |
-| `attribution_guard`, `attribution_patterns` | merge gate | refuses commit messages matching the pattern |
+| `attribution_guard`, `attribution_patterns` | merge gate | refuses commit messages matching the pattern. Anchor it to the shape of a trailer: a bare substring such as `generated with` refuses an honest body like `Generated with UPDATE_PARITY_FRAMES=1 so the frames match.` |
 | `ci` | merge gate | `gate` reads the checks in code and refuses anything not green; `ignore` leaves CI to your judgment |
 | `repo` | merge gate | REQUIRED. The local checkout the gate reads evidence from. Never defaulted: an unset `repo` refuses the merge rather than reading the caller's cwd |
 | `gh_repo` | merge gate | exported as `GH_REPO` so gh resolves the right repository |
@@ -31,6 +31,7 @@ review classes are read by you, as text, not by the scripts.
 | `default_agent` | adopt | agent kind assumed for a lane discovered with no profile |
 | `loop.every` | tick, loop | cadence. Also the watchdog's unit: a gap past twice this is reported |
 | `loop.max_ticks`, `loop.max_hours` | loop | bounds, `0` for none |
+| `loop.tick_timeout` | loop | seconds a single tick may take before it is stopped and the loop moves on. Defaults to twice the cadence |
 | `compact.at_pct`, `compact.keep` | tick | an idle lane over this percentage of context used is sent its compact command with the keep list |
 | `handover.credit_threshold_pct` | you | run handover yourself once the harness reports usage over this |
 | `exit` | tick | see below |
@@ -69,7 +70,7 @@ never_merge_into: [main, master]
 autonomy: merge_on_verdict
 signing: {required: true, key: "ABCD1234EF567890"}
 attribution_guard: true
-attribution_patterns: "co-authored-by|generated with|assisted by|acme-tool"
+attribution_patterns: "^[[:space:]]*co-authored-by:[[:space:]]|^[[:space:]]*generated with acme-tool"
 ci: ignore
 allow_fork_prs: false
 repo: /home/example/work/my-project
@@ -93,7 +94,7 @@ placement:
 metrics: {beszel_hub: "", token_ref: ""}
 
 scrub:
-  deny: "co-authored-by|generated with|assisted by|acme-tool"
+  deny: "^[[:space:]]*co-authored-by:[[:space:]]|acme-tool"
 
 review:
   default: {mode: orchestrator, kinds: [code], verdict: "line1 in {MERGE, MERGE WITH FOLLOW-UPS}"}
