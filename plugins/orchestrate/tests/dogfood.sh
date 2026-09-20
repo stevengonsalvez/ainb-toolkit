@@ -76,6 +76,13 @@ has "it says what it would have done" "$out" "would"
 is "a normal tick does restart it" "$([ "$(grep -c 'terminal send' "$STUB_STATE/calls.log")" -ge 1 ] && echo acted)" acted
 is "and that tick is not marked observe" "$(jq -r 'select(.ev=="tick") | .observe' "$D/events.jsonl" | tail -1)" false
 
+sect "D4 a send can be observed too"
+: > "$STUB_STATE/calls.log"
+out="$("$OS" send "$P" A - "a message that must not be typed yet" --observe 2>&1)"
+has "it says what it would send" "$out" "would send to A"
+is "and types nothing" "$(grep -c 'terminal send' "$STUB_STATE/calls.log")" 0
+hasnt "the text never reaches the terminal" "$(cat "$STUB_STATE/sent/h-a.txt" 2>/dev/null)" "must not be typed yet"
+
 sect "D4 takeover observes before it acts"
 : > "$STUB_STATE/calls.log"
 ORCHESTRATE_SESSION=session-one "$OS" takeover "$P" >/dev/null 2>&1
