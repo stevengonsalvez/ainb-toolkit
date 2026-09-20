@@ -16,11 +16,11 @@ hasnt "nothing was typed" "$(cat "$STUB_STATE/sent/h-a.txt" 2>/dev/null)" "nobod
 "$OS" merge "$P" 201 "$OK_SHA" >/dev/null 2>&1; is "an unowned programme refuses a merge" "$?" 3
 "$OS" retire "$P" A >/dev/null 2>&1; is "an unowned programme refuses a retire" "$?" 3
 "$OS" tick "$P" >/dev/null 2>&1
-is "a tick claims the lock rather than proceeding without one" "$(jq -r .session "$D/owner.json" 2>/dev/null)" session-one
-# shellcheck source=../scripts/lib.sh
-. "$PLUGIN/scripts/lib.sh"; prog_open "$P"
-ORCHESTRATE_SESSION=someone-else owner_claim_new >/dev/null 2>&1
-is "a claim on a held lock loses atomically" "$(jq -r .session "$D/owner.json")" session-one
+is "a tick claims the lock rather than proceeding without one" "$(jq -r .session "$D/owner.json" 2>/dev/null)" "$(label_of session-one)"
+# In a subshell: owner_claim_new exports the identity, and a bare assignment on
+# a function call persists, so a leak here would refuse every later verb.
+( . "$PLUGIN/scripts/lib.sh"; prog_open "$P"; ORCHESTRATE_SESSION=someone-else owner_claim_new ) >/dev/null 2>&1
+is "a claim on a held lock loses atomically" "$(jq -r .session "$D/owner.json")" "$(label_of session-one)"
 
 sect "H3 a message is one sanitised line or it is refused"
 before="$(wc -c < "$STUB_STATE/sent/h-a.txt" 2>/dev/null || echo 0)"
