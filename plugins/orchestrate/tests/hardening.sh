@@ -130,14 +130,14 @@ has "the merge call pins the head commit" "$(cat "$STUB_STATE/merge-args.txt")" 
 
 sect "M6 the evidence repo is required and verified"
 cp "$D/programme.yaml" "$TMP/cfg.bak"
-sed -i "s#^repo: .*#repo: $TMP/not-a-checkout#" "$D/programme.yaml"
+sed -i.bak "s#^repo: .*#repo: $TMP/not-a-checkout#" "$D/programme.yaml" && rm -f "$D/programme.yaml.bak"
 mkdir -p "$TMP/not-a-checkout"
 git -C "$BARE" update-ref "refs/pull/210/head" "$OK_SHA"
 mkpr 210 example-trunk feat-ok "$OK_SHA"
 "$OS" merge "$P" 210 "$OK_SHA" >/dev/null 2>&1
 is "a repo that is not a checkout is refused" "$?" 3
 is "that refusal is an event" "$(refused merge-repo)" 1
-sed -i "s#^repo: .*#repo:#" "$D/programme.yaml"
+sed -i.bak "s#^repo: .*#repo:#" "$D/programme.yaml" && rm -f "$D/programme.yaml.bak"
 "$OS" merge "$P" 210 "$OK_SHA" >/dev/null 2>&1
 is "an unset repo is refused, not defaulted to the cwd" "$?" 3
 cp "$TMP/cfg.bak" "$D/programme.yaml"
