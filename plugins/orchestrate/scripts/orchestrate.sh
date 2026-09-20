@@ -52,10 +52,10 @@ v_init() {
   [ -n "$trunk" ] && sed -i.bak -E "s#^trunk:.*#trunk: $trunk#" "$dir/programme.yaml" && rm -f "$dir/programme.yaml.bak"
   [ -n "$never" ] && sed -i.bak -E "s#^never_merge_into:.*#never_merge_into: [${never//,/, }]#" "$dir/programme.yaml" && rm -f "$dir/programme.yaml.bak"
   [ -n "$repo" ] && sed -i.bak -E "s#^repo:.*#repo: $repo#" "$dir/programme.yaml" && rm -f "$dir/programme.yaml.bak"
-  ORCHESTRATE_PROGRAMME="$programme" prog_open "$programme"
-  owner_ensure >/dev/null || true
   printf '%s\n' "$dir"
-  printf 'edit programme.yaml (autonomy and repo must both be set deliberately), then run adopt\n'
+  printf 'edit programme.yaml (autonomy and repo must both be set deliberately), then claim it:\n'
+  printf '  orchestrate.sh takeover %s\n' "$programme"
+  printf 'That prints the ownership token once. Export it; every verb that writes needs it.\n'
 }
 
 # ----------------------------------------------------------------- discover
@@ -121,7 +121,9 @@ v_adopt() {
     esac
     ctx="$(ctx_pct "$kind" "$text")"
     if [ "$new" = new ]; then
-      printf 'UNINDEXED\t%s\t%s\t%s\t%s\t%s\t%s\n' "$env" "$wt" "$kind" "$handle" "$st" "${ctx:--}"
+      # The terminal's own title goes in the lane column: without it two
+      # terminals in one worktree are indistinguishable proposals.
+      printf 'UNINDEXED/%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$lane" "$env" "$wt" "$kind" "$handle" "$st" "${ctx:--}"
       { [ "$dry" = 1 ] || [ "$include_new" = 0 ]; } && continue
     else
       printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$lane" "$env" "$wt" "$kind" "$handle" "$st" "${ctx:--}"
@@ -156,7 +158,6 @@ adopt_candidates() {
     while read -r id; do
       [ -n "$id" ] || continue
       wt="${id##*/}"
-      jq -e --arg w "$wt" --arg e "$e" 'select(.worktree == $w and .env == $e)' "$LANES" >/dev/null 2>&1 && continue
       rows="$(orca_call terminal list --worktree "id:$id" "${ORCA_ENV_ARGS[@]}" --json 2>/dev/null \
         | jq -r '.result.terminals[]? | [.handle, (.title // "")] | @tsv')"
       [ -n "$rows" ] || continue
@@ -175,7 +176,7 @@ v_status() {
   prog_open "${1:-}"
   printf '== lanes\n'
   jq -r '[.lane, .env, .worktree, .agent, .status, (.ctx_pct // "-"), (.last_seen // "-")] | @tsv' "$LANES" \
-    | column -t -s"$(printf '\t')" 2>/dev/null || cat
+    | column -t -s"$(printf '\t')" 2>/dev/null
   printf '\n== owner\n'
   if [ -s "$OWNER" ]; then jq -r '"\(.session) on \(.harness), last tick \(.last_tick)"' "$OWNER"; else printf 'released\n'; fi
   printf '\n== hosts\n'
@@ -278,6 +279,8 @@ v_tick() {
   cad="$(cadence_s)"
   if [ -n "$last" ]; then gap=$(( $(epoch) - $(iso_epoch "$last") )); else gap=0; fi
   n="$(( $(jq -r 'select(.ev == "tick") | .n' "$EVENTS" 2>/dev/null | tail -1 | grep -Eo '^[0-9]+$' || echo 0) + 1 ))"
+  local dupes; dupes="$(lanes | sort | uniq -d | tr '\n' ' ')"
+  [ -n "$dupes" ] && printf 'DUPLICATE lane rows, the last one wins silently: %s\n' "$dupes"
   [ "$gap" -gt "$(( 2 * cad ))" ] && printf 'WATCHDOG: %ss since the last tick, cadence is %ss\n' "$gap" "$cad"
 
   # 2-4. read every indexed handle, classify, re-resolve what is stale, and
@@ -331,6 +334,7 @@ v_tick() {
     printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$lane" "$env" "$kind" "$st" "${ctx:--}" "$note"
   done < <(lanes)
 
+  local unknown_repo=0
   # 5. host pressure. Never delete under a live lane: report and let the agent
   # ask the owning lane to clean.
   local e free floor
@@ -343,9 +347,15 @@ v_tick() {
     fi
   done < <(jq -r '.env' "$LANES" 2>/dev/null | sort -u)
 
+  if [ "${GH_REPO_UNRESOLVED:-0}" = 1 ]; then
+    printf 'DEGRADED: GH_REPO could not be resolved from programme.yaml, so every PR count is from whatever repository the caller is in\n'
+    ev degraded reason "gh_repo unresolved" repo "$(cfg repo)"
+    unknown_repo=1
+  fi
+
   # 6. open PRs and owed notices. A counter that could not be read is unknown,
   # never zero: a network blip must not read as "nothing left to do".
-  local open_prs owed_n unknown=0
+  local open_prs owed_n unknown="${unknown_repo:-0}"
   open_prs="$(open_pr_count)" || { open_prs=""; unknown=1; }
   owed_n="$(owed_list | wc -l | tr -d ' ')"
   if owed_list | grep -q 'owed-unknown'; then unknown=1; fi
@@ -357,9 +367,10 @@ v_tick() {
 
   # 10. record the tick, then say whether the exit condition holds.
   ev_json tick "$(jq -nc --arg n "$n" --arg w "$working" --arg i "$idle" --arg a "$asking" \
-    --arg d "$done_n" --arg x "$dead" --arg p "${open_prs:-0}" --arg o "$owed_n" --arg g "$gap" \
+    --arg d "$done_n" --arg x "$dead" --arg p "$open_prs" --arg o "$owed_n" --arg g "$gap" \
     '{n: ($n | tonumber), lanes: {working: ($w | tonumber), idle: ($i | tonumber), asking: ($a | tonumber),
-      done: ($d | tonumber), dead: ($x | tonumber)}, open_prs: ($p | tonumber), owed: ($o | tonumber),
+      done: ($d | tonumber), dead: ($x | tonumber)},
+      open_prs: (if $p == "" then null else ($p | tonumber) end), owed: ($o | tonumber),
       gap_s: ($g | tonumber)}')"
   owner_touch
 
@@ -402,6 +413,7 @@ v_loop() {
     esac
   done
   prog_open "$programme"
+  owner_require || return 3
   [ -n "$every" ] || every="$(cfg loop.every 20m)"
   [ "$max_ticks" != 0 ] || max_ticks="$(cfg loop.max_ticks 0)"
   [ "$max_hours" != 0 ] || max_hours="$(cfg loop.max_hours 0)"
@@ -420,6 +432,7 @@ v_loop() {
     [ -n "$agent_cmd" ] && inner+=(--agent-cmd "$agent_cmd")
     tmux new-session -d -s "$session" -n loop \
       -e "ORCHESTRATE_HOME=$ORCHESTRATE_HOME" -e "ORCHESTRATE_LOOP_LOG=$PROG/loop.log" \
+      -e "ORCHESTRATE_SESSION=$ORCHESTRATE_SESSION" \
       "${inner[@]}"
     printf 'loop armed in tmux session %s; stop it with: touch %s\n' "$session" "$STOP"
     return 0
@@ -497,7 +510,10 @@ v_handover() {
     printf '\n## House rules\n\n'
     printf 'Read ORCHESTRATION.md in this directory before answering any lane.\n'
   } > "$HANDOVER"
-  ev handover outgoing "$ORCHESTRATE_SESSION" harness "$ORCHESTRATE_HARNESS" reason "$reason"
+  ev handover outgoing "$(owner_session)" harness "$ORCHESTRATE_HARNESS" reason "$reason"
+  # The token is spent. The next orchestrator claims through takeover, which is
+  # recorded, rather than a tick silently picking the programme back up.
+  date -u +%FT%TZ > "$PROG/.handed-over"
   rm -f "$OWNER"
   printf '%s\n' "$HANDOVER"
   printf 'lock released; any harness resumes with: orchestrate:takeover %s\n' "$PROGRAMME"
@@ -558,6 +574,17 @@ v_retire() {
 }
 
 # -------------------------------------------------------------------- main
+
+# --session <token> anywhere in the line is equivalent to the environment
+# variable, for a harness that cannot set one.
+ARGS=()
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --session) ORCHESTRATE_SESSION="${2:-}"; export ORCHESTRATE_SESSION; shift 2 ;;
+    *) ARGS+=("$1"); shift ;;
+  esac
+done
+[ "${#ARGS[@]}" -gt 0 ] && set -- "${ARGS[@]}"
 
 verb="${1:-help}"; shift || true
 case "$verb" in
