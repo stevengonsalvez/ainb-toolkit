@@ -1,0 +1,75 @@
+# How to drive each agent kind: how it starts, how it resumes, what its screen
+# looks like when it is idle, busy or asking, and where its context readout is.
+# Screen patterns live here, NOT in code, so a TUI change is a config edit.
+#
+# Patterns are extended regular expressions, matched against the last lines of a
+# screen read. Verify them on your own lanes: `orchestrate.sh read <prog> <lane>`
+# prints exactly what the matcher sees. Values marked UNVERIFIED were not
+# observed on a live screen while this file was written; confirm before relying
+# on them. See references/agents-yaml.md for the provenance of every value.
+#
+# ctx_means says whether the number the ctx pattern finds is context USED or
+# context LEFT. Getting it backwards makes the compact step fire at the wrong
+# end, so set it from a real screen.
+
+default:
+  start: ""
+  resume: ""
+  compact: "/compact"
+  headless: ""
+  idle: "^[[:space:]]*[>❯][[:space:]]*$"
+  busy: "esc to (interrupt|cancel)"
+  asking: "^[[:space:]]*❯?[[:space:]]*1\.|Do you want|\(y/n\)"
+  ctx: ""
+  ctx_means: used
+  # Dead-shell guard: a lane whose screen ends in a plain shell prompt is not an
+  # agent. Nothing is ever typed into it.
+  shell_prompt: "[a-z_][a-z0-9_-]*@[A-Za-z0-9._-]+.*[%$#][[:space:]]?$|^[[:space:]]*[$%#][[:space:]]*$|^➜ "
+
+claude:
+  start: "claude"
+  resume: "claude --continue"
+  headless: "claude -p"
+  compact: "/compact"
+  idle: "^[[:space:]]*❯[[:space:]]*$"
+  busy: "esc to interrupt"
+  asking: "^[[:space:]]*❯?[[:space:]]*1\.|Do you want"
+  ctx: "ctx \[[^]]*\][[:space:]]*[0-9]+%"
+  ctx_means: used
+  shell_prompt: "[a-z_][a-z0-9_-]*@[A-Za-z0-9._-]+.*[%$#][[:space:]]?$|^[[:space:]]*[$%#][[:space:]]*$|^➜ "
+
+codex:
+  start: "codex"
+  resume: "codex resume --last"
+  headless: "codex exec"
+  compact: "/compact"                       # UNVERIFIED
+  idle: "^[[:space:]]*[>▌][[:space:]]*$"    # UNVERIFIED
+  busy: "esc to interrupt"                  # UNVERIFIED
+  asking: "^[[:space:]]*1\.|Allow command|\(y/n\)"   # UNVERIFIED
+  ctx: "context (left|used)[^0-9]*([0-9]+)%"            # UNVERIFIED
+  ctx_means: left                                       # UNVERIFIED
+  shell_prompt: "[a-z_][a-z0-9_-]*@[A-Za-z0-9._-]+.*[%$#][[:space:]]?$|^[[:space:]]*[$%#][[:space:]]*$|^➜ "
+
+agy:
+  start: "agy"
+  resume: "agy --continue"
+  headless: "agy --print"
+  compact: "/compact"                       # UNVERIFIED
+  idle: "^[[:space:]]*[>❯][[:space:]]*$"    # UNVERIFIED
+  busy: "esc to (interrupt|cancel)"         # UNVERIFIED
+  asking: "^[[:space:]]*1\.|\(y/n\)"     # UNVERIFIED
+  ctx: ""                                   # UNVERIFIED
+  ctx_means: used                           # UNVERIFIED
+  shell_prompt: "[a-z_][a-z0-9_-]*@[A-Za-z0-9._-]+.*[%$#][[:space:]]?$|^[[:space:]]*[$%#][[:space:]]*$|^➜ "
+
+gemini:
+  start: "gemini"                           # UNVERIFIED
+  resume: "gemini"                          # UNVERIFIED, no resume flag confirmed
+  headless: "gemini -p"                     # UNVERIFIED
+  compact: "/compress"                      # UNVERIFIED
+  idle: "^[[:space:]]*>[[:space:]]*$|\? for shortcuts"
+  busy: "esc to cancel"                     # UNVERIFIED
+  asking: "^[[:space:]]*[0-9]\.|Apply this change"     # UNVERIFIED
+  ctx: ""                                   # UNVERIFIED
+  ctx_means: used                           # UNVERIFIED
+  shell_prompt: "[a-z_][a-z0-9_-]*@[A-Za-z0-9._-]+.*[%$#][[:space:]]?$|^[[:space:]]*[$%#][[:space:]]*$|^➜ "
