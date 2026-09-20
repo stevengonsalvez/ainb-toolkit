@@ -65,6 +65,10 @@ mutate "ambiguous rebind refusal" scripts/lib.sh \
   '    handle="$(printf '"'"'%s\n'"'"' "$rows" | head -1 | cut -f1)"
     if false; then'
 
+mutate "pre-merge re-read" scripts/lib.sh \
+  '  view2="$(gh pr view "$pr" --json state,baseRefName,headRefOid 2>/dev/null)"' \
+  '  view2="$(printf '"'"'{"state":"OPEN","baseRefName":"%s","headRefOid":"%s"}'"'"' "$base" "$head")"'
+
 printf '\n%s killed, %s survived\n' "$KILLED" "$SURVIVED"
 [ "$SURVIVED" = 0 ] || exit 1
 exit 0
