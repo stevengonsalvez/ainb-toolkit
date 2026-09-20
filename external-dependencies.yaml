@@ -811,6 +811,22 @@ npx-skills:
       - "On drive commands `--fields` keeps its Drive API field-mask meaning (`--fields \"files(id,name)\"`); use `--select id,name` for plain JSON projection. `--fields id,name` on `drive ls` is a 400, by design."
     docs: "https://gogcli.sh"
 
+  - name: orca-skills
+    repo: stablyai/orca
+    install: "npx skills add stablyai/orca --skill orca-cli --skill orchestration --global --yes"
+    purpose: "Drive Orca-managed terminals and coordinate agents from inside a session (the tmux send-keys/capture-pane equivalent for Orca panes)"
+    multi-skill: true
+    skills:
+      - orca-cli: "Terminal list/send/read/wait/create/close, worktrees, handoffs to another agent"
+      - orchestration: "Inter-agent mailbox (send/check/ask/reply), supervised workers, task DAGs, decision gates"
+    features:
+      - "`orca terminal wait --for tui-idle` then `terminal send --enter --wait-submit N`; read back with `terminal read --screen`"
+      - "Handles are runtime-scoped (term_...): re-list after an Orca restart"
+      - "Same install via the Orca CLI: `orca skills install --skill orca-cli --skill orchestration`"
+    requires:
+      - "Orca desktop app or headless runtime (`orca serve`) on the host; skills wrap the `orca` CLI"
+    docs: "https://github.com/stablyai/orca/tree/main/skills"
+
 # =============================================================================
 # NANOCLAW SKILLS (qwibitai/nanoclaw container/skills/)
 # =============================================================================
