@@ -4,7 +4,7 @@
 #
 #   orchestrate.sh init      <programme> [--trunk B] [--never-merge-into B,B] [--repo DIR]
 #   orchestrate.sh discover  [--environment E]...
-#   orchestrate.sh adopt     <programme> [--dry-run] [--environment E]...
+#   orchestrate.sh adopt     <programme> [--dry-run] [--include-new] [--environment E]...
 #   orchestrate.sh status    <programme>
 #   orchestrate.sh read      <programme> <lane> [lines]
 #   orchestrate.sh send      <programme> <lane> <pr|-> <text>
@@ -15,7 +15,8 @@
 #   orchestrate.sh post      <programme> <pr> <report.md>
 #   orchestrate.sh scrub     <programme> <file.md> [out.md]
 #   orchestrate.sh tick      <programme> [--once]
-#   orchestrate.sh loop      <programme> [--every 20m] [--max-ticks N] [--max-hours N] [--tmux]
+#   orchestrate.sh loop      <programme> [--every 20m] [--max-ticks N] [--max-hours N]
+#                            [--tick-timeout S] [--agent-cmd CMD] [--tmux]
 #   orchestrate.sh handover  <programme> [reason]
 #   orchestrate.sh takeover  <programme> [--takeover]
 #   orchestrate.sh retire    <programme> <lane>
@@ -26,7 +27,7 @@ PLUGIN_ROOT="$(dirname "$HERE")"
 # shellcheck source=./lib.sh
 . "$HERE/lib.sh"
 
-usage() { sed -n '2,21p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,22p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 
 # ----------------------------------------------------------------- init
 
@@ -73,7 +74,7 @@ v_discover() {
   local e wts
   for e in "${envs[@]}"; do
     orca_env_args "$e"
-    wts="$(timeout "$ORCA_TIMEOUT" "$ORCA" worktree list "${ORCA_ENV_ARGS[@]}" --json 2>/dev/null)"
+    wts="$(orca_call worktree list "${ORCA_ENV_ARGS[@]}" --json 2>/dev/null)"
     if [ -z "$wts" ] || [ "$(printf '%s' "$wts" | jq -r '.result.worktrees | length' 2>/dev/null)" = "" ]; then
       printf '%s\tUNREACHABLE\t-\t-\n' "$e"
       continue
@@ -88,11 +89,12 @@ v_discover() {
 # because a remote terminal list has come back empty while lanes were alive.
 v_adopt() {
   local programme="${1:-}"; shift || true
-  local dry=0
+  local dry=0 include_new=0
   local -a envs=()
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --dry-run) dry=1; shift ;;
+      --include-new) include_new=1; shift ;;
       --environment) envs+=("${2:-}"); shift 2 ;;
       *) shift ;;
     esac
@@ -102,11 +104,11 @@ v_adopt() {
   [ "${#envs[@]}" -gt 0 ] || envs=(local)
 
   printf 'lane\tenv\tworktree\tagent\thandle\tstatus\tctx\n'
-  local lane env wt handle kind text st ctx known
-  while IFS=$'\t' read -r lane env wt handle kind; do
+  local lane env wt handle kind text st ctx known new
+  while IFS=$'\t' read -r lane env wt handle kind new; do
     [ -n "$lane" ] || continue
     text="$(orca_screen "$handle" "$env")"
-    if [ -z "$text" ]; then
+    if [ -z "$text" ] && [ "$new" != new ]; then
       known="$(lane_reresolve "$lane")"
       if [ -n "$known" ] && [ "$known" != "$handle" ]; then
         handle="$known"; text="$(orca_screen "$handle" "$env")"
@@ -115,39 +117,55 @@ v_adopt() {
     st="$(classify "$kind" "$text")"
     [ -n "$text" ] || st=dead
     case "$(lane_field "$lane" status)" in
-      done|retired) [ "$st" = "idle" ] || [ "$st" = unknown ] && st="$(lane_field "$lane" status)" ;;
+      done|retired|needs-rebind) [ "$st" = "idle" ] || [ "$st" = unknown ] && st="$(lane_field "$lane" status)" ;;
     esac
     ctx="$(ctx_pct "$kind" "$text")"
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$lane" "$env" "$wt" "$kind" "$handle" "$st" "${ctx:--}"
-    [ "$dry" = 1 ] && continue
-    lane_upsert "$(jq -nc --arg lane "$lane" --arg env "$env" --arg handle "$handle" --arg wt "$wt" \
+    if [ "$new" = new ]; then
+      printf 'UNINDEXED\t%s\t%s\t%s\t%s\t%s\t%s\n' "$env" "$wt" "$kind" "$handle" "$st" "${ctx:--}"
+      { [ "$dry" = 1 ] || [ "$include_new" = 0 ]; } && continue
+    else
+      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$lane" "$env" "$wt" "$kind" "$handle" "$st" "${ctx:--}"
+      [ "$dry" = 1 ] && continue
+    fi
+    # Merge, never replace. branch, goal, exclusive and title are the
+    # operator's, and a re-verify pass that blanks them disarms the retirement
+    # guard, which only checks open PRs when it knows the branch.
+    lane_upsert "$(jq -nc --argjson old "$(lane_row "$lane")" \
+      --arg lane "$lane" --arg env "$env" --arg handle "$handle" --arg wt "$wt" \
       --arg agent "$kind" --arg st "$st" --arg ctx "$ctx" --arg t "$(now)" \
-      '{lane: $lane, env: $env, handle: $handle, worktree: $wt, branch: "", agent: $agent, goal: "",
-        exclusive: [], status: $st, ctx_pct: $ctx, last_seen: $t}')"
+      '{branch: "", goal: "", exclusive: [], title: ""} + $old
+       + {lane: $lane, env: $env, handle: $handle, worktree: $wt, agent: $agent,
+          status: $st, ctx_pct: $ctx, last_seen: $t}')"
     ev adopt lane "$lane" env "$env" worktree "$wt" agent "$kind" status "$st"
   done < <(adopt_candidates "${envs[@]}")
 }
 
-# Candidates come from the existing index when there is one (adopt is also the
-# re-verify pass), otherwise from discovery, one row per live terminal.
+# Candidates are the indexed lanes AND anything live that is not indexed. A lane
+# started by hand and never registered is the failure adopt exists to prevent,
+# so discovery runs every time, not only on an empty index.
 adopt_candidates() {
   local -a envs=("$@")
+  local indexed=""
   if [ -s "$LANES" ]; then
-    jq -r '[.lane, .env, .worktree, .handle, .agent] | @tsv' "$LANES"
-    return 0
+    indexed="$(jq -r '.handle' "$LANES" 2>/dev/null)"
+    jq -r '[.lane, .env, .worktree, .handle, .agent, ""] | @tsv' "$LANES"
   fi
-  local e n=0 id wt handle
+  local e id wt handle title rows
   for e in "${envs[@]}"; do
     orca_env_args "$e"
     while read -r id; do
       [ -n "$id" ] || continue
       wt="${id##*/}"
-      handle="$(timeout "$ORCA_TIMEOUT" "$ORCA" terminal list --worktree "id:$id" "${ORCA_ENV_ARGS[@]}" --json 2>/dev/null \
-        | jq -r '.result.terminals[]? | .handle' | head -1)"
-      [ -n "$handle" ] || continue
-      n=$((n + 1))
-      printf '%s\t%s\t%s\t%s\t%s\n' "L$n" "$e" "$wt" "$handle" "$(cfg default_agent claude)"
-    done < <(timeout "$ORCA_TIMEOUT" "$ORCA" worktree list "${ORCA_ENV_ARGS[@]}" --json 2>/dev/null | jq -r '.result.worktrees[]?.id')
+      jq -e --arg w "$wt" --arg e "$e" 'select(.worktree == $w and .env == $e)' "$LANES" >/dev/null 2>&1 && continue
+      rows="$(orca_call terminal list --worktree "id:$id" "${ORCA_ENV_ARGS[@]}" --json 2>/dev/null \
+        | jq -r '.result.terminals[]? | [.handle, (.title // "")] | @tsv')"
+      [ -n "$rows" ] || continue
+      while IFS=$'\t' read -r handle title; do
+        [ -n "$handle" ] || continue
+        printf '%s\n' "$indexed" | grep -qxF -- "$handle" && continue
+        printf '%s\t%s\t%s\t%s\t%s\tnew\n' "${title:-$wt}" "$e" "$wt" "$handle" "$(cfg default_agent claude)"
+      done <<< "$rows"
+    done < <(orca_call worktree list "${ORCA_ENV_ARGS[@]}" --json 2>/dev/null | jq -r '.result.worktrees[]?.id')
   done
 }
 
@@ -244,7 +262,14 @@ v_scrub() {
 # skill describes them. Everything here runs from the programme dir alone.
 v_tick() {
   prog_open "${1:-}"
-  owner_ensure || return 3
+  # Two ticks running together each rewrite lanes.jsonl, and the slower one
+  # discards the faster one's updates. mkdir is the atomic test-and-set.
+  if ! mkdir "$PROG/.tick.lock" 2>/dev/null; then
+    refuse tick-running "a tick is already running for $PROGRAMME"
+    return 3
+  fi
+  trap 'rmdir "$PROG/.tick.lock" 2>/dev/null' EXIT INT TERM
+  owner_ensure || { rmdir "$PROG/.tick.lock" 2>/dev/null; return 3; }
   cfg_changed && printf 'CONFIG CHANGED: programme.yaml differs from the copy fingerprinted when the lock was claimed\n'
 
   # 1. watchdog: a gap past twice the cadence is the first thing reported.
@@ -318,24 +343,36 @@ v_tick() {
     fi
   done < <(jq -r '.env' "$LANES" 2>/dev/null | sort -u)
 
-  # 6. open PRs and owed notices.
-  local open_prs owed_n
-  open_prs="$(gh pr list --state open --json number --jq 'length' 2>/dev/null || echo 0)"
+  # 6. open PRs and owed notices. A counter that could not be read is unknown,
+  # never zero: a network blip must not read as "nothing left to do".
+  local open_prs owed_n unknown=0
+  open_prs="$(open_pr_count)" || { open_prs=""; unknown=1; }
   owed_n="$(owed_list | wc -l | tr -d ' ')"
+  if owed_list | grep -q 'owed-unknown'; then unknown=1; fi
   [ "$owed_n" = 0 ] || v_owed_report
+  if [ "$unknown" = 1 ]; then
+    printf 'DEGRADED: a counter could not be read, so the exit condition is not evaluated this tick\n'
+    ev degraded reason "counter unreadable" open_prs "${open_prs:-?}" owed "$owed_n"
+  fi
 
   # 10. record the tick, then say whether the exit condition holds.
   ev_json tick "$(jq -nc --arg n "$n" --arg w "$working" --arg i "$idle" --arg a "$asking" \
-    --arg d "$done_n" --arg x "$dead" --arg p "$open_prs" --arg o "$owed_n" --arg g "$gap" \
+    --arg d "$done_n" --arg x "$dead" --arg p "${open_prs:-0}" --arg o "$owed_n" --arg g "$gap" \
     '{n: ($n | tonumber), lanes: {working: ($w | tonumber), idle: ($i | tonumber), asking: ($a | tonumber),
       done: ($d | tonumber), dead: ($x | tonumber)}, open_prs: ($p | tonumber), owed: ($o | tonumber),
       gap_s: ($g | tonumber)}')"
   owner_touch
 
   local verdict
-  verdict="$(exit_eval "$(cfg exit)" "$open_prs" "$owed_n" "$done_n" "$(lanes | wc -l | tr -d ' ')")"
+  if [ "$unknown" = 1 ]; then
+    verdict=undecidable
+  else
+    verdict="$(exit_eval "$(cfg exit)" "$open_prs" "$owed_n" "$done_n" "$(lanes | wc -l | tr -d ' ')")"
+  fi
   printf '\ntick %s: working=%s idle=%s asking=%s done=%s dead=%s open_prs=%s owed=%s gap=%ss exit=%s\n' \
-    "$n" "$working" "$idle" "$asking" "$done_n" "$dead" "$open_prs" "$owed_n" "$gap" "$verdict"
+    "$n" "$working" "$idle" "$asking" "$done_n" "$dead" "${open_prs:-?}" "$owed_n" "$gap" "$verdict"
+  rmdir "$PROG/.tick.lock" 2>/dev/null
+  trap - EXIT INT TERM
   [ "$verdict" = true ] && return 10
   return 0
 }
@@ -352,13 +389,14 @@ v_owed_report() {
 # instead. STOP ends it, and so do max-ticks, max-hours and the exit condition.
 v_loop() {
   local programme="${1:-}"; shift || true
-  local every="" max_ticks=0 max_hours=0 use_tmux=0 agent_cmd=""
+  local every="" max_ticks=0 max_hours=0 use_tmux=0 agent_cmd="" tick_timeout=""
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --every) every="${2:-}"; shift 2 ;;
       --max-ticks) max_ticks="${2:-0}"; shift 2 ;;
       --max-hours) max_hours="${2:-0}"; shift 2 ;;
       --agent-cmd) agent_cmd="${2:-}"; shift 2 ;;
+      --tick-timeout) tick_timeout="${2:-}"; shift 2 ;;
       --tmux) use_tmux=1; shift ;;
       *) shift ;;
     esac
@@ -378,7 +416,7 @@ v_loop() {
     local session="orchestrate-$PROGRAMME"
     tmux has-session -t "$session" 2>/dev/null && die "tmux session $session already exists; stop it with: tmux kill-session -t $session" 1
     local -a inner=("$HERE/orchestrate.sh" loop "$PROGRAMME" --every "$every" \
-      --max-ticks "$max_ticks" --max-hours "$max_hours")
+      --max-ticks "$max_ticks" --max-hours "$max_hours" --tick-timeout "$tick_timeout")
     [ -n "$agent_cmd" ] && inner+=(--agent-cmd "$agent_cmd")
     tmux new-session -d -s "$session" -n loop \
       -e "ORCHESTRATE_HOME=$ORCHESTRATE_HOME" -e "ORCHESTRATE_LOOP_LOG=$PROG/loop.log" \
@@ -391,6 +429,10 @@ v_loop() {
   [ -z "${ORCHESTRATE_LOOP_LOG:-}" ] || exec >> "$ORCHESTRATE_LOOP_LOG" 2>&1
   interval="$(dur_s "$every")"
   [ "${interval:-0}" -gt 0 ] 2>/dev/null || interval=60
+  # A tick with no bound hangs the loop, and STOP is only read between ticks, so
+  # a wedged tick makes the documented stop mechanism inert.
+  [ -n "$tick_timeout" ] || tick_timeout="$(cfg loop.tick_timeout "$(( interval * 2 ))")"
+  [ "${tick_timeout:-0}" -gt 0 ] 2>/dev/null || tick_timeout=$(( interval * 2 ))
   deadline=0
   [ "$max_hours" != 0 ] && deadline=$(( $(epoch) + max_hours * 3600 ))
   ev loop action start every "$every" max_ticks "$max_ticks" max_hours "$max_hours"
@@ -401,15 +443,26 @@ v_loop() {
     i=$((i + 1))
     if [ -n "$agent_cmd" ]; then
       # The judgment half runs in a headless agent, fed the tick prompt.
-      ORCHESTRATE_PROGRAMME="$PROGRAMME" bash -c "$agent_cmd" < "$PLUGIN_ROOT/assets/tick-prompt.md"
+      ORCHESTRATE_PROGRAMME="$PROGRAMME" run_bounded "$tick_timeout" \
+        bash -c "$agent_cmd < '$PLUGIN_ROOT/assets/tick-prompt.md'"
       rc=$?
     else
-      v_tick "$PROGRAMME"
+      run_bounded "$tick_timeout" "$HERE/orchestrate.sh" tick "$PROGRAMME"
       rc=$?
+    fi
+    if [ "$rc" = 124 ]; then
+      ev tick-timeout n "$i" after "$tick_timeout"
+      printf 'tick %s exceeded %ss and was stopped; continuing\n' "$i" "$tick_timeout"
+      rmdir "$PROG/.tick.lock" 2>/dev/null
     fi
     if [ "$rc" = 10 ]; then ev loop action stop reason exit-condition; printf 'exit condition holds, loop ends\n'; break; fi
     [ -f "$STOP" ] && continue
-    sleep "$interval"
+    # Wait in slices so STOP is honoured during the gap, not only between ticks.
+    local slept=0
+    while [ "$slept" -lt "$interval" ]; do
+      [ -f "$STOP" ] && break
+      sleep 1; slept=$((slept + 1))
+    done
   done
 }
 
@@ -481,17 +534,23 @@ v_retire() {
     *) refuse retire-busy "lane $lane is $st, not idle"; return 3 ;;
   esac
   branch="$(lane_field "$lane" branch)"
-  if [ -n "$branch" ]; then
-    local open_n
-    open_n="$(gh pr list --head "$branch" --state open --json number --jq 'length' 2>/dev/null || echo 0)"
-    [ "${open_n:-0}" = 0 ] || { refuse retire-unmerged "lane $lane still has $open_n open PRs on $branch"; return 3; }
+  if [ -z "$branch" ]; then
+    refuse retire-unknown-branch "lane $lane has no branch recorded, so nothing can say its work landed"
+    return 3
   fi
+  local open_n rc
+  open_n="$(gh pr list --head "$branch" --state open --json number --jq 'length' 2>/dev/null)"; rc=$?
+  if [ "$rc" != 0 ] || ! printf '%s' "$open_n" | grep -Eq '^[0-9]+$'; then
+    refuse retire-unknown-state "cannot read the PR state for $branch; not retiring on a guess"
+    return 3
+  fi
+  [ "$open_n" = 0 ] || { refuse retire-unmerged "lane $lane still has $open_n open PRs on $branch"; return 3; }
   dirty="$(orca_screen "$(lane_field "$lane" handle)" "$env" | tail -3)"
   if [ -n "$dirty" ] && ! printf '%s\n' "$dirty" | grep -Eq -- "$(agent_cfg "$(lane_field "$lane" agent)" shell_prompt '\$ $')"; then
     if [ "$st" != "done" ]; then refuse retire-live "lane $lane still has a live agent screen"; return 3; fi
   fi
   orca_env_args "$env"
-  timeout "$ORCA_TIMEOUT" "$ORCA" worktree rm --worktree "name:$wt" "${ORCA_ENV_ARGS[@]}" --json >/dev/null 2>&1 \
+  orca_call worktree rm --worktree "name:$wt" "${ORCA_ENV_ARGS[@]}" --json >/dev/null 2>&1 \
     || { printf 'orca refused to remove %s\n' "$wt" >&2; return 1; }
   lane_set "$lane" status retired
   ev retire lane "$lane" worktree "$wt" env "$env"
