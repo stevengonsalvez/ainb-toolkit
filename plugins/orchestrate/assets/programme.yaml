@@ -6,12 +6,20 @@
 trunk: example-trunk                  # the ONLY branch a merge may target
 never_merge_into: [main, master]      # a wall, config cannot lift it
 autonomy: ask                         # or merge_on_verdict; set this deliberately
+allow_fork_prs: false                 # a fork head is refused unless this is true
 signing: {required: true, key: "<your-signing-key-id>"}
 attribution_guard: true
 attribution_patterns: "co-authored-by|generated with|assisted by"   # append your vendor strings, pipe separated
-ci: ignore                            # or gate
+ci: ignore                            # or gate, which reads the pinned head's checks
+
+# REQUIRED. The checkout the merge gate reads its evidence from. Without it the
+# gate would read whatever directory a tick happened to start in, which is how
+# the signatures checked and the PR merged end up in different repositories.
+repo: /absolute/path/to/your/checkout
+gh_repo: ""                           # owner/name; derived from origin when empty
 
 default_agent: claude
+send: {max_chars: 2000}               # a message is one line, capped here
 
 loop: {mode: self_paced, every: 20m, max_ticks: 0, max_hours: 0}
 compact: {at_pct: 85, keep: "keep the goal, the branch, the open PR and the last decision"}
