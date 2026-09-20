@@ -29,7 +29,7 @@ export PATH="$HERE/stubs:$PATH"
 export SEND_SETTLE_S=0 RESUME_SETTLE_S=0
 export ORCHESTRATE_HARNESS=test
 export ORCHESTRATE_SESSION=session-one
-mkdir -p "$STUB_STATE/screens" "$STUB_STATE/terminals" "$STUB_STATE/prs"
+mkdir -p "$STUB_STATE/screens" "$STUB_STATE/terminals" "$STUB_STATE/prs" "$STUB_STATE/noecho"
 
 P=prog
 D="$ORCHESTRATE_HOME/$P"
@@ -38,7 +38,8 @@ refused() { grep -c "\"what\":\"$1\"" "$D/events.jsonl" 2>/dev/null | tr -d ' ';
 # Set a key whether it sits on its own line or inside an inline map.
 setcfg() {
   local k="$1" v="$2"
-  sed -i -E "s#^([ ]*)$k:[^{].*#\1$k: $v#; s#([{,] ?)$k: [^,}]*#\1$k: $v#" "$D/programme.yaml"
+  sed -i.bak -E "s#^([ ]*)$k:[^{].*#\1$k: $v#; s#([{,] ?)$k: [^,}]*#\1$k: $v#" "$D/programme.yaml"
+  rm -f "$D/programme.yaml.bak"
 }
 
 idle_screen()  { printf 'some work happened\n>\n❯\n' > "$STUB_STATE/screens/$1.txt"; }
@@ -193,7 +194,7 @@ ATTR_SHA="$(git -C "$REPO" rev-parse feat-attr)"
 # shellcheck disable=SC2034  # read by hardening.sh
 
 TRUNK_SHA="$(git -C "$REPO" rev-parse example-trunk)"
-sed -i "s#^repo:.*#repo: $REPO#" "$D/programme.yaml"
+sed -i.bak "s#^repo:.*#repo: $REPO#" "$D/programme.yaml" && rm -f "$D/programme.yaml.bak"
 mkdir -p "$STUB_STATE/checks"
 printf '[{"name":"build","bucket":"pass"}]\n' > "$STUB_STATE/checks/default.json"
 
@@ -255,6 +256,8 @@ has "max-ticks bounds the loop" "$out" "max-ticks reached"
 
 # shellcheck source=./hardening.sh
 . "$HERE/hardening.sh"
+# shellcheck source=./review.sh
+. "$HERE/review.sh"
 
 sect "hard refusals have no code path at all"
 src="$(cat "$PLUGIN"/scripts/*.sh)"
@@ -275,17 +278,39 @@ if command -v shellcheck >/dev/null 2>&1; then
   shellcheck -S warning "$PLUGIN"/scripts/*.sh >/dev/null 2>&1 && ok "shellcheck scripts" || bad "shellcheck scripts"
 fi
 
-printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
-[ "$FAIL" = 0 ] || exit 1
+# Honest scope: every script here carries a bash shebang and is executed by
+# bash, so re-running this file from zsh would prove nothing about parsing. The
+# real hazard is a zsh CALLER, whose arguments do not word split the way a bash
+# caller's do, handing values to the entry script.
+if command -v zsh >/dev/null 2>&1; then
+  printf '\n== a zsh caller hands arguments over intact\n'
+  idle_screen h-zsh
+  printf 'h-zsh\tZSH\n' > "$STUB_STATE/terminals/zshwt"
+  cat >> "$D/lanes.jsonl" <<'JSON'
+{"lane":"ZSH","env":"local","handle":"h-zsh","worktree":"zshwt","branch":"z","agent":"claude","title":"ZSH","status":"working","ctx_pct":"","last_seen":""}
+JSON
+  zsh -f -c '
+    msg="two  spaces, a glob * and a \$dollar"
+    "$1" send "$2" ZSH - "$msg" >/dev/null 2>&1
+  ' zsh "$OS" "$P"
+  has "a value with spaces, a glob and a dollar arrives byte for byte" \
+    "$(cat "$STUB_STATE/sent/h-zsh.txt" 2>/dev/null)" 'two  spaces, a glob * and a $dollar'
+  is "it arrives as exactly one line" "$(wc -l < "$STUB_STATE/sent/h-zsh.txt" | tr -d ' ')" 1
+  zsh -f -c '
+    "$1" read "$2" ZSH 3 >/dev/null 2>&1
+  ' zsh "$OS" "$P"
+  is "a read from a zsh caller does not error" "$?" 0
+fi
 
-# A zsh caller does not word split, which broke two earlier scripts. Prove the
-# whole suite still passes when zsh is the shell that invokes it.
-if [ -z "${ORCH_TEST_ZSH:-}" ] && command -v zsh >/dev/null 2>&1; then
-  printf '\n== re-running the whole suite from zsh\n'
-  if ORCH_TEST_ZSH=1 zsh -c "'$HERE/run.sh'" >"$TMP/zsh.log" 2>&1; then
-    printf '  ok   zsh caller: %s\n' "$(tail -1 "$TMP/zsh.log")"
+if [ -n "${ORCH_TEST_MUTANTS:-}" ]; then
+  printf '\n== mutation check\n'
+  if "$HERE/mutants.sh" >"$TMP/mut.log" 2>&1; then
+    while read -r line; do ok "$line"; done < <(grep '^killed ' "$TMP/mut.log")
   else
-    printf '  FAIL zsh caller\n'; tail -20 "$TMP/zsh.log"; exit 1
+    bad "mutation check"; tail -20 "$TMP/mut.log"
   fi
 fi
+
+printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
+[ "$FAIL" = 0 ] || exit 1
 exit 0
