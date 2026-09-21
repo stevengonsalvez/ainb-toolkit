@@ -869,3 +869,77 @@ describe('setup-external.sh npx install list', () => {
         }
     });
 });
+
+describe('Antigravity CLI skills registration (config/skills.json)', () => {
+    const tempDir = path.join(__dirname, 'tmp-agy-skills-test');
+
+    beforeEach(() => {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+        fs.mkdirSync(tempDir, { recursive: true });
+    });
+
+    afterEach(() => {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    });
+
+    const run = (tool, mockHomeDir) => execSync(
+        `node bootstrap.js --tool=${tool} --homeDir=${mockHomeDir}`,
+        { cwd: __dirname, stdio: 'pipe', env: { ...process.env } });
+
+    const configPath = (mockHomeDir) =>
+        path.join(mockHomeDir, '.gemini', 'config', 'skills.json');
+
+    it('registers the deployed skills tree, which agy does not discover on its own', () => {
+        const home = path.join(tempDir, 'home');
+        fs.mkdirSync(home, { recursive: true });
+        run('antigravity', home);
+
+        const cfg = JSON.parse(fs.readFileSync(configPath(home), 'utf8'));
+        expect(cfg.entries.map(e => e.path))
+            .toContain(path.join(home, '.gemini', 'skills'));
+    });
+
+    it('also registers ~/.agents/skills when that tree exists', () => {
+        const home = path.join(tempDir, 'home-agents');
+        fs.mkdirSync(path.join(home, '.agents', 'skills'), { recursive: true });
+        run('antigravity', home);
+
+        const paths = JSON.parse(fs.readFileSync(configPath(home), 'utf8'))
+            .entries.map(e => e.path);
+        expect(paths).toContain(path.join(home, '.agents', 'skills'));
+        expect(paths).toContain(path.join(home, '.gemini', 'skills'));
+    });
+
+    it('lists no directory that does not exist', () => {
+        const home = path.join(tempDir, 'home-no-agents');
+        fs.mkdirSync(home, { recursive: true });
+        run('antigravity', home);
+
+        for (const e of JSON.parse(fs.readFileSync(configPath(home), 'utf8')).entries) {
+            expect(fs.existsSync(e.path)).toBe(true);
+        }
+    });
+
+    it('never overwrites a user-authored skills.json', () => {
+        const home = path.join(tempDir, 'home-existing');
+        fs.mkdirSync(path.join(home, '.gemini', 'config'), { recursive: true });
+        const mine = { entries: [{ path: '/somewhere/of/my/own' }] };
+        fs.writeFileSync(configPath(home), JSON.stringify(mine));
+
+        run('antigravity', home);
+
+        expect(JSON.parse(fs.readFileSync(configPath(home), 'utf8'))).toEqual(mine);
+    });
+
+    it('applies to the gemini alias but not to claude-code-4.5', () => {
+        const geminiHome = path.join(tempDir, 'home-gemini');
+        fs.mkdirSync(geminiHome, { recursive: true });
+        run('gemini', geminiHome);
+        expect(fs.existsSync(configPath(geminiHome))).toBe(true);
+
+        const claudeHome = path.join(tempDir, 'home-claude');
+        fs.mkdirSync(claudeHome, { recursive: true });
+        run('claude-code-4.5', claudeHome);
+        expect(fs.existsSync(path.join(claudeHome, '.claude', 'config', 'skills.json'))).toBe(false);
+    });
+});
