@@ -1,0 +1,63 @@
+{
+  "name": "hull-city-demo",
+  "takes": "/home/claude/demo-archive/takes",
+  "out": "/tmp/claude-1000/demo-compose/hull",
+  "theme": {
+    "bg": "#0A0A0A",
+    "surface": "#141414",
+    "accent": "#F7B613",
+    "highlight": "#1ABC9C",
+    "text": "#FFFFFF",
+    "muted": "#BDBDBD",
+    "fonts": {
+      "display": { "file": "fonts/poppins-700.woff2", "family": "Poppins", "weight": "600 700" },
+      "body": { "file": "fonts/montserrat-var.woff2", "family": "Montserrat", "weight": "500 600" }
+    }
+  },
+  "cards": {
+    "title": {
+      "kicker": "Product demo",
+      "title": "Hull City Academy on SHOT",
+      "sub": "Real navigation, from home, as a <b>coach</b> and a <b>parent</b>",
+      "dur": 3
+    },
+    "switches": [
+      {
+        "id": "switch-card",
+        "before": "parent-schedule",
+        "kicker": "Switching view",
+        "title": "Now, the parent",
+        "sub": "Claire Brennan · <b>Alfie's parent</b>",
+        "dur": 2.5
+      }
+    ],
+    "end": {
+      "kicker": "Hull City Academy",
+      "title": "SHOT",
+      "sub": "One clubhouse for <b>coaches</b> and <b>parents</b>",
+      "dur": 3
+    }
+  },
+  "chapters": [
+    { "name": "coach-landing", "title": "Coach home", "persona": "Coach · Danny Reid",
+      "labels": ["Your delivery, last 30 days", "Attendance at 96.4%", "Evaluations done: 21 of 21", "No evaluations overdue", "Team focus this week"] },
+    { "name": "club-executive", "title": "Club overview", "persona": "Coach · Danny Reid", "cuts": [[10.98, 11.2]],
+      "labels": ["Every team, athletes counted", "Club attendance and evaluations", "Welfare beside performance", "Two injured, split by severity", "Open injuries across the club", "Coaches compared side by side", "Sarah Whitlock: 3 overdue"] },
+    { "name": "comms", "title": "Announcements", "persona": "Coach · Danny Reid", "cuts": [[10.95, 11.2]],
+      "labels": ["General reaches 26 recipients", "Club, coaches and team channels", "Coaches channel: 3 recipients", "Coaches-only post", "U13 team: 7 recipients", "PDF attached to the post", "Choose who it reaches"] },
+    { "name": "documents", "title": "Club documents", "persona": "Coach · Danny Reid",
+      "labels": ["Club document attached to post", "Documents: policies and forms", "Visibility set at upload", "Four documents, file and size", "Marked staff only", "Share pre-fills the post"] },
+    { "name": "evaluations-reports", "title": "Evaluations and reports", "persona": "Coach · Danny Reid",
+      "labels": ["One athlete: score, streak, events", "Season attendance: 2 of 2", "Assign block objectives", "Block 5 of 6, week 29", "One focus per pillar"] },
+    { "name": "match-time", "title": "Match time", "persona": "Coach · Danny Reid",
+      "labels": ["Won 3-1: scorers and minutes", "Football time: 70 minutes", "Log ball-rolling and football time", "Minutes played vs scheduled 90", "On and off stints per athlete"] },
+    { "name": "consent", "title": "Consent forms", "persona": "Coach · Danny Reid",
+      "labels": ["Consent forms due Friday", "Consent form attached"] },
+    { "name": "parent-schedule", "title": "Schedule", "persona": "Parent · Claire Brennan",
+      "labels": ["Alfie's sessions: when and where", "This week: nothing scheduled", "Match on the 6th"] },
+    { "name": "parent-development", "title": "Development", "persona": "Parent · Claire Brennan",
+      "labels": ["Alfie: 68.1 over 4 weeks", "Each session: coach, score, change", "First session shows a dash", "Scored 70.8 of 100"] },
+    { "name": "parent-comms", "title": "Club messages", "persona": "Parent · Claire Brennan",
+      "labels": ["Only her club and Alfie's team", "Parent comments on team post", "Coach replies in thread"] }
+  ]
+}
