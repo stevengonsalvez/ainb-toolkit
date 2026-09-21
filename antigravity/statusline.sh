@@ -315,60 +315,116 @@ fi
 CTX_BAR=$(_bar "$CTX_PCT" 50 80)
 
 # ════════════════════════════════════════════════════════════════════════════
-# SIGNAL 7: Quota and Rate Limits (weekly and block usage bars)
+# SIGNAL 7: Quota and Rate Limits (5-hour and weekly usage bars)
 # ════════════════════════════════════════════════════════════════════════════
-QUOTA_BAR=""
-QUOTA_RESET_FMT=""
+FIVE_HR_BAR=""
+FIVE_HR_RESET_FMT=""
+WEEK_BAR=""
+WEEK_RESET_FMT=""
 
-# 1. Antigravity .quota bucket
-QUOTA_BUCKET=$(_jq '.quota | keys[0]')
-if [[ -n "$QUOTA_BUCKET" ]]; then
-  REMAINING_FRAC=$(_jq ".quota[\"$QUOTA_BUCKET\"].remaining_fraction")
-  RESET_SECS=$(_jq ".quota[\"$QUOTA_BUCKET\"].reset_in_seconds")
-  RESET_TIME=$(_jq ".quota[\"$QUOTA_BUCKET\"].reset_time")
-  if [[ -n "$REMAINING_FRAC" ]]; then
-    QUOTA_PCT=$(awk -v rf="$REMAINING_FRAC" 'BEGIN { printf "%.0f", (1.0 - rf) * 100 }')
-    QUOTA_LABEL="wk"
-    [[ "$QUOTA_BUCKET" == *"5h"* || "$QUOTA_BUCKET" == *"five"* ]] && QUOTA_LABEL="5h"
-    QUOTA_BAR="${QUOTA_LABEL} $(_bar "$QUOTA_PCT" 70 90)"
-    if [[ -n "$RESET_SECS" && "$RESET_SECS" =~ ^[0-9]+$ ]]; then
-      NOW=$(date +%s)
-      RESET_EPOCH=$(( NOW + RESET_SECS ))
-      QUOTA_RESET_FMT=$(_fmt_epoch "$RESET_EPOCH" '%b %e %H:%M' | tr -s ' ')
-    elif [[ -n "$RESET_TIME" ]]; then
-      QUOTA_RESET_FMT="$RESET_TIME"
+# Determine provider prefix based on active model
+PROVIDER_PREFIX="gemini"
+if [[ "$MODEL_SHORT" =~ (claude|sonnet|haiku|opus|gpt|o1|o3|3p) ]]; then
+  PROVIDER_PREFIX="3p"
+fi
+
+# 1. Antigravity .quota format (gemini-5h, gemini-weekly, 3p-5h, 3p-weekly)
+HAS_AGY_QUOTA=$(_jq '.quota // empty')
+if [[ -n "$HAS_AGY_QUOTA" ]]; then
+  # 5-hour bucket: try "${PROVIDER_PREFIX}-5h", then any key containing 5h
+  FIVE_HR_KEY="${PROVIDER_PREFIX}-5h"
+  if [[ -z "$(_jq ".quota[\"$FIVE_HR_KEY\"] // empty")" ]]; then
+    FIVE_HR_KEY=$(_jq '.quota | keys[] | select(test("5h|five"))' | head -n 1)
+  fi
+  if [[ -n "$FIVE_HR_KEY" ]]; then
+    FRAC=$(_jq ".quota[\"$FIVE_HR_KEY\"].remaining_fraction")
+    R_SECS=$(_jq ".quota[\"$FIVE_HR_KEY\"].reset_in_seconds")
+    R_TIME=$(_jq ".quota[\"$FIVE_HR_KEY\"].reset_time")
+    if [[ -n "$FRAC" ]]; then
+      PCT=$(awk -v rf="$FRAC" 'BEGIN { printf "%.0f", (1.0 - rf) * 100 }')
+      FIVE_HR_BAR="5h $(_bar "$PCT" 60 85)"
+      if [[ -n "$R_SECS" && "$R_SECS" =~ ^[0-9]+$ ]]; then
+        NOW=$(date +%s)
+        FIVE_HR_RESET_FMT=$(_fmt_epoch "$(( NOW + R_SECS ))" '%H:%M')
+      elif [[ -n "$R_TIME" ]]; then
+        FIVE_HR_RESET_FMT="$R_TIME"
+      fi
+    fi
+  fi
+
+  # Weekly bucket: try "${PROVIDER_PREFIX}-weekly", then any key containing week|7d
+  WEEK_KEY="${PROVIDER_PREFIX}-weekly"
+  if [[ -z "$(_jq ".quota[\"$WEEK_KEY\"] // empty")" ]]; then
+    WEEK_KEY=$(_jq '.quota | keys[] | select(test("week|7d"))' | head -n 1)
+  fi
+  if [[ -n "$WEEK_KEY" ]]; then
+    FRAC=$(_jq ".quota[\"$WEEK_KEY\"].remaining_fraction")
+    R_SECS=$(_jq ".quota[\"$WEEK_KEY\"].reset_in_seconds")
+    R_TIME=$(_jq ".quota[\"$WEEK_KEY\"].reset_time")
+    if [[ -n "$FRAC" ]]; then
+      PCT=$(awk -v rf="$FRAC" 'BEGIN { printf "%.0f", (1.0 - rf) * 100 }')
+      WEEK_BAR="wk $(_bar "$PCT" 70 90)"
+      if [[ -n "$R_SECS" && "$R_SECS" =~ ^[0-9]+$ ]]; then
+        NOW=$(date +%s)
+        WEEK_RESET_FMT=$(_fmt_epoch "$(( NOW + R_SECS ))" '%b %e %H:%M' | tr -s ' ')
+      elif [[ -n "$R_TIME" ]]; then
+        WEEK_RESET_FMT="$R_TIME"
+      fi
     fi
   fi
 fi
 
-# 2. Claude Code rate limits fallback
-if [[ -z "$QUOTA_BAR" ]]; then
+# 2. Fallback: Claude Code style .rate_limits
+if [[ -z "$FIVE_HR_BAR" && -z "$WEEK_BAR" ]]; then
   FIVE_HR_JSON=$(_jq '.rate_limits.five_hour.used_percentage')
   WEEK_JSON=$(_jq '.rate_limits.seven_day.used_percentage')
+  if [[ -n "$FIVE_HR_JSON" ]]; then
+    FIVE_HR_PCT=$(printf "%.0f" "$FIVE_HR_JSON" 2>/dev/null || echo 0)
+    FIVE_HR_RESET_FMT=$(_fmt_epoch "$(_jq '.rate_limits.five_hour.resets_at')" '%H:%M')
+    FIVE_HR_BAR="5h $(_bar "$FIVE_HR_PCT" 60 85)"
+  fi
   if [[ -n "$WEEK_JSON" ]]; then
     WEEK_PCT=$(printf "%.0f" "$WEEK_JSON" 2>/dev/null || echo 0)
     WEEK_RESET_FMT=$(_fmt_epoch "$(_jq '.rate_limits.seven_day.resets_at')" '%b %e %H:%M' | tr -s ' ')
-    QUOTA_BAR="wk $(_bar "$WEEK_PCT" 70 90)"
-    QUOTA_RESET_FMT="$WEEK_RESET_FMT"
-  elif [[ -n "$FIVE_HR_JSON" ]]; then
-    FIVE_HR_PCT=$(printf "%.0f" "$FIVE_HR_JSON" 2>/dev/null || echo 0)
-    FIVE_HR_RESET_FMT=$(_fmt_epoch "$(_jq '.rate_limits.five_hour.resets_at')" '%H:%M')
-    QUOTA_BAR="5h $(_bar "$FIVE_HR_PCT" 60 85)"
-    QUOTA_RESET_FMT="$FIVE_HR_RESET_FMT"
+    WEEK_BAR="wk $(_bar "$WEEK_PCT" 70 90)"
   fi
 fi
 
 # ════════════════════════════════════════════════════════════════════════════
-# SIGNAL 8: Cost and Subscription Tier
+# SIGNAL 8: Cost, Subscription Tier, and Account
 # ════════════════════════════════════════════════════════════════════════════
 SESSION_COST=$(_jq '.cost.total_cost_usd')
 COST_DISPLAY=""
+COST_COLOR="$FG_GREY"
 PLAN_TIER=$(_jq '.plan_tier')
+EMAIL=$(_jq '.email')
+
+# Clean tier name if present, e.g. "Google AI Pro" -> "Pro"
+TIER_SHORT=""
+if [[ -n "$PLAN_TIER" ]]; then
+  TIER_SHORT=$(printf '%s' "$PLAN_TIER" | sed -E 's/^[Gg]oogle[[:space:]]+[Aa][Ii][[:space:]]*//' | tr -d '\r\n')
+  TIER_SHORT="${TIER_SHORT#"${TIER_SHORT%%[![:space:]]*}"}"
+  TIER_SHORT="${TIER_SHORT%"${TIER_SHORT##*[![:space:]]}"}"
+fi
+
+# Account username from email (e.g. lazymonkkmann@gmail.com -> lazymonkkmann)
+ACCOUNT_NAME=""
+if [[ -n "$EMAIL" ]]; then
+  ACCOUNT_NAME="${EMAIL%%@*}"
+fi
 
 if [[ -n "$SESSION_COST" && "$SESSION_COST" =~ ^[0-9] ]]; then
   COST_DISPLAY=$(printf "\$%.2f" "$SESSION_COST" 2>/dev/null || echo "")
+  COST_COLOR="$FG_GREEN"
+elif [[ -n "$ACCOUNT_NAME" && -n "$TIER_SHORT" ]]; then
+  COST_DISPLAY="${ACCOUNT_NAME} (${TIER_SHORT})"
+  COST_COLOR="$FG_GREY"
+elif [[ -n "$ACCOUNT_NAME" ]]; then
+  COST_DISPLAY="${ACCOUNT_NAME}"
+  COST_COLOR="$FG_GREY"
 elif [[ -n "$PLAN_TIER" ]]; then
-  COST_DISPLAY="${FG_GREY}${PLAN_TIER}${RESET}"
+  COST_DISPLAY="${PLAN_TIER}"
+  COST_COLOR="$FG_GREY"
 fi
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -533,11 +589,14 @@ L2="${BOLD}${FG_MAGENTA}${MODEL_SHORT}${RESET}"
 [[ -n "$EFFORT_DISPLAY" ]] && L2+=" ${SEP} ${EFFORT_DISPLAY}"
 L2+=" ${SEP} ${HEALTH_FG}${HEALTH_EMOJI} ${MSG_COUNT}/50${RESET}"
 L2+=" ${SEP} ctx ${CTX_BAR}"
-if [[ -n "$QUOTA_BAR" ]]; then
-  L2+=" ${SEP} ${QUOTA_BAR}"
-  [[ -n "$QUOTA_RESET_FMT" ]] && L2+=" ${FG_GREY}↻ ${QUOTA_RESET_FMT}${RESET}"
+[[ -n "$FIVE_HR_BAR" ]] && L2+=" ${SEP} ${FIVE_HR_BAR}"
+if [[ -n "$WEEK_BAR" ]]; then
+  L2+=" ${SEP} ${WEEK_BAR}"
+  [[ -n "$WEEK_RESET_FMT" ]] && L2+=" ${FG_GREY}↻ ${WEEK_RESET_FMT}${RESET}"
+elif [[ -n "$FIVE_HR_RESET_FMT" ]]; then
+  L2+=" ${FG_GREY}↻ ${FIVE_HR_RESET_FMT}${RESET}"
 fi
-[[ -n "$COST_DISPLAY" ]] && L2+=" ${SEP} ${FG_GREEN}${COST_DISPLAY}${RESET}"
+[[ -n "$COST_DISPLAY" ]] && L2+=" ${SEP} ${COST_COLOR}${COST_DISPLAY}${RESET}"
 [[ -n "$TASKS_DISPLAY" ]] && L2+=" ${SEP} ${TASKS_DISPLAY}"
 [[ -n "$ARTIFACT_DISPLAY" ]] && L2+=" ${SEP} ${ARTIFACT_DISPLAY}"
 [[ -n "$SANDBOX_DISPLAY" ]] && L2+=" ${SEP} ${SANDBOX_DISPLAY}"
@@ -565,32 +624,6 @@ if grep -qsF 'rtk hook' "${_RTK_DIR}/.claude/settings.json" 2>/dev/null \
   L2+=" \033[38;2;${C_GREEN}m${_rtk_capL}\033[48;2;${C_GREEN}m\033[38;2;${C_BLACK}m RTK ${RESET}\033[38;2;${C_GREEN}m${_rtk_capR}${RESET}"
 fi
 
-# ── Output ────────────────────────────────────────────────────────────────────
-printf '%b\n %b' "$L1" "$L2"
-
-# Reflect timeline dashboard (if installed)
-_find_timeline() {
-  local base="$1"
-  for sub in plugin/scripts scripts; do
-    [[ -x "$base/$sub/reflect_timeline.sh" ]] && { printf '%s' "$base/$sub/reflect_timeline.sh"; return 0; }
-  done
-  return 1
-}
-TIMELINE_HELPER=""
-if [[ -n "${CLAUDE_PLUGIN_ROOT:-}" ]]; then
-  TIMELINE_HELPER="$(_find_timeline "$CLAUDE_PLUGIN_ROOT")"
-fi
-if [[ -z "$TIMELINE_HELPER" ]]; then
-  _REFLECT_CACHE="$HOME/.claude/plugins/cache/agents-in-a-box/reflect"
-  while IFS= read -r _v; do
-    TIMELINE_HELPER="$(_find_timeline "${_v%/}")" && break
-  done < <(ls -1d "$_REFLECT_CACHE"/*/ 2>/dev/null | sort -Vr)
-fi
-if [[ "${REFLECT_TIMELINE_DISABLE:-0}" != "1" ]] && [[ -x "$TIMELINE_HELPER" ]]; then
-  REFLECT_TIMELINE_SESSION_ID="$(_jq '.session_id // .conversation_id')" \
-  REFLECT_TIMELINE_PROJECT_DIR="$(_jq '.workspace.project_dir // .workspace.current_dir')" \
-    "$TIMELINE_HELPER" 2>/dev/null
-fi
-
-printf '\n'
+# ── Output (clean 2 lines) ───────────────────────────────────────────────────
+printf '%b\n %b\n' "$L1" "$L2"
 exit 0
