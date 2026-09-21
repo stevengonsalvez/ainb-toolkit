@@ -1,0 +1,34 @@
+{
+  "name": "demo",
+  "version": "0.1.0",
+  "description": "Film any running app as real, re-recordable product footage, then compose it into a styled walkthrough video",
+  "author": {
+    "name": "Steven Gonsalvez",
+    "url": "https://github.com/stevengonsalvez"
+  },
+  "homepage": "https://github.com/stevengonsalvez/ainb-toolkit",
+  "repository": "https://github.com/stevengonsalvez/ainb-toolkit",
+  "license": "Apache-2.0",
+  "skills": "./skills/",
+  "dependencies": [
+    "brag"
+  ],
+  "keywords": [
+    "demo",
+    "video",
+    "capture",
+    "playwright",
+    "hyperframes"
+  ],
+  "interface": {
+    "displayName": "Demo",
+    "shortDescription": "Capture a product demo from a live app and compose it into a video",
+    "category": "delivery",
+    "capabilities": [
+      "Instructions"
+    ],
+    "defaultPrompt": [
+      "demo:capture"
+    ]
+  }
+}
