@@ -38,6 +38,11 @@ cat << 'EOF' | bash "$SCRIPT"
   "exceeds_200k_tokens": false,
   "product": "antigravity",
   "quota": {
+    "gemini-5h": {
+      "remaining_fraction": 0.96,
+      "reset_time": "2026-07-06T07:50:32Z",
+      "reset_in_seconds": 18000
+    },
     "gemini-weekly": {
       "remaining_fraction": 0.9378,
       "reset_time": "2026-07-06T07:50:32Z",
@@ -59,6 +64,26 @@ cat << 'EOF' | bash "$SCRIPT"
   "task_count": 1,
   "terminal_width": 120,
   "execution_mode": "planning"
+}
+EOF
+
+echo ""
+echo "=== Test 1b: Full AGY 4-Bucket Quota (3p + gemini) ==="
+cat << 'EOF' | bash "$SCRIPT"
+{
+  "cwd": "/Users/stevengonsalvez/orca/workspaces/ainb-toolkit/toolkit-intel",
+  "model": {
+    "id": "Gemini 3.8 Flash (High)",
+    "display_name": "Gemini 3.8 Flash (High)"
+  },
+  "quota": {
+    "3p-5h": { "remaining_fraction": 1.0, "reset_in_seconds": 17698 },
+    "3p-weekly": { "remaining_fraction": 1.0, "reset_in_seconds": 604498 },
+    "gemini-5h": { "remaining_fraction": 0.96, "reset_in_seconds": 17698 },
+    "gemini-weekly": { "remaining_fraction": 0.57, "reset_in_seconds": 305688 }
+  },
+  "plan_tier": "Google AI Pro",
+  "email": "lazymonkkmann@gmail.com"
 }
 EOF
 
