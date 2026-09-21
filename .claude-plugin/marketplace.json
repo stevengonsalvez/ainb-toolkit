@@ -18,6 +18,21 @@
       "source": "./plugins/orchestrate",
       "description": "Own N agent lanes across Orca hosts: recorded message path, stateless tick, refusing merge gate, handover any session can pick up",
       "category": "orchestration"
+    },
+    {
+      "name": "demo",
+      "source": "./plugins/demo",
+      "description": "Film any running app as real product footage, then compose it into a styled walkthrough video",
+      "category": "delivery"
+    },
+    {
+      "name": "brag",
+      "source": {
+        "source": "github",
+        "repo": "latent-spaces/brag"
+      },
+      "description": "Upstream launch-video skill by latent-spaces, referenced so demo:brag can delegate to it",
+      "category": "delivery"
     }
   ]
 }
