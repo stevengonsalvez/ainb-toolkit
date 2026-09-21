@@ -1,0 +1,12 @@
+{
+  "name": "demo",
+  "version": "0.1.0",
+  "description": "Film any running app as real, re-recordable product footage, then compose it into a styled walkthrough video",
+  "author": {
+    "name": "Steven Gonsalvez",
+    "url": "https://github.com/stevengonsalvez"
+  },
+  "dependencies": [
+    "brag"
+  ]
+}
