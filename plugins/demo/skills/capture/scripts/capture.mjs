@@ -21,10 +21,15 @@ import { chromium } from '@playwright/test';
 const smoothstep = p => p * p * (3 - 2 * p);
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
+// String paths match on a segment boundary: '/reports' accepts '/reports' and '/reports/x',
+// never '/reports-archive'. (A pathname carries no '?' or '#', so '/' is the only boundary.)
+const onPath = (expected, got) => expected instanceof RegExp ? expected.test(got)
+  : got === expected || got.startsWith(expected.endsWith('/') ? expected : expected + '/');
+
 // A mis-click must fail the take, not quietly film the wrong screen.
 export function checkPath(expected, url, name = '?') {
   const got = new URL(url).pathname;
-  const ok = expected instanceof RegExp ? expected.test(got) : got.startsWith(expected);
+  const ok = onPath(expected, got);
   if (!ok) throw new Error(`beat "${name}": expected path ${expected}, got ${got}`);
 }
 
@@ -64,7 +69,7 @@ export async function mintState({ base, email, password, state, loginPath = '/lo
     await page.locator(emailSel).type(email);
     await page.locator(passwordSel).type(password);
     await page.locator(submitSel).click();
-    await page.waitForURL(u => !u.pathname.startsWith(loginPath), { timeout: 20000 })
+    await page.waitForURL(u => !onPath(loginPath, u.pathname), { timeout: 20000 })
       .catch(() => { throw new Error(`login as ${email} did not leave ${loginPath}`); });
     fs.mkdirSync(path.dirname(state), { recursive: true });
     await ctx.storageState({ path: state });

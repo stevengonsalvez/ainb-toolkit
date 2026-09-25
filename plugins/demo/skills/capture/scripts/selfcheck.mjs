@@ -33,6 +33,9 @@ try {
   checkPath('/reports', 'http://x/reports/team');
   checkPath(/^\/b$/, 'http://x/b');
   assert.throws(() => checkPath('/reports', 'http://x/news/article'), /expected path \/reports, got \/news/);
+  // A sibling path sharing the prefix is a different page.
+  checkPath('/reports', 'http://x/reports?tab=2#top');
+  assert.throws(() => checkPath('/reports', 'http://x/reports-archive'), /got \/reports-archive/);
 
   // 2. Main take: zoom, marks, scoped click, wait out the splash.
   const r = await capture({ base, out, chapter: 'main', beats: [
