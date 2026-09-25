@@ -69,6 +69,13 @@ export function loadConfig(path) {
   if (raw.cards?.end) cards['end-card'] = { ...cardDefaults, ...raw.cards.end };
   for (const c of Object.values(cards)) c.dur = r3(c.dur * pace);
 
+  // Output size: a format preset, overridable by explicit width/height. The footage stays 16:9;
+  // square follows the spotlit element (see compose.mjs viewFor).
+  const FORMATS = { landscape: [1280, 720], square: [1080, 1080] };
+  const format = raw.format || 'landscape';
+  if (format === 'vertical') throw new Error('config: format "vertical" is not supported: 16:9 footage cropped to 9:16 cannot keep wide marks readable. Use "landscape" or "square".');
+  if (!FORMATS[format]) throw new Error(`config: unknown format "${format}" (landscape or square)`);
+
   const speed = { travel: 2, proof: 1, rampMs: 250, ...(raw.speed || {}) };
   for (const c of [speed, ...chapters.map((ch) => ch.speed || {})]) {
     for (const k of ['travel', 'proof']) if (c[k] != null && !(c[k] >= 0.1 && c[k] <= 4)) throw new Error(`config: speed.${k} must be between 0.1 and 4`);
@@ -82,8 +89,9 @@ export function loadConfig(path) {
     // some PATH builds lack it, so point FFMPEG or "ffmpeg" at a full build.
     ffmpeg: process.env.FFMPEG || raw.ffmpeg || 'ffmpeg',
     ffprobe: process.env.FFPROBE || raw.ffprobe || 'ffprobe',
-    width: raw.width || 1280,
-    height: raw.height || 720,
+    format,
+    width: raw.width || FORMATS[format][0],
+    height: raw.height || FORMATS[format][1],
     pace, speed,
     targetDuration: raw.targetDuration,
     chapterCardDur: r3((raw.chapterCardDur ?? 2.0) * pace),

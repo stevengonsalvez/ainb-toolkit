@@ -71,7 +71,8 @@ ${faces}
 html, body { width: ${W}px; height: ${H}px; overflow: hidden; background: ${T.bg}; }
 #root { position: relative; width: 100%; height: 100%; overflow: hidden; background: ${T.bg};
   font-family: ${C.bodyStack}; color: ${T.text}; }
-.foot { position: absolute; inset: 0; width: ${W}px; height: ${H}px; object-fit: contain; }
+.cam { position: absolute; left: 0; top: 0; }
+.foot { position: absolute; inset: 0; width: 100%; height: 100%; }
 .card { position: absolute; inset: 0; background: ${T.bg}; display: flex; flex-direction: column;
   align-items: center; justify-content: center; text-align: center; }
 .card .inner { display: flex; flex-direction: column; align-items: center; }
@@ -178,7 +179,8 @@ function analyze(cfg) {
     for (const [u, v] of pieces) if (v - u > 1.4) cuts.push([u + 0.5, v - 0.5]);
   }
   const kept = keep(dur - 0.03, cuts);
-  return { cfg, name, mp4, dur, spots, kept, CARD: cfg.cardDur ?? C.chapterCardDur };
+  const vp = ev.viewport || { width: 1280, height: 720 };
+  return { cfg, name, mp4, dur, spots, kept, srcW: vp.width, srcH: vp.height, CARD: cfg.cardDur ?? C.chapterCardDur };
 }
 
 // ---------- speed ramp ----------
@@ -280,6 +282,21 @@ function renderFootage(an, rt, out) {
     '-an', '-c:v', 'libx264', '-crf', '14', '-preset', 'veryfast', out]);
 }
 
+// ---------- output framing ----------
+// Footage keeps its own aspect. When the output aspect differs (square), each proof window gets a
+// view {s, x, y}: footage scaled by s and placed at x, y, chosen so the spotlit rect fits with room
+// for its label. The view is still inside a window, so spotlights stay put; it eases between windows.
+function viewFor(an, fr) {
+  const sMin = Math.min(W / an.srcW, H / an.srcH), sMax = Math.max(W / an.srcW, H / an.srcH);
+  if (sMax - sMin < 1e-6) return { s: sMin, x: 0, y: 0 };
+  const LH = C.layout.labelHeight, GAP = C.layout.labelGap;
+  const s = Math.max(sMin, Math.min(sMax, (W - 2 * SAFE) / fr.w, (H - 2 * SAFE - LH - GAP) / fr.h));
+  const fw = an.srcW * s, fh = an.srcH * s, cx = fr.x + fr.w / 2, cy = fr.y + fr.h / 2;
+  const x = fw <= W ? (W - fw) / 2 : Math.min(0, Math.max(W - fw, W / 2 - cx * s));
+  const y = fh <= H ? (H - fh) / 2 : Math.min(0, Math.max(H - fh, H / 2 - cy * s));
+  return { s: r3(s), x: r3(x), y: r3(y) };
+}
+
 // ---------- chapter ----------
 function chapter(an, sp) {
   const { name, cfg, CARD } = an;
@@ -301,11 +318,24 @@ function chapter(an, sp) {
     const { rect, cam } = s.m, c = cam || { x: 0, y: 0, s: 1 };
     s.fr = { x: (rect.x - c.x) * c.s, y: (rect.y - c.y) * c.s, w: rect.w * c.s, h: rect.h * c.s };
   }
+  // Spots whose windows overlap share one view (their union), so no spotlight moves while lit.
+  const groups = [];
+  for (const s of an.spots) {
+    const g = groups.at(-1), prev = g?.at(-1);
+    if (prev && s.T - C.fadeLead < prev.T + prev.hold + F(0.3)) g.push(s); else groups.push([s]);
+  }
+  for (const g of groups) {
+    const x0 = Math.min(...g.map((s) => s.fr.x)), y0 = Math.min(...g.map((s) => s.fr.y));
+    const x1 = Math.max(...g.map((s) => s.fr.x + s.fr.w)), y1 = Math.max(...g.map((s) => s.fr.y + s.fr.h));
+    const v = viewFor(an, { x: x0, y: y0, w: x1 - x0, h: y1 - y0 });
+    for (const s of g) s.view = v;
+  }
+
   const LH = C.layout.labelHeight, GAP = C.layout.labelGap;
   const report = [];
   const overlays = an.spots.map((s) => {
-    const fr = s.fr;
-    let x = fr.x - 8, y = fr.y - 8, w = fr.w + 16, h = fr.h + 16;
+    const fr = s.fr, v = s.view;
+    let x = fr.x * v.s + v.x - 8, y = fr.y * v.s + v.y - 8, w = fr.w * v.s + 16, h = fr.h * v.s + 16;
     const x2 = Math.min(W - 6, x + w), y2 = Math.min(H - 6, y + h);
     x = Math.max(6, x); y = Math.max(6, y); w = x2 - x; h = y2 - y;
     const lw = s.label.length * 12.2 + 44;
@@ -326,7 +356,7 @@ function chapter(an, sp) {
     report.push({
       i: s.i, label: s.label, srcT: r3(s.m.t), shift: s.shift || 0, compT: r3(ct), hold: r3(s.hold),
       place: pick[0], box: [x, y, w, h].map(Math.round),
-      labBox: [pick[2].left, pick[2].top, lw, LH].map(Math.round),
+      labBox: [pick[2].left, pick[2].top, lw, LH].map(Math.round), view: v,
     });
     s.ct = ct; s.dir = pick[0];
     return `<div id="${name}-s${s.i}" class="spot" style="left:${r3(x)}px;top:${r3(y)}px;width:${r3(w)}px;height:${r3(h)}px"></div>
@@ -340,6 +370,15 @@ function chapter(an, sp) {
     `tl.fromTo("#fade", { opacity: 1 }, { opacity: 0, duration: ${F(0.35)}, ease: "power1.out", immediateRender: false }, ${r3(CARD)});`,
     `tl.fromTo("#fade", { opacity: 0 }, { opacity: 1, duration: ${F(0.35)}, ease: "power1.in", immediateRender: false }, ${r3(total - F(0.35))});`,
   ];
+  // Framing: one set at 0, then an eased move between consecutive groups while nothing is lit.
+  const cam = `#${name}-cam`, V = (v) => `x: ${v.x}, y: ${v.y}, scale: ${v.s}`;
+  lines.push(`tl.set("${cam}", { ${V(groups[0][0].view)}, transformOrigin: "0 0" }, 0);`);
+  for (let i = 1; i < groups.length; i++) {
+    const a = groups[i - 1].at(-1), b = groups[i][0];
+    if (JSON.stringify(a.view) === JSON.stringify(b.view)) continue;
+    const t0 = a.ct + a.hold + F(0.3), t1 = b.ct - C.fadeLead;
+    lines.push(`tl.to("${cam}", { ${V(b.view)}, duration: ${r3(Math.max(0.05, t1 - t0))}, ease: "power2.inOut" }, ${r3(Math.min(t0, t1 - 0.05))});`);
+  }
   for (const s of an.spots) {
     const dy = { 'below-cropped': -8, below: -8, above: 8, right: 0, left: 0 }[s.dir] ?? 0;
     const dx = { right: -8, left: 8 }[s.dir] || 0;
@@ -348,10 +387,12 @@ function chapter(an, sp) {
     lines.push(`tl.to(["#${name}-s${s.i}", "#${name}-l${s.i}"], { opacity: 0, duration: ${F(0.3)}, ease: "power1.in" }, ${r3(s.ct + s.hold)});`);
   }
 
-  const vid = `<video id="${name}-v" class="foot clip" src="assets/footage/${name}.mp4" data-start="${r3(CARD)}" data-duration="${footDur}" data-media-start="0" data-track-index="0" muted playsinline></video>`;
+  const vid = `<div id="${name}-cam" class="cam" style="width:${an.srcW}px;height:${an.srcH}px">
+<video id="${name}-v" class="foot clip" src="assets/footage/${name}.mp4" data-start="${r3(CARD)}" data-duration="${footDur}" data-media-start="0" data-track-index="0" muted playsinline></video>
+</div>`;
   const d = project(name, doc(name, total, `${vid}\n${card}\n${overlays}`, lines.join('\n')));
   renderFootage(an, rt, `${d}/assets/footage/${name}.mp4`);
-  const meta = { name, kind: 'chapter', total: r3(total), srcDur: r3(an.dur), cardDur: CARD,
+  const meta = { name, kind: 'chapter', total: r3(total), srcDur: r3(an.dur), cardDur: CARD, srcW: an.srcW, srcH: an.srcH,
     speed: sp, kept: an.kept.map((k) => k.map(r3)), cuts: r3(an.dur - rt.kept.reduce((a, [x, y]) => a + y - x, 0)),
     footDur, spots: report };
   writeFileSync(`${C.out}/work/${name}.plan.json`, JSON.stringify(meta, null, 1));

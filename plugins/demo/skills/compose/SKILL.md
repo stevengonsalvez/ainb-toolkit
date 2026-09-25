@@ -61,7 +61,8 @@ Only `takes` and `chapters` are required. Everything below shows the default whe
   "name": "my-demo",                  // final file is out/<name>.mp4
   "takes": "/scratch/takes",          // demo:capture output dir (required)
   "out": "./compose",                 // work dir: projects/, out/, work/
-  "width": 1280, "height": 720,       // must match the capture viewport
+  "format": "landscape",              // or "square"; see Playback pace and format
+  "width": 1280, "height": 720,       // default from format; set to override it
   "theme": {
     "bg": "#101114", "surface": "#1B1D22", "accent": "#C8CDD6",
     "highlight": "#9AA3B2", "text": "#FFFFFF", "muted": "#B5BAC4",
@@ -102,7 +103,7 @@ Paths in the config (`takes`, `out`, font `file`) resolve against the config fil
 directory. `sub` on a card is raw HTML so `<b>` can pick out a word in the highlight colour;
 every other string is escaped.
 
-## Playback pace
+## Playback pace and format
 
 How fast the **finished video** plays, re-timed from footage you already have: no re-shoot.
 This is separate from demo:capture's filming `pace`, which changes what the camera records.
@@ -130,6 +131,13 @@ speed      2x    ramp    1x     ramp   2x   ramp    1x     ramp
   until the whole video (cards included) fits, and prints `speed.travel` and the planned length.
   It never speeds up proof windows, cards or holds, so a target shorter than those can reach is
   reported, not met. Chapters with their own `speed.travel` keep it.
+- **`format`**: `"landscape"` 1280x720 (default), `"square"` 1080x1080. Footage stays 16:9.
+  For square, each proof window gets its own framing: footage scaled and placed so the spotlit
+  rect (from `events.json` `rect` and `cam`) fits with room for its label, between the
+  cover scale (fills the square, crops the sides) and the contain scale (whole frame, bands
+  above and below in `theme.bg`). Framing holds still while a spotlight is lit and eases between
+  windows; overlapping windows share one framing. `"vertical"` is refused: 16:9 cropped to 9:16
+  cannot keep a wide mark readable, and a broken vertical is worse than none.
 
 Measured on the ferry example (two chapters, five marks, 3s title and end cards):
 
@@ -137,6 +145,7 @@ Measured on the ferry example (two chapters, five marks, 3s title and end cards)
 |---|---|---|
 | `speed.travel: 1` | see the PR for the figure from the run | 5/5 |
 | default (2x travel ramp) | 27.03s | 5/5 |
+| `format: "square"`, default ramp | 27.03s | 5/5 |
 
 How it works: `compose.mjs` writes each chapter's footage already cut and re-timed (one ffmpeg
 pass: `select` for the kept ranges, `setpts` with the piecewise speed curve, `fps=30`), so the

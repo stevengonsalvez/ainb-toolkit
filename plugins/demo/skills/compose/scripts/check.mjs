@@ -21,12 +21,33 @@ if (!cfgPath) { console.error('usage: check.mjs <config.json> [chapter ...]'); p
 const C = loadConfig(cfgPath);
 const W = C.width, H = C.height, K = C.check;
 
-function grayFrame(mp4, t) {
+function grayFrame(mp4, t, w = W, h = H) {
   const buf = execFileSync(C.ffmpeg, ['-nostdin', '-loglevel', 'error', '-ss', String(t), '-i', mp4,
-    '-frames:v', '1', '-vf', `scale=${W}:${H},format=gray`, '-f', 'rawvideo', '-'], { maxBuffer: 1 << 28 });
-  if (buf.length < W * H) throw new Error(`no frame at ${t}s of ${mp4}`);
+    '-frames:v', '1', '-vf', `scale=${w}:${h},format=gray`, '-f', 'rawvideo', '-'], { maxBuffer: 1 << 28 });
+  if (buf.length < w * h) throw new Error(`no frame at ${t}s of ${mp4}`);
   return buf;
 }
+
+// The source frame as the composition frames it: scaled by view.s, placed at view.x/y, and
+// `bg` where the footage does not reach. Identity when the output matches the footage.
+function framed(src, sw, sh, v, bg) {
+  if (v.s === 1 && v.x === 0 && v.y === 0 && sw === W && sh === H) return src;
+  const out = Buffer.alloc(W * H, bg);
+  for (let y = 0; y < H; y++) {
+    const sy = Math.floor((y - v.y) / v.s);
+    if (sy < 0 || sy >= sh) continue;
+    for (let x = 0; x < W; x++) {
+      const sx = Math.floor((x - v.x) / v.s);
+      if (sx >= 0 && sx < sw) out[y * W + x] = src[sy * sw + sx];
+    }
+  }
+  return out;
+}
+const bgLuma = (() => {
+  const h = C.theme.bg.replace('#', ''), n = h.length === 3 ? h.split('').map((c) => c + c).join('') : h;
+  const [r, g, b] = [0, 2, 4].map((i) => parseInt(n.slice(i, i + 2), 16));
+  return Math.round(0.299 * r + 0.587 * g + 0.114 * b);
+})();
 
 // mean and standard deviation of luma inside a box, clipped to the frame.
 // `ex` is an optional rect whose pixels are skipped (used to keep the label out of the ring).
@@ -86,7 +107,8 @@ function checkChapter(name) {
     const why = [];
 
     const ren = at.map((t) => grayFrame(seg, t));
-    const raw = atSrc.map((t) => grayFrame(src, t));
+    const sw = plan.srcW ?? W, sh = plan.srcH ?? H, view = s.view ?? { s: 1, x: 0, y: 0 };
+    const raw = atSrc.map((t) => framed(grayFrame(src, t, sw, sh), sw, sh, view, bgLuma));
 
     // lit: undimmed inside, dimmed outside, measured against the same frame of the source
     const litR = [0, 1].map((k) => stats(ren[k], box).mean / Math.max(1, stats(raw[k], box).mean));
@@ -113,7 +135,7 @@ function checkChapter(name) {
     for (const [k, t] of at.entries()) {
       try {
         execFileSync(C.ffmpeg, ['-nostdin', '-loglevel', 'error', '-y', '-ss', String(t), '-i', seg, '-frames:v', '1',
-          '-vf', `scale=640:360,drawtext=text='m${s.i} ${'ab'[k]} t=${t}':x=6:y=6:fontsize=18:fontcolor=cyan:box=1:boxcolor=black`,
+          '-vf', `scale=${W / 2}:${H / 2},drawtext=text='m${s.i} ${'ab'[k]} t=${t}':x=6:y=6:fontsize=18:fontcolor=cyan:box=1:boxcolor=black`,
           `${stillDir}/${String(s.i).padStart(2, '0')}${'ab'[k]}.png`], { stdio: ['ignore', 'ignore', 'pipe'] });
       } catch (e) {
         if (/drawtext/.test(e.stderr)) throw new Error(`${C.ffmpeg} has no drawtext filter. Set FFMPEG (or "ffmpeg" in the config) to a full build, e.g. /usr/bin/ffmpeg`);
