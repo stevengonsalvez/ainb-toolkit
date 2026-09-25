@@ -99,6 +99,32 @@ export async function ensureState({ base, state, login, probe = '/home' }) {
   return 'minted';
 }
 
+// Init script: cursor, click ripple and localStorage seeding, run in every document.
+// Exported so the self-check can drive it on a bare page.
+export function overlay({ ls }) {
+  // e.g. consent keys: a consent banner otherwise covers the lower third of every frame.
+  // Storage throws in sandboxed documents; skipping it there must not stop the cursor mounting.
+  for (const [k, v] of Object.entries(ls)) try { localStorage.setItem(k, v); } catch {}
+  // Top frame only: in an iframe the overlay filmed a second cursor inside the iframe.
+  if (window !== window.top) return;
+  const mount = () => {
+    if (document.getElementById('__cur')) return;
+    const d = document.createElement('div'); d.id = '__cur';
+    d.style.cssText = 'position:fixed;top:0;left:0;width:20px;height:26px;pointer-events:none;z-index:2147483647;transition:transform .05s linear;will-change:transform;background:no-repeat center/contain url("data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'20\' height=\'26\' viewBox=\'0 0 18 24\'%3E%3Cpath d=\'M2 2 L2 18 L6.5 13.8 L9.2 20 L11.8 19 L9.1 13 L14.5 13 Z\' fill=\'white\' stroke=\'black\' stroke-width=\'1.4\' stroke-linejoin=\'round\'/%3E%3C/svg%3E")';
+    document.body.appendChild(d);
+    const ring = document.createElement('div'); ring.id = '__ring';
+    ring.style.cssText = 'position:fixed;top:0;left:0;width:0;height:0;border-radius:50%;border:2px solid #1ABC9C;pointer-events:none;z-index:2147483646;opacity:0';
+    document.body.appendChild(ring);
+    addEventListener('mousemove', e => { d.style.transform = `translate(${e.clientX}px,${e.clientY}px)`; }, { passive: true });
+    // Click ripple, so a viewer can see WHERE the click landed.
+    addEventListener('mousedown', e => {
+      ring.style.cssText += `;left:${e.clientX - 26}px;top:${e.clientY - 26}px;width:52px;height:52px;opacity:1;transition:none`;
+      requestAnimationFrame(() => { ring.style.transition = 'opacity .5s ease, transform .5s ease'; ring.style.transform = 'scale(1.7)'; ring.style.opacity = '0'; });
+    }, true);
+  };
+  document.readyState === 'loading' ? addEventListener('DOMContentLoaded', mount) : mount();
+}
+
 export async function capture({ base, state, out, viewport = { width: 1280, height: 720 }, beats, chapter, localStorage: ls = {} }) {
   const { width: W, height: H } = viewport;
   if (!beats[0]?.goto) throw new Error(`chapter "${chapter}": first beat must be a goto (filming starts once it has painted)`);
@@ -110,26 +136,7 @@ export async function capture({ base, state, out, viewport = { width: 1280, heig
   const ctx = await browser.newContext({ viewport, deviceScaleFactor: 1, storageState: state });
   const page = await ctx.newPage();
 
-  await page.addInitScript(ls => {
-    // e.g. consent keys: a consent banner otherwise covers the lower third of every frame.
-    for (const [k, v] of Object.entries(ls)) localStorage.setItem(k, v);
-    const mount = () => {
-      if (document.getElementById('__cur')) return;
-      const d = document.createElement('div'); d.id = '__cur';
-      d.style.cssText = 'position:fixed;top:0;left:0;width:20px;height:26px;pointer-events:none;z-index:2147483647;transition:transform .05s linear;will-change:transform;background:no-repeat center/contain url("data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'20\' height=\'26\' viewBox=\'0 0 18 24\'%3E%3Cpath d=\'M2 2 L2 18 L6.5 13.8 L9.2 20 L11.8 19 L9.1 13 L14.5 13 Z\' fill=\'white\' stroke=\'black\' stroke-width=\'1.4\' stroke-linejoin=\'round\'/%3E%3C/svg%3E")';
-      document.body.appendChild(d);
-      const ring = document.createElement('div'); ring.id = '__ring';
-      ring.style.cssText = 'position:fixed;top:0;left:0;width:0;height:0;border-radius:50%;border:2px solid #1ABC9C;pointer-events:none;z-index:2147483646;opacity:0';
-      document.body.appendChild(ring);
-      addEventListener('mousemove', e => { d.style.transform = `translate(${e.clientX}px,${e.clientY}px)`; }, { passive: true });
-      // Click ripple, so a viewer can see WHERE the click landed.
-      addEventListener('mousedown', e => {
-        ring.style.cssText += `;left:${e.clientX - 26}px;top:${e.clientY - 26}px;width:52px;height:52px;opacity:1;transition:none`;
-        requestAnimationFrame(() => { ring.style.transition = 'opacity .5s ease, transform .5s ease'; ring.style.transform = 'scale(1.7)'; ring.style.opacity = '0'; });
-      }, true);
-    };
-    document.readyState === 'loading' ? addEventListener('DOMContentLoaded', mount) : mount();
-  }, ls);
+  await page.addInitScript(overlay, { ls });
 
   const cdp = await ctx.newCDPSession(page);
   const frames = []; const events = [];
