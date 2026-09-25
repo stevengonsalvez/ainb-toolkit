@@ -51,6 +51,20 @@ claude plugin install brag@ainb-toolkit
 Then `/reload-plugins`. Do not fall back to writing a video pipeline by hand, and do not
 vendor a copy of the upstream skill.
 
+## Outside Claude Code
+
+Only Claude Code resolves the dependency. Everywhere else brag is a separate, manual install
+from its own repository, and step 1 above is where you tell the user to do it:
+
+| Harness | Install brag | It appears as |
+|---|---|---|
+| Codex | `codex plugin marketplace add latent-spaces/brag` then `codex plugin add brag@brag` | `brag:brag` |
+| Copilot CLI | `copilot plugin marketplace add latent-spaces/brag` then `copilot plugin install brag@brag` | `brag` |
+| Antigravity | `git clone https://github.com/latent-spaces/brag` then `agy plugin install ./brag` | `brag` |
+
+Antigravity does not namespace skills, so two skills named `brag` show up: this router and
+upstream. Use the one whose description does not say "delegating to the upstream brag skill".
+
 ## Why it is wired this way
 
 `demo` declares `"dependencies": ["brag"]` and the ainb-toolkit marketplace lists `brag` with
