@@ -8,5 +8,5 @@ n=$(( cols * rows ))
 total=$("$FFPROBE" -v error -count_frames -select_streams v:0 -show_entries stream=nb_read_frames -of csv=p=0 "$in")
 step=$(( total / n > 0 ? total / n : 1 ))
 "$FFMPEG" -v error -y -i "$in" \
-  -vf "select='not(mod(n\,$step))',scale=480:-2,tile=${cols}x${rows}:padding=4" -frames:v 1 -fps_mode vfr "$out"
+  -vf "select='not(mod(n\,$step))',scale=480:-2,tile=${cols}x${rows}:padding=4" -frames:v 1 "$out"
 echo "$out"
