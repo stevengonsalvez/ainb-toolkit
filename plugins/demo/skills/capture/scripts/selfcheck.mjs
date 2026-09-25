@@ -17,6 +17,8 @@ const pages = {
   '/tall': `<body style="margin:0;background:${BG};height:3000px"><div id="w" style="position:absolute;top:2000px;left:290px;width:700px;height:400px;background:#fff"></div></body>`,
   '/news': `<body style="background:${BG}">news</body>`,
   '/frame': `<body style="margin:0;background:${BG};height:100vh"><iframe src="/news" width="400" height="200"></iframe></body>`,
+  // Turns white once the input holds exactly the typed text: the last frame proves the type beat.
+  '/type': `<body style="margin:0;background:${BG};height:100vh"><input id="q" style="margin:200px;font-size:30px" oninput="if (this.value === 'ferry times') document.body.style.background = '#fff'"></body>`,
   // A login form, and a home page that sends logged-out visitors to /welcome, not to /login.
   '/login': `<body><input id="email"><input id="password" type="password"><button onclick="document.cookie='sid=1;path=/';location='/home'">Log in</button></body>`,
   '/welcome': `<body>welcome</body>`,
@@ -86,7 +88,7 @@ try {
   let ripple, sandboxErrs;
   try {
     const page = await browser.newPage();
-    await page.addInitScript(overlay, { ls: { k: 'v' } });
+    await page.addInitScript(overlay, { ls: { k: 'v' }, hidden: false });
     await page.goto(`${base}/frame`); await page.frames()[1].waitForLoadState();
     const cursors = (await Promise.all(page.frames().map(f => f.locator('#__cur').count()))).reduce((a, b) => a + b);
     assert.equal(cursors, 1, `expected 1 cursor across ${page.frames().length} frames, got ${cursors}`);
@@ -106,7 +108,20 @@ try {
     assert.equal(new Set(ripple.map(r => r[1])).size, 1, `ripple cssText grows per click ${JSON.stringify(ripple)}`);
   } finally { await browser.close(); }
 
-  // 7. A dead session on an app that sends logged-out users to /welcome must be re-minted when
+  // 7. type beat types key by key (fill() would finish in one frame), and a hidden cursor still
+  //    keeps a hold emitting frames.
+  const ty = await capture({ base, out, chapter: 'type', cursor: { hidden: true }, beats: [{ goto: '/type' }, { type: { into: '#q', text: 'ferry times', cps: 10 } }, { hold: 1500 }] });
+  const tl = luma(frame(ty.dir, ty.frames - 1));
+  assert.ok(tl > 200, `typed text did not land (luma ${tl})`);
+  assert.ok(ty.dur > 1.0 + 1.5, `type beat too fast for 11 chars at 10 cps (${ty.dur.toFixed(2)}s)`);
+  assert.ok(ty.frames >= 30, `hidden-cursor take produced only ${ty.frames} frames`);
+
+  // 8. pace scales holds: the same 1s hold at pace 2 films about twice as long.
+  const p1 = await capture({ base, out, chapter: 'pace1', beats: [{ goto: '/a', hold: 1000 }] });
+  const p2 = await capture({ base, out, chapter: 'pace2', pace: 2, beats: [{ goto: '/a', hold: 1000 }] });
+  assert.ok(p2.dur - p1.dur > 0.8, `pace 2 did not lengthen the take (${p1.dur.toFixed(2)}s vs ${p2.dur.toFixed(2)}s)`);
+
+  // 9. A dead session on an app that sends logged-out users to /welcome must be re-minted when
   //    loggedInSel is set; without it the probe only checks "not on /login" and wrongly reuses it.
   const state = path.join(out, 'state.json');
   fs.writeFileSync(state, JSON.stringify({ cookies: [], origins: [] }));
@@ -116,7 +131,7 @@ try {
   assert.equal(await ensureState({ base, state, login: { ...login, loggedInSel: '#me' } }), 'minted');
   assert.equal(await ensureState({ base, state, login: { ...login, loggedInSel: '#me' } }), 'reused');
 
-  console.log(`selfcheck OK: cursors 1 with iframe; sandbox errors ${sandboxErrs}; ripple ${JSON.stringify(ripple)}; loggedInSel re-mints`);
+  console.log(`selfcheck OK: cursors 1 with iframe; sandbox errors ${sandboxErrs}; ripple ${JSON.stringify(ripple)}; type ${ty.dur.toFixed(2)}s luma ${tl}; pace ${p1.dur.toFixed(2)}s -> ${p2.dur.toFixed(2)}s; loggedInSel re-mints`);
   console.log(`selfcheck OK: main ${r.frames} frames/${r.dur.toFixed(1)}s luma head ${head} tail ${tail}; hold ${h.frames} frames; scroll-zoom luma ${zl}; guard threw`);
 } finally {
   server.close(); fs.rmSync(out, { recursive: true, force: true });

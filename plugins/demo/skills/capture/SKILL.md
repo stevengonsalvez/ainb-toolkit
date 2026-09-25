@@ -55,7 +55,10 @@ export default {
   viewport: { width: 1280, height: 720 },      // optional, default 1280x720
   localStorage: { someConsentKey: 'true' },    // optional, set before every document
   login: { email: 'demo@example.test', password: '…' },  // OMIT for an app with no login
-  chapters: [{ name: 'home-to-detail', beats: [ /* ... */ ] }],
+  pace: 1,                                     // optional filming pace, see below
+  cursor: { speed: 1200, hidden: false },      // optional, see below
+  chapters: [{ name: 'home-to-detail', pace: 1.3, cursor: { hidden: true },  // per-chapter overrides
+               beats: [ /* ... */ ] }],
 };
 ```
 
@@ -83,12 +86,36 @@ A beat is an object; keys run in this fixed order within one beat:
 | `settle` | ms | extra wait after ready/quiet, default 400 |
 | `expectPath` | string path or RegExp | assert pathname; throws and fails the take. A string matches that path or anything below it: `/reports` accepts `/reports/7`, never `/reports-archive` |
 | `scroll` | px | smooth `scrollBy` |
+| `type` | `{into, text, cps=12}` | glide to the field, click it, type `text` key by key at `cps` characters per second (`type()`, never `fill()`, so the viewer sees it typed) |
 | `zoom` | `{on, scale=2, ms=700}` | ease camera onto element centre |
 | `wide` | `true` or ms | ease camera back to full frame |
 | `mark` | `{label, on}` | push an event into events.json (after zoom/wide) |
 | `hold` | ms | keep filming with cursor drift |
 
-Order: goto, click, wait (ready or network quiet), settle, expectPath, [filming starts here on beat 0], scroll, zoom, wide, mark, hold.
+Order: goto, click, wait (ready or network quiet), settle, expectPath, [filming starts here on beat 0], scroll, type, zoom, wide, mark, hold.
+
+## Filming pace
+
+How fast things happen **in front of the camera**. Changing it means re-filming. To re-pace
+footage you already have (speed up navigation, stretch holds) use demo:compose's playback
+controls (`speed`, `pace`, `targetDuration`) instead: no re-shoot.
+
+- `pace` (default 1): multiplies every filmed duration in the take: zoom and wide `ms`, `hold`,
+  `settle`, the pause before a click, the end-of-take hold, and cursor glides. `2` films
+  everything twice as slowly, `0.7` brisker. Set it on the beats file, override per chapter.
+  Page load waits (`ready`, network quiet) are the app's own time and are not scaled.
+- `cursor.speed` (px/s, optional): glide the pointer at a constant speed, so a long move takes
+  longer than a short one. Unset keeps the rig's original feel: every click glide takes 300ms
+  and every re-centre before a hold 200ms, whatever the distance (one `mouse.move` step is one
+  rendered frame, measured 16.7ms). `pace` scales either.
+- `cursor.hidden` (default false): films no pointer and no click ripple. The pointer element
+  is still there at near-zero opacity and still drifts, because that drift is what keeps the
+  screencast emitting during a hold (fact 1). Measured: a hidden-cursor take still produced
+  frames through a 1.5s hold.
+- `type.cps` sets typing speed per beat and is not scaled by `pace`.
+
+Merge rule: a chapter's `pace` replaces the file's; a chapter's `cursor` keys override the
+file's `cursor` keys one by one.
 
 ## Measured facts (do not re-learn these)
 
@@ -191,4 +218,4 @@ Takes land in `<copy>/takes/`, where the compose config expects them.
 - `scripts/run.mjs`: runs chapters from a beats file, encodes each.
 - `scripts/encode.sh`: `list.txt` (real frame durations) to 30fps H.264 mp4.
 - `scripts/montage.sh`: contact sheet for grading a take.
-- `scripts/selfcheck.mjs`: local throwaway server; asserts path guard (including a sibling path such as `/reports-archive`), zoom framing, events.json schema, non-blank head, non-splash tail, hold frame count, bare-text mis-click failing, one cursor on a page with an iframe, the cursor mounting where storage throws, every click ripple starting at scale 1, and `loggedInSel` re-minting a dead session.
+- `scripts/selfcheck.mjs`: local throwaway server; asserts path guard (including a sibling path such as `/reports-archive`), zoom framing, events.json schema, non-blank head, non-splash tail, hold frame count, bare-text mis-click failing, one cursor on a page with an iframe, the cursor mounting where storage throws, every click ripple starting at scale 1, a `type` beat typing key by key with a hidden cursor still emitting frames, `pace: 2` lengthening a hold, and `loggedInSel` re-minting a dead session.
