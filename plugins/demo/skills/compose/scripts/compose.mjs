@@ -327,10 +327,13 @@ function chapter(an, sp) {
     s.fr = { x: (rect.x - c.x) * c.s, y: (rect.y - c.y) * c.s, w: rect.w * c.s, h: rect.h * c.s };
   }
   // Spots whose windows overlap share one view (their union), so no spotlight moves while lit.
+  // Grouped in OUTPUT time, where the camera move is scheduled: travel speed shrinks the gaps,
+  // and a source-time split left moves with no room (end before start).
+  for (const s of an.spots) s.ct = toComp(s.T);
   const groups = [];
   for (const s of an.spots) {
     const g = groups.at(-1), prev = g?.at(-1);
-    if (prev && s.T - C.fadeLead < prev.T + prev.hold + F(0.3)) g.push(s); else groups.push([s]);
+    if (prev && s.ct - C.fadeLead < prev.ct + prev.hold + F(0.3) + 0.1) g.push(s); else groups.push([s]);
   }
   for (const g of groups) {
     const x0 = Math.min(...g.map((s) => s.fr.x)), y0 = Math.min(...g.map((s) => s.fr.y));
@@ -360,7 +363,7 @@ function chapter(an, sp) {
       h = H - SAFE - LH - GAP - y;
       pick = ['below-cropped', true, { left: Math.min(Math.max(x, SAFE), W - SAFE - lw), top: y + h + GAP }];
     }
-    const ct = toComp(s.T);
+    const ct = s.ct;
     report.push({
       i: s.i, label: s.label, srcT: r3(s.m.t), shift: s.shift || 0, compT: r3(ct), hold: r3(s.hold),
       place: pick[0], box: [x, y, w, h].map(Math.round),
