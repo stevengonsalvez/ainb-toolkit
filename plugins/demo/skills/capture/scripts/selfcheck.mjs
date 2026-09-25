@@ -4,7 +4,7 @@
 // Usage: node selfcheck.mjs   (or `npm run check` from the skill dir)
 import http from 'http'; import fs from 'fs'; import os from 'os'; import path from 'path';
 import assert from 'assert/strict'; import { execFileSync } from 'child_process';
-import { capture, checkPath } from './capture.mjs';
+import { capture, checkPath, ensureState } from './capture.mjs';
 
 const BG = '#3a6ea5';                             // luma ~100: neither blank white nor splash black
 const nav = `<nav class="fixed bottom-0" style="position:fixed;bottom:0;left:0;right:0;height:64px;background:#222;display:flex;gap:40px;justify-content:center;align-items:center">
@@ -15,11 +15,18 @@ const pages = {
   // Tall page with a white block (bigger than the 2x camera box) far below the fold: zooming on it after a scroll must film it.
   '/tall': `<body style="margin:0;background:${BG};height:3000px"><div id="w" style="position:absolute;top:2000px;left:290px;width:700px;height:400px;background:#fff"></div></body>`,
   '/news': `<body style="background:${BG}">news</body>`,
+  // A login form, and a home page that sends logged-out visitors to /welcome, not to /login.
+  '/login': `<body><input id="email"><input id="password" type="password"><button onclick="document.cookie='sid=1;path=/';location='/home'">Log in</button></body>`,
+  '/welcome': `<body>welcome</body>`,
   // Splash until a slow request lands, like an SPA shell fetching its data.
   '/b': `<body style="margin:0;background:#000;height:100vh">${nav}<script>fetch('/slow').then(() => document.body.style.background = '${BG}')</script></body>`,
 };
 const server = http.createServer((req, res) => {
   if (req.url === '/slow') return setTimeout(() => res.end('ok'), 1500);
+  if (req.url === '/home') {
+    if (!/sid=1/.test(req.headers.cookie || '')) { res.writeHead(302, { location: '/welcome' }); return res.end(); }
+    res.setHeader('content-type', 'text/html'); return res.end('<body><div id="me">signed in</div></body>');
+  }
   res.setHeader('content-type', 'text/html'); res.end(pages[req.url] ?? '404');
 }).listen(0);
 const base = `http://127.0.0.1:${server.address().port}`;
@@ -69,6 +76,17 @@ try {
   await assert.rejects(capture({ base, out, chapter: 'wrong', beats: [
     { goto: '/a' }, { name: 'bare', click: 'text=REPORTS', expectPath: '/b' }] }), /expected path \/b, got \/news/);
 
+  // 6. A dead session on an app that sends logged-out users to /welcome must be re-minted when
+  //    loggedInSel is set; without it the probe only checks "not on /login" and wrongly reuses it.
+  const state = path.join(out, 'state.json');
+  fs.writeFileSync(state, JSON.stringify({ cookies: [], origins: [] }));
+  const login = { email: 'a@example.test', password: 'x' };
+  assert.equal(await ensureState({ base, state, login }), 'reused');
+  fs.writeFileSync(state, JSON.stringify({ cookies: [], origins: [] }));
+  assert.equal(await ensureState({ base, state, login: { ...login, loggedInSel: '#me' } }), 'minted');
+  assert.equal(await ensureState({ base, state, login: { ...login, loggedInSel: '#me' } }), 'reused');
+
+  console.log(`selfcheck OK: loggedInSel re-mints`);
   console.log(`selfcheck OK: main ${r.frames} frames/${r.dur.toFixed(1)}s luma head ${head} tail ${tail}; hold ${h.frames} frames; scroll-zoom luma ${zl}; guard threw`);
 } finally {
   server.close(); fs.rmSync(out, { recursive: true, force: true });

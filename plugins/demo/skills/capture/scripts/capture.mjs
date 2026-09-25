@@ -57,7 +57,7 @@ function networkQuiet(page, { quiet = 500, cap = 8000 } = {}) {
 // Defaults match the first SPA this was built on: #email is input[type=text], a cookie modal covers the
 // submit button, and type() (not fill()) is what the controlled inputs accept.
 export async function mintState({ base, email, password, state, loginPath = '/login',
-  emailSel = '#email', passwordSel = '#password',
+  emailSel = '#email', passwordSel = '#password', loggedInSel,
   submitSel = 'role=button[name=/^(log in|sign in)$/i]', dismissSel = '#rcc-decline-button' }) {
   const browser = await chromium.launch();
   try {
@@ -71,22 +71,29 @@ export async function mintState({ base, email, password, state, loginPath = '/lo
     await page.locator(submitSel).click();
     await page.waitForURL(u => !onPath(loginPath, u.pathname), { timeout: 20000 })
       .catch(() => { throw new Error(`login as ${email} did not leave ${loginPath}`); });
+    if (loggedInSel) await page.locator(loggedInSel).first().waitFor({ timeout: 20000 })
+      .catch(() => { throw new Error(`login as ${email}: ${loggedInSel} never appeared`); });
     fs.mkdirSync(path.dirname(state), { recursive: true });
     await ctx.storageState({ path: state });
   } finally { await browser.close(); }
 }
 
-// Reuse `state` if it still gets past the login page, otherwise mint a fresh one.
+// Reuse `state` if it still looks logged in, otherwise mint a fresh one. "Logged in" means
+// `login.loggedInSel` is visible when set; otherwise only "the probe did not land on loginPath",
+// which reuses a dead session on apps that send logged-out users somewhere else.
 export async function ensureState({ base, state, login, probe = '/home' }) {
   if (fs.existsSync(state)) {
     const browser = await chromium.launch();
-    const ctx = await browser.newContext({ storageState: state });
-    const page = await ctx.newPage();
-    const quiet = networkQuiet(page);
-    await page.goto(base + probe); await quiet(); await page.waitForTimeout(1000);
-    const got = new URL(page.url()).pathname;
-    await browser.close();
-    if (!got.startsWith(login.loginPath ?? '/login')) return 'reused';
+    let alive;
+    try {
+      const page = await (await browser.newContext({ storageState: state })).newPage();
+      const quiet = networkQuiet(page);
+      await page.goto(base + probe); await quiet(); await page.waitForTimeout(1000);
+      alive = login.loggedInSel
+        ? await page.locator(login.loggedInSel).first().isVisible()
+        : !onPath(login.loginPath ?? '/login', new URL(page.url()).pathname);
+    } finally { await browser.close(); }
+    if (alive) return 'reused';
   }
   await mintState({ base, state, ...login });
   return 'minted';
