@@ -423,8 +423,11 @@ const analysis = (cfg) => analyses.get(cfg.name) ?? analyses.set(cfg.name, analy
 let travel = C.speed.travel;
 if (C.targetDuration) {
   // Whole-video length at a given travel speed, computed from the plan: nothing is rendered.
+  // Chapters not filmed yet cannot be measured: leave them out, say so, and keep going.
+  const filmed = C.chapters.filter((c) => existsSync(`${C.takes}/${c.name}.mp4`));
+  for (const c of C.chapters) if (!filmed.includes(c)) console.warn(`warn: targetDuration leaves out ${c.name}: no footage at ${C.takes}/${c.name}.mp4`);
   const length = (v) => Object.values(C.cards).reduce((a, c) => a + c.dur, 0)
-    + C.chapters.reduce((a, c) => { const an = analysis(c); return a + an.CARD + retime(an, speedFor(c, v)).footDur; }, 0);
+    + filmed.reduce((a, c) => { const an = analysis(c); return a + an.CARD + retime(an, speedFor(c, v)).footDur; }, 0);
   // ponytail: bisection on travel alone; proof windows, cards and holds are never sped up to hit it.
   if (length(travel) > C.targetDuration) {
     let lo = travel, hi = Math.max(travel, 4);

@@ -133,7 +133,9 @@ speed      2x    ramp    1x     ramp   2x   ramp    1x     ramp
 - **`targetDuration`** (seconds, optional): raises the global `speed.travel`, capped at 4x,
   until the whole video (cards included) fits, and prints `speed.travel` and the planned length.
   It never speeds up proof windows, cards or holds, so a target shorter than those can reach is
-  reported, not met. Chapters with their own `speed.travel` keep it.
+  reported, not met. Chapters with their own `speed.travel` keep it. It measures every chapter
+  that has footage, even when the command names only some, so a partial re-run picks the same
+  speed; chapters not filmed yet are left out with a warning.
 - **`format`**: `"landscape"` 1280x720 (default), `"square"` 1080x1080. Footage stays 16:9.
   For square, each proof window gets its own framing: footage scaled and placed so the spotlit
   rect (from `events.json` `rect` and `cam`) fits with room for its label, between the
