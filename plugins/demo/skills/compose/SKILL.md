@@ -28,10 +28,10 @@ family, clip timing on the `<video>` and not on an ancestor).
 
 ```bash
 S="$SKILL_DIR"   # this skill's own directory
-node $S/scripts/compose.mjs my.config.json            # generate every segment project
-bash $S/scripts/render.sh  my.config.json             # render each one, foreground, resumable
-node $S/scripts/check.mjs  my.config.json             # THE GATE: hit/miss per mark, exit 1 on miss
-bash $S/scripts/concat.sh  my.config.json             # final silent mp4 + contact sheet
+node "$S/scripts/compose.mjs" my.config.json            # generate every segment project
+bash "$S/scripts/render.sh"  my.config.json             # render each one, foreground, resumable
+node "$S/scripts/check.mjs"  my.config.json             # THE GATE: hit/miss per mark, exit 1 on miss
+bash "$S/scripts/concat.sh"  my.config.json             # final silent mp4 + contact sheet
 ```
 
 Every command takes optional segment names to limit the work (`compose.mjs cfg.json consent`).
@@ -39,7 +39,18 @@ Every command takes optional segment names to limit the work (`compose.mjs cfg.j
 Renders run one at a time in the foreground under `timeout 590`: a harness that kills long
 background tasks for low memory will otherwise take the whole batch out.
 
-A worked config is `examples/hull.config.json` with its fonts in `examples/fonts/`.
+A worked example is `examples/ferry/`: a made-up ferry operator's three-page app
+(`serve.mjs`, `app/`), the `beats.mjs` that films it with demo:capture, and
+`ferry.config.json` with its fonts. Every path in it is relative to that directory, so copy
+the directory somewhere writable and run it end to end:
+
+```bash
+cp -r "$S/examples/ferry" /scratch/ferry && cd /scratch/ferry   # CAPTURE_DIR: the demo:capture skill dir
+node serve.mjs &                                            # app on 127.0.0.1:7744
+node "$CAPTURE_DIR/scripts/run.mjs" beats.mjs               # takes/departures.mp4, takes/fares.mp4
+node "$S/scripts/compose.mjs" ferry.config.json && bash "$S/scripts/render.sh" ferry.config.json
+node "$S/scripts/check.mjs" ferry.config.json && bash "$S/scripts/concat.sh" ferry.config.json
+```
 
 ## Config
 
@@ -50,7 +61,8 @@ Only `takes` and `chapters` are required. Everything below shows the default whe
   "name": "my-demo",                  // final file is out/<name>.mp4
   "takes": "/scratch/takes",          // demo:capture output dir (required)
   "out": "./compose",                 // work dir: projects/, out/, work/
-  "width": 1280, "height": 720,       // must match the capture viewport
+  "format": "landscape",              // or "square"; see Playback pace and format
+  "width": 1280, "height": 720,       // default from format; set to override it
   "theme": {
     "bg": "#101114", "surface": "#1B1D22", "accent": "#C8CDD6",
     "highlight": "#9AA3B2", "text": "#FFFFFF", "muted": "#B5BAC4",
@@ -69,12 +81,16 @@ Only `takes` and `chapters` are required. Everything below shows the default whe
   "defaultPersona": "",               // per-chapter `persona` overrides it
   "chapters": [
     { "name": "<chapter>",            // must match <chapter>.mp4 in takes (required)
-      "title": "Coach home",          // default: chapter name, title-cased
-      "persona": "Coach · Danny Reid",
+      "title": "The live board",      // default: chapter name, title-cased
+      "persona": "Foot passenger",
       "labels": ["…"],                // default: the capture's own mark labels. One per mark.
       "cuts": [[10.98, 11.2]],        // extra source-time cuts, e.g. a splash screen
-      "cardDur": 2.0 }
+      "cardDur": 2.0,
+      "speed": { "travel": 1 } }      // per-chapter override of the global speed
   ],
+  "speed":  { "travel": 2, "rampMs": 250 },
+  "pace": 1,
+  "targetDuration": 45,               // optional, seconds, whole video
   "hold":   { "min": 1.5, "max": 2.2 },
   "fadeLead": 0.25,                   // spotlight fades in this long before the mark
   "deadHold": 2.0,                    // freezes longer than this get trimmed
@@ -86,6 +102,64 @@ Only `takes` and `chapters` are required. Everything below shows the default whe
 Paths in the config (`takes`, `out`, font `file`) resolve against the config file's own
 directory. `sub` on a card is raw HTML so `<b>` can pick out a word in the highlight colour;
 every other string is escaped.
+
+## Playback pace and format
+
+How fast the **finished video** plays, re-timed from footage you already have: no re-shoot.
+This is separate from demo:capture's filming `pace`, which changes what the camera records.
+
+```
+source   ──travel──╮ proof window ╭──travel──╮ proof window ╭──
+speed      2x    ramp    1x     ramp   2x   ramp    1x     ramp
+                    mark t - fadeLead ... end of hold
+```
+
+- **Speed ramp, on by default.** Inside each proof window (from `fadeLead` before a mark to the
+  end of its hold) footage always plays at 1x. Everything else, navigation, loading,
+  cursor travel, plays at `speed.travel` (2x). Speed changes over `speed.rampMs` (250ms of
+  output time) each side, so it reads as a ramp and never as a jump cut. A gap too short for
+  two full ramps gets a shallower peak instead. Marks and spotlights land on the re-timed
+  footage; the still-check runs on it. Chapter cards and holds are never sped up.
+  `"speed": { "travel": 1 }` turns the ramp off and plays everything at 1x, exactly as before
+  the ramp existed. Set `speed` globally, override any key per chapter with `chapters[].speed`.
+  `speed.travel` must be between 0.1 and 4, `speed.rampMs` a number >= 0 (0 = hard speed
+  change). There is no proof-speed setting: the spotlight timing and the still-check both rely
+  on proof windows playing at 1x, so any other `speed` key is refused.
+- **`pace`** (default 1): one multiplier on card durations (title, switch, end, chapter
+  cards), `hold.min`/`hold.max`, `fadeLead` and every fade and card-motion timing. `1.3` gives
+  a calmer cut, `0.8` a brisker one. It does not change footage speed. A paced hold stops where
+  the footage stops being still (the next camera move), so a spotlight never outlives its pose;
+  at `pace: 1` holds are exactly the unpaced rule.
+- **`targetDuration`** (seconds, optional): raises the global `speed.travel`, capped at 4x,
+  until the whole video (cards included) fits, and prints `speed.travel` and the planned length.
+  It never speeds up proof windows, cards or holds, so a target shorter than those can reach is
+  reported, not met. Chapters with their own `speed.travel` keep it. It measures every chapter
+  that has footage, even when the command names only some, so a partial re-run picks the same
+  speed; chapters not filmed yet are left out with a warning.
+- **`format`**: `"landscape"` 1280x720 (default), `"square"` 1080x1080. Footage stays 16:9.
+  For square, each proof window gets its own framing: footage scaled and placed so the spotlit
+  rect (from `events.json` `rect` and `cam`) fits with room for its label, between the
+  cover scale (fills the square, crops the sides) and the contain scale (whole frame, bands
+  above and below in `theme.bg`). Framing holds still while a spotlight is lit and eases between
+  windows; overlapping windows share one framing. `"vertical"` is refused: 16:9 cropped to 9:16
+  cannot keep a wide mark readable, and a broken vertical is worse than none.
+
+Measured on the ferry example, filmed fresh (two chapters, five marks, 3s title and end cards):
+
+| settings | video length | still-check |
+|---|---|---|
+| `speed.travel: 1` | 31.17s | 5/5 |
+| default (2x travel ramp) | 26.13s | 5/5 |
+| `format: "square"`, default ramp | 26.13s | 5/5 |
+
+The ferry app is quick, so travel is a small share of it; the saving grows with loading and
+navigation time.
+
+How it works: `compose.mjs` writes each chapter's footage already cut and re-timed (one ffmpeg
+pass: `select` for the kept ranges, `setpts` with the piecewise speed curve, `fps=30`), so the
+HyperFrames project holds one plain `<video>`. At a constant whole-number speed it nudges each
+piece by under 1/60s so source frames never sit on a half frame, which otherwise made a 1x
+window duplicate then drop a frame.
 
 ## Style rules the generator holds to
 
@@ -99,7 +173,8 @@ Measured on a 5:36 ten-chapter demo, 47 marks. Change them in config, not in cod
 - **Chapter cards** about 2s (persona line plus chapter title), **title and end cards** about 3s.
 - **Silent**, and no annotation is ever burned into the footage. Everything is an overlay on
   top of an untouched capture, so a relabel is a re-render and never a re-shoot.
-- Navigation clicks stay in. Only dead holds over 2s and configured cuts are trimmed.
+- Navigation clicks stay in, played at `speed.travel`. Only dead holds over 2s and configured
+  cuts are trimmed.
 
 ## Two defects this generator already fixes
 
@@ -144,9 +219,15 @@ with a tighter `hold` before the next camera move.
 - `scripts/config.mjs`: config load, defaults, font stacks, segment ordering.
 - `scripts/compose.mjs`: one standalone HyperFrames project per segment. Separate projects keep
   each render small and lint clean.
-- `scripts/render.sh`, `scripts/concat.sh`: render loop and final encode (`/usr/bin/ffmpeg`;
-  the ffmpeg on PATH may lack drawtext).
-- `scripts/check.mjs`: the gate.
+- `scripts/render.sh`, `scripts/concat.sh`: render loop and final encode.
+- ffmpeg and ffprobe, everywhere: env `FFMPEG`/`FFPROBE`, then config `"ffmpeg"`/`"ffprobe"`,
+  then whatever is on PATH. Every step, the still-check verdict included, runs on a plain build.
+  The one cosmetic extra is the caption on each contact tile (`drawtext`, libfreetype), which
+  some builds lack (a measured Homebrew 8.1 did): `check.mjs` then prints one warning and writes
+  the tiles uncaptioned. For captions, point `FFMPEG` at a full build such as `/usr/bin/ffmpeg`.
+- `scripts/check.mjs`: the gate. For square output it frames the source frame with the same
+  view as the composition before comparing.
 - `assets/template/`: `hyperframes.json`, `package.json`, and a vendored `gsap.min.js` so a
   render needs no CDN.
-- `examples/`: a full config plus its fonts.
+- `examples/ferry/`: a runnable example, a made-up app with its server, beats file, config and
+  fonts, every path relative to that directory.

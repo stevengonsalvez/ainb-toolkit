@@ -57,8 +57,20 @@ vendor a copy of the upstream skill.
 a github source pointing at `latent-spaces/brag`. Installing `demo` therefore installs brag
 too, and dependencies resolve inside one marketplace without a cross-marketplace allowlist.
 
-To hold brag at a known version, pin the marketplace entry with `ref` or `sha`. Unpinned, it
-tracks the upstream default branch.
+brag is pinned: the marketplace entry carries `"ref": "v0.3.0"` and
+`"sha": "57ce4c9bb912f01a0078b154318bf67c5cbf780f"`, the commit that tag points to. An install
+gets exactly that commit, whatever upstream pushes later.
+
+To move the pin to a newer release, resolve the tag to its commit (annotated tags need the
+second call to dereference), then update both fields together in `.claude-plugin/marketplace.json`:
+
+```bash
+T=$(gh api repos/latent-spaces/brag/git/refs/tags/vX.Y.Z --jq '.object.sha')
+gh api repos/latent-spaces/brag/git/tags/$T --jq '.object.sha'   # the commit for "sha"
+```
+
+If the first call's `.object.type` is already `commit`, the tag is lightweight and its sha is
+the commit.
 
 ## Credit
 
