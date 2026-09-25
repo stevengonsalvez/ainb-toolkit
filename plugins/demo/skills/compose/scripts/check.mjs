@@ -14,7 +14,7 @@
 //           -> DEFECT 2: a label never covers its own spotlight
 import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync, mkdirSync, rmSync, existsSync, readdirSync } from 'node:fs';
-import { loadConfig, segmentNames, r3 } from './config.mjs';
+import { loadConfig, segmentNames, r3, hexToRgb } from './config.mjs';
 
 const cfgPath = process.argv[2];
 if (!cfgPath) { console.error('usage: check.mjs <config.json> [chapter ...]'); process.exit(2); }
@@ -48,11 +48,7 @@ function framed(src, sw, sh, v, bg) {
   }
   return out;
 }
-const bgLuma = (() => {
-  const h = C.theme.bg.replace('#', ''), n = h.length === 3 ? h.split('').map((c) => c + c).join('') : h;
-  const [r, g, b] = [0, 2, 4].map((i) => parseInt(n.slice(i, i + 2), 16));
-  return Math.round(0.299 * r + 0.587 * g + 0.114 * b);
-})();
+const bgLuma = (([r, g, b]) => Math.round(0.299 * r + 0.587 * g + 0.114 * b))(hexToRgb(C.theme.bg));
 
 // mean and standard deviation of luma inside a box, clipped to the frame.
 // `ex` is an optional rect whose pixels are skipped (used to keep the label out of the ring).

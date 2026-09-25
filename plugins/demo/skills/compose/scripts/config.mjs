@@ -17,12 +17,12 @@ export function eventsPath(takes, name) {
 
 const titleCase = (s) => s.replace(/[-_]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 
-function hexToRgba(hex, a) {
+export function hexToRgb(hex) {
   const h = hex.replace('#', '');
   const n = h.length === 3 ? h.split('').map((c) => c + c).join('') : h;
-  const [r, g, b] = [0, 2, 4].map((i) => parseInt(n.slice(i, i + 2), 16));
-  return `rgba(${r},${g},${b},${a})`;
+  return [0, 2, 4].map((i) => parseInt(n.slice(i, i + 2), 16));
 }
+const hexToRgba = (hex, a) => `rgba(${hexToRgb(hex).join(',')},${a})`;
 
 const GENERIC = 'ui-sans-serif, system-ui, sans-serif';
 
