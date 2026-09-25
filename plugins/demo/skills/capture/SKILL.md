@@ -71,8 +71,10 @@ needs.
 as an avatar menu. Without it a saved session counts as valid unless the probe (`probe`, default
 `/home`) lands on `loginPath`, so an app that sends logged-out visitors to a landing page instead
 reuses a dead session and films that page. With it set, the session is reused only if the element
-is visible, and `mintState` also waits for it after submitting the form. Drop `login` and `state` entirely when the app is public: the rig then films straight
-from `base` with a fresh context.
+becomes visible within 5s, and `mintState` also waits for it after submitting the form.
+
+Drop `login` and `state` entirely when the app is public: the rig then films straight from
+`base` with a fresh context.
 
 A beat is an object; keys run in this fixed order within one beat:
 

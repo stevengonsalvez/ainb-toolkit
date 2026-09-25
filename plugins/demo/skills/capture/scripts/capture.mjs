@@ -90,7 +90,8 @@ export async function ensureState({ base, state, login, probe = '/home' }) {
       const quiet = networkQuiet(page);
       await page.goto(base + probe); await quiet(); await page.waitForTimeout(1000);
       alive = login.loggedInSel
-        ? await page.locator(login.loggedInSel).first().isVisible()
+        // isVisible() does not wait: an SPA still rendering its shell would read as logged out.
+        ? await page.locator(login.loggedInSel).first().waitFor({ state: 'visible', timeout: 5000 }).then(() => true, () => false)
         : !onPath(login.loginPath ?? '/login', new URL(page.url()).pathname);
     } finally { await browser.close(); }
     if (alive) return 'reused';
@@ -252,6 +253,7 @@ export async function capture({ base, state, out, viewport = { width: 1280, heig
       await cdp.send('Page.startScreencast', { format: 'jpeg', quality: 90, everyNthFrame: 1 });
     }
     if (step.scroll) { await page.evaluate(y => window.scrollBy({ top: y, behavior: 'smooth' }), step.scroll); await page.waitForTimeout(700); }
+    // Typed key by key so the viewer sees it being entered; fill() would paste it in one frame.
     // Typed key by key so the viewer sees it being entered; fill() would paste it in one frame.
     if (step.type) {
       const { into, text, cps = 12 } = step.type;

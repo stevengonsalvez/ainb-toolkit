@@ -31,7 +31,8 @@ const server = http.createServer((req, res) => {
   if (req.url === '/sandboxed') { res.setHeader('content-security-policy', 'sandbox allow-scripts'); return res.end(`<body style="background:${BG}">sandboxed</body>`); }
   if (req.url === '/home') {
     if (!/sid=1/.test(req.headers.cookie || '')) { res.writeHead(302, { location: '/welcome' }); return res.end(); }
-    res.setHeader('content-type', 'text/html'); return res.end('<body><div id="me">signed in</div></body>');
+    // #me renders late, like an SPA shell: a check that does not wait reads a live session as dead.
+    res.setHeader('content-type', 'text/html'); return res.end(`<body><script>setTimeout(() => document.body.innerHTML = '<div id="me">signed in</div>', 2000)</script></body>`);
   }
   res.setHeader('content-type', 'text/html'); res.end(pages[req.url] ?? '404');
 }).listen(0);
