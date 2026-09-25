@@ -76,9 +76,12 @@ export function loadConfig(path) {
   if (format === 'vertical') throw new Error('config: format "vertical" is not supported: 16:9 footage cropped to 9:16 cannot keep wide marks readable. Use "landscape" or "square".');
   if (!FORMATS[format]) throw new Error(`config: unknown format "${format}" (landscape or square)`);
 
-  const speed = { travel: 2, proof: 1, rampMs: 250, ...(raw.speed || {}) };
+  // Proof windows always play at 1x: the spotlight timing and the still-check both assume it.
+  const speed = { travel: 2, rampMs: 250, ...(raw.speed || {}) };
   for (const c of [speed, ...chapters.map((ch) => ch.speed || {})]) {
-    for (const k of ['travel', 'proof']) if (c[k] != null && !(c[k] >= 0.1 && c[k] <= 4)) throw new Error(`config: speed.${k} must be between 0.1 and 4`);
+    for (const k of Object.keys(c)) if (!['travel', 'rampMs'].includes(k)) throw new Error(`config: speed.${k} is not a setting (speed takes travel and rampMs; proof windows always play at 1x)`);
+    if (c.travel != null && !(c.travel >= 0.1 && c.travel <= 4)) throw new Error('config: speed.travel must be between 0.1 and 4');
+    if (c.rampMs != null && !(typeof c.rampMs === 'number' && c.rampMs >= 0)) throw new Error('config: speed.rampMs must be a number >= 0');
   }
 
   return {

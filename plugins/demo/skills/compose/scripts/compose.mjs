@@ -187,7 +187,7 @@ function analyze(cfg) {
 // Footage time is re-mapped in two steps: source t -> kept time u (cuts removed) -> output time.
 // Output time is built from pieces over u, each with a slowness k = output s per source s that
 // runs linearly from k0 to k1, so a ramp is a smooth change of speed rather than a jump.
-// Proof windows (fadeLead before a mark through the end of its hold) play at speed.proof;
+// Proof windows (fadeLead before a mark through the end of its hold) play at 1x;
 // everything between them plays at speed.travel, with a ramp of rampMs of output time each side.
 function retime(an, sp) {
   const U = []; let acc = 0;
@@ -197,7 +197,7 @@ function retime(an, sp) {
     for (const [i, [a, b]] of an.kept.entries()) { if (t < b) return U[i] + Math.max(0, t - a); }
     return uEnd;
   };
-  const kp = 1 / sp.proof, kt = 1 / sp.travel;
+  const kp = 1, kt = 1 / sp.travel;
   // proof windows in u, merged when they touch
   const win = [];
   for (const s of an.spots) {

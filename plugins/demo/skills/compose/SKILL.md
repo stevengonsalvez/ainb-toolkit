@@ -88,7 +88,7 @@ Only `takes` and `chapters` are required. Everything below shows the default whe
       "cardDur": 2.0,
       "speed": { "travel": 1 } }      // per-chapter override of the global speed
   ],
-  "speed":  { "travel": 2, "proof": 1, "rampMs": 250 },
+  "speed":  { "travel": 2, "rampMs": 250 },
   "pace": 1,
   "targetDuration": 45,               // optional, seconds, whole video
   "hold":   { "min": 1.5, "max": 2.2 },
@@ -115,14 +115,16 @@ speed      2x    ramp    1x     ramp   2x   ramp    1x     ramp
 ```
 
 - **Speed ramp, on by default.** Inside each proof window (from `fadeLead` before a mark to the
-  end of its hold) footage plays at `speed.proof` (1x). Everything else, navigation, loading,
+  end of its hold) footage always plays at 1x. Everything else, navigation, loading,
   cursor travel, plays at `speed.travel` (2x). Speed changes over `speed.rampMs` (250ms of
   output time) each side, so it reads as a ramp and never as a jump cut. A gap too short for
   two full ramps gets a shallower peak instead. Marks and spotlights land on the re-timed
   footage; the still-check runs on it. Chapter cards and holds are never sped up.
   `"speed": { "travel": 1 }` turns the ramp off and plays everything at 1x, exactly as before
   the ramp existed. Set `speed` globally, override any key per chapter with `chapters[].speed`.
-  Both speeds must be between 0.1 and 4.
+  `speed.travel` must be between 0.1 and 4, `speed.rampMs` a number >= 0 (0 = hard speed
+  change). There is no proof-speed setting: the spotlight timing and the still-check both rely
+  on proof windows playing at 1x, so any other `speed` key is refused.
 - **`pace`** (default 1): one multiplier on card durations (title, switch, end, chapter
   cards), `hold.min`/`hold.max`, `fadeLead` and every fade and card-motion timing. `1.3` gives
   a calmer cut, `0.8` a brisker one. It does not change footage speed. A long `hold.min` can
