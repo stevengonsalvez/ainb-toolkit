@@ -245,30 +245,33 @@ function retime(an, sp) {
     const p = pieces[i], kb = p.k0 + (p.k1 - p.k0) * (b - p.u0) / (p.u1 - p.u0);
     pieces.splice(i, 1, { u0: p.u0, u1: b, k0: p.k0, k1: kb }, { u0: b, u1: p.u1, k0: kb, k1: p.k1 });
   }
-  let o = 0, nominal = 0;
+  // Frame phase: at a constant whole-number speed v, source frames land on v evenly spaced
+  // phases of the 30fps output grid. If one sits on a half frame, float noise flips the fps
+  // filter's rounding and a 1x proof window stutters (a duplicated then a dropped frame,
+  // measured). So each constant piece is nudged off its NOMINAL start by under 1/60s (clamped
+  // at 0) to keep every phase clear of the half, and each ramp is stretched (`sc`) to run from
+  // where the previous piece really ended to its own nominal end. Nudges never accumulate and
+  // the composition keeps the nominal length.
+  let nominal = 0, end = 0;
   for (const p of pieces) {
-    const len = (p.u1 - p.u0) * (p.k0 + p.k1) / 2;
-    p.o0 = o; nominal += len;
-    // Frame phase: at a constant whole-number speed v, source frames land on v evenly spaced
-    // phases of the 30fps output grid. If one sits on a half frame, float noise flips the fps
-    // filter's rounding and a 1x proof window stutters (a duplicated then a dropped frame,
-    // measured). Nudge the piece's start (< 1/60s, at most one frame at its entry) so every
-    // phase keeps clear of the half; the next piece starts where this one ends, so the exit is
-    // continuous. The composition keeps the un-nudged length, so durations do not move.
+    const len = (p.u1 - p.u0) * (p.k0 + p.k1) / 2, start = nominal;
+    nominal += len;
     const v = 1 / p.k0;
     if (p.k0 === p.k1 && Math.abs(v - Math.round(v)) < 1e-9) {
       const q = Math.round(v), i = U.findLastIndex((x) => x <= p.u0 + 1e-9);
-      const base = 30 * (p.o0 + p.k0 * (U[i] - an.kept[i][0] - p.u0));
+      const base = 30 * (start + p.k0 * (U[i] - an.kept[i][0] - p.u0));
       const want = (1 / (2 * q) + 0.5) % (1 / q), have = ((base % (1 / q)) + 1 / q) % (1 / q);
       let d = want - have; if (d > 0.5 / q) d -= 1 / q; if (d < -0.5 / q) d += 1 / q;
-      p.o0 += d / 30;
+      p.o0 = Math.max(0, start + d / 30); p.sc = 1;
+    } else {
+      p.o0 = end; p.sc = len > 0 ? Math.max(0, (nominal - end) / len) : 1;
     }
-    o = p.o0 + len;
+    end = p.o0 + len * p.sc;
   }
   const outOfU = (u) => {
     const p = pieces.find((q) => u < q.u1) ?? pieces.at(-1);
     const x = Math.min(u, p.u1) - p.u0;
-    return p.o0 + p.k0 * x + (p.k1 - p.k0) * x * x / (2 * (p.u1 - p.u0));
+    return p.o0 + p.sc * (p.k0 * x + (p.k1 - p.k0) * x * x / (2 * (p.u1 - p.u0)));
   };
   return { pieces, footDur: nominal, toOut: (t) => outOfU(toU(t)), kept: an.kept, U };
 }
@@ -282,7 +285,7 @@ function renderFootage(an, rt, out) {
   let o = '0';
   for (let i = rt.pieces.length - 1; i >= 0; i--) {
     const p = rt.pieces[i], x = `(ld(0)-${f(p.u0)})`;
-    const e = `${f(p.o0)}+${f(p.k0)}*${x}+${f((p.k1 - p.k0) / (2 * (p.u1 - p.u0)))}*${x}*${x}`;
+    const e = `${f(p.o0)}+${f(p.sc * p.k0)}*${x}+${f(p.sc * (p.k1 - p.k0) / (2 * (p.u1 - p.u0)))}*${x}*${x}`;
     o = i === rt.pieces.length - 1 ? e : `if(lt(ld(0),${f(p.u1)}),${e},${o})`;
   }
   execFileSync(C.ffmpeg, ['-nostdin', '-loglevel', 'error', '-y', '-i', an.mp4,
