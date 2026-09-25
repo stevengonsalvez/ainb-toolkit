@@ -35,36 +35,45 @@ capture drives a browser.
 
 ## How to run it
 
-1. Confirm the upstream skill is present. It installs automatically as a dependency of this
-   plugin, and appears in the skills list as `brag:brag`.
-2. Invoke it with the Skill tool: `skill: "brag:brag"`, passing the user's own arguments
-   through verbatim (it accepts flags such as `--tone`, `--format` and `--voice`).
+The upstream skill's name depends on the harness you are running in:
+
+| Harness | Upstream skill | Install it if missing (pinned to `v0.3.0`) |
+|---|---|---|
+| Claude Code | `brag:brag` | `claude plugin install brag@ainb-toolkit`, then `/reload-plugins` |
+| Codex | `brag:brag` | `codex plugin marketplace add latent-spaces/brag --ref v0.3.0` then `codex plugin add brag@brag` |
+| Copilot CLI | `brag` | `git clone --branch v0.3.0 https://github.com/latent-spaces/brag` then `copilot plugin marketplace add ./brag` then `copilot plugin install brag@brag` |
+| Antigravity | `brag` | `git clone --branch v0.3.0 https://github.com/latent-spaces/brag` then `agy plugin install ./brag` |
+
+1. Find the upstream skill for your harness in the skills list. On Claude Code it installs
+   automatically as a dependency of this plugin; everywhere else it is a manual install.
+2. Invoke it the way your harness invokes skills (on Claude Code, the Skill tool:
+   `skill: "brag:brag"`), passing the user's own arguments through verbatim (it accepts flags
+   such as `--tone`, `--format` and `--voice`).
 3. Follow its instructions from there. Do not reimplement any part of it here, and do not
    paraphrase its steps: read what it says and do that.
 
-If `brag:brag` is not in the skills list, the dependency did not install. Tell the user to run:
+If the upstream skill is not in the skills list, show the user the install command from the
+row for the harness you are running in, and stop. Do not fall back to writing a video pipeline
+by hand, and do not vendor a copy of the upstream skill.
 
-```bash
-claude plugin install brag@ainb-toolkit
-```
+### Never invoke this skill from itself
 
-Then `/reload-plugins`. Do not fall back to writing a video pipeline by hand, and do not
-vendor a copy of the upstream skill.
+Copilot CLI and Antigravity do not namespace skills, so this router is also named `brag`
+there. The target is always the `brag` whose description does NOT say it delegates to the
+upstream brag skill. This skill must never invoke itself. If the only `brag` in the list is
+this one, upstream is missing: show the install command above.
 
-## Outside Claude Code
+Notes on the manual installs:
 
-Only Claude Code resolves the dependency. Everywhere else brag is a separate, manual install
-from its own repository, and step 1 above is where you tell the user to do it. The Codex and
-Antigravity commands hold the same `v0.3.0` tag the Claude marketplace entry pins:
-
-| Harness | Install brag | It appears as |
-|---|---|---|
-| Codex | `codex plugin marketplace add latent-spaces/brag --ref v0.3.0` then `codex plugin add brag@brag` | `brag:brag` |
-| Copilot CLI | `copilot plugin marketplace add latent-spaces/brag` then `copilot plugin install brag@brag` | `brag` |
-| Antigravity | `git clone --branch v0.3.0 https://github.com/latent-spaces/brag` then `agy plugin install ./brag` | `brag` |
-
-Antigravity does not namespace skills, so two skills named `brag` show up: this router and
-upstream. Use the one whose description does not say "delegating to the upstream brag skill".
+- Copilot CLI: the route above follows GitHub's documented forms (a local path for
+  `marketplace add`, and `install PLUGIN@MARKETPLACE`), where the local clone is what holds
+  the version. It has not been run against a live Copilot CLI. The plain
+  `copilot plugin marketplace add latent-spaces/brag` also works per the docs but tracks the
+  upstream default branch; the documented command shows no ref option.
+- Antigravity: `agy plugin validate` rejects the upstream checkout ("missing plugin.json")
+  but `agy plugin install` accepts it, placing the skill under
+  `~/.gemini/config/plugins/brag/skills/brag/`. Upstream also ships extra SKILL.md copies
+  under `.agents/`, `.claude/` and `.opencode/`, and the install copies those too.
 
 ## Why it is wired this way
 
