@@ -54,13 +54,14 @@ vendor a copy of the upstream skill.
 ## Outside Claude Code
 
 Only Claude Code resolves the dependency. Everywhere else brag is a separate, manual install
-from its own repository, and step 1 above is where you tell the user to do it:
+from its own repository, and step 1 above is where you tell the user to do it. The Codex and
+Antigravity commands hold the same `v0.3.0` tag the Claude marketplace entry pins:
 
 | Harness | Install brag | It appears as |
 |---|---|---|
-| Codex | `codex plugin marketplace add latent-spaces/brag` then `codex plugin add brag@brag` | `brag:brag` |
+| Codex | `codex plugin marketplace add latent-spaces/brag --ref v0.3.0` then `codex plugin add brag@brag` | `brag:brag` |
 | Copilot CLI | `copilot plugin marketplace add latent-spaces/brag` then `copilot plugin install brag@brag` | `brag` |
-| Antigravity | `git clone https://github.com/latent-spaces/brag` then `agy plugin install ./brag` | `brag` |
+| Antigravity | `git clone --branch v0.3.0 https://github.com/latent-spaces/brag` then `agy plugin install ./brag` | `brag` |
 
 Antigravity does not namespace skills, so two skills named `brag` show up: this router and
 upstream. Use the one whose description does not say "delegating to the upstream brag skill".
