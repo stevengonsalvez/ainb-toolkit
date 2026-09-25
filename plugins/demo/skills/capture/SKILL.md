@@ -38,7 +38,7 @@ node scripts/run.mjs /path/to/beats.mjs [chapter ...]   # capture + encode each 
 scripts/montage.sh <out>/<chapter>.mp4          # 4x3 contact sheet; LOOK at it
 ```
 
-- Browsers: export `PLAYWRIGHT_BROWSERS_PATH="$PW"` and keep that directory stable; capture.mjs sets it before Playwright loads, which is the only ordering that works. The installed revision must match `node_modules/playwright-core/browsers.json` (1.62.0 wants chromium 1234). On mismatch: `PLAYWRIGHT_BROWSERS_PATH="$PW" npx playwright install chromium`. Prefer a directory you control over `~/.cache/ms-playwright`, which other tooling clears: measured wiped twice on one machine with 34G free, so not disk pressure.
+- Browsers: Playwright reads `PLAYWRIGHT_BROWSERS_PATH` when it is set and otherwise uses its own default (`~/.cache/ms-playwright` on Linux). Export `PLAYWRIGHT_BROWSERS_PATH="$PW"` in the shell that runs the rig and keep that directory stable; the scripts never set it for you. The installed revision must match `node_modules/playwright-core/browsers.json` (1.62.0 wants chromium 1234). On mismatch: `PLAYWRIGHT_BROWSERS_PATH="$PW" npx playwright install chromium`. Prefer a directory you control over `~/.cache/ms-playwright`, which other tooling clears: measured wiped twice on one machine with 34G free, so not disk pressure.
 - Write beats files and `out` under a scratch dir, never in a project repo.
 - After every take: open the montage. Check head is not blank/black, tail is not a splash, zoom frames are sharp.
 
@@ -62,7 +62,13 @@ export default {
 `login` overrides, with the defaults the rig ships: `loginPath '/login'`, `emailSel '#email'`,
 `passwordSel '#password'`, `submitSel 'role=button[name=/^(log in|sign in)$/i]'`,
 `dismissSel '#rcc-decline-button'` (the decline button id react-cookie-consent renders). Set whichever the app
-needs. Drop `login` and `state` entirely when the app is public: the rig then films straight
+needs.
+
+`login.loggedInSel` (optional): a selector for an element that exists only when logged in, such
+as an avatar menu. Without it a saved session counts as valid unless the probe (`probe`, default
+`/home`) lands on `loginPath`, so an app that sends logged-out visitors to a landing page instead
+reuses a dead session and films that page. With it set, the session is reused only if the element
+is visible, and `mintState` also waits for it after submitting the form. Drop `login` and `state` entirely when the app is public: the rig then films straight
 from `base` with a fresh context.
 
 A beat is an object; keys run in this fixed order within one beat:
@@ -75,7 +81,7 @@ A beat is an object; keys run in this fixed order within one beat:
 | `ready` | selector | after goto/click, wait until visible (preferred) |
 | `readyCap` | ms | cap for `ready`, or for network-quiet fallback (8000) |
 | `settle` | ms | extra wait after ready/quiet, default 400 |
-| `expectPath` | string prefix or RegExp | assert pathname; throws and fails the take |
+| `expectPath` | string path or RegExp | assert pathname; throws and fails the take. A string matches that path or anything below it: `/reports` accepts `/reports/7`, never `/reports-archive` |
 | `scroll` | px | smooth `scrollBy` |
 | `zoom` | `{on, scale=2, ms=700}` | ease camera onto element centre |
 | `wide` | `true` or ms | ease camera back to full frame |
@@ -99,8 +105,9 @@ Order: goto, click, wait (ready or network quiet), settle, expectPath, [filming 
 5. **Nav bars are context-dependent.** Measured on one app: after clicking one nav item, another item was gone from the nav. Targets are resolved fresh per beat; never cache handles across beats.
 6. **`addInitScript` overlays survive SPA route changes** (cursor verified present after three client-side navigations).
 7. **Login: never hand-write a token into storageState.** It fails silently and films the login page. `mintState` drives the real form and throws unless the final pathname has left `loginPath`. Quirks it already handles, each found on a real app: an `#email` field that is `input[type=text]` rather than `type=email`, a cookie modal covering the submit button (dismissed via `dismissSel` first), and controlled React inputs that need `type()` rather than `fill()`.
-8. **Encode with `/usr/bin/ffmpeg`.** The ffmpeg on PATH lacks libass/drawtext.
-9. **Browsers live in `$PLAYWRIGHT_BROWSERS_PATH`, set before Playwright loads** (see Run).
+8. **ffmpeg is `$FFMPEG` (and `$FFPROBE`), else the one on PATH.** Capture only encodes and tiles, which any build does. Some PATH builds (a measured Homebrew one) lack libass/drawtext, which demo:compose's still-check needs: point `FFMPEG`/`FFPROBE` at a full build such as `/usr/bin/ffmpeg` from the distro package.
+9. **Browsers live in `$PLAYWRIGHT_BROWSERS_PATH` when set** (see Run).
+10. **The overlay mounts in the top frame only.** Init scripts run in every frame; before this, a page with an iframe filmed a second cursor inside it. Seeding `localStorage` is skipped where storage throws (sandboxed documents) instead of aborting the cursor.
 
 ## Defects the rig already handles
 
@@ -184,4 +191,4 @@ Takes land in `<copy>/takes/`, where the compose config expects them.
 - `scripts/run.mjs`: runs chapters from a beats file, encodes each.
 - `scripts/encode.sh`: `list.txt` (real frame durations) to 30fps H.264 mp4.
 - `scripts/montage.sh`: contact sheet for grading a take.
-- `scripts/selfcheck.mjs`: local throwaway server; asserts path guard, zoom framing, events.json schema, non-blank head, non-splash tail, hold frame count, bare-text mis-click failing.
+- `scripts/selfcheck.mjs`: local throwaway server; asserts path guard (including a sibling path such as `/reports-archive`), zoom framing, events.json schema, non-blank head, non-splash tail, hold frame count, bare-text mis-click failing, one cursor on a page with an iframe, the cursor mounting where storage throws, every click ripple starting at scale 1, and `loggedInSel` re-minting a dead session.
