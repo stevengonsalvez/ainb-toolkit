@@ -39,7 +39,18 @@ Every command takes optional segment names to limit the work (`compose.mjs cfg.j
 Renders run one at a time in the foreground under `timeout 590`: a harness that kills long
 background tasks for low memory will otherwise take the whole batch out.
 
-A worked config is `examples/hull.config.json` with its fonts in `examples/fonts/`.
+A worked example is `examples/ferry/`: a made-up ferry operator's three-page app
+(`serve.mjs`, `app/`), the `beats.mjs` that films it with demo:capture, and
+`ferry.config.json` with its fonts. Every path in it is relative to that directory, so copy
+the directory somewhere writable and run it end to end:
+
+```bash
+cp -r "$S/examples/ferry" /scratch/ferry && cd /scratch/ferry
+node serve.mjs &                                            # app on 127.0.0.1:7744
+node "$CAPTURE_DIR/scripts/run.mjs" beats.mjs               # takes/departures.mp4, takes/fares.mp4
+node $S/scripts/compose.mjs ferry.config.json && bash $S/scripts/render.sh ferry.config.json
+node $S/scripts/check.mjs ferry.config.json && bash $S/scripts/concat.sh ferry.config.json
+```
 
 ## Config
 
@@ -69,8 +80,8 @@ Only `takes` and `chapters` are required. Everything below shows the default whe
   "defaultPersona": "",               // per-chapter `persona` overrides it
   "chapters": [
     { "name": "<chapter>",            // must match <chapter>.mp4 in takes (required)
-      "title": "Coach home",          // default: chapter name, title-cased
-      "persona": "Coach · Danny Reid",
+      "title": "The live board",      // default: chapter name, title-cased
+      "persona": "Foot passenger",
       "labels": ["…"],                // default: the capture's own mark labels. One per mark.
       "cuts": [[10.98, 11.2]],        // extra source-time cuts, e.g. a splash screen
       "cardDur": 2.0 }

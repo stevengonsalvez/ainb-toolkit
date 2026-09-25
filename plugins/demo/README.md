@@ -48,6 +48,6 @@ copy come from a config file, and each skill ships a worked example.
 |---|---|---|
 | brag | not vendored; installed from [latent-spaces/brag](https://github.com/latent-spaces/brag) as a plugin dependency | MIT |
 | GSAP (`gsap.min.js`) | `skills/compose/assets/template/` | GSAP standard "no charge" licence |
-| Poppins, Montserrat (woff2) | `skills/compose/examples/fonts/` | SIL Open Font Licence 1.1 |
+| Fraunces, IBM Plex Sans (woff2) | `skills/compose/examples/ferry/fonts/` | SIL Open Font Licence 1.1 |
 
-The fonts are example assets for the worked config. Supply your own in your config's `theme.fonts`.
+The fonts are example assets for the worked ferry example. Supply your own in your config's `theme.fonts`.
