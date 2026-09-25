@@ -12,8 +12,8 @@
 //  - Zoom uses Emulation.setDeviceMetricsOverride's viewport clip. CSS
 //    transform on <html> re-rasters crisply but makes the root the containing
 //    block for position:fixed, which throws fixed chrome into mid-frame.
-//  - Never select by bare text. `text=PERFORM` matched a Pulse article headline
-//    and navigated away from the nav entirely. Scope every selector.
+//  - Never select by bare text. A bare text selector for a nav label matched an
+//    article headline and navigated away from the nav entirely. Scope every selector.
 import fs from 'fs'; import path from 'path';
 
 // ~/.cache/ms-playwright was wiped externally twice; browsers live here instead.
@@ -52,7 +52,7 @@ function networkQuiet(page, { quiet = 500, cap = 8000 } = {}) {
 
 // Drive the real login form and save storageState. Never hand-write a token
 // into a state file: it fails silently and films the /login page instead.
-// Defaults match SHOT: #email is input[type=text], a cookie modal covers the
+// Defaults match the first SPA this was built on: #email is input[type=text], a cookie modal covers the
 // submit button, and type() (not fill()) is what the controlled inputs accept.
 export async function mintState({ base, email, password, state, loginPath = '/login',
   emailSel = '#email', passwordSel = '#password',
@@ -165,7 +165,7 @@ export async function capture({ base, state, out, viewport = { width: 1280, heig
   };
 
   // Targets are resolved fresh every beat: nav bars change with context
-  // (LOCKER vanished from the nav after PULSE), so cached handles go stale.
+  // (one item vanished from the nav after another was clicked), so cached handles go stale.
   const rectOf = async (sel, beat) => {
     const el = page.locator(sel).first();
     if (!(await el.count())) throw new Error(`beat "${beat}": selector ${sel} matched nothing`);

@@ -8,10 +8,10 @@ import { capture, checkPath } from './capture.mjs';
 
 const BG = '#3a6ea5';                             // luma ~100: neither blank white nor splash black
 const nav = `<nav class="fixed bottom-0" style="position:fixed;bottom:0;left:0;right:0;height:64px;background:#222;display:flex;gap:40px;justify-content:center;align-items:center">
-  <a href="/b" style="color:#fff">PERFORM</a><a href="/a" style="color:#fff">HOME</a></nav>`;
+  <a href="/b" style="color:#fff">REPORTS</a><a href="/a" style="color:#fff">HOME</a></nav>`;
 const pages = {
-  // A headline sharing the nav's text: bare `text=PERFORM` hits this first.
-  '/a': `<body style="margin:0;background:${BG};height:100vh"><h1><a href="/news" style="color:#fff">PERFORM wins the league</a></h1>${nav}</body>`,
+  // A headline sharing the nav's text: bare `text=REPORTS` hits this first.
+  '/a': `<body style="margin:0;background:${BG};height:100vh"><h1><a href="/news" style="color:#fff">REPORTS show a record season</a></h1>${nav}</body>`,
   // Tall page with a white block (bigger than the 2x camera box) far below the fold: zooming on it after a scroll must film it.
   '/tall': `<body style="margin:0;background:${BG};height:3000px"><div id="w" style="position:absolute;top:2000px;left:290px;width:700px;height:400px;background:#fff"></div></body>`,
   '/news': `<body style="background:${BG}">news</body>`,
@@ -30,9 +30,9 @@ const frame = (dir, i) => path.join(dir, `f${String(i).padStart(5, '0')}.jpg`);
 
 try {
   // 1. Path guard.
-  checkPath('/perform', 'http://x/perform/team');
+  checkPath('/reports', 'http://x/reports/team');
   checkPath(/^\/b$/, 'http://x/b');
-  assert.throws(() => checkPath('/perform', 'http://x/pulse/article'), /expected path \/perform, got \/pulse/);
+  assert.throws(() => checkPath('/reports', 'http://x/news/article'), /expected path \/reports, got \/news/);
 
   // 2. Main take: zoom, marks, scoped click, wait out the splash.
   const r = await capture({ base, out, chapter: 'main', beats: [
@@ -40,7 +40,7 @@ try {
     { mark: { label: 'nav', on: 'nav.fixed.bottom-0' } },
     { zoom: { on: 'nav.fixed.bottom-0', scale: 2, ms: 500 }, mark: { label: 'zoomed', on: 'nav.fixed.bottom-0' } },
     { wide: 500 },
-    { name: 'perform', click: 'nav.fixed.bottom-0 >> text=PERFORM', expectPath: '/b' },
+    { name: 'reports', click: 'nav.fixed.bottom-0 >> text=REPORTS', expectPath: '/b' },
   ] });
   const ev = JSON.parse(fs.readFileSync(path.join(r.dir, 'events.json'), 'utf8'));
   for (const k of ['chapter', 'viewport', 'dur', 'frames', 'events']) assert.ok(k in ev, `events.json missing ${k}`);
@@ -64,7 +64,7 @@ try {
 
   // 5. A bare-text mis-click must fail the take.
   await assert.rejects(capture({ base, out, chapter: 'wrong', beats: [
-    { goto: '/a' }, { name: 'bare', click: 'text=PERFORM', expectPath: '/b' }] }), /expected path \/b, got \/news/);
+    { goto: '/a' }, { name: 'bare', click: 'text=REPORTS', expectPath: '/b' }] }), /expected path \/b, got \/news/);
 
   console.log(`selfcheck OK: main ${r.frames} frames/${r.dur.toFixed(1)}s luma head ${head} tail ${tail}; hold ${h.frames} frames; scroll-zoom luma ${zl}; guard threw`);
 } finally {

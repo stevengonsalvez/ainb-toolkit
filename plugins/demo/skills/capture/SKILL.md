@@ -48,7 +48,7 @@ Values below are one app's; only `base`, `out` and `chapters` are required.
 
 ```js
 export default {
-  base: 'http://localhost:5182',
+  base: 'http://localhost:5173',
   out: '/scratch/takes',
   state: '/scratch/session-state.json',        // only with `login`: reused if it still gets past
                                                // the login page, else re-minted
@@ -61,7 +61,7 @@ export default {
 
 `login` overrides, with the defaults the rig ships: `loginPath '/login'`, `emailSel '#email'`,
 `passwordSel '#password'`, `submitSel 'role=button[name=/^(log in|sign in)$/i]'`,
-`dismissSel '#rcc-decline-button'` (a cookie banner's decline button). Set whichever the app
+`dismissSel '#rcc-decline-button'` (the decline button id react-cookie-consent renders). Set whichever the app
 needs. Drop `login` and `state` entirely when the app is public: the rig then films straight
 from `base` with a fresh context.
 
@@ -95,7 +95,7 @@ Order: goto, click, wait (ready or network quiet), settle, expectPath, [filming 
    - `Emulation.setDeviceMetricsOverride` with `viewport: {x, y, width, height, scale}`: sharp, correctly framed, fixed chrome behaves. **This is the camera.** Crispness is decided at capture time; no editor or compositor recovers it.
    - Its `viewport` x/y are **document**-relative, while `getBoundingClientRect` is viewport-relative. After a 520px scroll, `y: 0` filmed the blank page top; `y: 520` framed the target. The rig adds the scroll (read once while unzoomed) and `wide` clears the override. `npm run check` asserts a scroll-then-zoom lands on its target (luma 255 fixed, 101 with the offset removed).
    - While zoomed, the drifting cursor must stay inside the camera box. Drifting outside it repaints nothing visible, the screencast stops emitting, and the mp4 froze on the pre-zoom frame for ~2.4s.
-4. **Never select by bare text.** Measured: a bare `text=PERFORM` matched an article headline elsewhere on the page and navigated away. Scope every selector to its container (`<nav-selector> >> text=<label>`, e.g. `nav.fixed.bottom-0 >> text=PERFORM` or `header nav >> text=Fares`) and set `expectPath` on every navigating beat so a mis-click fails the take instead of filming the wrong screen.
+4. **Never select by bare text.** Measured: a bare `text=<nav label>` matched an article headline elsewhere on the page and navigated away. Scope every selector to its container (`<nav-selector> >> text=<label>`, e.g. `nav.fixed.bottom-0 >> text=REPORTS` or `header nav >> text=Fares`) and set `expectPath` on every navigating beat so a mis-click fails the take instead of filming the wrong screen.
 5. **Nav bars are context-dependent.** Measured on one app: after clicking one nav item, another item was gone from the nav. Targets are resolved fresh per beat; never cache handles across beats.
 6. **`addInitScript` overlays survive SPA route changes** (cursor verified present after three client-side navigations).
 7. **Login: never hand-write a token into storageState.** It fails silently and films the login page. `mintState` drives the real form and throws unless the final pathname has left `loginPath`. Quirks it already handles, each found on a real app: an `#email` field that is `input[type=text]` rather than `type=email`, a cookie modal covering the submit button (dismissed via `dismissSel` first), and controlled React inputs that need `type()` rather than `fill()`.
@@ -113,7 +113,7 @@ One per chapter, written next to the frames at `<out>/<chapter>/events.json`; `<
 
 ```json
 {
-  "chapter": "home-to-perform",
+  "chapter": "home-to-reports",
   "viewport": { "width": 1280, "height": 720 },
   "dur": 10.85,
   "frames": 477,
@@ -141,20 +141,20 @@ One per chapter, written next to the frames at `<out>/<chapter>/events.json`; `<
 ```js
 const nav = 'nav.fixed.bottom-0';
 export default {
-  base: 'http://localhost:5182',
+  base: 'http://localhost:5173',
   state: '/scratch/demo/session-state.json',
   out: '/scratch/demo/takes',
-  login: { email: 'coach@example.test', password: '…' },
-  chapters: [{ name: 'home-to-perform', beats: [
+  login: { email: 'demo@example.test', password: '…' },
+  chapters: [{ name: 'home-to-reports', beats: [
     { name: 'land', goto: '/home', expectPath: '/home', hold: 1500 },
     { zoom: { on: nav, scale: 2, ms: 900 }, mark: { label: 'bottom nav', on: nav }, hold: 1500 },
     { wide: 700, hold: 600 },
-    { name: 'perform', click: `${nav} >> text=PERFORM`, expectPath: '/perform', hold: 2000 },
+    { name: 'reports', click: `${nav} >> text=REPORTS`, expectPath: '/reports', hold: 2000 },
   ] }],
 };
 ```
 
-Result: `session: minted`, then `home-to-perform: 477 frames, 10.8s, 1 marks`. Zoomed frames sharp with nav at the frame bottom; tail on loaded /perform.
+Result: `session: minted`, then `home-to-reports: 477 frames, 10.8s, 1 marks`. Zoomed frames sharp with nav at the frame bottom; tail on the loaded page.
 
 **Public multi-page app, no login** (verified end to end, 2026-09-21). No `login`, no `state`:
 
@@ -172,6 +172,11 @@ export default {
 ```
 
 Result: `fares: 370 frames, 10.3s, 2 marks`. Both marks passed `demo:compose`'s still-check.
+
+The full example, a made-up ferry operator's three-page app with its server, beats file and
+compose config, ships in `../compose/examples/ferry/`. Copy it to a scratch directory, run
+`node serve.mjs`, then `node scripts/run.mjs <copy>/beats.mjs` from this skill's directory.
+Takes land in `<copy>/takes/`, where the compose config expects them.
 
 ## Files
 
