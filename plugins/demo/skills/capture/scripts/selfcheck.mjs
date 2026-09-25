@@ -24,7 +24,7 @@ const server = http.createServer((req, res) => {
 }).listen(0);
 const base = `http://127.0.0.1:${server.address().port}`;
 const out = fs.mkdtempSync(path.join(os.tmpdir(), 'demo-capture-check-'));
-const luma = jpg => Number(execFileSync('/usr/bin/ffmpeg', ['-v', 'error', '-i', jpg, '-vf',
+const luma = jpg => Number(execFileSync(process.env.FFMPEG || 'ffmpeg', ['-v', 'error', '-i', jpg, '-vf',
   'signalstats,metadata=print:key=lavfi.signalstats.YAVG:file=-', '-f', 'null', '-']).toString().match(/YAVG=([\d.]+)/)[1]);
 const frame = (dir, i) => path.join(dir, `f${String(i).padStart(5, '0')}.jpg`);
 

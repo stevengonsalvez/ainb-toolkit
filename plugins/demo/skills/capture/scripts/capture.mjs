@@ -15,11 +15,8 @@
 //  - Never select by bare text. A bare text selector for a nav label matched an
 //    article headline and navigated away from the nav entirely. Scope every selector.
 import fs from 'fs'; import path from 'path';
-
-// ~/.cache/ms-playwright was wiped externally twice; browsers live here instead.
-// Must be set before playwright loads, hence the dynamic import.
-process.env.PLAYWRIGHT_BROWSERS_PATH ??= '/home/claude/.local/pw-browsers';
-const { chromium } = await import('@playwright/test');
+// Browsers come from $PLAYWRIGHT_BROWSERS_PATH when set, else Playwright's own default.
+import { chromium } from '@playwright/test';
 
 const smoothstep = p => p * p * (3 - 2 * p);
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
