@@ -11,7 +11,7 @@ Pairs with **demo:compose** (the sibling skill in this plugin): it takes the tak
 skill writes, plus one config carrying the brand and copy, and produces the finished cut.
 
 ```
-beats.mjs ──▶ run.mjs ──▶ capture.mjs ──▶ <out>/<chapter>/ frames + list.txt + events.json
+beats.mjs ──▶ run.mjs ──▶ capture.mjs ──▶ <out>/<chapter>/ frames + cfr/ + events.json
                               │                         │
                         mintState (real login)     encode.sh ──▶ <chapter>.mp4
                                                         │
@@ -159,7 +159,7 @@ One per chapter, written next to the frames at `<out>/<chapter>/events.json`; `<
 }
 ```
 
-- `dur`: seconds, first to last captured frame. The mp4 runs ~0.1s longer (last-frame hold + 30fps rounding; measured 50.24s dur vs 50.33s mp4). Before list.txt dropped frames closer than 1/60s, a 16ms duration clamp ran it 0.39s long at 20s and 1.22s long at 50s, putting marks early.
+- `dur`: seconds, first to last captured frame. The mp4 has `ceil(dur * 30) + 1` frames: capture.mjs resamples to 30fps itself (frame k shows the last frame captured at or before k/30) and writes `cfr/` as hard links, which `encode.sh` encodes as a plain image sequence. It used to hand ffmpeg a concat list of per-frame durations instead; measured on a 4.4s take with zoom glides, that ran 0.17s short on ffmpeg 6.1 and 0.73s short on ffmpeg 8.1 (an 11.1s ferry take came out 8.9s long), putting marks late by growing amounts. `npm run check` now asserts the mp4 length matches the take.
 - `frames`: captured JPEG count (variable rate; the mp4 is resampled to 30fps).
 - `t`: seconds from the first frame, which is mp4 time 0. Taken from the wall clock: the last delivered frame lagged the screen by ~1s late in a 50s take.
 - `kind`: currently always `"mark"`.
@@ -216,6 +216,6 @@ Takes land in `<copy>/takes/`, where the compose config expects them.
 
 - `scripts/capture.mjs`: `capture()`, `mintState()`, `ensureState()`, `checkPath()`. Edit here to change camera, cursor, waits.
 - `scripts/run.mjs`: runs chapters from a beats file, encodes each.
-- `scripts/encode.sh`: `list.txt` (real frame durations) to 30fps H.264 mp4.
+- `scripts/encode.sh`: `cfr/` (the 30fps frame sequence) to H.264 mp4.
 - `scripts/montage.sh`: contact sheet for grading a take.
 - `scripts/selfcheck.mjs`: local throwaway server; asserts path guard (including a sibling path such as `/reports-archive`), zoom framing, events.json schema, non-blank head, non-splash tail, hold frame count, bare-text mis-click failing, one cursor on a page with an iframe, the cursor mounting where storage throws, every click ripple starting at scale 1, a `type` beat typing key by key with a hidden cursor still emitting frames, `pace: 2` lengthening a hold, and `loggedInSel` re-minting a dead session.

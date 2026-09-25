@@ -278,18 +278,18 @@ export async function capture({ base, state, out, viewport = { width: 1280, heig
   await hold(P(500));
   await cdp.send('Page.stopScreencast');
 
-  // List only frames >=1/60s apart so every duration is exact. Clamping each duration to 16ms
-  // instead ran the mp4 1.2s long over 50s (849 clamped frames) and put marks early.
+  // Resample to 30fps here: output frame k shows the last frame captured at or before k/30, and
+  // cfr/ holds one hard link per output frame for a plain image2 encode. An ffmpeg concat list
+  // with per-frame durations was version-dependent: ffmpeg 6.1 honoured the durations, 8.1
+  // ignored them and squeezed an 11.1s take into 8.9s, so every mark landed late.
   frames.forEach((f, i) => fs.writeFileSync(path.join(dir, `f${String(i).padStart(5, '0')}.jpg`), f.buf));
-  const keep = [];
-  frames.forEach((f, i) => { if (!keep.length || f.t - frames[keep.at(-1)].t >= 1 / 60 || i === frames.length - 1) keep.push(i); });
-  let list = '';
-  keep.forEach((i, k) => {
-    const next = keep[k + 1] !== undefined ? frames[keep[k + 1]].t : frames[i].t + 0.033;
-    list += `file 'f${String(i).padStart(5, '0')}.jpg'\nduration ${Math.max(0.001, next - frames[i].t).toFixed(4)}\n`;
-  });
-  if (keep.length) list += `file 'f${String(keep.at(-1)).padStart(5, '0')}.jpg'\n`;
-  fs.writeFileSync(path.join(dir, 'list.txt'), list);
+  const cfr = path.join(dir, 'cfr'); fs.mkdirSync(cfr);
+  const pad = (i) => `${String(i).padStart(5, '0')}.jpg`;
+  const n = frames.length ? Math.ceil((frames.at(-1).t - t0) * 30) + 1 : 0;
+  for (let k = 0, j = 0; k < n; k++) {
+    while (j + 1 < frames.length && frames[j + 1].t - t0 <= k / 30) j++;
+    fs.linkSync(path.join(dir, `f${pad(j)}`), path.join(cfr, pad(k)));
+  }
   const dur = frames.length ? frames.at(-1).t - t0 : 0;
   fs.writeFileSync(path.join(dir, 'events.json'), JSON.stringify({ chapter, viewport, dur, frames: frames.length, events }, null, 1));
   return { frames: frames.length, dur, events: events.length, dir };

@@ -65,6 +65,12 @@ try {
   const z = ev.events.find(e => e.label === 'zoomed');
   assert.equal(z.cam.s, 2, 'zoom did not reach scale 2');
   assert.ok(z.cam.y + z.cam.h >= z.rect.y + z.rect.h, 'zoom box does not frame the nav');
+  // The mp4 must run as long as the take. Zoom glides deliver frames faster than 30fps; an
+  // encoder that mishandles those squeezes the timeline and puts every mark late.
+  execFileSync(path.join(import.meta.dirname, 'encode.sh'), [r.dir, `${r.dir}.mp4`]);
+  const n = Number(execFileSync(process.env.FFPROBE || 'ffprobe', ['-v', 'error', '-count_frames', '-select_streams', 'v:0',
+    '-show_entries', 'stream=nb_read_frames', '-of', 'csv=p=0', `${r.dir}.mp4`]).toString());
+  assert.ok(Math.abs(n / 30 - r.dur) < 0.1, `mp4 holds ${n} frames (${(n / 30).toFixed(2)}s) for a ${r.dur.toFixed(2)}s take`);
   const head = luma(frame(r.dir, 0)), tail = luma(frame(r.dir, r.frames - 1));
   assert.ok(head > 60 && head < 140, `first frame is blank/splash (luma ${head})`);
   assert.ok(tail > 60 && tail < 140, `last frame is still the splash (luma ${tail})`);
@@ -132,7 +138,7 @@ try {
   assert.equal(await ensureState({ base, state, login: { ...login, loggedInSel: '#me' } }), 'reused');
 
   console.log(`selfcheck OK: cursors 1 with iframe; sandbox errors ${sandboxErrs}; ripple ${JSON.stringify(ripple)}; type ${ty.dur.toFixed(2)}s luma ${tl}; pace ${p1.dur.toFixed(2)}s -> ${p2.dur.toFixed(2)}s; loggedInSel re-mints`);
-  console.log(`selfcheck OK: main ${r.frames} frames/${r.dur.toFixed(1)}s luma head ${head} tail ${tail}; hold ${h.frames} frames; scroll-zoom luma ${zl}; guard threw`);
+  console.log(`selfcheck OK: main ${r.frames} frames/${r.dur.toFixed(1)}s mp4 ${n} frames luma head ${head} tail ${tail}; hold ${h.frames} frames; scroll-zoom luma ${zl}; guard threw`);
 } finally {
   server.close(); fs.rmSync(out, { recursive: true, force: true });
 }
