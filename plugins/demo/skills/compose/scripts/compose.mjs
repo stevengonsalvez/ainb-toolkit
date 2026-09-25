@@ -39,10 +39,11 @@ function freezes(mp4) {
 }
 
 // DEFECT 1 guard: a hold must not run past a camera move. Returns the first time after t+0.3
-// where the frame differs from the t+0.3 pose (mean abs luma diff > 2 at 160x90).
+// where the frame differs from the t+0.3 pose (mean abs luma diff > 2 at 160x90). The scan
+// covers the longest hold allowed (pace can raise hold.max), so an unseen move cannot slip in.
 function stableUntil(mp4, t) {
   const fw = 160 * 90, t0 = t + 0.3;
-  const buf = execFileSync(C.ffmpeg, ['-nostdin', '-loglevel', 'error', '-ss', String(t0), '-i', mp4, '-t', '2.6',
+  const buf = execFileSync(C.ffmpeg, ['-nostdin', '-loglevel', 'error', '-ss', String(t0), '-i', mp4, '-t', String(Math.max(2.6, C.hold.max + 0.4)),
     '-vf', 'fps=10,scale=160:90,format=gray', '-f', 'rawvideo', '-'], { maxBuffer: 1 << 26 });
   const n = Math.floor(buf.length / fw);
   for (let k = 1; k < n; k++) {
@@ -150,19 +151,26 @@ function analyze(cfg) {
     if (l.trim().split(/\s+/).length > C.layout.maxLabelWords) console.warn(`  warn ${name} m${i}: label over ${C.layout.maxLabelWords} words: "${l}"`);
   }
 
-  // spotlight windows in SOURCE time
+  // spotlight windows in SOURCE time. `pace` stretches hold.min/max, but only as far as the
+  // footage stays still: past that the frame moves under the cut-out (defect 1). At pace 1 this
+  // is exactly the unpaced rule, hold.min floor included.
+  const minRaw = C.hold.min / C.pace;
+  const holdFor = (settle, T) => {
+    const stable = settle - T - 0.15;
+    const base = Math.max(minRaw, Math.min(C.hold.max / C.pace, stable));
+    return Math.min(Math.max(C.hold.min, Math.min(C.hold.max, stable)), Math.max(base, stable));
+  };
   const spots = marks.map((m, i) => {
     const settle = stableUntil(mp4, m.t);
-    const hold = Math.max(C.hold.min, Math.min(C.hold.max, settle - m.t - 0.15));
-    return { m, i, T: m.t, hold, label: labels[i], settle };
+    return { m, i, T: m.t, hold: holdFor(settle, m.t), label: labels[i], settle };
   });
   for (let i = 0; i + 1 < spots.length; i++) {
     const a = spots[i], b = spots[i + 1];
     if (a.T + a.hold + 0.3 > b.T - 0.25) {
       // too close: first fades out as the second fades in; push the second only if the gap is short
-      if (b.T - a.T < C.hold.min - 0.05) {
-        const T2 = a.T + C.hold.min - 0.05;
-        b.hold = Math.max(C.hold.min, Math.min(C.hold.max, b.settle - T2 - 0.15));
+      if (b.T - a.T < minRaw - 0.05) {
+        const T2 = a.T + minRaw - 0.05;
+        b.hold = holdFor(b.settle, T2);
         b.shift = r3(T2 - b.T); b.T = T2;
       }
       a.hold = Math.min(a.hold, b.T - a.T - 0.25);

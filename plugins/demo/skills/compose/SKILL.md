@@ -127,8 +127,9 @@ speed      2x    ramp    1x     ramp   2x   ramp    1x     ramp
   on proof windows playing at 1x, so any other `speed` key is refused.
 - **`pace`** (default 1): one multiplier on card durations (title, switch, end, chapter
   cards), `hold.min`/`hold.max`, `fadeLead` and every fade and card-motion timing. `1.3` gives
-  a calmer cut, `0.8` a brisker one. It does not change footage speed. A long `hold.min` can
-  outlast a camera move; if the still-check then reports drift, lower `pace` or re-mark.
+  a calmer cut, `0.8` a brisker one. It does not change footage speed. A paced hold stops where
+  the footage stops being still (the next camera move), so a spotlight never outlives its pose;
+  at `pace: 1` holds are exactly the unpaced rule.
 - **`targetDuration`** (seconds, optional): raises the global `speed.travel`, capped at 4x,
   until the whole video (cards included) fits, and prints `speed.travel` and the planned length.
   It never speeds up proof windows, cards or holds, so a target shorter than those can reach is
