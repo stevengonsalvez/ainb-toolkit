@@ -45,10 +45,12 @@ load helpers
   # demo can rely on.
   M="$REPO_ROOT/.github/plugin/marketplace.json"
   jq -e '.plugins[] | select(.name == "demo") | .source == "./plugins/demo"' "$M"
-  while IFS=$'\t' read -r src skills; do
-    [[ "$src" == ./plugins/* ]]
-    [ -d "$REPO_ROOT/$src/$skills" ]
-  done < <(jq -r '.plugins[] | [.source, .skills] | @tsv' "$M")
+  # Types first: a github-source object or a missing skills key must fail here,
+  # not slip through a string loop that never sees them.
+  jq -e 'all(.plugins[]; (.source | type) == "string" and (.source | startswith("./plugins/")) and (.skills | type) == "string")' "$M"
+  for dir in $(jq -r '.plugins[] | .source + "/" + .skills' "$M"); do
+    [ -d "$REPO_ROOT/$dir" ] || return 1
+  done
 }
 
 @test "hooks.json wires gate AND heartbeat on Stop, sync on SessionStart/PreCompact" {
