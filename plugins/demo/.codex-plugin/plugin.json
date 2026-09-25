@@ -10,9 +10,6 @@
   "repository": "https://github.com/stevengonsalvez/ainb-toolkit",
   "license": "Apache-2.0",
   "skills": "./skills/",
-  "dependencies": [
-    "brag"
-  ],
   "keywords": [
     "demo",
     "video",
