@@ -29,7 +29,9 @@
       "name": "brag",
       "source": {
         "source": "github",
-        "repo": "latent-spaces/brag"
+        "repo": "latent-spaces/brag",
+        "ref": "v0.3.0",
+        "sha": "57ce4c9bb912f01a0078b154318bf67c5cbf780f"
       },
       "description": "Upstream launch-video skill by latent-spaces, referenced so demo:brag can delegate to it",
       "category": "delivery"
