@@ -85,8 +85,8 @@ export function loadConfig(path) {
     name: raw.name || 'demo',
     takes: abs(raw.takes),
     out: abs(raw.out || './compose'),
-    // env, then config, then PATH. check.mjs needs an ffmpeg with drawtext (libfreetype);
-    // some PATH builds lack it, so point FFMPEG or "ffmpeg" at a full build.
+    // env, then config, then PATH. Any build works; without drawtext (libfreetype) check.mjs
+    // tiles lose their captions and it says so.
     ffmpeg: process.env.FFMPEG || raw.ffmpeg || 'ffmpeg',
     ffprobe: process.env.FFPROBE || raw.ffprobe || 'ffprobe',
     format,

@@ -21,6 +21,11 @@ if (!cfgPath) { console.error('usage: check.mjs <config.json> [chapter ...]'); p
 const C = loadConfig(cfgPath);
 const W = C.width, H = C.height, K = C.check;
 
+// Captions on the contact tiles need drawtext (libfreetype), which some ffmpeg builds lack, a
+// Homebrew one included. They are for human eyes only: the verdict never depends on them.
+const drawtext = / drawtext /.test(execFileSync(C.ffmpeg, ['-hide_banner', '-filters']).toString());
+if (!drawtext) console.warn(`warn: ${C.ffmpeg} has no drawtext filter, so contact tiles carry no captions. For captions set FFMPEG (or "ffmpeg" in the config) to a full build, e.g. /usr/bin/ffmpeg.`);
+
 function grayFrame(mp4, t, w = W, h = H) {
   const buf = execFileSync(C.ffmpeg, ['-nostdin', '-loglevel', 'error', '-ss', String(t), '-i', mp4,
     '-frames:v', '1', '-vf', `scale=${w}:${h},format=gray`, '-f', 'rawvideo', '-'], { maxBuffer: 1 << 28 });
@@ -131,20 +136,16 @@ function checkChapter(name) {
       lit: r3(Math.min(...litR)), dim: r3(Math.max(...dimR)), sd: r3(sd), drift: r3(drift),
       ok: !why.length, why: why.join('; ') });
 
-    // contact tiles for eyeballing alongside the numbers
+    // contact tiles for eyeballing alongside the numbers, named 000.png, 001.png, ... in mark order
     for (const [k, t] of at.entries()) {
-      try {
-        execFileSync(C.ffmpeg, ['-nostdin', '-loglevel', 'error', '-y', '-ss', String(t), '-i', seg, '-frames:v', '1',
-          '-vf', `scale=${W / 2}:${H / 2},drawtext=text='m${s.i} ${'ab'[k]} t=${t}':x=6:y=6:fontsize=18:fontcolor=cyan:box=1:boxcolor=black`,
-          `${stillDir}/${String(s.i).padStart(2, '0')}${'ab'[k]}.png`], { stdio: ['ignore', 'ignore', 'pipe'] });
-      } catch (e) {
-        if (/drawtext/.test(e.stderr)) throw new Error(`${C.ffmpeg} has no drawtext filter. Set FFMPEG (or "ffmpeg" in the config) to a full build, e.g. /usr/bin/ffmpeg`);
-        throw e;
-      }
+      const cap = drawtext ? `,drawtext=text='m${s.i} ${'ab'[k]} t=${t}':x=6:y=6:fontsize=18:fontcolor=cyan:box=1:boxcolor=black` : '';
+      execFileSync(C.ffmpeg, ['-nostdin', '-loglevel', 'error', '-y', '-ss', String(t), '-i', seg, '-frames:v', '1',
+        '-vf', `scale=${W / 2}:${H / 2}${cap}`, `${stillDir}/${String(2 * rows.length - 2 + k).padStart(3, '0')}.png`]);
     }
   }
+  // An image2 sequence, not -pattern_type glob, which some builds do not support.
   const tiles = readdirSync(stillDir).length;
-  if (tiles) execFileSync(C.ffmpeg, ['-loglevel', 'error', '-y', '-pattern_type', 'glob', '-i', `${stillDir}/*.png`,
+  if (tiles) execFileSync(C.ffmpeg, ['-loglevel', 'error', '-y', '-i', `${stillDir}/%03d.png`,
     '-vf', `tile=2x${Math.ceil(tiles / 2)}`, '-frames:v', '1', `${C.out}/work/stills-${name}.png`]);
   return rows;
 }

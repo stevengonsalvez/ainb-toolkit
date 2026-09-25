@@ -216,9 +216,10 @@ with a tighter `hold` before the next camera move.
   each render small and lint clean.
 - `scripts/render.sh`, `scripts/concat.sh`: render loop and final encode.
 - ffmpeg and ffprobe, everywhere: env `FFMPEG`/`FFPROBE`, then config `"ffmpeg"`/`"ffprobe"`,
-  then whatever is on PATH. `check.mjs` needs the `drawtext` filter (libfreetype), which some
-  PATH builds lack (a measured Homebrew build did); it stops with a message naming the fix.
-  Point `FFMPEG` at a full build, for example the distro's `/usr/bin/ffmpeg`.
+  then whatever is on PATH. Every step, the still-check verdict included, runs on a plain build.
+  The one cosmetic extra is the caption on each contact tile (`drawtext`, libfreetype), which
+  some builds lack (a measured Homebrew 8.1 did): `check.mjs` then prints one warning and writes
+  the tiles uncaptioned. For captions, point `FFMPEG` at a full build such as `/usr/bin/ffmpeg`.
 - `scripts/check.mjs`: the gate. For square output it frames the source frame with the same
   view as the composition before comparing.
 - `assets/template/`: `hyperframes.json`, `package.json`, and a vendored `gsap.min.js` so a
