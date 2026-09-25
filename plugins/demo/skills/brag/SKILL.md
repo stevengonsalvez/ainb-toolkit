@@ -77,9 +77,11 @@ Notes on the manual installs:
 
 ## Why it is wired this way
 
-`demo` declares `"dependencies": ["brag"]` and the ainb-toolkit marketplace lists `brag` with
-a github source pointing at `latent-spaces/brag`. Installing `demo` therefore installs brag
-too, and dependencies resolve inside one marketplace without a cross-marketplace allowlist.
+`demo` declares `"dependencies": ["brag"]` in `.claude-plugin/plugin.json` only; the Codex
+and portable manifests leave it out, since those harnesses do not resolve it. The ainb-toolkit
+marketplace lists `brag` with a github source pointing at `latent-spaces/brag`. On Claude
+Code, installing `demo` therefore installs brag too, and dependencies resolve inside one
+marketplace without a cross-marketplace allowlist.
 
 To hold brag at a known version, pin the marketplace entry with `ref` or `sha`. Unpinned, it
 tracks the upstream default branch.
