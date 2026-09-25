@@ -5,12 +5,13 @@
 import { execSync } from 'node:child_process';
 import { readFileSync, writeFileSync, mkdirSync, copyFileSync, existsSync } from 'node:fs';
 import { dirname, resolve, basename } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { loadConfig, segmentNames, eventsPath, r3, esc } from './config.mjs';
 
 const cfgPath = process.argv[2];
 if (!cfgPath) { console.error('usage: compose.mjs <config.json> [segment ...]'); process.exit(2); }
 const C = loadConfig(cfgPath);
-const SKILL = resolve(dirname(new URL(import.meta.url).pathname), '..');
+const SKILL = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const W = C.width, H = C.height, SAFE = C.layout.safeMargin;
 
 // ---------- project scaffold ----------
