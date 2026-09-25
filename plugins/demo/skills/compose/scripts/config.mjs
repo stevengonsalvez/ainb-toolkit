@@ -51,9 +51,11 @@ export function loadConfig(path) {
   const displayStack = fontStack(raw.theme?.fonts?.display, dir, faces, files);
   const bodyStack = fontStack(raw.theme?.fonts?.body, dir, faces, files);
 
+  // pace multiplies card durations, hold min/max and fade timings. It never touches footage speed.
+  const pace = raw.pace ?? 1;
   const chapters = (raw.chapters || []).map((c) => {
     if (typeof c === 'string') c = { name: c };
-    return { ...c, title: c.title ?? titleCase(c.name) };
+    return { ...c, title: c.title ?? titleCase(c.name), ...(c.cardDur != null && { cardDur: c.cardDur * pace }) };
   });
   if (!chapters.length) throw new Error('config: chapters is empty');
 
@@ -65,6 +67,12 @@ export function loadConfig(path) {
     cards[id] = { ...cardDefaults, dur: 2.5, ...s };
   }
   if (raw.cards?.end) cards['end-card'] = { ...cardDefaults, ...raw.cards.end };
+  for (const c of Object.values(cards)) c.dur = r3(c.dur * pace);
+
+  const speed = { travel: 2, proof: 1, rampMs: 250, ...(raw.speed || {}) };
+  for (const c of [speed, ...chapters.map((ch) => ch.speed || {})]) {
+    for (const k of ['travel', 'proof']) if (c[k] != null && !(c[k] >= 0.1 && c[k] <= 4)) throw new Error(`config: speed.${k} must be between 0.1 and 4`);
+  }
 
   return {
     name: raw.name || 'demo',
@@ -76,11 +84,13 @@ export function loadConfig(path) {
     ffprobe: process.env.FFPROBE || raw.ffprobe || 'ffprobe',
     width: raw.width || 1280,
     height: raw.height || 720,
-    chapterCardDur: raw.chapterCardDur ?? 2.0,
+    pace, speed,
+    targetDuration: raw.targetDuration,
+    chapterCardDur: r3((raw.chapterCardDur ?? 2.0) * pace),
     defaultPersona: raw.defaultPersona || '',
-    fadeLead: raw.fadeLead ?? 0.25,          // spotlight fades in this long before t
+    fadeLead: r3((raw.fadeLead ?? 0.25) * pace), // spotlight fades in this long before t
     deadHold: raw.deadHold ?? 2.0,           // freezes longer than this get trimmed
-    hold: { min: 1.5, max: 2.2, ...(raw.hold || {}) },
+    hold: Object.fromEntries(Object.entries({ min: 1.5, max: 2.2, ...(raw.hold || {}) }).map(([k, v]) => [k, v * pace])),
     layout: { safeMargin: 64, labelHeight: 48, labelGap: 14, maxLabelWords: 6, ...(raw.layout || {}) },
     check: { litRatio: 0.80, dimRatio: 0.62, contentSd: 8, driftMax: 12, ...(raw.check || {}) },
     theme, displayStack, bodyStack, fontFaces: faces, fontFiles: [...files],

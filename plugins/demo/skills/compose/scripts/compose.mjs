@@ -13,6 +13,7 @@ if (!cfgPath) { console.error('usage: compose.mjs <config.json> [segment ...]');
 const C = loadConfig(cfgPath);
 const SKILL = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const W = C.width, H = C.height, SAFE = C.layout.safeMargin;
+const F = (x) => r3(x * C.pace);          // fade and card-motion timings scale with pace
 
 // ---------- project scaffold ----------
 // ponytail: one standalone project per segment so each renders alone (render memory) and lint stays clean
@@ -125,14 +126,14 @@ function cardDoc(id, c) {
     <div class="sub">${c.sub}</div>
   </div>
 </section>`;
-  const script = `tl.fromTo("#${id}-inner", { opacity: 0, y: 18 }, { opacity: 1, y: 0, duration: 0.6, ease: "power3.out" }, 0.15);
-tl.fromTo("#${id}-rule", { scaleX: 0 }, { scaleX: 1, duration: 0.5, ease: "power2.out" }, 0.35);
-tl.fromTo("#fade", { opacity: 0 }, { opacity: 1, duration: 0.4, ease: "power1.in" }, ${r3(dur - 0.4)});`;
+  const script = `tl.fromTo("#${id}-inner", { opacity: 0, y: 18 }, { opacity: 1, y: 0, duration: ${F(0.6)}, ease: "power3.out" }, ${F(0.15)});
+tl.fromTo("#${id}-rule", { scaleX: 0 }, { scaleX: 1, duration: ${F(0.5)}, ease: "power2.out" }, ${F(0.35)});
+tl.fromTo("#fade", { opacity: 0 }, { opacity: 1, duration: ${F(0.4)}, ease: "power1.in" }, ${r3(dur - F(0.4))});`;
   return doc(id, dur, body, script);
 }
 
-// ---------- chapter ----------
-function chapter(cfg) {
+// ---------- chapter analysis (source time, independent of speed) ----------
+function analyze(cfg) {
   const name = cfg.name;
   const mp4 = `${C.takes}/${name}.mp4`;
   if (!existsSync(mp4)) throw new Error(`${name}: no footage at ${mp4}`);
@@ -147,7 +148,6 @@ function chapter(cfg) {
   for (const [i, l] of labels.entries()) {
     if (l.trim().split(/\s+/).length > C.layout.maxLabelWords) console.warn(`  warn ${name} m${i}: label over ${C.layout.maxLabelWords} words: "${l}"`);
   }
-  const CARD = cfg.cardDur ?? C.chapterCardDur;
 
   // spotlight windows in SOURCE time
   const spots = marks.map((m, i) => {
@@ -178,15 +178,115 @@ function chapter(cfg) {
     for (const [u, v] of pieces) if (v - u > 1.4) cuts.push([u + 0.5, v - 0.5]);
   }
   const kept = keep(dur - 0.03, cuts);
-  const toComp = (t) => { // source -> composition time
-    let acc = CARD;
-    for (const [a, b] of kept) { if (t < b) return acc + Math.max(0, t - a); acc += b - a; }
-    return acc;
-  };
-  const footDur = kept.reduce((s, [a, b]) => s + b - a, 0);
-  const total = CARD + footDur;
+  return { cfg, name, mp4, dur, spots, kept, CARD: cfg.cardDur ?? C.chapterCardDur };
+}
 
-  const vids = kept.map(([a, b], i) => `<video id="${name}-v${i}" class="foot clip" src="assets/footage/${name}.mp4" data-start="${r3(toComp(a))}" data-duration="${r3(b - a)}" data-media-start="${r3(a)}" data-track-index="0" muted playsinline></video>`).join('\n');
+// ---------- speed ramp ----------
+// Footage time is re-mapped in two steps: source t -> kept time u (cuts removed) -> output time.
+// Output time is built from pieces over u, each with a slowness k = output s per source s that
+// runs linearly from k0 to k1, so a ramp is a smooth change of speed rather than a jump.
+// Proof windows (fadeLead before a mark through the end of its hold) play at speed.proof;
+// everything between them plays at speed.travel, with a ramp of rampMs of output time each side.
+function retime(an, sp) {
+  const U = []; let acc = 0;
+  for (const [a, b] of an.kept) { U.push(acc); acc += b - a; }
+  const uEnd = acc;
+  const toU = (t) => {
+    for (const [i, [a, b]] of an.kept.entries()) { if (t < b) return U[i] + Math.max(0, t - a); }
+    return uEnd;
+  };
+  const kp = 1 / sp.proof, kt = 1 / sp.travel;
+  // proof windows in u, merged when they touch
+  const win = [];
+  for (const s of an.spots) {
+    const w = [Math.max(0, toU(s.T - C.fadeLead)), Math.min(uEnd, toU(s.T + s.hold))];
+    if (win.length && w[0] <= win.at(-1)[1]) win.at(-1)[1] = Math.max(win.at(-1)[1], w[1]); else win.push(w);
+  }
+  const pieces = [];
+  const piece = (u0, u1, k0, k1) => { if (u1 - u0 > 1e-6) pieces.push({ u0, u1, k0, k1 }); };
+  // source length of one full ramp, chosen so the ramp lasts rampMs of OUTPUT time
+  const rs = kp === kt ? 0 : (2 * sp.rampMs / 1000) / (kp + kt);
+  const slope = rs ? (kt - kp) / rs : 0;       // dk per source second, going from proof to travel
+  const gap = (g0, g1, left, right) => {       // left/right: a proof window borders that side
+    const g = g1 - g0;
+    if (!rs) return piece(g0, g1, kt, kt);
+    if (left && right) {
+      if (g >= 2 * rs) { piece(g0, g0 + rs, kp, kt); piece(g0 + rs, g1 - rs, kt, kt); piece(g1 - rs, g1, kt, kp); }
+      else { const km = kp + slope * g / 2; piece(g0, g0 + g / 2, kp, km); piece(g0 + g / 2, g1, km, kp); }
+    } else if (right) {                        // head of the chapter: already travelling
+      if (g >= rs) { piece(g0, g1 - rs, kt, kt); piece(g1 - rs, g1, kt, kp); }
+      else piece(g0, g1, kp + slope * g, kp);
+    } else {                                   // tail: ramp up and leave
+      if (g >= rs) { piece(g0, g0 + rs, kp, kt); piece(g0 + rs, g1, kt, kt); }
+      else piece(g0, g1, kp, kp + slope * g);
+    }
+  };
+  let cur = 0;
+  for (const [i, [w0, w1]] of win.entries()) {
+    gap(cur, w0, i > 0, true);
+    piece(w0, w1, kp, kp);
+    cur = w1;
+  }
+  gap(cur, uEnd, true, false);
+  // Split at cut boundaries so each piece maps one kept range, then lay pieces end to end.
+  for (const b of U.slice(1)) {
+    const i = pieces.findIndex((p) => p.u0 < b - 1e-6 && b < p.u1 - 1e-6);
+    if (i < 0) continue;
+    const p = pieces[i], kb = p.k0 + (p.k1 - p.k0) * (b - p.u0) / (p.u1 - p.u0);
+    pieces.splice(i, 1, { u0: p.u0, u1: b, k0: p.k0, k1: kb }, { u0: b, u1: p.u1, k0: kb, k1: p.k1 });
+  }
+  let o = 0, nominal = 0;
+  for (const p of pieces) {
+    const len = (p.u1 - p.u0) * (p.k0 + p.k1) / 2;
+    p.o0 = o; nominal += len;
+    // Frame phase: at a constant whole-number speed v, source frames land on v evenly spaced
+    // phases of the 30fps output grid. If one sits on a half frame, float noise flips the fps
+    // filter's rounding and a 1x proof window stutters (a duplicated then a dropped frame,
+    // measured). Nudge the piece's start (< 1/60s, at most one frame at its entry) so every
+    // phase keeps clear of the half; the next piece starts where this one ends, so the exit is
+    // continuous. The composition keeps the un-nudged length, so durations do not move.
+    const v = 1 / p.k0;
+    if (p.k0 === p.k1 && Math.abs(v - Math.round(v)) < 1e-9) {
+      const q = Math.round(v), i = U.findLastIndex((x) => x <= p.u0 + 1e-9);
+      const base = 30 * (p.o0 + p.k0 * (U[i] - an.kept[i][0] - p.u0));
+      const want = (1 / (2 * q) + 0.5) % (1 / q), have = ((base % (1 / q)) + 1 / q) % (1 / q);
+      let d = want - have; if (d > 0.5 / q) d -= 1 / q; if (d < -0.5 / q) d += 1 / q;
+      p.o0 += d / 30;
+    }
+    o = p.o0 + len;
+  }
+  const outOfU = (u) => {
+    const p = pieces.find((q) => u < q.u1) ?? pieces.at(-1);
+    const x = Math.min(u, p.u1) - p.u0;
+    return p.o0 + p.k0 * x + (p.k1 - p.k0) * x * x / (2 * (p.u1 - p.u0));
+  };
+  return { pieces, footDur: nominal, toOut: (t) => outOfU(toU(t)), kept: an.kept, U };
+}
+
+// Write the re-timed footage: cuts dropped, pieces re-timed, resampled to 30fps.
+function renderFootage(an, rt, out) {
+  const f = (x) => x.toFixed(6);
+  const sel = an.kept.map(([a, b]) => `between(t,${f(a)},${f(b)})`).join('+');
+  let u = `T-${f(an.kept.at(-1)[0])}+${f(rt.U.at(-1))}`;
+  for (let i = an.kept.length - 2; i >= 0; i--) u = `if(lt(T,${f(an.kept[i][1])}),T-${f(an.kept[i][0])}+${f(rt.U[i])},${u})`;
+  let o = '0';
+  for (let i = rt.pieces.length - 1; i >= 0; i--) {
+    const p = rt.pieces[i], x = `(ld(0)-${f(p.u0)})`;
+    const e = `${f(p.o0)}+${f(p.k0)}*${x}+${f((p.k1 - p.k0) / (2 * (p.u1 - p.u0)))}*${x}*${x}`;
+    o = i === rt.pieces.length - 1 ? e : `if(lt(ld(0),${f(p.u1)}),${e},${o})`;
+  }
+  execFileSync(C.ffmpeg, ['-nostdin', '-loglevel', 'error', '-y', '-i', an.mp4,
+    '-vf', `select='${sel}',setpts='(st(0,${u});${o})/TB',fps=30,tpad=stop_mode=clone:stop_duration=0.2,format=yuv420p`,
+    '-an', '-c:v', 'libx264', '-crf', '14', '-preset', 'veryfast', out]);
+}
+
+// ---------- chapter ----------
+function chapter(an, sp) {
+  const { name, cfg, CARD } = an;
+  const rt = retime(an, sp);
+  const toComp = (t) => CARD + rt.toOut(t);
+  const footDur = r3(rt.footDur);
+  const total = CARD + footDur;
 
   const card = `<section id="${name}-card" class="card clip" data-start="0" data-duration="${CARD}" data-track-index="2">
   <div class="inner" id="${name}-inner">
@@ -196,13 +296,16 @@ function chapter(cfg) {
   </div>
 </section>`;
 
+  // frame position of a rect: (rect - cam) * cam.s  (see demo-capture handoff contract)
+  for (const s of an.spots) {
+    const { rect, cam } = s.m, c = cam || { x: 0, y: 0, s: 1 };
+    s.fr = { x: (rect.x - c.x) * c.s, y: (rect.y - c.y) * c.s, w: rect.w * c.s, h: rect.h * c.s };
+  }
   const LH = C.layout.labelHeight, GAP = C.layout.labelGap;
   const report = [];
-  const overlays = spots.map((s) => {
-    const { rect, cam } = s.m;
-    const c = cam || { x: 0, y: 0, s: 1 };
-    // frame position of a rect: (rect - cam) * cam.s  (see demo-capture handoff contract)
-    let x = (rect.x - c.x) * c.s - 8, y = (rect.y - c.y) * c.s - 8, w = rect.w * c.s + 16, h = rect.h * c.s + 16;
+  const overlays = an.spots.map((s) => {
+    const fr = s.fr;
+    let x = fr.x - 8, y = fr.y - 8, w = fr.w + 16, h = fr.h + 16;
     const x2 = Math.min(W - 6, x + w), y2 = Math.min(H - 6, y + h);
     x = Math.max(6, x); y = Math.max(6, y); w = x2 - x; h = y2 - y;
     const lw = s.label.length * 12.2 + 44;
@@ -231,23 +334,26 @@ function chapter(cfg) {
   }).join('\n');
 
   const lines = [
-    `tl.fromTo("#${name}-inner", { opacity: 0, y: 18 }, { opacity: 1, y: 0, duration: 0.5, ease: "power3.out" }, 0.1);`,
-    `tl.fromTo("#${name}-rule", { scaleX: 0 }, { scaleX: 1, duration: 0.45, ease: "power2.out" }, 0.3);`,
-    `tl.to("#${name}-inner", { opacity: 0, duration: 0.3, ease: "power1.in" }, ${r3(CARD - 0.35)});`,
-    `tl.fromTo("#fade", { opacity: 1 }, { opacity: 0, duration: 0.35, ease: "power1.out", immediateRender: false }, ${r3(CARD)});`,
-    `tl.fromTo("#fade", { opacity: 0 }, { opacity: 1, duration: 0.35, ease: "power1.in", immediateRender: false }, ${r3(total - 0.35)});`,
+    `tl.fromTo("#${name}-inner", { opacity: 0, y: 18 }, { opacity: 1, y: 0, duration: ${F(0.5)}, ease: "power3.out" }, ${F(0.1)});`,
+    `tl.fromTo("#${name}-rule", { scaleX: 0 }, { scaleX: 1, duration: ${F(0.45)}, ease: "power2.out" }, ${F(0.3)});`,
+    `tl.to("#${name}-inner", { opacity: 0, duration: ${F(0.3)}, ease: "power1.in" }, ${r3(CARD - F(0.35))});`,
+    `tl.fromTo("#fade", { opacity: 1 }, { opacity: 0, duration: ${F(0.35)}, ease: "power1.out", immediateRender: false }, ${r3(CARD)});`,
+    `tl.fromTo("#fade", { opacity: 0 }, { opacity: 1, duration: ${F(0.35)}, ease: "power1.in", immediateRender: false }, ${r3(total - F(0.35))});`,
   ];
-  for (const s of spots) {
+  for (const s of an.spots) {
     const dy = { 'below-cropped': -8, below: -8, above: 8, right: 0, left: 0 }[s.dir] ?? 0;
     const dx = { right: -8, left: 8 }[s.dir] || 0;
-    lines.push(`tl.fromTo("#${name}-s${s.i}", { opacity: 0 }, { opacity: 1, duration: 0.25, ease: "power1.out" }, ${r3(s.ct - C.fadeLead)});`);
-    lines.push(`tl.fromTo("#${name}-l${s.i}", { opacity: 0, x: ${dx}, y: ${dy} }, { opacity: 1, x: 0, y: 0, duration: 0.3, ease: "power2.out" }, ${r3(s.ct - 0.1)});`);
-    lines.push(`tl.to(["#${name}-s${s.i}", "#${name}-l${s.i}"], { opacity: 0, duration: 0.3, ease: "power1.in" }, ${r3(s.ct + s.hold)});`);
+    lines.push(`tl.fromTo("#${name}-s${s.i}", { opacity: 0 }, { opacity: 1, duration: ${F(0.25)}, ease: "power1.out" }, ${r3(s.ct - C.fadeLead)});`);
+    lines.push(`tl.fromTo("#${name}-l${s.i}", { opacity: 0, x: ${dx}, y: ${dy} }, { opacity: 1, x: 0, y: 0, duration: ${F(0.3)}, ease: "power2.out" }, ${r3(s.ct - F(0.1))});`);
+    lines.push(`tl.to(["#${name}-s${s.i}", "#${name}-l${s.i}"], { opacity: 0, duration: ${F(0.3)}, ease: "power1.in" }, ${r3(s.ct + s.hold)});`);
   }
 
-  const d = project(name, doc(name, total, `${vids}\n${card}\n${overlays}`, lines.join('\n')));
-  copyFileSync(mp4, `${d}/assets/footage/${name}.mp4`);
-  const meta = { name, kind: 'chapter', total: r3(total), srcDur: r3(dur), cardDur: CARD, kept: kept.map((k) => k.map(r3)), cuts: r3(dur - footDur), spots: report };
+  const vid = `<video id="${name}-v" class="foot clip" src="assets/footage/${name}.mp4" data-start="${r3(CARD)}" data-duration="${footDur}" data-media-start="0" data-track-index="0" muted playsinline></video>`;
+  const d = project(name, doc(name, total, `${vid}\n${card}\n${overlays}`, lines.join('\n')));
+  renderFootage(an, rt, `${d}/assets/footage/${name}.mp4`);
+  const meta = { name, kind: 'chapter', total: r3(total), srcDur: r3(an.dur), cardDur: CARD,
+    speed: sp, kept: an.kept.map((k) => k.map(r3)), cuts: r3(an.dur - rt.kept.reduce((a, [x, y]) => a + y - x, 0)),
+    footDur, spots: report };
   writeFileSync(`${C.out}/work/${name}.plan.json`, JSON.stringify(meta, null, 1));
   return meta;
 }
@@ -255,7 +361,29 @@ function chapter(cfg) {
 // ---------- run ----------
 mkdirSync(`${C.out}/work`, { recursive: true });
 const want = process.argv.slice(3);
-for (const n of want.length ? want : segmentNames(C)) {
+const names = want.length ? want : segmentNames(C);
+for (const n of names) if (!C.cards[n] && !C.chapters.some((c) => c.name === n)) throw new Error(`unknown segment "${n}"`);
+
+// A chapter's `speed` keys override the global ones; `travel` can be raised by targetDuration.
+const speedFor = (cfg, travel) => ({ ...C.speed, travel, ...(cfg.speed || {}) });
+const analyses = new Map();
+const analysis = (cfg) => analyses.get(cfg.name) ?? analyses.set(cfg.name, analyze(cfg)).get(cfg.name);
+let travel = C.speed.travel;
+if (C.targetDuration) {
+  // Whole-video length at a given travel speed, computed from the plan: nothing is rendered.
+  const length = (v) => Object.values(C.cards).reduce((a, c) => a + c.dur, 0)
+    + C.chapters.reduce((a, c) => { const an = analysis(c); return a + an.CARD + retime(an, speedFor(c, v)).footDur; }, 0);
+  // ponytail: bisection on travel alone; proof windows, cards and holds are never sped up to hit it.
+  if (length(travel) > C.targetDuration) {
+    let lo = travel, hi = Math.max(travel, 4);
+    if (length(hi) > C.targetDuration) lo = hi;
+    for (let k = 0; k < 40 && hi - lo > 0.001; k++) { const m = (lo + hi) / 2; if (length(m) > C.targetDuration) lo = m; else hi = m; }
+    travel = r3(Math.max(lo, hi));
+  }
+  console.log(`targetDuration ${C.targetDuration}s: speed.travel ${travel}x (cap 4x), planned ${r3(length(travel))}s`);
+}
+
+for (const n of names) {
   const card = C.cards[n];
   if (card) {
     project(n, cardDoc(n, card));
@@ -264,7 +392,6 @@ for (const n of want.length ? want : segmentNames(C)) {
     continue;
   }
   const cfg = C.chapters.find((c) => c.name === n);
-  if (!cfg) throw new Error(`unknown segment "${n}"`);
-  const m = chapter(cfg);
-  console.log(`${n}: total ${m.total}s (src ${m.srcDur}, cut ${m.cuts}) spots ${m.spots.map((s) => `${s.place}${s.shift ? '+' + s.shift : ''}/${s.hold}`).join(' ')}`);
+  const m = chapter(analysis(cfg), speedFor(cfg, travel));
+  console.log(`${n}: total ${m.total}s (src ${m.srcDur}, cut ${m.cuts}, travel ${m.speed.travel}x) spots ${m.spots.map((s) => `${s.place}${s.shift ? '+' + s.shift : ''}/${s.hold}`).join(' ')}`);
 }

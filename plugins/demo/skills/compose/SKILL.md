@@ -84,8 +84,12 @@ Only `takes` and `chapters` are required. Everything below shows the default whe
       "persona": "Foot passenger",
       "labels": ["…"],                // default: the capture's own mark labels. One per mark.
       "cuts": [[10.98, 11.2]],        // extra source-time cuts, e.g. a splash screen
-      "cardDur": 2.0 }
+      "cardDur": 2.0,
+      "speed": { "travel": 1 } }      // per-chapter override of the global speed
   ],
+  "speed":  { "travel": 2, "proof": 1, "rampMs": 250 },
+  "pace": 1,
+  "targetDuration": 45,               // optional, seconds, whole video
   "hold":   { "min": 1.5, "max": 2.2 },
   "fadeLead": 0.25,                   // spotlight fades in this long before the mark
   "deadHold": 2.0,                    // freezes longer than this get trimmed
@@ -97,6 +101,48 @@ Only `takes` and `chapters` are required. Everything below shows the default whe
 Paths in the config (`takes`, `out`, font `file`) resolve against the config file's own
 directory. `sub` on a card is raw HTML so `<b>` can pick out a word in the highlight colour;
 every other string is escaped.
+
+## Playback pace
+
+How fast the **finished video** plays, re-timed from footage you already have: no re-shoot.
+This is separate from demo:capture's filming `pace`, which changes what the camera records.
+
+```
+source   ──travel──╮ proof window ╭──travel──╮ proof window ╭──
+speed      2x    ramp    1x     ramp   2x   ramp    1x     ramp
+                    mark t - fadeLead ... end of hold
+```
+
+- **Speed ramp, on by default.** Inside each proof window (from `fadeLead` before a mark to the
+  end of its hold) footage plays at `speed.proof` (1x). Everything else, navigation, loading,
+  cursor travel, plays at `speed.travel` (2x). Speed changes over `speed.rampMs` (250ms of
+  output time) each side, so it reads as a ramp and never as a jump cut. A gap too short for
+  two full ramps gets a shallower peak instead. Marks and spotlights land on the re-timed
+  footage; the still-check runs on it. Chapter cards and holds are never sped up.
+  `"speed": { "travel": 1 }` turns the ramp off and plays everything at 1x, exactly as before
+  the ramp existed. Set `speed` globally, override any key per chapter with `chapters[].speed`.
+  Both speeds must be between 0.1 and 4.
+- **`pace`** (default 1): one multiplier on card durations (title, switch, end, chapter
+  cards), `hold.min`/`hold.max`, `fadeLead` and every fade and card-motion timing. `1.3` gives
+  a calmer cut, `0.8` a brisker one. It does not change footage speed. A long `hold.min` can
+  outlast a camera move; if the still-check then reports drift, lower `pace` or re-mark.
+- **`targetDuration`** (seconds, optional): raises the global `speed.travel`, capped at 4x,
+  until the whole video (cards included) fits, and prints `speed.travel` and the planned length.
+  It never speeds up proof windows, cards or holds, so a target shorter than those can reach is
+  reported, not met. Chapters with their own `speed.travel` keep it.
+
+Measured on the ferry example (two chapters, five marks, 3s title and end cards):
+
+| settings | video length | still-check |
+|---|---|---|
+| `speed.travel: 1` | see the PR for the figure from the run | 5/5 |
+| default (2x travel ramp) | 27.03s | 5/5 |
+
+How it works: `compose.mjs` writes each chapter's footage already cut and re-timed (one ffmpeg
+pass: `select` for the kept ranges, `setpts` with the piecewise speed curve, `fps=30`), so the
+HyperFrames project holds one plain `<video>`. At a constant whole-number speed it nudges each
+piece by under 1/60s so source frames never sit on a half frame, which otherwise made a 1x
+window duplicate then drop a frame.
 
 ## Style rules the generator holds to
 
