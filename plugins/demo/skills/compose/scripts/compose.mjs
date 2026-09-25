@@ -2,7 +2,7 @@
 // compose.mjs <config.json> [segment ...]
 // Generates one standalone HyperFrames project per chapter, plus title / switch / end cards.
 // Everything app-specific comes from the config. Nothing here knows what app was filmed.
-import { execSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync, mkdirSync, copyFileSync, existsSync } from 'node:fs';
 import { dirname, resolve, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -28,8 +28,10 @@ function project(name, html) {
 }
 
 // ---------- footage analysis ----------
+// Every external command is argv, never a shell string: config values reach these paths.
 function freezes(mp4) {
-  const out = execSync(`${C.ffmpeg} -hide_banner -nostats -i ${JSON.stringify(mp4)} -vf "freezedetect=n=0.002:d=2" -map 0:v -f null - 2>&1 || true`).toString();
+  const out = spawnSync(C.ffmpeg, ['-hide_banner', '-nostats', '-i', mp4, '-vf', 'freezedetect=n=0.002:d=2', '-map', '0:v', '-f', 'null', '-'],
+    { encoding: 'utf8', maxBuffer: 1 << 26 }).stderr;
   const s = [...out.matchAll(/freeze_start: ([\d.]+)/g)].map((m) => +m[1]);
   const e = [...out.matchAll(/freeze_end: ([\d.]+)/g)].map((m) => +m[1]);
   return s.map((a, i) => [a, e[i] ?? 1e9]);
@@ -39,7 +41,8 @@ function freezes(mp4) {
 // where the frame differs from the t+0.3 pose (mean abs luma diff > 2 at 160x90).
 function stableUntil(mp4, t) {
   const fw = 160 * 90, t0 = t + 0.3;
-  const buf = execSync(`${C.ffmpeg} -nostdin -loglevel error -ss ${t0} -i ${JSON.stringify(mp4)} -t 2.6 -vf fps=10,scale=160:90,format=gray -f rawvideo -`, { maxBuffer: 1 << 26 });
+  const buf = execFileSync(C.ffmpeg, ['-nostdin', '-loglevel', 'error', '-ss', String(t0), '-i', mp4, '-t', '2.6',
+    '-vf', 'fps=10,scale=160:90,format=gray', '-f', 'rawvideo', '-'], { maxBuffer: 1 << 26 });
   const n = Math.floor(buf.length / fw);
   for (let k = 1; k < n; k++) {
     let d = 0;
@@ -134,7 +137,7 @@ function chapter(cfg) {
   const mp4 = `${C.takes}/${name}.mp4`;
   if (!existsSync(mp4)) throw new Error(`${name}: no footage at ${mp4}`);
   const ev = JSON.parse(readFileSync(eventsPath(C.takes, name), 'utf8'));
-  const dur = +execSync(`${C.ffprobe} -v error -show_entries format=duration -of csv=p=0 ${JSON.stringify(mp4)}`).toString().trim();
+  const dur = +execFileSync(C.ffprobe, ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', mp4]).toString().trim();
   const fz = freezes(mp4);
   const marks = ev.events.filter((e) => e.kind === 'mark');
   if (!marks.length) throw new Error(`${name}: events.json has no marks`);
