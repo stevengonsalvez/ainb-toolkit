@@ -28,10 +28,10 @@ family, clip timing on the `<video>` and not on an ancestor).
 
 ```bash
 S="$SKILL_DIR"   # this skill's own directory
-node $S/scripts/compose.mjs my.config.json            # generate every segment project
-bash $S/scripts/render.sh  my.config.json             # render each one, foreground, resumable
-node $S/scripts/check.mjs  my.config.json             # THE GATE: hit/miss per mark, exit 1 on miss
-bash $S/scripts/concat.sh  my.config.json             # final silent mp4 + contact sheet
+node "$S/scripts/compose.mjs" my.config.json            # generate every segment project
+bash "$S/scripts/render.sh"  my.config.json             # render each one, foreground, resumable
+node "$S/scripts/check.mjs"  my.config.json             # THE GATE: hit/miss per mark, exit 1 on miss
+bash "$S/scripts/concat.sh"  my.config.json             # final silent mp4 + contact sheet
 ```
 
 Every command takes optional segment names to limit the work (`compose.mjs cfg.json consent`).
@@ -48,8 +48,8 @@ the directory somewhere writable and run it end to end:
 cp -r "$S/examples/ferry" /scratch/ferry && cd /scratch/ferry   # CAPTURE_DIR: the demo:capture skill dir
 node serve.mjs &                                            # app on 127.0.0.1:7744
 node "$CAPTURE_DIR/scripts/run.mjs" beats.mjs               # takes/departures.mp4, takes/fares.mp4
-node $S/scripts/compose.mjs ferry.config.json && bash $S/scripts/render.sh ferry.config.json
-node $S/scripts/check.mjs ferry.config.json && bash $S/scripts/concat.sh ferry.config.json
+node "$S/scripts/compose.mjs" ferry.config.json && bash "$S/scripts/render.sh" ferry.config.json
+node "$S/scripts/check.mjs" ferry.config.json && bash "$S/scripts/concat.sh" ferry.config.json
 ```
 
 ## Config
