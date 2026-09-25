@@ -113,13 +113,16 @@ export function overlay({ ls }) {
     d.style.cssText = 'position:fixed;top:0;left:0;width:20px;height:26px;pointer-events:none;z-index:2147483647;transition:transform .05s linear;will-change:transform;background:no-repeat center/contain url("data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'20\' height=\'26\' viewBox=\'0 0 18 24\'%3E%3Cpath d=\'M2 2 L2 18 L6.5 13.8 L9.2 20 L11.8 19 L9.1 13 L14.5 13 Z\' fill=\'white\' stroke=\'black\' stroke-width=\'1.4\' stroke-linejoin=\'round\'/%3E%3C/svg%3E")';
     document.body.appendChild(d);
     const ring = document.createElement('div'); ring.id = '__ring';
-    ring.style.cssText = 'position:fixed;top:0;left:0;width:0;height:0;border-radius:50%;border:2px solid #1ABC9C;pointer-events:none;z-index:2147483646;opacity:0';
+    ring.style.cssText = 'position:fixed;top:0;left:0;width:52px;height:52px;border-radius:50%;border:2px solid #1ABC9C;pointer-events:none;z-index:2147483646;opacity:0';
     document.body.appendChild(ring);
     addEventListener('mousemove', e => { d.style.transform = `translate(${e.clientX}px,${e.clientY}px)`; }, { passive: true });
-    // Click ripple, so a viewer can see WHERE the click landed.
+    // Click ripple, so a viewer can see WHERE the click landed. Reset every property it animates,
+    // or the second click starts already at scale(1.7) and never visibly expands.
     addEventListener('mousedown', e => {
-      ring.style.cssText += `;left:${e.clientX - 26}px;top:${e.clientY - 26}px;width:52px;height:52px;opacity:1;transition:none`;
-      requestAnimationFrame(() => { ring.style.transition = 'opacity .5s ease, transform .5s ease'; ring.style.transform = 'scale(1.7)'; ring.style.opacity = '0'; });
+      Object.assign(ring.style, { transition: 'none', transform: 'scale(1)', opacity: '1', left: `${e.clientX - 26}px`, top: `${e.clientY - 26}px` });
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        Object.assign(ring.style, { transition: 'opacity .5s ease, transform .5s ease', transform: 'scale(1.7)', opacity: '0' });
+      }));
     }, true);
   };
   document.readyState === 'loading' ? addEventListener('DOMContentLoaded', mount) : mount();

@@ -80,10 +80,10 @@ try {
   await assert.rejects(capture({ base, out, chapter: 'wrong', beats: [
     { goto: '/a' }, { name: 'bare', click: 'text=REPORTS', expectPath: '/b' }] }), /expected path \/b, got \/news/);
 
-  // 6. Overlay: one cursor per page even with an iframe, and it mounts in a sandboxed document
-  //    where storage throws.
+  // 6. Overlay: one cursor per page even with an iframe, mounts in a sandboxed document where
+  //    storage throws, and every click ripple starts from scale(1).
   const browser = await chromium.launch();
-  let sandboxErrs;
+  let ripple, sandboxErrs;
   try {
     const page = await browser.newPage();
     await page.addInitScript(overlay, { ls: { k: 'v' } });
@@ -97,6 +97,13 @@ try {
     sandboxErrs = errs.length;
     assert.equal(sandboxErrs, 0, `init script threw: ${errs}`);
 
+    await page.goto(`${base}/news`);
+    await page.evaluate(() => { window.__log = []; document.addEventListener('mousedown', () => {
+      const r = document.getElementById('__ring'); window.__log.push([r.style.transform, r.style.cssText.length]); }); });
+    for (const x of [300, 500, 700]) { await page.mouse.click(x, 300); await page.waitForTimeout(700); }
+    ripple = await page.evaluate(() => window.__log);
+    assert.deepEqual(ripple.map(r => r[0]), ['scale(1)', 'scale(1)', 'scale(1)'], `ripple start transforms ${JSON.stringify(ripple)}`);
+    assert.equal(new Set(ripple.map(r => r[1])).size, 1, `ripple cssText grows per click ${JSON.stringify(ripple)}`);
   } finally { await browser.close(); }
 
   // 7. A dead session on an app that sends logged-out users to /welcome must be re-minted when
@@ -109,7 +116,7 @@ try {
   assert.equal(await ensureState({ base, state, login: { ...login, loggedInSel: '#me' } }), 'minted');
   assert.equal(await ensureState({ base, state, login: { ...login, loggedInSel: '#me' } }), 'reused');
 
-  console.log(`selfcheck OK: cursors 1 with iframe; sandbox errors ${sandboxErrs}; loggedInSel re-mints`);
+  console.log(`selfcheck OK: cursors 1 with iframe; sandbox errors ${sandboxErrs}; ripple ${JSON.stringify(ripple)}; loggedInSel re-mints`);
   console.log(`selfcheck OK: main ${r.frames} frames/${r.dur.toFixed(1)}s luma head ${head} tail ${tail}; hold ${h.frames} frames; scroll-zoom luma ${zl}; guard threw`);
 } finally {
   server.close(); fs.rmSync(out, { recursive: true, force: true });
