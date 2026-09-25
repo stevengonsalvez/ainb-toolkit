@@ -254,15 +254,19 @@ export async function capture({ base, state, out, viewport = { width: 1280, heig
     }
     if (step.scroll) { await page.evaluate(y => window.scrollBy({ top: y, behavior: 'smooth' }), step.scroll); await page.waitForTimeout(700); }
     // Typed key by key so the viewer sees it being entered; fill() would paste it in one frame.
-    // Typed key by key so the viewer sees it being entered; fill() would paste it in one frame.
+    // Typing can fetch (search-as-you-type), so it waits like a click: ready, else network quiet, then settle.
     if (step.type) {
       const { into, text, cps = 12 } = step.type;
       const el = page.locator(into).first();
       if (!(await el.count())) throw new Error(`beat "${name}": selector ${into} matched nothing`);
       const r = await el.boundingBox();
       if (r) await moveTo(r.x + r.width / 2, r.y + r.height / 2, 300);
+      const typed = step.ready ? null : networkQuiet(page, { cap: step.readyCap });
       await el.click({ timeout: 8000 });
       await el.type(String(text), { delay: 1000 / cps });
+      if (step.ready) await page.locator(step.ready).first().waitFor({ state: 'visible', timeout: step.readyCap ?? 15000 });
+      else await typed();
+      await page.waitForTimeout(P(step.settle ?? 400));
     }
     if (step.zoom) {
       const r = await rectOf(step.zoom.on, name);
