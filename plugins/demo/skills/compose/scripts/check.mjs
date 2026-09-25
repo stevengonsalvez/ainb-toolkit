@@ -111,9 +111,14 @@ function checkChapter(name) {
 
     // contact tiles for eyeballing alongside the numbers
     for (const [k, t] of at.entries()) {
-      execFileSync(C.ffmpeg, ['-nostdin', '-loglevel', 'error', '-y', '-ss', String(t), '-i', seg, '-frames:v', '1',
-        '-vf', `scale=640:360,drawtext=text='m${s.i} ${'ab'[k]} t=${t}':x=6:y=6:fontsize=18:fontcolor=cyan:box=1:boxcolor=black`,
-        `${stillDir}/${String(s.i).padStart(2, '0')}${'ab'[k]}.png`]);
+      try {
+        execFileSync(C.ffmpeg, ['-nostdin', '-loglevel', 'error', '-y', '-ss', String(t), '-i', seg, '-frames:v', '1',
+          '-vf', `scale=640:360,drawtext=text='m${s.i} ${'ab'[k]} t=${t}':x=6:y=6:fontsize=18:fontcolor=cyan:box=1:boxcolor=black`,
+          `${stillDir}/${String(s.i).padStart(2, '0')}${'ab'[k]}.png`], { stdio: ['ignore', 'ignore', 'pipe'] });
+      } catch (e) {
+        if (/drawtext/.test(e.stderr)) throw new Error(`${C.ffmpeg} has no drawtext filter. Set FFMPEG (or "ffmpeg" in the config) to a full build, e.g. /usr/bin/ffmpeg`);
+        throw e;
+      }
     }
   }
   const tiles = readdirSync(stillDir).length;

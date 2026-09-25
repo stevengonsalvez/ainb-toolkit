@@ -155,8 +155,11 @@ with a tighter `hold` before the next camera move.
 - `scripts/config.mjs`: config load, defaults, font stacks, segment ordering.
 - `scripts/compose.mjs`: one standalone HyperFrames project per segment. Separate projects keep
   each render small and lint clean.
-- `scripts/render.sh`, `scripts/concat.sh`: render loop and final encode (`/usr/bin/ffmpeg`;
-  the ffmpeg on PATH may lack drawtext).
+- `scripts/render.sh`, `scripts/concat.sh`: render loop and final encode.
+- ffmpeg and ffprobe, everywhere: env `FFMPEG`/`FFPROBE`, then config `"ffmpeg"`/`"ffprobe"`,
+  then whatever is on PATH. `check.mjs` needs the `drawtext` filter (libfreetype), which some
+  PATH builds lack (a measured Homebrew build did); it stops with a message naming the fix.
+  Point `FFMPEG` at a full build, for example the distro's `/usr/bin/ffmpeg`.
 - `scripts/check.mjs`: the gate.
 - `assets/template/`: `hyperframes.json`, `package.json`, and a vendored `gsap.min.js` so a
   render needs no CDN.

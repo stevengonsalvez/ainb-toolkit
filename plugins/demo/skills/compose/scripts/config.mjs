@@ -70,8 +70,10 @@ export function loadConfig(path) {
     name: raw.name || 'demo',
     takes: abs(raw.takes),
     out: abs(raw.out || './compose'),
-    ffmpeg: raw.ffmpeg || '/usr/bin/ffmpeg',
-    ffprobe: raw.ffprobe || '/usr/bin/ffprobe',
+    // env, then config, then PATH. check.mjs needs an ffmpeg with drawtext (libfreetype);
+    // some PATH builds lack it, so point FFMPEG or "ffmpeg" at a full build.
+    ffmpeg: process.env.FFMPEG || raw.ffmpeg || 'ffmpeg',
+    ffprobe: process.env.FFPROBE || raw.ffprobe || 'ffprobe',
     width: raw.width || 1280,
     height: raw.height || 720,
     chapterCardDur: raw.chapterCardDur ?? 2.0,
