@@ -45,7 +45,7 @@ A worked example is `examples/ferry/`: a made-up ferry operator's three-page app
 the directory somewhere writable and run it end to end:
 
 ```bash
-cp -r "$S/examples/ferry" /scratch/ferry && cd /scratch/ferry
+cp -r "$S/examples/ferry" /scratch/ferry && cd /scratch/ferry   # CAPTURE_DIR: the demo:capture skill dir
 node serve.mjs &                                            # app on 127.0.0.1:7744
 node "$CAPTURE_DIR/scripts/run.mjs" beats.mjs               # takes/departures.mp4, takes/fares.mp4
 node $S/scripts/compose.mjs ferry.config.json && bash $S/scripts/render.sh ferry.config.json
