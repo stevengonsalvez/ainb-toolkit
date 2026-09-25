@@ -139,13 +139,16 @@ speed      2x    ramp    1x     ramp   2x   ramp    1x     ramp
   windows; overlapping windows share one framing. `"vertical"` is refused: 16:9 cropped to 9:16
   cannot keep a wide mark readable, and a broken vertical is worse than none.
 
-Measured on the ferry example (two chapters, five marks, 3s title and end cards):
+Measured on the ferry example, filmed fresh (two chapters, five marks, 3s title and end cards):
 
 | settings | video length | still-check |
 |---|---|---|
-| `speed.travel: 1` | see the PR for the figure from the run | 5/5 |
-| default (2x travel ramp) | 27.03s | 5/5 |
-| `format: "square"`, default ramp | 27.03s | 5/5 |
+| `speed.travel: 1` | 31.17s | 5/5 |
+| default (2x travel ramp) | 26.13s | 5/5 |
+| `format: "square"`, default ramp | 26.13s | 5/5 |
+
+The ferry app is quick, so travel is a small share of it; the saving grows with loading and
+navigation time.
 
 How it works: `compose.mjs` writes each chapter's footage already cut and re-timed (one ffmpeg
 pass: `select` for the kept ranges, `setpts` with the piecewise speed curve, `fps=30`), so the
@@ -165,7 +168,8 @@ Measured on a 5:36 ten-chapter demo, 47 marks. Change them in config, not in cod
 - **Chapter cards** about 2s (persona line plus chapter title), **title and end cards** about 3s.
 - **Silent**, and no annotation is ever burned into the footage. Everything is an overlay on
   top of an untouched capture, so a relabel is a re-render and never a re-shoot.
-- Navigation clicks stay in. Only dead holds over 2s and configured cuts are trimmed.
+- Navigation clicks stay in, played at `speed.travel`. Only dead holds over 2s and configured
+  cuts are trimmed.
 
 ## Two defects this generator already fixes
 
@@ -215,7 +219,9 @@ with a tighter `hold` before the next camera move.
   then whatever is on PATH. `check.mjs` needs the `drawtext` filter (libfreetype), which some
   PATH builds lack (a measured Homebrew build did); it stops with a message naming the fix.
   Point `FFMPEG` at a full build, for example the distro's `/usr/bin/ffmpeg`.
-- `scripts/check.mjs`: the gate.
+- `scripts/check.mjs`: the gate. For square output it frames the source frame with the same
+  view as the composition before comparing.
 - `assets/template/`: `hyperframes.json`, `package.json`, and a vendored `gsap.min.js` so a
   render needs no CDN.
-- `examples/`: a full config plus its fonts.
+- `examples/ferry/`: a runnable example, a made-up app with its server, beats file, config and
+  fonts, every path relative to that directory.
