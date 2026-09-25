@@ -39,6 +39,18 @@ load helpers
   jq -e '.plugins[0].hooks == "hooks/copilot-hooks.json"' "$M"
 }
 
+@test "every Copilot marketplace entry resolves to an in-repo plugin with skills" {
+  # brag (a github source) and demo's dependency on it stay Claude-only: Copilot
+  # does not resolve plugin dependencies, so listing brag here installs nothing
+  # demo can rely on.
+  M="$REPO_ROOT/.github/plugin/marketplace.json"
+  jq -e '.plugins[] | select(.name == "demo") | .source == "./plugins/demo"' "$M"
+  while IFS=$'\t' read -r src skills; do
+    [[ "$src" == ./plugins/* ]]
+    [ -d "$REPO_ROOT/$src/$skills" ]
+  done < <(jq -r '.plugins[] | [.source, .skills] | @tsv' "$M")
+}
+
 @test "hooks.json wires gate AND heartbeat on Stop, sync on SessionStart/PreCompact" {
   H="$REPO_ROOT/plugins/godmode/hooks/hooks.json"
   jq -e '.hooks.Stop[0].hooks | length == 2' "$H"
