@@ -7,9 +7,12 @@ CFG=$(realpath "$1")
 eval "$(cd "$D" && node -e '
 const m = await import("./config.mjs"); const c = m.loadConfig(process.argv[1]);
 console.log(`R=${JSON.stringify(c.out)}; NAME=${JSON.stringify(c.name)}; FFMPEG=${JSON.stringify(c.ffmpeg)}; FFPROBE=${JSON.stringify(c.ffprobe)}`);' "$CFG")"
-mapfile -t NAMES < <(cd "$D" && node -e 'const m=await import("./config.mjs");const c=m.loadConfig(process.argv[1]);console.log(m.segmentNames(c).join("\n"))' "$CFG")
+# Portable across bash 3.2 (macOS /bin/bash): no mapfile.
+NAMES=()
+while IFS= read -r n; do [ -n "$n" ] && NAMES+=("$n"); done < <(cd "$D" && node -e 'const m=await import("./config.mjs");const c=m.loadConfig(process.argv[1]);console.log(m.segmentNames(c).join("\n"))' "$CFG")
 
 L=$R/work/concat.txt; : > "$L"
+[ ${#NAMES[@]} -gt 0 ] || { echo "no segments in config"; exit 1; }
 for n in "${NAMES[@]}"; do
   [ -s "$R/out/seg/$n.mp4" ] || { echo "missing segment: $n"; exit 1; }
   printf "file '%s'\n" "$R/out/seg/$n.mp4" >> "$L"
