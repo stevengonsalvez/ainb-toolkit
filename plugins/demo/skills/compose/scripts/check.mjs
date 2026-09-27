@@ -19,6 +19,10 @@ import { loadConfig, segmentNames, r3 } from './config.mjs';
 const cfgPath = process.argv[2];
 if (!cfgPath) { console.error('usage: check.mjs <config.json> [chapter ...]'); process.exit(2); }
 const C = loadConfig(cfgPath);
+// The contact tiles label each still with drawtext, which needs an ffmpeg built with
+// freetype. Homebrew's default formula lacks it, so fall back to unlabelled tiles there;
+// the hit/miss numbers this gate reports do not depend on the labels.
+const hasDrawtext = /\sdrawtext\s/.test(execFileSync(C.ffmpeg, ['-hide_banner', '-filters']).toString());
 const W = C.width, H = C.height, K = C.check;
 
 function grayFrame(mp4, t) {
@@ -112,7 +116,9 @@ function checkChapter(name) {
     // contact tiles for eyeballing alongside the numbers
     for (const [k, t] of at.entries()) {
       execFileSync(C.ffmpeg, ['-nostdin', '-loglevel', 'error', '-y', '-ss', String(t), '-i', seg, '-frames:v', '1',
-        '-vf', `scale=640:360,drawtext=text='m${s.i} ${'ab'[k]} t=${t}':x=6:y=6:fontsize=18:fontcolor=cyan:box=1:boxcolor=black`,
+        '-vf', hasDrawtext
+          ? `scale=640:360,drawtext=text='m${s.i} ${'ab'[k]} t=${t}':x=6:y=6:fontsize=18:fontcolor=cyan:box=1:boxcolor=black`
+          : 'scale=640:360',
         `${stillDir}/${String(s.i).padStart(2, '0')}${'ab'[k]}.png`]);
     }
   }

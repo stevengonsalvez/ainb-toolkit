@@ -24,7 +24,9 @@ const server = http.createServer((req, res) => {
 }).listen(0);
 const base = `http://127.0.0.1:${server.address().port}`;
 const out = fs.mkdtempSync(path.join(os.tmpdir(), 'demo-capture-check-'));
-const luma = jpg => Number(execFileSync('/usr/bin/ffmpeg', ['-v', 'error', '-i', jpg, '-vf',
+// $FFMPEG, else the distro build at /usr/bin, else PATH (Homebrew on macOS, where /usr/bin is read-only).
+const FFMPEG = process.env.FFMPEG || (fs.existsSync('/usr/bin/ffmpeg') ? '/usr/bin/ffmpeg' : 'ffmpeg');
+const luma = jpg => Number(execFileSync(FFMPEG, ['-v', 'error', '-i', jpg, '-vf',
   'signalstats,metadata=print:key=lavfi.signalstats.YAVG:file=-', '-f', 'null', '-']).toString().match(/YAVG=([\d.]+)/)[1]);
 const frame = (dir, i) => path.join(dir, `f${String(i).padStart(5, '0')}.jpg`);
 

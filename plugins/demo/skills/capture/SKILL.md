@@ -99,7 +99,7 @@ Order: goto, click, wait (ready or network quiet), settle, expectPath, [filming 
 5. **Nav bars are context-dependent.** Measured on one app: after clicking one nav item, another item was gone from the nav. Targets are resolved fresh per beat; never cache handles across beats.
 6. **`addInitScript` overlays survive SPA route changes** (cursor verified present after three client-side navigations).
 7. **Login: never hand-write a token into storageState.** It fails silently and films the login page. `mintState` drives the real form and throws unless the final pathname has left `loginPath`. Quirks it already handles, each found on a real app: an `#email` field that is `input[type=text]` rather than `type=email`, a cookie modal covering the submit button (dismissed via `dismissSel` first), and controlled React inputs that need `type()` rather than `fill()`.
-8. **Encode with `/usr/bin/ffmpeg`.** The ffmpeg on PATH lacks libass/drawtext.
+8. **ffmpeg is resolved, not hardcoded.** `$FFMPEG`/`$FFPROBE` win, then the distro build at `/usr/bin`, then PATH (Homebrew on macOS, where `/usr/bin` is read-only). Capture needs only `signalstats`, `scale`, `fps` and libx264, which every common build has; it does not use drawtext.
 9. **Browsers live in `$PLAYWRIGHT_BROWSERS_PATH`, set before Playwright loads** (see Run).
 
 ## Defects the rig already handles
