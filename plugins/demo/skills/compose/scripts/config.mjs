@@ -6,6 +6,10 @@ import { dirname, resolve, isAbsolute, basename } from 'node:path';
 export const r3 = (x) => Math.round(x * 1000) / 1000;
 export const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/'/g, '&#39;');
 
+// ffmpeg/ffprobe: config value, else $FFMPEG/$FFPROBE, else the distro build at /usr/bin,
+// else PATH (Homebrew on macOS, where /usr/bin is read-only).
+const ffbin = (name) => process.env[name.toUpperCase()] || (existsSync(`/usr/bin/${name}`) ? `/usr/bin/${name}` : name);
+
 // capture writes either <takes>/<chapter>-events.json or <takes>/<chapter>/events.json
 export function eventsPath(takes, name) {
   const flat = `${takes}/${name}-events.json`;
@@ -70,8 +74,8 @@ export function loadConfig(path) {
     name: raw.name || 'demo',
     takes: abs(raw.takes),
     out: abs(raw.out || './compose'),
-    ffmpeg: raw.ffmpeg || '/usr/bin/ffmpeg',
-    ffprobe: raw.ffprobe || '/usr/bin/ffprobe',
+    ffmpeg: raw.ffmpeg || ffbin('ffmpeg'),
+    ffprobe: raw.ffprobe || ffbin('ffprobe'),
     width: raw.width || 1280,
     height: raw.height || 720,
     chapterCardDur: raw.chapterCardDur ?? 2.0,

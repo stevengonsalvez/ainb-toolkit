@@ -144,8 +144,10 @@ with a tighter `hold` before the next camera move.
 - `scripts/config.mjs`: config load, defaults, font stacks, segment ordering.
 - `scripts/compose.mjs`: one standalone HyperFrames project per segment. Separate projects keep
   each render small and lint clean.
-- `scripts/render.sh`, `scripts/concat.sh`: render loop and final encode (`/usr/bin/ffmpeg`;
-  the ffmpeg on PATH may lack drawtext).
+- `scripts/render.sh`, `scripts/concat.sh`: render loop and final encode. ffmpeg/ffprobe come from
+  the config (`ffmpeg`/`ffprobe` keys), else `$FFMPEG`/`$FFPROBE`, else `/usr/bin`, else PATH.
+  Only `check.mjs`'s contact tiles use drawtext; on a build without it (Homebrew's default) the
+  tiles render unlabelled and the gate's numbers are unaffected.
 - `scripts/check.mjs`: the gate.
 - `assets/template/`: `hyperframes.json`, `package.json`, and a vendored `gsap.min.js` so a
   render needs no CDN.
