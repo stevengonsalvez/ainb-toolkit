@@ -1041,6 +1041,21 @@ codex-skills:
   #   source: ".experimental"
   #   install: "Use $skill-installer in Codex"
   #   purpose: "Linear issue management"
+  - name: cc-sendbird
+    install: |
+      codex plugin marketplace add sendbird/codex-marketplace || true
+      codex plugin add cc@sendbird || true
+    purpose: "Codex only. Claude Code from inside Codex: read-only review, adversarial review, and tracked rescue tasks run through the local claude CLI"
+    license: "Apache-2.0 (Sendbird; adapted from openai/codex-plugin-cc, the reverse of the codex Claude plugin)"
+    requires:
+      - "claude CLI installed and authenticated"
+      - "node"
+      - "codex-cli >= 0.148 (installed and verified on 0.148, 0.151, 0.154, 0.159)"
+    notes: >-
+      Ships Codex hooks: a SessionStart/SessionEnd bridge, an unread-result
+      check on UserPromptSubmit, and a Stop review gate that is off by default
+      (stopReviewGate false per workspace until $cc:setup enables it), so it
+      does not change how Codex ends a turn unless opted in.
 
 # =============================================================================
 # COPILOT SKILLS (GitHub Copilot CLI skills)
