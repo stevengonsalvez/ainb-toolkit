@@ -61,15 +61,22 @@ function stableUntil(mp4, t) {
   return t0 + f.n / 10;
 }
 
-// A camera move's last pose reaches the footage up to a few frames after capture logs its end
-// (measured: the final zoom step landed 1-2 frames late, with 3-4 frame gaps mid-glide). Returns the
-// time of the last frame near the logged end that still differs from the one before it
-// (mean abs luma diff > 0.5 at 160x90; the drifting cursor alone measures under 0.1).
-function settledAt(mp4, t1) {
-  const a = Math.max(0, t1 - 0.2), f = grayFrames(mp4, a, 0.6);
-  let last = -1;
-  for (let k = 1; k < f.n; k++) if (mad(f.at(k), f.at(k - 1)) > 0.5) last = k;
-  return last < 0 ? t1 : Math.max(t1, Math.ceil(a * 30) / 30 + last / 30);
+// When the camera move capture logged as ending at t1 has really landed in the footage. The last
+// pose arrives a frame or two after t1 (measured 16-63ms), so the answer is the last frame-to-frame
+// change (mean abs luma diff > 0.5 at 160x90; the drifting cursor alone measures under 0.1) no later
+// than SETTLE_CAP after t1. Changes past the cap are the page itself moving, not the camera: an
+// animated page used to delay every zoomed spotlight by ~0.4s. Those are capped and warned about.
+const SETTLE_CAP = 0.1;
+function settledAt(mp4, t1, name) {
+  const a = Math.max(0, t1 - 0.1), f = grayFrames(mp4, a, t1 + 2 * SETTLE_CAP - a);
+  const tk = (k) => Math.ceil(a * 30) / 30 + k / 30;
+  let settle = t1, late = false;
+  for (let k = 1; k < f.n; k++) {
+    if (mad(f.at(k), f.at(k - 1)) <= 0.5) continue;
+    if (tk(k) <= t1 + SETTLE_CAP) settle = Math.max(settle, tk(k)); else late = true;
+  }
+  if (late) console.warn(`  warn ${name}: footage still changing ${SETTLE_CAP}s after the camera move ending at ${r3(t1)}s (page animation?); spotlight starts at ${r3(settle)}s`);
+  return settle;
 }
 
 // subtract intervals `cuts` from [0,dur] -> kept ranges
@@ -203,7 +210,7 @@ function analyze(cfg) {
   // the footage, whichever is later: a cut-out fading in over a moving frame points at nothing.
   for (const s of spots) {
     const mv = moves.filter(([a]) => a < s.T).at(-1);
-    s.from = mv && mv[1] > s.T - C.fadeLead - 0.3 ? Math.max(s.T - C.fadeLead, settledAt(mp4, mv[1])) : s.T - C.fadeLead;
+    s.from = mv && mv[1] > s.T - C.fadeLead - 0.3 ? Math.max(s.T - C.fadeLead, settledAt(mp4, mv[1], name)) : s.T - C.fadeLead;
   }
 
   // cuts: dead-hold trims outside protected windows, plus configured cuts
