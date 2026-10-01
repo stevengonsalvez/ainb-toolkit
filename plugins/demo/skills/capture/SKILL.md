@@ -92,7 +92,7 @@ capture.mode
 capture: {
   mode: 'deterministic',  // or 'screencast'
   dpr: 2, fps: 60,        // pixel density and frame rate (deterministic only)
-  blur: { samples: 4, max: 16, spacing: 2, shutter: 0.5, threshold: 2 },  // or false
+  blur: { samples: 4, max: 16, spacing: 2, shutter: 0.5, threshold: 2 },  // on by default; false for drafts (about 3x faster)
   network: 'auto',        // or 'pause' / 'advance': requests that hold page time, see above
   unstickMs: 1500,        // wall ms a frame waits on the network before 'auto' forces it
   stallMs: 10000,         // wall ms before falling back: page time stuck, or any wait under 'pause'
@@ -100,13 +100,20 @@ capture: {
 }
 ```
 
-**Motion blur** (deterministic only). A frame where the camera or the pointer moved more than
+**Motion blur** (deterministic only, ON by default). A frame where the camera or the pointer moved more than
 `threshold` CSS px since the last frame is rendered `samples` or more times across `shutter` of the
 frame interval (0.5: a 180 degree shutter) and averaged. Static pixels average to themselves, so a
 hold stays exactly as sharp as without blur, and only what moves smears. The count grows with
 speed so samples sit at most `spacing` px apart, up to `max`: four samples on a fast zoom filmed
-separate ghost copies of the text (looked at), the adaptive count a continuous smear. `blur: false`
-turns it off. `events.json` lists the blurred frames as `capture.blur.spans` (frame index ranges).
+separate ghost copies of the text (looked at), the adaptive count a continuous smear.
+`events.json` lists the blurred frames as `capture.blur.spans` (frame index ranges).
+
+**What it costs.** Measured on the ferry example (8 cores, no GPU, one take at a time):
+deterministic capture runs at about **19x real time with blur** and about **6.5x without**
+(screencast: 1x). For a 5-minute demo that is roughly **95 minutes of filming with blur** against
+about 33 minutes without. Blur is the final-take setting. For draft takes, while beats are still
+changing, set `capture: { blur: false }` (file-wide or per chapter): same 2x, 60fps, deterministic
+footage, a third of the wait, only fast moves are sharp instead of smeared. Fact 14 has the per-chapter numbers.
 
 Rules the deterministic path imposes, all measured:
 - Page time only moves inside the rig's frame loop. Beats are fine as written; custom code
@@ -261,7 +268,7 @@ file's `cursor` keys one by one.
 11. **Deterministic capture needs chrome-headless-shell and the density flag.** `HeadlessExperimental.beginFrame` is gone from full Chrome 147+ and survives in the headless shell, which Playwright 1.62 launches for headless Chromium (Chrome for Testing 151, revision 1234). The density must come from `--force-device-scale-factor`: an emulated deviceScaleFactor reports 2 but beginFrame returns 1280x720 pixels. The rig checks the first frame's size and falls back if it is wrong.
 12. **Deterministic frames are exact.** `npm run check`: 2560x1440, `avg_frame_rate 60/1`, frame count = duration x 60 + 1, and 0 repeated frames out of 122 on a page animating every frame. The first ~24 beginFrames after a load repeat while the pipeline primes, so the rig draws 30 before filming. The PNGs survive `encode.sh` bit-exact (libx264rgb `-qp 0`, PSNR inf against the frame). Identical consecutive frames (a still hold) are hard links, so a hold costs no disk.
 13. **An open SSE stream and any dynamic `import()` hold virtual time for good; a websocket does not.** Under `pauseIfNetworkFetchesPending` page time stood still until something forced it: a 0ms and an 800ms lazy module alike, and a lazy route of a real SPA (its first deterministic take fell back to screencast before `network: 'auto'` existed). `npm run check` asserts all three outcomes: the lazy module stays deterministic under `auto`, the SSE page films on under `auto` and says so once, and falls back to screencast under `pause` and says so once. A websocket pushing every 200ms did not hold it.
-14. **Deterministic capture costs wall time, most of it motion blur.** The ferry example on 8 cores without a GPU, one run at a time: departures (12.5s of footage) filmed in 233s with blur, 84s with `blur: false`, 12s in screencast mode; fares (11.0s) in 210s, 69s and 11s. So about 19x real time with blur and 6.5x without: blur renders 254 of departures' 751 frames again at 4 to 16 samples, about 0.6s more per blurred frame. Set `blur: false` for drafts and leave it on for the final take.
+14. **Deterministic capture costs wall time, most of it motion blur.** The ferry example on 8 cores without a GPU, one run at a time: departures (12.5s of footage) filmed in 233s with blur, 84s with `blur: false`, 12s in screencast mode; fares (11.0s) in 210s, 69s and 11s. So about 19x real time with blur and 6.5x without: blur renders 254 of departures' 751 frames again at 4 to 16 samples, about 0.6s more per blurred frame. A 5-minute demo: about 95 minutes with blur (the default), about 33 with `blur: false` (drafts).
 
 ## Defects the rig already handles
 
