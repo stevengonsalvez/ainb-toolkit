@@ -68,6 +68,21 @@ const yavg = (img, vf = '') => Number(execFileSync(FFMPEG, ['-v', 'error', '-i',
 const luma = img => yavg(img);
 const probe = mp4 => JSON.parse(execFileSync(FFPROBE, ['-v', 'error', '-count_frames', '-select_streams', 'v:0',
   '-show_entries', 'stream=width,height,avg_frame_rate,nb_read_frames', '-of', 'json', mp4]).toString()).streams[0];
+// An ffmpeg stand-in for capture's blur jobs (the only calls with tmix): every other call, and
+// every job after the first, runs the real ffmpeg. For the first job, `nowrite` exits 0 without
+// writing its frame; `stall` marks `started`, waits, then marks `finished` and runs.
+const ffStandIn = (mode, marks) => {
+  const f = path.join(marks, `ffmpeg-${mode}.sh`);
+  fs.writeFileSync(f, `#!/bin/sh
+case "$*" in *tmix=*) ;; *) exec "${FFMPEG}" "$@";; esac
+if mkdir "${marks}/first" 2>/dev/null; then
+  ${mode === 'nowrite' ? 'exit 0' : `touch "${marks}/started"; sleep 8; touch "${marks}/finished"`}
+fi
+exec "${FFMPEG}" "$@"
+`);
+  fs.chmodSync(f, 0o755);
+  return f;
+};
 const encode = (dir, mp4) => execFileSync(path.join(import.meta.dirname, 'encode.sh'), [dir, mp4]);
 
 try {
@@ -200,22 +215,28 @@ try {
   assert.equal(warned.filter(w => /re-filming it in screencast mode/.test(w)).length, 1, `fallback message: ${JSON.stringify(warned)}`);
   assert.equal(warned.filter(w => /page time running regardless of the network/.test(w)).length, 1, `auto message: ${JSON.stringify(warned)}`);
 
-  // 5b. A fallback while blur jobs are still averaging: they are killed and awaited before the
+  // 5b. A fallback while a blur job is still averaging: jobs are killed and awaited before the
   //     re-film wipes the directory. Before, a job finishing late threw ENOENT, uncaught, and took
-  //     node down (reproduced at a 12.5s timeout), or could write a stray PNG into the new take.
-  //     Two timeouts land the fallback at different points of a take that is blurred throughout.
+  //     node down, or could write a stray PNG into the new take. Event-driven: the first job's
+  //     ffmpeg stand-in marks `started` and waits; the test then kills the browser, which forces
+  //     the fallback with that job in flight. `finished` must never appear (the job was killed).
   const zz = [{ goto: '/plain' }];
-  for (let i = 0; i < 8; i++) zz.push({ zoom: { on: '#z', scale: 2.5, ms: 400 } }, { wide: 400 });
+  for (let i = 0; i < 4; i++) zz.push({ zoom: { on: '#z', scale: 2.5, ms: 400 } }, { wide: 400 });
+  const marks = fs.mkdtempSync(path.join(out, 'marks-'));
   console.warn = () => {};
+  const ffPrev = process.env.FFMPEG; process.env.FFMPEG = ffStandIn('stall', marks);
+  let mb;
   try {
-    for (const ms of [10000, 12500]) {
-      const mb = await capture({ base, out, chapter: 'midblur', capture: { timeoutMs: ms }, beats: zz });
-      await new Promise(r => setTimeout(r, 3000));          // room for a late job to misbehave
-      const left = fs.readdirSync(path.join(mb.dir, 'cfr')).filter(f => !f.endsWith('.jpg'));
-      assert.ok(mb.mode === 'screencast' && /hard timeout/.test(ev(mb).capture.fallback) && !left.length && !fs.existsSync(path.join(mb.dir, 'sub')),
-        `fallback at ${ms}ms mid-blur: mode ${mb.mode}, stray ${left.slice(0, 3)}`);
-    }
-  } finally { console.warn = warn; }
+    const filming = capture({ base, out, chapter: 'midblur', beats: zz });
+    for (let i = 0; i < 1200 && !fs.existsSync(path.join(marks, 'started')); i++) await new Promise(r => setTimeout(r, 100));
+    assert.ok(fs.existsSync(path.join(marks, 'started')), 'no blur job started');
+    for (const pid of execFileSync('pgrep', ['-P', String(process.pid), '-f', 'headless']).toString().trim().split('\n')) process.kill(+pid, 'SIGKILL');
+    mb = await filming;
+    await new Promise(r => setTimeout(r, 2000));            // room for a late job to misbehave
+  } finally { console.warn = warn; if (ffPrev === undefined) delete process.env.FFMPEG; else process.env.FFMPEG = ffPrev; }
+  const left = fs.readdirSync(path.join(mb.dir, 'cfr')).filter(f => !f.endsWith('.jpg'));
+  assert.ok(mb.mode === 'screencast' && !fs.existsSync(path.join(marks, 'finished')) && !left.length && !fs.existsSync(path.join(mb.dir, 'sub')),
+    `fallback with a blur job in flight: mode ${mb.mode} (${ev(mb).capture.fallback}), job finished ${fs.existsSync(path.join(marks, 'finished'))}, stray ${left.slice(0, 3)}`);
 
   // 6. Motion blur only where something moves: the camera is the only mover in this take (no
   //    clicks, no marks), so every blurred frame sits inside a camera move.
@@ -230,11 +251,15 @@ try {
   assert.ok(bb.maxGap > 0 && bb.maxGap <= 1.5 && bb.maxSamples > 6 && bb.filled > 0, `blur sampling ${JSON.stringify(bb)}`);
   const capped = ev(await capture({ base, out, chapter: 'blur-capped', capture: { blur: { max: 6 } }, beats: [{ goto: '/plain', hold: 300 }, { zoom: { on: '#z', scale: 2, ms: 500 } }] })).capture.blur;
   assert.ok(capped.maxSamples === 6 && capped.maxGap > 1.5 && capped.filled > 0, `capped blur ${JSON.stringify(capped)}`);
-  //    A blur job that fails must fail the take: its error used to be dropped, leaving a hole in
-  //    cfr/ that encode.sh read as the end of the take (cut short, exit 0).
-  const ff = process.env.FFMPEG; process.env.FFMPEG = '/bin/false';
+  //    A blur job that fails must fail the take, at once: its error used to be dropped, leaving a
+  //    hole in cfr/ that encode.sh read as the end of the take (cut short, exit 0). Two ways:
+  //    ffmpeg failing outright, and ffmpeg exiting 0 for one frame without writing it.
+  const ff = process.env.FFMPEG;
   try {
+    process.env.FFMPEG = '/bin/false';
     await assert.rejects(capture({ base, out, chapter: 'blur-fails', beats: [{ goto: '/plain', hold: 200 }, { zoom: { on: '#z', scale: 2, ms: 300 } }] }), /motion blur averaging failed/);
+    process.env.FFMPEG = ffStandIn('nowrite', fs.mkdtempSync(path.join(out, 'marks-')));
+    await assert.rejects(capture({ base, out, chapter: 'blur-gap', beats: [{ goto: '/plain', hold: 200 }, { zoom: { on: '#z', scale: 2, ms: 300 } }] }), /wrote no frame|is missing/);
   } finally { if (ff === undefined) delete process.env.FFMPEG; else process.env.FFMPEG = ff; }
 
   // 7. Holds must keep producing frames (screencast only emits on repaint).
