@@ -124,8 +124,10 @@ export function shortLabel(s, max = 59) {
 }
 
 // Interactive steps, in demo order: every mark (it has a rect and a label), plus every click or
-// type cue that carries a `rect` (demo:capture's cues do not yet; those are counted and skipped).
-// Each step points at the take frame that first shows it and the camera box in force there.
+// type cue that carries a `rect` (takes filmed before demo:capture recorded one have none; those
+// are counted and skipped). A type beat's click into the field and its typing are one step, at
+// the click's frame. Each step points at the take frame that first shows it and the camera box in
+// force there (the cue's own `cam` when it has one).
 export function steps(C, tl) {
   const out = []; let skipped = 0;
   for (const ch of tl.chapters) {
@@ -142,8 +144,12 @@ export function steps(C, tl) {
           text: said(mark) || ch.spots.find((s) => s.i === mark)?.label || e.label, mark: mark++ });
       } else if (e.kind === 'click' || e.kind === 'type') {
         if (!e.rect) { skipped++; continue; }
-        out.push({ chapter: ch.name, title: ch.title, kind: e.kind, t: e.t, frame: Math.max(0, Math.round(e.t * fps) - 1), rect: e.rect, cam, dpr, fps, vp,
-          text: e.label || (e.kind === 'type' ? 'Type here' : 'Click here') });
+        const prev = out.at(-1), same = (a, b) => a && b && ['x', 'y', 'w', 'h'].every((k) => a[k] === b[k]);
+        if (e.kind === 'type' && prev?.kind === 'click' && prev.chapter === ch.name && same(prev.rect, e.rect)) {
+          Object.assign(prev, { kind: 'type', text: e.label || 'Type here' }); continue;
+        }
+        out.push({ chapter: ch.name, title: ch.title, kind: e.kind, t: e.t, frame: Math.max(0, Math.round(e.t * fps) - 1), rect: e.rect,
+          cam: e.cam !== undefined ? e.cam : cam, dpr, fps, vp, text: e.label || (e.kind === 'type' ? 'Type here' : 'Click here') });
       }
     }
   }
