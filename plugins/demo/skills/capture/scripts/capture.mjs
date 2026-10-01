@@ -175,6 +175,8 @@ export async function capture({ base, state, out, viewport = { width: 1280, heig
   // each navigating beat's wait. Without it, a click while zoomed filmed the next page's cursor at 2x.
   const counter = v => cdp.send('Runtime.evaluate', { expression:
     `for (const id of ['__cur', '__ring']) document.getElementById(id)?.style.setProperty('--__demo-cs', '${v ? 1 / v.s : 1}')` });
+  // ponytail: two re-apply sites patch it in after the overlay mounts, so a frame or two after a
+  // navigation can still show it at 2x. Wave 2's deterministic capture makes it known at mount.
   page.on('domcontentloaded', () => { if (cam) counter(cam).catch(() => {}); });
   const setCam = async v => {
     const prev = cam; cam = v;
