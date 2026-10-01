@@ -233,7 +233,7 @@ music file ──▶ hyperframes beats ─▶ card padding, every cut on a beat 
   words from the anchor on are spoken again on their own and that clip's first 0.15s is matched
   against the line's loudness envelope near the recogniser's guess: -8ms to +24ms on the same 13
   lines, inside one 30fps frame. On the finished narrated ferry cut, burst against the spotlight
-  being fully lit was -23ms to +6ms at all five anchors. A weak match (correlation under 0.8) falls back to the recogniser's
+  being fully lit was -23ms to +8ms at all five anchors. A weak match (correlation under 0.8) falls back to the recogniser's
   time and says so.
 - **Loudness**: a mix with narration or music is mastered to `loudness.target` (-14 LUFS
   integrated) by measured gain plus a limiter 1 dB under `truePeak` (-1 dBTP), corrected once,
@@ -242,12 +242,11 @@ music file ──▶ hyperframes beats ─▶ card padding, every cut on a beat 
   are not normalised: lifting sparse ticks to -14 LUFS puts each one near full scale, so they keep
   their own low level and only the ceiling is checked.
 
-  | ferry example, fresh clone, plain ffmpeg 8.1, measured on the final file | integrated | true peak |
+  | ferry example, fresh clone, 60fps 2x takes, plain ffmpeg 8.1, measured on the final file | integrated | true peak |
   |---|---|---|
-  | effects only (`ferry.config.json`) | -38.7 LUFS | -25.5 dBTP |
-  | effects + a 100 BPM music bed | -14.1 LUFS | -1.8 dBTP |
+  | effects only (`ferry.config.json`) | -37.7 LUFS | -25.4 dBTP |
+  | effects + a 100 BPM music bed | -14.0 LUFS | -1.7 dBTP |
   | effects + narration (`ferry.narrated.config.json`) | -14.0 LUFS | -1.9 dBTP |
-  | effects + narration + music bed | -14.1 LUFS | -1.3 dBTP |
 
 - **Captions**, always: `out/<name>.captions.vtt` (narration, each sentence split into the fewest
   even cues of at most `maxWords` words and 42 characters; without narration, each spotlight's
