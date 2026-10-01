@@ -19,10 +19,11 @@ export function eventsPath(takes, name) {
 // Luma frames of a video or image scaled to w x h: `len` seconds from `t` (every frame, or `fps`
 // per second), or the single frame at `t` (or of an image) when `len` is unset. The one ffmpeg
 // frame reader for compose.mjs and check.mjs; argv, never a shell string.
-export function grayFrames(ffmpeg, file, { t, len, fps, w = 160, h = 90 } = {}) {
+// `crop` [x, y, w, h] in the file's pixels is applied before the scale.
+export function grayFrames(ffmpeg, file, { t, len, fps, w = 160, h = 90, crop } = {}) {
   const buf = execFileSync(ffmpeg, ['-nostdin', '-loglevel', 'error', ...(t == null ? [] : ['-ss', String(t)]), '-i', file,
     ...(len == null ? ['-frames:v', '1'] : ['-t', String(len)]),
-    '-vf', `${fps ? `fps=${fps},` : ''}scale=${w}:${h},format=gray`, '-f', 'rawvideo', '-'], { maxBuffer: 1 << 28 });
+    '-vf', `${fps ? `fps=${fps},` : ''}${crop ? `crop=${crop[2]}:${crop[3]}:${crop[0]}:${crop[1]},` : ''}scale=${w}:${h},format=gray`, '-f', 'rawvideo', '-'], { maxBuffer: 1 << 28 });
   const fw = w * h;
   return { n: Math.floor(buf.length / fw), at: (k) => buf.subarray(k * fw, (k + 1) * fw) };
 }
@@ -42,7 +43,7 @@ export function hexToRgb(hex) {
   const n = h.length === 3 ? h.split('').map((c) => c + c).join('') : h;
   return [0, 2, 4].map((i) => parseInt(n.slice(i, i + 2), 16));
 }
-const hexToRgba = (hex, a) => `rgba(${hexToRgb(hex).join(',')},${a})`;
+export const hexToRgba = (hex, a) => `rgba(${hexToRgb(hex).join(',')},${a})`;
 
 const GENERIC = 'ui-sans-serif, system-ui, sans-serif';
 
@@ -89,12 +90,43 @@ export function loadConfig(path) {
   if (raw.cards?.end) cards['end-card'] = { ...cardDefaults, ...raw.cards.end };
   for (const c of Object.values(cards)) c.dur = r3(c.dur * pace);
 
-  // Output size: a format preset, overridable by explicit width/height. The footage stays 16:9;
-  // square follows the spotlit element (see compose.mjs viewFor).
-  const FORMATS = { landscape: [1280, 720], square: [1080, 1080] };
+  // Output size. Everything is laid out in a design space (1280x720 landscape, 1080x1080 square)
+  // and scaled to the canvas with CSS zoom, so text and geometry rasterise at master size rather
+  // than being upscaled. quality "final" (default) is the master: 2560x1440 or 1440x1440 at 60fps,
+  // so a 2x take enters at native pixels. "draft" is 1280x720 or 1080x1080 at 30fps for iteration.
+  // Explicit width/height override the canvas; the design space keeps the format's height.
+  const DESIGN = { landscape: [1280, 720], square: [1080, 1080] };
+  const MASTER = { landscape: [2560, 1440], square: [1440, 1440] };
   const format = raw.format || 'landscape';
   if (format === 'vertical') throw new Error('config: format "vertical" is not supported: 16:9 footage cropped to 9:16 cannot keep wide marks readable. Use "landscape" or "square".');
-  if (!FORMATS[format]) throw new Error(`config: unknown format "${format}" (landscape or square)`);
+  if (!DESIGN[format]) throw new Error(`config: unknown format "${format}" (landscape or square)`);
+  const quality = raw.quality || 'final';
+  if (!['final', 'draft'].includes(quality)) throw new Error(`config: unknown quality "${quality}" (final or draft)`);
+  const [cw0, ch0] = quality === 'draft' ? DESIGN[format] : MASTER[format];
+  const width = raw.width || (raw.height ? Math.round(raw.height * cw0 / ch0) : cw0);
+  const height = raw.height || (raw.width ? Math.round(raw.width * ch0 / cw0) : ch0);
+  if (width % 2 || height % 2) throw new Error('config: width and height must be even (4:2:0 delivery)');
+  const zoom = height / DESIGN[format][1];
+
+  // The framed window: footage in a rounded window with a soft shadow on a backdrop from the theme.
+  // `frame: false` is full-bleed footage, as before. Lengths are design px.
+  const frame = raw.frame === false ? null : { style: 'window', padding: 80, radius: 24, shadow: 1, backdrop: 'glow', grain: 0.045, tilt: 9, ...(raw.frame || {}) };
+  if (frame) {
+    if (frame.style !== 'window') throw new Error(`config: frame.style "${frame.style}" is not a style (window)`);
+    if (!['glow', 'gradient', 'solid'].includes(frame.backdrop)) throw new Error(`config: frame.backdrop "${frame.backdrop}" (glow, gradient or solid)`);
+    if (!(frame.padding >= 0 && frame.padding < DESIGN[format][0] / 4)) throw new Error('config: frame.padding must be between 0 and a quarter of the design width');
+  }
+  // Spotlight: feathered cut-out. It glides to the next mark when that one lights within `glide`
+  // seconds; otherwise it fades out and irises in on the next. `blur` softens what it dims.
+  const spotlight = { feather: 18, glide: 2.5, sweep: true, blur: 2, ...(raw.spotlight || {}) };
+  if (!(spotlight.feather >= 0 && spotlight.feather <= 24)) throw new Error('config: spotlight.feather must be 0-24 (design px): the still-check reads the dim ring 34px out');
+  // Seams between segments: a blur crossfade, and a push with motion blur ("whip") where one
+  // chapter hands over to the next chapter or a switch card. Seconds; false = hard cuts.
+  const transitions = raw.transitions === false ? null : { blur: 0.5, whip: 0.4, ...(raw.transitions || {}) };
+  for (const [k, v] of Object.entries(transitions || {})) {
+    if (!['blur', 'whip'].includes(k)) throw new Error(`config: transitions.${k} is not a transition (blur, whip)`);
+    if (!(typeof v === 'number' && v >= 0 && v <= 1)) throw new Error(`config: transitions.${k} must be seconds between 0 and 1`);
+  }
 
   // Proof windows always play at 1x: the spotlight timing and the still-check both assume it.
   const speed = { travel: 2, rampMs: 250, ...(raw.speed || {}) };
@@ -113,14 +145,18 @@ export function loadConfig(path) {
     // check.mjs tiles lose their captions and it says so.
     ffmpeg: raw.ffmpeg || ffbin('ffmpeg'),
     ffprobe: raw.ffprobe || ffbin('ffprobe'),
-    format,
+    format, quality, frame, spotlight, transitions,
     // Output frame rate: render.sh passes it to hyperframes, concat.sh reads the PNGs at it,
-    // check.mjs maps times to frames with it, and compose retimes footage onto its grid. One value,
-    // not a setting: only 30 has been measured end to end. Takes are 30fps (screencast) or 60fps at 2x
-    // (deterministic); renderFootage resamples and scales either onto this grid.
-    fps: 30,
-    width: raw.width || FORMATS[format][0],
-    height: raw.height || FORMATS[format][1],
+    // check.mjs maps times to frames with it, and compose retimes footage onto its grid. Set by
+    // quality, not a setting of its own: 60 for final (a 60fps take plays every frame at 1x), 30 for draft.
+    fps: quality === 'draft' ? 30 : 60,
+    width, height, zoom,
+    // design space: what compose lays out and check measures in
+    dw: Math.round(width / zoom), dh: DESIGN[format][1],
+    // hyperframes capture workers. Auto picks 1 at 1440p (its calibration sees a slow frame);
+    // 4 measured 3.4x faster on 8 cores.
+    workers: raw.workers ?? 4,
+    crf: raw.crf ?? 16,
     pace, speed,
     targetDuration: raw.targetDuration,
     chapterCardDur: r3((raw.chapterCardDur ?? 2.0) * pace),
@@ -136,6 +172,30 @@ export function loadConfig(path) {
     scrim: raw.scrim || 'rgba(0,0,0,0.60)',
     chapters, cards,
   };
+}
+
+// The seam into each segment: blur crossfade, or whip where a chapter hands over to another
+// chapter or a switch card. Duration snapped to whole frames; 0 with transitions off.
+export function seams(C) {
+  const names = segmentNames(C), isCh = (n) => !C.cards[n];
+  const snap = (d) => Math.round(d * C.fps) / C.fps;
+  return names.map((n, i) => {
+    if (!i || !C.transitions) return { kind: 'cut', dur: 0 };
+    const kind = isCh(names[i - 1]) && (isCh(n) || C.cards[n]?.before) ? 'whip' : 'blur';
+    return { kind, dur: snap(C.transitions[kind]) };
+  });
+}
+// Where the footage "screen" sits: inside the framed window (padded, scaled by ws) or full
+// bleed. Design px, plus the same rect in canvas px for reading rendered frames.
+export function screenRect(C) {
+  const pad = C.frame ? C.frame.padding : 0, ws = (C.dw - 2 * pad) / C.dw, padY = (C.dh - C.dh * ws) / 2;
+  const z = C.zoom;
+  return { pad, padY, ws, canvas: [Math.round(pad * z), Math.round(padY * z), Math.round(C.dw * ws * z), Math.round(C.dh * ws * z)] };
+}
+// Head and tail transitions of one segment.
+export function seamsOf(C, name) {
+  const names = segmentNames(C), all = seams(C), i = names.indexOf(name);
+  return { in: all[i] ?? { kind: 'cut', dur: 0 }, out: all[i + 1] ?? { kind: 'cut', dur: 0 } };
 }
 
 // Full ordered segment list: title card, chapters with their switch cards, end card.
