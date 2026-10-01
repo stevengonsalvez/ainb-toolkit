@@ -7,9 +7,9 @@ set -eu
 D=$(cd "$(dirname "$0")" && pwd)
 CFG=$(realpath "$1")
 # Config values are read as plain lines, never eval'd: a name or path can hold shell syntax.
-{ read -r R; read -r NAME; read -r FFMPEG; read -r FFPROBE; } < <(cd "$D" && node -e '
+{ read -r R; read -r NAME; read -r FFMPEG; read -r FFPROBE; read -r FPS; } < <(cd "$D" && node -e '
 const m = await import("./config.mjs"); const c = m.loadConfig(process.argv[1]);
-console.log([c.out, c.name, c.ffmpeg, c.ffprobe].join("\n"));' "$CFG")
+console.log([c.out, c.name, c.ffmpeg, c.ffprobe, c.fps].join("\n"));' "$CFG")
 mapfile -t NAMES < <(cd "$D" && node -e 'const m=await import("./config.mjs");const c=m.loadConfig(process.argv[1]);console.log(m.segmentNames(c).join("\n"))' "$CFG")
 
 # Each segment is a PNG sequence (render.sh). They are joined with the concat filter, one
@@ -17,7 +17,7 @@ mapfile -t NAMES < <(cd "$D" && node -e 'const m=await import("./config.mjs");co
 IN=()
 for n in "${NAMES[@]}"; do
   [ -f "$R/out/seg/$n/frame_000001.png" ] || { echo "missing segment: $n"; exit 1; }
-  IN+=(-framerate 30 -i "$R/out/seg/$n/frame_%06d.png")
+  IN+=(-framerate "$FPS" -i "$R/out/seg/$n/frame_%06d.png")
 done
 OUT=$R/out/$NAME.mp4
 # The PNGs are RGB (sRGB), so there is no input matrix to guess: convert once to BT.709 limited

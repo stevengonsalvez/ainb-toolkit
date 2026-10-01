@@ -32,8 +32,8 @@ function grayFrame(file, t, w = W, h = H) {
   if (!f.n) throw new Error(`no frame at ${t}s of ${file}`);
   return f.at(0);
 }
-// A rendered segment is a directory of PNGs, frame_000001.png at time 0, 30 per second.
-const segFrame = (seg, n, t) => `${seg}/frame_${String(Math.min(n, Math.round(t * 30) + 1)).padStart(6, '0')}.png`;
+// A rendered segment is a directory of PNGs, frame_000001.png at time 0, C.fps per second.
+const segFrame = (seg, n, t) => `${seg}/frame_${String(Math.min(n, Math.round(t * C.fps) + 1)).padStart(6, '0')}.png`;
 
 // The source frame as the composition frames it: scaled by view.s, placed at view.x/y, and
 // `bg` where the footage does not reach. Identity when the output matches the footage.

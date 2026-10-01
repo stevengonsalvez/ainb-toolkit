@@ -111,6 +111,10 @@ export function loadConfig(path) {
     ffmpeg: process.env.FFMPEG || raw.ffmpeg || 'ffmpeg',
     ffprobe: process.env.FFPROBE || raw.ffprobe || 'ffprobe',
     format,
+    // Output frame rate: render.sh passes it to hyperframes, concat.sh reads the PNGs at it,
+    // check.mjs maps times to frames with it, and compose retimes footage onto its grid. One value,
+    // not a setting: only 30 has been measured end to end (the takes themselves are 30fps).
+    fps: 30,
     width: raw.width || FORMATS[format][0],
     height: raw.height || FORMATS[format][1],
     pace, speed,

@@ -284,10 +284,10 @@ function retime(an, sp) {
     const v = 1 / p.k0;
     if (p.k0 === p.k1 && Math.abs(v - Math.round(v)) < 1e-9) {
       const q = Math.round(v), i = U.findLastIndex((x) => x <= p.u0 + 1e-9);
-      const base = 30 * (start + p.k0 * (U[i] - an.kept[i][0] - p.u0));
+      const base = C.fps * (start + p.k0 * (U[i] - an.kept[i][0] - p.u0));
       const want = (1 / (2 * q) + 0.5) % (1 / q), have = ((base % (1 / q)) + 1 / q) % (1 / q);
       let d = want - have; if (d > 0.5 / q) d -= 1 / q; if (d < -0.5 / q) d += 1 / q;
-      p.o0 = Math.max(0, start + d / 30); p.sc = 1;
+      p.o0 = Math.max(0, start + d / C.fps); p.sc = 1;
     } else {
       p.o0 = end; p.sc = len > 0 ? Math.max(0, (nominal - end) / len) : 1;
     }
@@ -301,7 +301,7 @@ function retime(an, sp) {
   return { pieces, footDur: nominal, toOut: (t) => outOfU(toU(t)), kept: an.kept, U };
 }
 
-// Write the re-timed footage: cuts dropped, pieces re-timed, resampled to 30fps. Lossless
+// Write the re-timed footage: cuts dropped, pieces re-timed, resampled to C.fps. Lossless
 // (x264 -qp 0, no pixel-format change): concat.sh makes the one lossy encode.
 function renderFootage(an, rt, out) {
   const f = (x) => x.toFixed(6);
@@ -315,7 +315,7 @@ function renderFootage(an, rt, out) {
     o = i === rt.pieces.length - 1 ? e : `if(lt(ld(0),${f(p.u1)}),${e},${o})`;
   }
   execFileSync(C.ffmpeg, ['-nostdin', '-loglevel', 'error', '-y', '-i', an.mp4,
-    '-vf', `select='${sel}',setpts='(st(0,${u});${o})/TB',fps=30,tpad=stop_mode=clone:stop_duration=0.2`,
+    '-vf', `select='${sel}',setpts='(st(0,${u});${o})/TB',fps=${C.fps},tpad=stop_mode=clone:stop_duration=0.2`,
     '-an', '-c:v', 'libx264', '-qp', '0', '-preset', 'veryfast', out]);
 }
 
