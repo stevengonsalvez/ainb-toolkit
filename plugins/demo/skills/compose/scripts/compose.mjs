@@ -47,21 +47,22 @@ function stableUntil(mp4, t) {
   return t0 + f.n / 10;
 }
 
-// When the camera move capture logged as ending at t1 has really landed in the footage. The last
-// pose arrives a frame or two after t1 (measured 16-63ms), so the answer is the last frame-to-frame
-// change (mean abs luma diff > 0.5 at 160x90; the drifting cursor alone measures under 0.1) no later
-// than SETTLE_CAP after t1. Changes past the cap are the page itself moving, not the camera: an
-// animated page used to delay every zoomed spotlight by ~0.4s. Those are capped and warned about.
-const SETTLE_CAP = 0.1;
+// When the camera move capture logged as ending at t1 has really landed in the footage. t1 is
+// logged after the last pose plus a 30ms wait, and that pose reaches the footage 16-63ms later
+// (measured), so every frame-to-frame change (mean abs luma diff > 0.5 at 160x90; the drifting
+// cursor alone measures under 0.1) up to SETTLE_WINDOW after t1 counts as the camera landing,
+// with room for a slow landing under load. Only changes after that window are the page itself
+// moving: they no longer delay the spotlight (an animated page used to, by ~0.4s) and are warned about.
+const SETTLE_WINDOW = 0.25;
 function settledAt(mp4, t1, name) {
-  const a = Math.max(0, t1 - 0.1), f = grayFrames(C.ffmpeg, mp4, { t: a, len: t1 + 2 * SETTLE_CAP - a });
-  const tk = (k) => Math.ceil(a * 30) / 30 + k / 30;
-  let settle = t1, late = false;
+  const a = Math.max(0, t1 - 0.1), f = grayFrames(C.ffmpeg, mp4, { t: a, len: t1 + SETTLE_WINDOW + 0.15 - a });
+  const tk = (k) => Math.ceil(a * 30) / 30 + k / 30;   // the take is 30fps (demo:capture)
+  let settle = t1, moving = false;
   for (let k = 1; k < f.n; k++) {
     if (mad(f.at(k), f.at(k - 1)) <= 0.5) continue;
-    if (tk(k) <= t1 + SETTLE_CAP) settle = Math.max(settle, tk(k)); else late = true;
+    if (tk(k) <= t1 + SETTLE_WINDOW) settle = Math.max(settle, tk(k)); else moving = true;
   }
-  if (late) console.warn(`  warn ${name}: footage still changing ${SETTLE_CAP}s after the camera move ending at ${r3(t1)}s (page animation?); spotlight starts at ${r3(settle)}s`);
+  if (moving) console.warn(`  warn ${name}: the frame keeps changing more than ${SETTLE_WINDOW}s after the camera move that ended at ${r3(t1)}s. That is the page moving, not the camera; the spotlight starts at ${r3(settle)}s regardless`);
   return settle;
 }
 
