@@ -6,6 +6,7 @@ import http from 'http'; import fs from 'fs'; import os from 'os'; import path f
 import assert from 'assert/strict'; import { execFileSync } from 'child_process';
 import { chromium } from '@playwright/test';
 import { capture, checkPath, ensureState, overlay } from './capture.mjs';
+import { Camera, Cursor } from './motion.mjs';
 
 const BG = '#3a6ea5';                             // luma ~100: neither blank white nor splash black
 const nav = `<nav class="fixed bottom-0" style="position:fixed;bottom:0;left:0;right:0;height:64px;background:#222;display:flex;gap:40px;justify-content:center;align-items:center">
@@ -28,9 +29,19 @@ const pages = {
   '/welcome': `<body>welcome</body>`,
   // Splash until a slow request lands, like an SPA shell fetching its data.
   '/b': `<body style="margin:0;background:#000;height:100vh">${nav}<script>fetch('/slow').then(() => document.body.style.background = '${BG}')</script></body>`,
+  // Something moves on every frame: a CSS animation and a rAF-driven bar.
+  '/anim': `<body style="margin:0;background:${BG};height:100vh"><div style="position:absolute;top:200px;width:60px;height:60px;background:#fff;animation:mv 3s linear infinite"></div>
+    <div id="r" style="position:absolute;top:400px;height:20px;background:#f80"></div><style>@keyframes mv{to{transform:translateX(1200px)}}</style>
+    <script>const r = document.getElementById('r'); (function f(t) { r.style.width = (t / 3 % 1200) + 'px'; requestAnimationFrame(f); })(0)</script></body>`,
+  // Holds an SSE stream open for good, like a live-updates channel.
+  '/sse': `<body style="margin:0;background:${BG};height:100vh"><script>new EventSource('/stream')</script></body>`,
+  // A lazy-loaded module, like a code-split route: turns white once it has loaded.
+  '/lazy': `<body style="margin:0;background:${BG};height:100vh"><button id="go" style="margin:200px" onclick="import('/mod.js').then(m => document.body.style.background = m.c)">go</button></body>`,
 };
 const server = http.createServer((req, res) => {
   if (req.url === '/slow') return setTimeout(() => res.end('ok'), 1500);
+  if (req.url === '/mod.js') { res.setHeader('content-type', 'text/javascript'); return res.end(`export const c = '#fff';`); }
+  if (req.url === '/stream') { res.writeHead(200, { 'content-type': 'text/event-stream' }); return res.write('data: hi\n\n'); }
   // A sandboxed document: localStorage throws in it.
   if (req.url === '/sandboxed') { res.setHeader('content-security-policy', 'sandbox allow-scripts'); return res.end(`<body style="background:${BG}">sandboxed</body>`); }
   if (req.url === '/home') {
@@ -45,9 +56,17 @@ const out = fs.mkdtempSync(path.join(os.tmpdir(), 'demo-capture-check-'));
 // $FFMPEG/$FFPROBE, else the distro build at /usr/bin, else PATH (Homebrew on macOS, where /usr/bin is read-only).
 const ffbin = name => process.env[name.toUpperCase()] || (fs.existsSync(`/usr/bin/${name}`) ? `/usr/bin/${name}` : name);
 const FFMPEG = ffbin('ffmpeg'), FFPROBE = ffbin('ffprobe');
-const luma = jpg => Number(execFileSync(FFMPEG, ['-v', 'error', '-i', jpg, '-vf',
-  'signalstats,metadata=print:key=lavfi.signalstats.YAVG:file=-', '-f', 'null', '-']).toString().match(/YAVG=([\d.]+)/)[1]);
-const frame = (dir, i) => path.join(dir, `f${String(i).padStart(5, '0')}.jpg`);
+const SC = { mode: 'screencast' };
+const ev = t => JSON.parse(fs.readFileSync(path.join(t.dir, 'events.json'), 'utf8'));
+// Output frame k of a take (cfr/ is the constant-rate sequence: PNG when deterministic, JPEG from screencast).
+const frame = (t, k) => { const f = path.join(t.dir, 'cfr', String(k).padStart(5, '0')); return fs.existsSync(`${f}.png`) ? `${f}.png` : `${f}.jpg`; };
+const last = t => frame(t, fs.readdirSync(path.join(t.dir, 'cfr')).length - 1);
+const yavg = (img, vf = '') => Number(execFileSync(FFMPEG, ['-v', 'error', '-i', img, '-vf',
+  `${vf}signalstats,metadata=print:key=lavfi.signalstats.YAVG:file=-`, '-f', 'null', '-']).toString().match(/YAVG=([\d.]+)/)[1]);
+const luma = img => yavg(img);
+const probe = mp4 => JSON.parse(execFileSync(FFPROBE, ['-v', 'error', '-count_frames', '-select_streams', 'v:0',
+  '-show_entries', 'stream=width,height,avg_frame_rate,nb_read_frames', '-of', 'json', mp4]).toString()).streams[0];
+const encode = (dir, mp4) => execFileSync(path.join(import.meta.dirname, 'encode.sh'), [dir, mp4]);
 
 try {
   // 1. Path guard.
@@ -58,60 +77,124 @@ try {
   checkPath('/reports', 'http://x/reports?tab=2#top');
   assert.throws(() => checkPath('/reports', 'http://x/reports-archive'), /got \/reports-archive/);
 
-  // 2. Main take: zoom, marks, scoped click, wait out the splash.
+  // 2. Spring solver (motion.mjs), pure: a retarget mid-flight keeps the velocity (no kink), a zoom
+  //    from wide is pre-aimed (scales about its target, no pan), and a planned click lands.
+  const cam = new Camera(1280, 720), FI = 1 / 60;
+  cam.aim({ x: 320, y: 180, w: 640, h: 360, s: 2 });
+  assert.ok(cam.u.x === 0.5 && cam.u.v === 0, 'zoom from wide was not pre-aimed');
+  const xs = [];
+  for (let i = 0; i < 12; i++) { cam.step(FI); xs.push(cam.box()); }
+  cam.aim({ x: 600, y: 300, w: 512, h: 288, s: 2.5 });      // retarget while still moving
+  for (let i = 0; i < 12; i++) { cam.step(FI); xs.push(cam.box()); }
+  // Velocity of the scale channel frame to frame: its largest jump across the retarget is no
+  // bigger than its largest jump anywhere else (a velocity reset would spike it).
+  const dv = xs.slice(2).map((b, i) => Math.abs((b.s - xs[i + 1].s) - (xs[i + 1].s - xs[i].s)));
+  assert.ok(dv[10] <= Math.max(...dv.filter((_, i) => i !== 10)) * 1.5 + 1e-9, `scale velocity jumps at the retarget: ${dv.map(v => v.toExponential(1))}`);
+  let settle = 0; while (!cam.settled() && settle < 600) { cam.step(FI); settle++; }
+  assert.deepEqual(cam.box(), { x: 600, y: 300, w: 512, h: 288, s: 2.5 }, 'camera did not settle exactly on its target');
+  const cur = new Cursor(100, 100, 1280, 720), press = cur.click(0, 900, 500);
+  for (let t = 0; t < press - 1e-9; t += FI) cur.step(t, Math.min(FI, press - t));
+  assert.ok(Math.hypot(cur.x.x - 900, cur.y.x - 500) < 0.5 && press >= 0.5, `click planned at ${press}s lands ${JSON.stringify(cur.pos())}`);
+
+  // 3. Main take (deterministic, the default): zoom, marks, scoped click, wait out the splash.
   const r = await capture({ base, out, chapter: 'main', beats: [
     { goto: '/a' },
     { mark: { label: 'nav', on: 'nav.fixed.bottom-0' } },
-    { zoom: { on: 'nav.fixed.bottom-0', scale: 2, ms: 500 }, mark: { label: 'zoomed', on: 'nav.fixed.bottom-0' } },
+    { zoom: { on: 'nav.fixed.bottom-0', scale: 2, ms: 500 }, mark: { label: 'zoomed', on: 'nav.fixed.bottom-0' }, hold: 1000 },
     { wide: 500 },
     { name: 'reports', click: 'nav.fixed.bottom-0 >> text=REPORTS', expectPath: '/b' },
   ] });
-  const ev = JSON.parse(fs.readFileSync(path.join(r.dir, 'events.json'), 'utf8'));
-  for (const k of ['chapter', 'viewport', 'dur', 'frames', 'events']) assert.ok(k in ev, `events.json missing ${k}`);
-  assert.equal(ev.frames, r.frames);
-  const z = ev.events.find(e => e.label === 'zoomed');
-  for (const e of ev.events.filter(e => e.kind === 'mark')) for (const k of ['t', 'kind', 'label', 'rect', 'cam']) assert.ok(k in e, `event missing ${k}`);
-  // Every camera glide (zoom and wide, 500ms each: 11 steps of at least 30ms) is logged with its span,
-  // so compose can play it at 1x.
-  const moves = ev.events.filter(e => e.kind === 'camera');
+  const e = ev(r);
+  for (const k of ['chapter', 'viewport', 'dpr', 'fps', 'capture', 'dur', 'frames', 'events']) assert.ok(k in e, `events.json missing ${k}`);
+  assert.equal(e.capture.mode, 'deterministic', `main take fell back: ${e.capture.fallback}`);
+  assert.equal(e.frames, r.frames);
+  const z = e.events.find(m => m.label === 'zoomed');
+  for (const m of e.events.filter(m => m.kind === 'mark')) for (const k of ['t', 'kind', 'label', 'rect', 'cam']) assert.ok(k in m, `event missing ${k}`);
+  // Every camera move (zoom and wide) is logged with its span, so compose can play it at 1x.
+  const moves = e.events.filter(m => m.kind === 'camera');
   assert.equal(moves.length, 2, `expected 2 camera events, got ${moves.length}`);
-  for (const m of moves) assert.ok(m.t1 - m.t0 >= 0.3, `camera event span ${m.t0}..${m.t1} shorter than its 11 steps of 30ms`);
+  // A sound cue per click, timed inside the take.
+  const clicks = e.events.filter(m => m.kind === 'click');
+  assert.ok(clicks.length === 1 && clicks[0].t > moves[1].t1 && clicks[0].t <= e.dur, `click cues ${JSON.stringify(clicks)}`);
+  for (const m of moves) assert.ok(m.t1 - m.t0 >= 0.3, `camera event span ${m.t0}..${m.t1} too short for a 500ms spring`);
   assert.ok(moves[0].t1 <= z.t, 'zoom ended after the mark that follows it');
   assert.equal(z.cam.s, 2, 'zoom did not reach scale 2');
+  // Page time and footage time agree through blurred frames: the 1s hold (the pointer parks, so its
+  // frames are blurred) lasts 1s of footage. It once ran half a frame short per blurred frame.
+  assert.ok(Math.abs(moves[1].t0 - z.t - 1) < 1.5 / 60, `1s hold filmed as ${(moves[1].t0 - z.t).toFixed(3)}s`);
+  assert.ok(e.capture.blur.spans.some(([a, b]) => a >= z.t * 60 && b <= z.t * 60 + 60), `no blurred frames while the pointer parked: ${JSON.stringify(e.capture.blur.spans)}`);
   assert.ok(z.cam.y + z.cam.h >= z.rect.y + z.rect.h, 'zoom box does not frame the nav');
-  // The mp4 must run as long as the take. Zoom glides deliver frames faster than 30fps; an
-  // encoder that mishandles those squeezes the timeline and puts every mark late.
-  execFileSync(path.join(import.meta.dirname, 'encode.sh'), [r.dir, `${r.dir}.mp4`]);
-  const n = Number(execFileSync(FFPROBE, ['-v', 'error', '-count_frames', '-select_streams', 'v:0',
-    '-show_entries', 'stream=nb_read_frames', '-of', 'csv=p=0', `${r.dir}.mp4`]).toString());
-  assert.ok(Math.abs(n / 30 - r.dur) < 0.1, `mp4 holds ${n} frames (${(n / 30).toFixed(2)}s) for a ${r.dur.toFixed(2)}s take`);
+  // 2560x1440 at exactly 60fps, and the mp4 holds every frame: dur * 60 + 1.
+  encode(r.dir, `${r.dir}.mp4`);
+  const pm = probe(`${r.dir}.mp4`), n = +pm.nb_read_frames;
+  assert.deepEqual([pm.width, pm.height, pm.avg_frame_rate], [2560, 1440, '60/1'], `main mp4 is ${JSON.stringify(pm)}`);
+  assert.ok(Math.abs(n - (r.dur * 60 + 1)) < 1.001, `mp4 holds ${n} frames for a ${r.dur.toFixed(3)}s take`);
   // A '%' in the take's path: ffmpeg reads the cfr/ input as a %05d pattern, and an unescaped
   // "100%/" failed with "Error opening input file" (exit 254). Same take, copied under one.
   const pct = path.join(out, 'pct 100%', 'main');
   fs.cpSync(r.dir, pct, { recursive: true });
-  execFileSync(path.join(import.meta.dirname, 'encode.sh'), [pct, `${pct}.mp4`]);
-  const np = Number(execFileSync(FFPROBE, ['-v', 'error', '-count_frames', '-select_streams', 'v:0',
-    '-show_entries', 'stream=nb_read_frames', '-of', 'csv=p=0', `${pct}.mp4`]).toString());
-  assert.equal(np, n, `encode under a '%' path gave ${np} frames, not ${n}`);
-  const head = luma(frame(r.dir, 0)), tail = luma(frame(r.dir, r.frames - 1));
+  encode(pct, `${pct}.mp4`);
+  assert.equal(+probe(`${pct}.mp4`).nb_read_frames, n, `encode under a '%' path gave a different frame count`);
+  const head = luma(frame(r, 0)), tail = luma(last(r));
   assert.ok(head > 60 && head < 140, `first frame is blank/splash (luma ${head})`);
   assert.ok(tail > 60 && tail < 140, `last frame is still the splash (luma ${tail})`);
 
-  // 3. Holds must keep producing frames (screencast only emits on repaint).
-  const h = await capture({ base, out, chapter: 'hold', beats: [{ goto: '/a', hold: 2500 }] });
+  // 4. Animated page: every frame is new (no repeats), 60fps exactly, frame count = dur * 60 + 1.
+  const an = await capture({ base, out, chapter: 'anim', beats: [{ goto: '/anim', hold: 1500 }] });
+  encode(an.dir, `${an.dir}.mp4`);
+  const md5 = execFileSync(FFMPEG, ['-v', 'error', '-i', `${an.dir}.mp4`, '-f', 'framemd5', '-']).toString()
+    .split('\n').filter(l => /^\d/.test(l)).map(l => l.split(',').at(-1).trim());
+  const repeats = md5.filter((h, i) => i && h === md5[i - 1]).length;
+  assert.equal(repeats, 0, `${repeats} repeated frames on an animated page`);
+  assert.ok(Math.abs(md5.length - (an.dur * 60 + 1)) < 1.001 && an.dur >= 1.9, `anim: ${md5.length} frames for ${an.dur}s`);
+
+  // 5. Requests that hold virtual time. A dynamic import() never lets pauseIfNetworkFetchesPending
+  //    expire (measured, even for an instant module): the default network 'auto' forces that frame
+  //    through and the take stays deterministic with latency edited out elsewhere. A stream that
+  //    never ends holds it at every frame: 'auto' films on with page time running regardless and
+  //    says so; 'pause' instead falls back to screencast, says so once, and records the mode it used.
+  const lz = await capture({ base, out, chapter: 'lazy', beats: [{ goto: '/lazy' }, { click: '#go', ready: 'body[style*="rgb(255, 255, 255)"]', hold: 300 }] });
+  assert.deepEqual([lz.mode, ev(lz).capture.network], ['deterministic', 'pause'], `lazy import: ${JSON.stringify(ev(lz).capture)}`);
+  assert.ok(luma(last(lz)) > 200, 'lazy module never loaded');
+  const warned = []; const warn = console.warn; console.warn = (...a) => { warned.push(a.join(' ')); };
+  let fb, ss;
+  try {
+    ss = await capture({ base, out, chapter: 'sse-auto', beats: [{ goto: '/sse', hold: 600 }] });
+    fb = await capture({ base, out, chapter: 'sse', capture: { stallMs: 3000, network: 'pause' }, beats: [{ goto: '/sse', hold: 600 }] });
+  } finally { console.warn = warn; }
+  assert.deepEqual([ss.mode, ev(ss).capture.network], ['deterministic', 'advance'], `SSE under auto: ${JSON.stringify(ev(ss).capture)}`);
+  assert.match(ev(ss).capture.networkNote, /eventsource request to .*\/stream never finished/);
+  assert.equal(fb.mode, 'screencast');
+  assert.match(ev(fb).capture.fallback, /stalled.*eventsource request to .*\/stream/, `fallback cause ${ev(fb).capture.fallback}`);
+  assert.equal(warned.filter(w => /re-filming it in screencast mode/.test(w)).length, 1, `fallback message: ${JSON.stringify(warned)}`);
+  assert.equal(warned.filter(w => /page time running regardless of the network/.test(w)).length, 1, `auto message: ${JSON.stringify(warned)}`);
+
+  // 6. Motion blur only where something moves: the camera is the only mover in this take (no
+  //    clicks, no marks), so every blurred frame sits inside a camera move.
+  const bl = await capture({ base, out, chapter: 'blur', beats: [{ goto: '/plain', hold: 500 }, { zoom: { on: '#z', scale: 2, ms: 500 }, hold: 500 }, { wide: 500, hold: 500 }] });
+  const be = ev(bl), spans = be.capture.blur.spans, mv = be.events.filter(m => m.kind === 'camera').map(m => [m.t0 * 60, m.t1 * 60]);
+  assert.ok(spans.length >= 2, `expected blur on both camera moves, got ${JSON.stringify(spans)}`);
+  for (const [a, b] of spans) assert.ok(mv.some(([u, v]) => a >= u - 1 && b <= v + 1), `blurred frames ${a}-${b} outside the camera moves ${JSON.stringify(mv)}`);
+
+  // 7. Holds must keep producing frames (screencast only emits on repaint).
+  const h = await capture({ base, out, chapter: 'hold', capture: SC, beats: [{ goto: '/a', hold: 2500 }] });
   assert.ok(h.frames >= 30, `2.5s hold produced only ${h.frames} frames`);
 
-  // 4. Zoom after scroll frames the target (override viewport is document-relative).
-  const sz = await capture({ base, out, chapter: 'scrollzoom', beats: [{ goto: '/tall' }, { scroll: 1700 }, { zoom: { on: '#w', scale: 2, ms: 400 }, hold: 800 }] });
-  const zl = luma(frame(sz.dir, sz.frames - 1));
-  assert.ok(zl > 200, `zoom after scroll missed the target (luma ${zl})`);
+  // 8. Zoom after scroll frames the target (override viewport is document-relative; under
+  //    deterministic capture its x/y are device pixels too).
+  const zl = {};
+  for (const [m, c] of [['det', {}], ['sc', SC]]) {
+    const sz = await capture({ base, out, chapter: `scrollzoom-${m}`, capture: c, beats: [{ goto: '/tall' }, { scroll: 1700 }, { zoom: { on: '#w', scale: 2, ms: 400 }, hold: 800 }] });
+    zl[m] = luma(last(sz));
+    assert.ok(zl[m] > 200, `${m}: zoom after scroll missed the target (luma ${zl[m]})`);
+  }
 
-  // 5. A bare-text mis-click must fail the take.
+  // 9. A bare-text mis-click must fail the take (and never falls back: it is not a capture problem).
   await assert.rejects(capture({ base, out, chapter: 'wrong', beats: [
     { goto: '/a' }, { name: 'bare', click: 'text=REPORTS', expectPath: '/b' }] }), /expected path \/b, got \/news/);
 
-  // 6. Overlay: one cursor per page even with an iframe, mounts in a sandboxed document where
-  //    storage throws, and every click ripple starts from scale(1).
+  // 10. Overlay: one cursor per page even with an iframe, mounts in a sandboxed document where
+  //     storage throws, and every click restarts the feedback (one ring animation, from its start).
   const browser = await chromium.launch();
   let ripple, sandboxErrs;
   try {
@@ -128,30 +211,36 @@ try {
     assert.equal(sandboxErrs, 0, `init script threw: ${errs}`);
 
     await page.goto(`${base}/news`);
-    await page.evaluate(() => { window.__log = []; document.addEventListener('mousedown', () => {
-      const r = document.getElementById('__ring'); window.__log.push([r.style.transform, r.style.cssText.length]); }); });
-    for (const x of [300, 500, 700]) { await page.mouse.click(x, 300); await page.waitForTimeout(700); }
-    ripple = await page.evaluate(() => window.__log);
+    ripple = [];
+    for (const x of [300, 500, 700]) {
+      await page.mouse.click(x, 300); await page.waitForTimeout(100);
+      ripple.push(await page.evaluate(() => { const r = document.getElementById('__ring'), a = r.getAnimations();
+        return [a.length, a[0] ? Math.round(a[0].currentTime / 100) : -1, r.style.left]; }));
+    }
     assert.equal(await page.evaluate(() => getComputedStyle(document.getElementById('__ring')).borderTopColor), 'rgb(255, 0, 0)', 'click ring ignores cursor.ring');
-    assert.deepEqual(ripple.map(r => r[0]), ['scale(1)', 'scale(1)', 'scale(1)'], `ripple start transforms ${JSON.stringify(ripple)}`);
-    assert.equal(new Set(ripple.map(r => r[1])).size, 1, `ripple cssText grows per click ${JSON.stringify(ripple)}`);
+    assert.deepEqual(ripple.map(r => r.slice(0, 2)), [[1, 1], [1, 1], [1, 1]], `ring animations per click ${JSON.stringify(ripple)}`);
   } finally { await browser.close(); }
 
-  // 7. type beat types key by key (fill() would finish in one frame), and a hidden cursor still
-  //    keeps a hold emitting frames.
-  const ty = await capture({ base, out, chapter: 'type', cursor: { hidden: true }, beats: [{ goto: '/type' }, { type: { into: '#q', text: 'ferry times', cps: 10 } }, { hold: 1500 }] });
-  const tl = luma(frame(ty.dir, ty.frames - 1));
-  assert.ok(tl > 200, `typed text did not land (luma ${tl})`);
-  assert.ok(ty.dur > 1.0 + 1.5, `type beat too fast for 11 chars at 10 cps (${ty.dur.toFixed(2)}s)`);
-  assert.ok(ty.frames >= 30, `hidden-cursor take produced only ${ty.frames} frames`);
+  // 11. type beat types key by key on the take's clock (fill() would finish in one frame), and a
+  //     hidden cursor still keeps a screencast hold emitting frames.
+  const ty = {};
+  for (const [m, c] of [['det', {}], ['sc', SC]]) {
+    const t = await capture({ base, out, chapter: `type-${m}`, capture: c, cursor: { hidden: true }, beats: [{ goto: '/type' }, { type: { into: '#q', text: 'ferry times', cps: 10 } }, { hold: 1500 }] });
+    ty[m] = [t.dur, luma(last(t))];
+    const cue = ev(t).events.find(x => x.kind === 'type');
+    assert.ok(cue && cue.chars === 11 && cue.dur > 1.0, `${m}: type cue ${JSON.stringify(cue)}`);
+    assert.ok(ty[m][1] > 200, `${m}: typed text did not land (luma ${ty[m][1]})`);
+    assert.ok(t.dur > 1.0 + 1.5, `${m}: type beat too fast for 11 chars at 10 cps (${t.dur.toFixed(2)}s)`);
+    assert.ok(t.frames >= 30, `${m}: hidden-cursor take produced only ${t.frames} frames`);
+  }
 
-  // 8. pace scales holds: the same 1s hold at pace 2 films about twice as long.
+  // 12. pace scales holds: the same 1s hold at pace 2 films about twice as long.
   const p1 = await capture({ base, out, chapter: 'pace1', beats: [{ goto: '/a', hold: 1000 }] });
   const p2 = await capture({ base, out, chapter: 'pace2', pace: 2, beats: [{ goto: '/a', hold: 1000 }] });
-  assert.ok(p2.dur - p1.dur > 0.8, `pace 2 did not lengthen the take (${p1.dur.toFixed(2)}s vs ${p2.dur.toFixed(2)}s)`);
+  assert.ok(Math.abs(p2.dur - p1.dur - 1.5) < 0.05, `pace 2 did not add 1.5s (the 1s hold and the 0.5s tail, once more; the first settle is before filming) (${p1.dur.toFixed(2)}s vs ${p2.dur.toFixed(2)}s)`);
 
-  // 9. A dead session on an app that sends logged-out users to /welcome must be re-minted when
-  //    loggedInSel is set; without it the probe only checks "not on /login" and wrongly reuses it.
+  // 13. A dead session on an app that sends logged-out users to /welcome must be re-minted when
+  //     loggedInSel is set; without it the probe only checks "not on /login" and wrongly reuses it.
   const state = path.join(out, 'state.json');
   fs.writeFileSync(state, JSON.stringify({ cookies: [], origins: [] }));
   const login = { email: 'a@example.test', password: 'x' };
@@ -160,29 +249,31 @@ try {
   assert.equal(await ensureState({ base, state, login: { ...login, loggedInSel: '#me' } }), 'minted');
   assert.equal(await ensureState({ base, state, login: { ...login, loggedInSel: '#me' } }), 'reused');
 
-  // 10. The cursor keeps its size under a zoom: white pixels (only the cursor is white on /plain)
-  //     in a zoomed hold vs an unzoomed one. Measured 1.00-1.34 with the counter-scale, 5.14 without.
-  const white = (dir, k) => Number(execFileSync(FFMPEG, ['-v', 'error', '-i', path.join(dir, 'cfr', `${String(k).padStart(5, '0')}.jpg`),
-    '-vf', "format=gray,lutyuv=y='if(gt(val,200),255,0)',signalstats,metadata=print:key=lavfi.signalstats.YAVG:file=-", '-f', 'null', '-']).toString().match(/YAVG=([\d.]+)/)[1]);
+  // 14. The cursor keeps its size under a zoom: white pixels (only the cursor is white on /plain)
+  //     in a zoomed hold vs an unzoomed one. Screencast measured 1.00-1.34 with the counter-scale,
+  //     5.14 without. And still after a click navigates while zoomed: the new page's overlay reads
+  //     the counter-scale at mount (5.10 when it did not).
+  const white = img => yavg(img, "format=gray,lutyuv=y='if(gt(val,200),255,0)',");
   // cursor area in a take's last frame over its area just before the take's first camera move
   const growth = t => {
-    const mv = JSON.parse(fs.readFileSync(path.join(t.dir, 'events.json'), 'utf8')).events.find(e => e.kind === 'camera');
-    const before = white(t.dir, Math.floor((mv.t0 - 0.15) * 30));
+    const e = ev(t), mv = e.events.find(m => m.kind === 'camera');
+    const before = white(frame(t, Math.floor((mv.t0 - 0.15) * e.fps)));
     assert.ok(before > 0, `${t.dir}: no cursor before the zoom`);
-    return white(t.dir, fs.readdirSync(path.join(t.dir, 'cfr')).length - 1) / before;
+    return white(last(t)) / before;
   };
-  const csRatio = growth(await capture({ base, out, chapter: 'counter', beats: [{ goto: '/plain', hold: 700 }, { zoom: { on: '#z', scale: 2, ms: 300 }, hold: 700 }] }));
-  assert.ok(csRatio > 0.6 && csRatio < 1.6, `cursor ${csRatio.toFixed(2)}x its unzoomed size under a 2x zoom (want ~1)`);
+  const cs = {};
+  for (const [m, c] of [['det', {}], ['sc', SC]]) {
+    cs[m] = [growth(await capture({ base, out, chapter: `counter-${m}`, capture: c, beats: [{ goto: '/plain', hold: 700 }, { zoom: { on: '#z', scale: 2, ms: 300 }, hold: 700 }] })),
+      growth(await capture({ base, out, chapter: `counter-nav-${m}`, capture: c, beats: [{ goto: '/plain', hold: 700 },
+        { zoom: { on: '#z', scale: 2, ms: 300 } }, { name: 'go', click: '#go', expectPath: '/plain2', hold: 700 }] }))];
+    for (const v of cs[m]) assert.ok(v > 0.6 && v < 1.6, `${m}: cursor ${v.toFixed(2)}x its unzoomed size under a 2x zoom (want ~1): ${cs[m]}`);
+  }
 
-  // 11. ...and still after a click navigates while zoomed: the new page's overlay starts unscaled.
-  //     Measured 1.02-1.31 with the re-apply after navigation, 5.10 without.
-  const nvRatio = growth(await capture({ base, out, chapter: 'counter-nav', beats: [{ goto: '/plain', hold: 700 },
-    { zoom: { on: '#z', scale: 2, ms: 300 } }, { name: 'go', click: '#go', expectPath: '/plain2', hold: 700 }] }));
-  assert.ok(nvRatio > 0.6 && nvRatio < 1.6, `cursor ${nvRatio.toFixed(2)}x its unzoomed size after navigating while zoomed (want ~1)`);
-
-  console.log(`selfcheck OK: cursor under 2x zoom ${csRatio.toFixed(2)}x its unzoomed size, ${nvRatio.toFixed(2)}x after navigating while zoomed; ring takes cursor.ring`);
-  console.log(`selfcheck OK: cursors 1 with iframe; sandbox errors ${sandboxErrs}; ripple ${JSON.stringify(ripple)}; type ${ty.dur.toFixed(2)}s luma ${tl}; pace ${p1.dur.toFixed(2)}s -> ${p2.dur.toFixed(2)}s; loggedInSel re-mints`);
-  console.log(`selfcheck OK: main ${r.frames} frames/${r.dur.toFixed(1)}s mp4 ${n} frames luma head ${head} tail ${tail}; hold ${h.frames} frames; scroll-zoom luma ${zl}; guard threw`);
+  const f2 = v => v.toFixed(2);
+  console.log(`selfcheck OK: springs (retarget keeps velocity, pre-aim, settles exact, click lands at ${press.toFixed(3)}s)`);
+  console.log(`selfcheck OK: main ${r.frames} frames/${r.dur.toFixed(2)}s 2560x1440@60 mp4 ${n} frames luma head ${head} tail ${tail}; anim ${md5.length} frames 0 repeats; blur spans ${JSON.stringify(spans)} inside camera moves`);
+  console.log(`selfcheck OK: lazy import stays deterministic; SSE runs on under auto, falls back to ${fb.mode} under pause, one message each; screencast hold ${h.frames} frames; scroll-zoom luma ${zl.det}/${zl.sc}; guard threw`);
+  console.log(`selfcheck OK: cursor under 2x zoom det ${cs.det.map(f2)} sc ${cs.sc.map(f2)} (zoomed, after nav); ring per click ${JSON.stringify(ripple)}; type det ${f2(ty.det[0])}s sc ${f2(ty.sc[0])}s; pace ${f2(p1.dur)}s -> ${f2(p2.dur)}s; loggedInSel re-mints; sandbox errors ${sandboxErrs}`);
 } finally {
   server.close(); fs.rmSync(out, { recursive: true, force: true });
 }
