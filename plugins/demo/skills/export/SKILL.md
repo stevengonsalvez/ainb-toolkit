@@ -114,8 +114,11 @@ the motion weight (0.5) costs such a loop 3 to 12 points against 10 per spotligh
 | `--out` | `<out>/export/interactive` | |
 
 **Steps.** One per mark in demo order (every mark has a rect and a label), plus each click or
-type cue that carries a `rect`. demo:capture records only the time of clicks and types today, so
-those are counted, skipped and named in a warning. The label is the narration line for that
+type cue that carries a `rect` (demo:capture records the clicked or typed-into element's rect
+and the camera box on each). A type beat's click into the field and its typing make one step,
+"Type here", at the click's frame. Takes filmed before demo:capture recorded these rects have
+cues without them; those are counted, skipped and named in a warning (the ferry example's takes
+predate it: 1 click skipped). Click steps read "Click here". The label is the narration line for that
 mark when the demo has narration, else compose's label for that spotlight (so the config's
 `labels` overrides apply), else the capture's, cut at a word to under 60 characters
 (longer hotspot copy loses about 12% completion in Arcade's benchmarks).
@@ -173,8 +176,8 @@ matching check goes red.
 
 - demo:export reads demo:compose's config loader from `../compose/scripts/`, so it runs from
   the plugin's `skills/` directory with compose beside it, as the plugin installs it.
-- Click and type cues carry no target rect yet, so walkthroughs step through marks only.
-  Recording `rect` on those events in demo:capture makes them steps with no change here.
+- Click and type steps have generic labels ("Click here", "Type here"): the cues carry no
+  copy of their own. Put a mark on anything that needs words.
 - The loop stays inside one chapter; a demo whose chapters are all shorter than 8 s gets a
   shorter loop and a warning.
 - Hotspots are rectangles; a rotated or clipped element shows its bounding box.
