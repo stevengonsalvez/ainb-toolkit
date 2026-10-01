@@ -2,6 +2,8 @@
 # render.sh <config.json> [segment ...]
 # Renders each segment project one at a time, in the foreground, with a timeout.
 # Skips a segment whose output is newer than its index.html, so a killed run resumes.
+# Segments are ProRes 4444 .mov, captured as PNG with footage frames extracted as PNG: an
+# intermediate with no visible loss. concat.sh makes the one lossy encode.
 set -eu
 D=$(cd "$(dirname "$0")" && pwd)
 CFG=$(realpath "$1"); shift
@@ -13,10 +15,10 @@ else
   NAMES=("$@")
 fi
 for n in "${NAMES[@]}"; do
-  o=$R/out/seg/$n.mp4
+  o=$R/out/seg/$n.mov
   if [ -s "$o" ] && [ "$o" -nt "$R/projects/$n/index.html" ]; then echo "$n: up to date"; continue; fi
   s=$(date +%s)
-  ( cd "$R/projects/$n" && timeout 590 npx --yes hyperframes@0.8.40 render --quality looks --output "$o" > "$R/work/render-$n.log" 2>&1 ) \
+  ( cd "$R/projects/$n" && timeout 590 npx --yes hyperframes@0.8.40 render --format mov --video-frame-format png --output "$o" > "$R/work/render-$n.log" 2>&1 ) \
     || { echo "$n: FAILED"; tail -20 "$R/work/render-$n.log"; exit 1; }
   echo "$n: ok $(( $(date +%s) - s ))s $("$FFPROBE" -v error -show_entries format=duration -of csv=p=0 "$o")s"
 done

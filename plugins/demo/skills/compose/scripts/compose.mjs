@@ -72,6 +72,8 @@ ${faces}
 html, body { width: ${W}px; height: ${H}px; overflow: hidden; background: ${T.bg}; }
 #root { position: relative; width: 100%; height: 100%; overflow: hidden; background: ${T.bg};
   font-family: ${C.bodyStack}; color: ${T.text}; }
+/* A .mov render forces the root and body transparent, so the fill lives on this child. */
+#bg { position: absolute; inset: 0; background: ${T.bg}; }
 .cam { position: absolute; left: 0; top: 0; }
 .foot { position: absolute; inset: 0; width: 100%; height: 100%; }
 .card { position: absolute; inset: 0; background: ${T.bg}; display: flex; flex-direction: column;
@@ -104,6 +106,7 @@ function doc(id, dur, body, script) {
 </head>
 <body>
 <div id="root" data-composition-id="${id}" data-start="0" data-duration="${r3(dur)}" data-width="${W}" data-height="${H}">
+<div id="bg"></div>
 ${body}
 <div id="fade"></div>
 </div>

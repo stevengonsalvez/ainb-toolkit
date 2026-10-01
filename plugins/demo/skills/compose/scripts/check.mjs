@@ -93,7 +93,7 @@ function checkChapter(name) {
   if (!existsSync(planPath)) throw new Error(`${name}: no plan, run compose.mjs first`);
   const plan = JSON.parse(readFileSync(planPath, 'utf8'));
   if (plan.kind === 'card') return [];
-  const seg = `${C.out}/out/seg/${name}.mp4`;
+  const seg = `${C.out}/out/seg/${name}.mov`;
   if (!existsSync(seg)) throw new Error(`${name}: no rendered segment at ${seg}, run render.sh first`);
   const src = `${C.takes}/${name}.mp4`;
   const stillDir = `${C.out}/work/stills/${name}`;
