@@ -20,7 +20,7 @@
 import fs from 'fs'; import path from 'path'; import { execFile } from 'child_process';
 // Browsers come from $PLAYWRIGHT_BROWSERS_PATH when set, else Playwright's own default.
 import { chromium } from '@playwright/test';
-import { Camera, Cursor, camMotion, tilt, CAMERA_REF_MS, CLICK_LEAD_MS } from './motion.mjs';
+import { Camera, Cursor, tilt, CAMERA_REF_MS, CLICK_LEAD_MS } from './motion.mjs';
 
 const smoothstep = p => p * p * (3 - 2 * p);
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -169,7 +169,7 @@ class Fallback extends Error {}
 export async function capture(opts) {
   const cap = { mode: 'deterministic', dpr: 2, fps: 60, blur: {}, network: 'auto', unstickMs: 1500, stallMs: 10000, timeoutMs: 600000,
     ...opts.capture, chapter: opts.chapter };
-  if (cap.blur !== false) cap.blur = { samples: 4, max: 16, spacing: 2, shutter: 0.5, threshold: 2, ...cap.blur };
+  if (cap.blur !== false) cap.blur = { samples: 4, max: 64, spacing: 1.5, shutter: 0.5, threshold: 2, ...cap.blur };
   if (cap.mode !== 'deterministic') return film({ ...opts, cap });
   try { return await film({ ...opts, cap }); } catch (e) {
     if (!(e instanceof Fallback)) throw e;
@@ -289,7 +289,7 @@ async function film({ base, state, out, viewport = { width: 1280, height: 720 },
     const r = await rec.stop();
     const capInfo = { mode: cap.mode, ...(cap.fallback && { requested: 'deterministic', fallback: cap.fallback }),
       ...(det && { network: cap.netNote ? 'advance' : cap.network === 'advance' ? 'advance' : 'pause', ...(cap.netNote && { networkNote: cap.netNote }) }),
-      ...(det && { blur: cap.blur && { ...cap.blur, spans: r.blurSpans } }) };
+      ...(det && { blur: cap.blur && { ...cap.blur, spans: r.blurSpans, ...r.blurStats } }) };
     fs.writeFileSync(path.join(dir, 'events.json'), JSON.stringify({ chapter, viewport, dpr: r.dpr, fps: r.fps,
       capture: capInfo, dur: r.dur, frames: r.frames, events }, null, 1));
     return { frames: r.frames, dur: r.dur, events: events.filter(e => e.kind === 'mark').length, dir, mode: cap.mode, fps: r.fps, dpr: r.dpr };
@@ -509,9 +509,42 @@ async function deterministic({ W, H, cap, dir, state, overlayArgs }) {
   };
   const step = to => { const dt = (to - st) / 1000; if (dt > 0) { camera.step(dt); cursor.step(st / 1000, dt); } st = to; };
   let applied = { cam: null, x: NaN, y: NaN, cs: NaN, rot: NaN }, camScroll = { x: 0, y: 0 };
-  const screen = () => {
-    const b = camera.box(), p = cursor.pos();
+  const screen = (cam = camera, cur = cursor) => {
+    const b = cam.box(), p = cur.pos();
     return { b, x: (p.x - (b.s > 1 ? b.x : 0)) * b.s, y: (p.y - (b.s > 1 ? b.y : 0)) * b.s };
+  };
+  // How far anything on screen moves over this frame's shutter, in output (device) px, and the
+  // direction of the largest move: camera (the frame corner that moves most) or pointer. Taken
+  // from the solver stepped ahead on copies, so it is the motion the samples will really span.
+  const shutterMotion = () => {
+    const a = screen(), cam = camera.clone(), cur = cursor.clone(), dt = blur.shutter * FI / 1000;
+    cam.step(dt); cur.step(st / 1000, dt);
+    const b = screen(cam, cur);
+    let best = { d: Math.hypot(b.x - a.x, b.y - a.y), dx: b.x - a.x, dy: b.y - a.y };
+    for (const [fx, fy] of [[0, 0], [1, 0], [0, 1], [1, 1]]) {
+      const px = b.b.x + fx * b.b.w, py = b.b.y + fy * b.b.h;            // page point at the later corner
+      const dx = fx * W - (px - a.b.x) * a.b.s, dy = fy * H - (py - a.b.y) * a.b.s;
+      if (Math.hypot(dx, dy) > best.d) best = { d: Math.hypot(dx, dy), dx, dy };
+    }
+    return { d: best.d * dpr };
+  };
+  // The camera's move across one gap between samples, as an output-pixel map D = k S + (ox, oy)
+  // (scale about the origin plus a shift: radial for a zoom, linear for a pan).
+  const gapWarp = gap => {
+    const a = camera.box(), cam = camera.clone(); cam.step(gap); const g = cam.box();
+    return { k: g.s / a.s, ox: (a.x - g.x) * g.s * dpr, oy: (a.y - g.y) * g.s * dpr };
+  };
+  // Gap fill: average K copies of the blurred frame, each warped by j/K of that map, so every
+  // sample spreads continuously across the gap to the next (copies at most 0.5px apart).
+  // Pixels the camera does not move (the fixed point of a zoom) stay as sharp as the samples.
+  const fillGraph = (w, gapPx) => {
+    const K = Math.ceil(gapPx / 0.5), WW = W * dpr, HH = H * dpr, parts = [];
+    for (let j = 0; j < K; j++) {
+      const f = j / K, kk = 1 + (w.k - 1) * f, src = ([X, Y]) => [((X - w.ox * f) / kk).toFixed(3), ((Y - w.oy * f) / kk).toFixed(3)];
+      const [p0, p1, p2, p3] = [[0, 0], [WW, 0], [0, HH], [WW, HH]].map(src);
+      parts.push(`[f${j}]perspective=x0=${p0[0]}:y0=${p0[1]}:x1=${p1[0]}:y1=${p1[1]}:x2=${p2[0]}:y2=${p2[1]}:x3=${p3[0]}:y3=${p3[1]}:interpolation=cubic[g${j}]`);
+    }
+    return `,format=gbrp,split=${K}${Array.from({ length: K }, (_, j) => `[f${j}]`).join('')};${parts.join(';')};${Array.from({ length: K }, (_, j) => `[g${j}]`).join('')}mix=inputs=${K}`;
   };
   // Pose camera and pointer for page time `to`, then draw. The pointer is posed directly (exact)
   // and a real mouseMoved follows it once per output frame, so hover states match what is filmed.
@@ -549,22 +582,22 @@ async function deterministic({ W, H, cap, dir, state, overlayArgs }) {
     return grab ? Buffer.from(r.screenshotData, 'base64') : null;
   };
 
-  let tNext = FI, recording = false, n = 0, primed = 0, prev = null, prevPng = null, waiters = [], pumping = true;
-  const blurFrames = [];
+  let tNext = FI, recording = false, n = 0, primed = 0, prevPng = null, waiters = [], pumping = true;
+  const blurFrames = [], stats = { maxSamples: 0, maxGap: 0, filled: 0 };
   // ffmpeg averages each blurred frame in the background while capture goes on (tmix over its
   // N sub-frames; -update keeps the last output, the full average). Two at a time.
   // A take that falls back is re-filmed into the same directory, so close() kills and awaits every
   // job first; a job that ends after that is ignored rather than writing into the new take.
   const queue = [], busy = [], kids = new Set(), jobErrors = [];
   let cancelled = false;
-  const average = (sub, N, out) => queue.push([sub, N, out]) && drain();
+  const average = (sub, N, out, fill) => queue.push([sub, N, out, fill]) && drain();
   const drain = () => {
     while (!cancelled && busy.length < 2 && queue.length) {
-      const [sub, N, out] = queue.shift();
+      const [sub, N, out, fill] = queue.shift();
       let kid;
       const job = new Promise((res, rej) => {
         kid = execFile(ffbin('ffmpeg'), ['-v', 'error', '-y', '-i', `${sub.replace(/%/g, '%%')}/%02d.png`,
-          '-vf', `tmix=frames=${N}`, '-update', '1', out], e => {
+          '-filter_complex', `tmix=frames=${N}${fill}`, '-update', '1', out], e => {
           kids.delete(kid);
           if (cancelled) return res();
           if (e) { jobErrors.push(`${out}: ${String(e.message).split('\n').slice(-2).join(' ')}`); return rej(e); }
@@ -592,20 +625,24 @@ async function deterministic({ W, H, cap, dir, state, overlayArgs }) {
       step(t); await apply(true);
       if (!recording) { await draw(t, false); primed++; }
       else {
-        const sc = screen();
-        const motion = prev ? Math.max(camMotion(prev.b, sc.b, W, H), Math.hypot(sc.x - prev.x, sc.y - prev.y)) : 0;
-        prev = sc;
+        const sm = blur ? shutterMotion() : { d: 0 };
         let buf = await draw(t, true);
         if (n === 0) {                                     // the size check, once: a 1x frame means DSF did not apply
           const w = buf.readUInt32BE(16), h = buf.readUInt32BE(20);
           if (w !== Math.round(W * dpr) || h !== Math.round(H * dpr)) throw new Fallback(`frames came back ${w}x${h}, not ${W * dpr}x${H * dpr}`);
         }
-        if (blur && motion > blur.threshold) {
+        if (blur && sm.d > blur.threshold) {
           // Motion blur: average renders spread over the shutter (0.5 of the frame interval: a 180
           // degree shutter). Static pixels average to themselves, so only what moves smears. The
-          // sample count grows with speed so samples sit at most `spacing` px apart: 4 samples on
-          // a fast zoom filmed separate ghost copies of the text (looked at).
-          const N = clamp(Math.ceil(motion * blur.shutter / blur.spacing), blur.samples, blur.max);
+          // sample count comes from how far things move over the shutter, so that neighbouring
+          // samples sit at most `spacing` output px apart (up to `max` samples): at about 4px
+          // apart a fast zoom filmed striated copies of every glyph instead of a smear (looked
+          // at). Glyph edges still land on whole pixels in each sample, so a camera move also gets
+          // the gap fill above, which turns the remaining steps into a continuous smear.
+          const N = clamp(Math.ceil(sm.d / blur.spacing), blur.samples, blur.max), gap = sm.d / N;
+          const w = gapWarp(blur.shutter * FI / 1000 / N), camGap = Math.hypot(w.ox, w.oy) + Math.abs(w.k - 1) * W * dpr;
+          const fillPx = Math.min(gap, camGap), fill = fillPx > 0.5 ? fillGraph(w, fillPx) : '';   // under 0.5px: nothing to fill
+          stats.maxSamples = Math.max(stats.maxSamples, N); stats.maxGap = Math.max(stats.maxGap, +gap.toFixed(2)); if (fill) stats.filled++;
           const sub = path.join(dir, 'sub', String(n));
           fs.mkdirSync(sub, { recursive: true });
           fs.writeFileSync(path.join(sub, '00.png'), buf);
@@ -614,7 +651,7 @@ async function deterministic({ W, H, cap, dir, state, overlayArgs }) {
             step(tk); await apply(false);
             fs.writeFileSync(path.join(sub, `${String(k).padStart(2, '0')}.png`), await draw(tk, true));
           }
-          average(sub, N, path.join(dir, 'cfr', name(n)));
+          average(sub, N, path.join(dir, 'cfr', name(n)), fill);
           blurFrames.push(n); prevPng = null;
         } else if (prevPng && buf.equals(prevPng)) fs.linkSync(path.join(dir, 'cfr', name(n - 1)), path.join(dir, 'cfr', name(n)));
         else { fs.writeFileSync(path.join(dir, 'cfr', name(n)), buf); prevPng = buf; }
@@ -682,7 +719,7 @@ async function deterministic({ W, H, cap, dir, state, overlayArgs }) {
       if (gapAt !== undefined) throw new Error(`frame ${gapAt} of ${n} is missing from ${path.join(dir, 'cfr')}`);
       const spans = [];
       for (const k of blurFrames) { if (spans.length && spans.at(-1)[1] === k - 1) spans.at(-1)[1] = k; else spans.push([k, k]); }
-      return { frames: n, dur: (n - 1) / fps, fps, dpr, blurSpans: spans };
+      return { frames: n, dur: (n - 1) / fps, fps, dpr, blurSpans: spans, blurStats: stats };
     },
     close: async () => { pumping = false; await pump.catch(() => {}); await cancelBlur(); await browser.close(); },
   };
