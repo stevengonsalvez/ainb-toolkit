@@ -307,6 +307,9 @@ music file ──▶ hyperframes beats ─▶ card padding, every cut on a beat 
   moves every later start, so with a bed `compose.mjs` also composes again each later segment
   whose start has moved, and `audio.mjs` fails when a cut sits more than a frame off the grid,
   which only a segment rendered from a stale plan can do: re-run `compose.mjs` and `render.sh`.
+  With transitions a cut is the frame the next segment starts to come in (its seam overlaps the
+  end of this one), so the pad aims that frame at the beat, and `audio.mjs` places every sound at
+  the segment starts `concat.sh` records in `work/timeline.json`, seams already taken off.
 
   | bed (ferry example, measured) | detector | fitted | cuts off the beat | result |
   |---|---|---|---|---|

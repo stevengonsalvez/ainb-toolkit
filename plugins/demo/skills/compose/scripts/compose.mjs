@@ -6,7 +6,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync, mkdirSync, copyFileSync, existsSync } from 'node:fs';
 import { dirname, resolve, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadConfig, segmentNames, seamsOf, screenRect, eventsPath, r3, esc, grayFrames, mad, hexToRgba } from './config.mjs';
+import { loadConfig, segmentNames, seams, seamsOf, screenRect, eventsPath, r3, esc, grayFrames, mad, hexToRgba } from './config.mjs';
 import { audioSettings, narrationClips, fitNarration, beatGrid } from './audio.mjs';
 
 const cfgPath = process.argv[2];
@@ -532,7 +532,9 @@ function chapter(an, sp) {
     s.glide = false;
     if (!n || !(SP.glide > 0) || !same(s, n) || n.cf - (s.ct + s.hold) > SP.glide) { run++; continue; }
     const start = Math.min(s.ct + s.hold, n.cf - GLIDE);
-    if (start - s.ct < HOLD_MIN) { run++; continue; }
+    // nor while this mark's narration line is still being spoken
+    const said = Math.max(-Infinity, ...fit.placed.filter((p) => p.slot === s.i).map((p) => p.at + p.dur));
+    if (start - s.ct < HOLD_MIN || start < said) { run++; continue; }
     s.hold = start - s.ct; s.glide = true; n.glided = true;
   }
 
@@ -682,25 +684,31 @@ const PLANS = Object.fromEntries(segmentNames(C).map((n) => {
   return [n, existsSync(p) ? JSON.parse(readFileSync(p, 'utf8')) : null];
 }));
 const TOTALS = Object.fromEntries(segmentNames(C).map((n) => [n, PLANS[n]?.total ?? null]));
+// A segment starts where the previous one ends less the seam between them: a transition overlaps
+// the two (concat.sh), so with transitions on every later start moves earlier by the seams before it.
+const SEAM = Object.fromEntries(segmentNames(C).map((n, i) => [n, seams(C)[i].dur]));
+const OUT = Object.fromEntries(segmentNames(C).map((n, i, a) => [n, SEAM[a[i + 1]] ?? 0]));
 const startOf = (n) => {
   let start = 0;
-  for (const m of segmentNames(C)) { if (m === n) return start; if (TOTALS[m] == null) return null; start += TOTALS[m]; }
+  for (const m of segmentNames(C)) { start -= SEAM[m]; if (m === n) return start; if (TOTALS[m] == null) return null; start += TOTALS[m]; }
   return null;
 };
-// With a music bed, each segment's leading card grows by under one beat so the segment ends,
-// to the frame, on a beat: every cut lands on the music.
-// Starts are counted in whole frames (each segment renders whole frames), so the padded segment
-// ends exactly on the frame nearest the beat.
-const padAt = (start, total) => {
+// With a music bed, each segment's leading card grows by under one beat so the next segment
+// starts, to the frame, on a beat: every cut lands on the music. With a transition the cut is the
+// moment the next segment starts to come in, `out` (its seam) before this one ends; the last
+// segment's end is the film's.
+// Starts are counted in whole frames (each segment renders whole frames, seams are whole frames),
+// so the padded segment ends exactly on the frame nearest the beat.
+const padAt = (start, total, out = 0) => {
   if (!GRID) return 0;
-  const s0 = Math.round(start * C.fps);
-  return (Math.round(GRID.after(s0 / C.fps + total - 1e-3) * C.fps) - s0) / C.fps - total;
+  const s0 = Math.round(start * C.fps), cut = total - out;
+  return (Math.round(GRID.after(s0 / C.fps + cut - 1e-3) * C.fps) - s0) / C.fps - cut;
 };
 function padToBeat(n, total) {
   if (!GRID) return 0;
   const start = startOf(n);
   if (start == null) { console.warn(`warn: ${n} not snapped to the beat: an earlier segment has no plan yet`); return 0; }
-  return padAt(start, total);
+  return padAt(start, total, OUT[n]);
 }
 // A card's length before any beat padding: a narrated card stays up until its line has finished.
 const cardDur = (n) => {
@@ -722,10 +730,11 @@ if (C.targetDuration) {
   const length = (v) => segmentNames(C).reduce((t, n) => {
     const c = C.chapters.find((x) => x.name === n);
     if (c && !filmed.includes(c)) return t;
+    t -= SEAM[n];                                    // a seam overlaps this segment with the last
     const an = c && analysis(c), sp = c && speedFor(c, v);
     // the same arithmetic as chapter() and the card branch: a pad decides on a beat, and a
     // millisecond either side of one is a whole beat of difference
-    const foot = c ? r3(retime(an, sp, fitFor(an, sp).freezes).footDur) : 0, base = c ? an.CARD + foot : cardDur(n), pad = padAt(t, base);
+    const foot = c ? r3(retime(an, sp, fitFor(an, sp).freezes).footDur) : 0, base = c ? an.CARD + foot : cardDur(n), pad = padAt(t, base, OUT[n]);
     return t + (GRID ? base + pad : c ? an.CARD + foot : r3(base));
   }, 0);
   // ponytail: bisection on travel alone; proof windows, cards and holds are never sped up to hit it.
