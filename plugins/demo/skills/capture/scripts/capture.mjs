@@ -112,13 +112,14 @@ export function overlay({ ls, hidden, ringColor }) {
     if (document.getElementById('__cur')) return;
     const d = document.createElement('div'); d.id = '__cur';
     // A hidden cursor still moves: its repaints are what keep the screencast emitting during a hold.
-    // `scale: var(--cs)` is the camera's counter-scale (set by setCam), so the pointer keeps its size
+    // `scale: var(--__demo-cs)` is the camera's counter-scale (set by setCam on these two elements,
+    // under a name no app uses), so the pointer keeps its size
     // under a zoom; it composes with `translate`, the pointer position, about the arrow's tip.
-    d.style.cssText = 'position:fixed;top:0;left:0;width:20px;height:26px;pointer-events:none;z-index:2147483647;transition:translate .05s linear;will-change:translate;transform-origin:0 0;scale:var(--cs,1);filter:drop-shadow(0 1px 2px rgba(0,0,0,.45));background:no-repeat center/contain url("data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'20\' height=\'26\' viewBox=\'0 0 18 24\'%3E%3Cpath d=\'M2 2 L2 18 L6.5 13.8 L9.2 20 L11.8 19 L9.1 13 L14.5 13 Z\' fill=\'white\' stroke=\'black\' stroke-width=\'1.4\' stroke-linejoin=\'round\'/%3E%3C/svg%3E")' + (hidden ? ';opacity:0.004' : '');
+    d.style.cssText = 'position:fixed;top:0;left:0;width:20px;height:26px;pointer-events:none;z-index:2147483647;transition:translate .05s linear;will-change:translate;transform-origin:0 0;scale:var(--__demo-cs,1);filter:drop-shadow(0 1px 2px rgba(0,0,0,.45));background:no-repeat center/contain url("data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'20\' height=\'26\' viewBox=\'0 0 18 24\'%3E%3Cpath d=\'M2 2 L2 18 L6.5 13.8 L9.2 20 L11.8 19 L9.1 13 L14.5 13 Z\' fill=\'white\' stroke=\'black\' stroke-width=\'1.4\' stroke-linejoin=\'round\'/%3E%3C/svg%3E")' + (hidden ? ';opacity:0.004' : '');
     document.body.appendChild(d);
     const ring = document.createElement('div'); ring.id = '__ring';
     // A thin dark outline keeps the default white ring visible on a white page.
-    ring.style.cssText = `position:fixed;top:0;left:0;width:52px;height:52px;border-radius:50%;border:2px solid ${ringColor};box-shadow:0 0 0 1px rgba(0,0,0,.25);scale:var(--cs,1);pointer-events:none;z-index:2147483646;opacity:0`;
+    ring.style.cssText = `position:fixed;top:0;left:0;width:52px;height:52px;border-radius:50%;border:2px solid ${ringColor};box-shadow:0 0 0 1px rgba(0,0,0,.25);scale:var(--__demo-cs,1);pointer-events:none;z-index:2147483646;opacity:0`;
     document.body.appendChild(ring);
     addEventListener('mousemove', e => { d.style.translate = `${e.clientX}px ${e.clientY}px`; }, { passive: true });
     if (hidden) return;
@@ -169,8 +170,12 @@ export async function capture({ base, state, out, viewport = { width: 1280, heig
   let camScroll = { x: 0, y: 0 };
   // The override zooms the overlay with the page (measured 1.5x bigger at scale 1.5), so each pose
   // also sets the cursor's counter-scale, sent alongside the override rather than after it.
-  // ponytail: a navigation while zoomed drops it until the next camera move; set it on load if that bites.
-  const counter = v => cdp.send('Runtime.evaluate', { expression: `document.documentElement.style.setProperty('--cs', '${v ? 1 / v.s : 1}')` });
+  // The override outlives a navigation but the new document's overlay starts at scale 1, so the
+  // counter-scale is re-applied on every DOMContentLoaded (after the overlay mounts) and again after
+  // each navigating beat's wait. Without it, a click while zoomed filmed the next page's cursor at 2x.
+  const counter = v => cdp.send('Runtime.evaluate', { expression:
+    `for (const id of ['__cur', '__ring']) document.getElementById(id)?.style.setProperty('--__demo-cs', '${v ? 1 / v.s : 1}')` });
+  page.on('domcontentloaded', () => { if (cam) counter(cam).catch(() => {}); });
   const setCam = async v => {
     const prev = cam; cam = v;
     if (!v) { await Promise.all([cdp.send('Emulation.clearDeviceMetricsOverride'), counter(v)]); return; }
@@ -255,6 +260,7 @@ export async function capture({ base, state, out, viewport = { width: 1280, heig
       else await quiet();
       await page.waitForTimeout(P(step.settle ?? 400));
     }
+    if ((step.goto || step.click) && cam) await counter(cam);
     if (step.expectPath) checkPath(step.expectPath, page.url(), name);
     // Start filming only once the first page is ready: starting before paint
     // put a white about:blank frame plus ~85 black splash frames at the head.

@@ -17,7 +17,9 @@ const pages = {
   '/tall': `<body style="margin:0;background:${BG};height:3000px"><div id="w" style="position:absolute;top:2000px;left:290px;width:700px;height:400px;background:#fff"></div></body>`,
   '/news': `<body style="background:${BG}">news</body>`,
   // Plain page with an invisible zoom target: the only white pixels in a frame are the cursor's.
-  '/plain': `<body style="margin:0;background:${BG};height:100vh"><div id="z" style="position:absolute;left:440px;top:260px;width:400px;height:200px"></div></body>`,
+  // #go fills the zoom target, so a click on it navigates while the camera is zoomed.
+  '/plain': `<body style="margin:0;background:${BG};height:100vh"><div id="z" style="position:absolute;left:440px;top:260px;width:400px;height:200px"><a id="go" href="/plain2" style="position:absolute;inset:0"></a></div></body>`,
+  '/plain2': `<body style="margin:0;background:${BG};height:100vh"></body>`,
   '/frame': `<body style="margin:0;background:${BG};height:100vh"><iframe src="/news" width="400" height="200"></iframe></body>`,
   // Turns white once the input holds exactly the typed text: the last frame proves the type beat.
   '/type': `<body style="margin:0;background:${BG};height:100vh"><input id="q" style="margin:200px;font-size:30px" oninput="if (this.value === 'ferry times') document.body.style.background = '#fff'"></body>`,
@@ -148,7 +150,7 @@ try {
   assert.equal(await ensureState({ base, state, login: { ...login, loggedInSel: '#me' } }), 'reused');
 
   // 10. The cursor keeps its size under a zoom: white pixels (only the cursor is white on /plain)
-  //     in a zoomed hold vs an unzoomed one. Measured 1.00-1.29 with the counter-scale, 5.14 without.
+  //     in a zoomed hold vs an unzoomed one. Measured 1.00-1.34 with the counter-scale, 5.14 without.
   const cs = await capture({ base, out, chapter: 'counter', beats: [{ goto: '/plain', hold: 700 }, { zoom: { on: '#z', scale: 2, ms: 300 }, hold: 700 }] });
   const csMove = JSON.parse(fs.readFileSync(path.join(cs.dir, 'events.json'), 'utf8')).events.find(e => e.kind === 'camera');
   const white = k => Number(execFileSync(process.env.FFMPEG || 'ffmpeg', ['-v', 'error', '-i', path.join(cs.dir, 'cfr', `${String(k).padStart(5, '0')}.jpg`),
@@ -158,7 +160,17 @@ try {
   assert.ok(wide > 0, 'no cursor in the unzoomed frame');
   assert.ok(csRatio > 0.6 && csRatio < 1.6, `cursor ${csRatio.toFixed(2)}x its unzoomed size under a 2x zoom (want ~1)`);
 
-  console.log(`selfcheck OK: cursor under 2x zoom ${csRatio.toFixed(2)}x its unzoomed size; ring takes cursor.ring`);
+  // 11. ...and still after a click navigates while zoomed: the new page's overlay starts unscaled.
+  //     Measured 1.31 with the re-apply after navigation, 5.10 without.
+  const nv = await capture({ base, out, chapter: 'counter-nav', beats: [{ goto: '/plain', hold: 700 },
+    { zoom: { on: '#z', scale: 2, ms: 300 } }, { name: 'go', click: '#go', expectPath: '/plain2', hold: 700 }] });
+  const nvMove = JSON.parse(fs.readFileSync(path.join(nv.dir, 'events.json'), 'utf8')).events.find(e => e.kind === 'camera');
+  const nvWhite = k => Number(execFileSync(process.env.FFMPEG || 'ffmpeg', ['-v', 'error', '-i', path.join(nv.dir, 'cfr', `${String(k).padStart(5, '0')}.jpg`),
+    '-vf', "format=gray,lutyuv=y='if(gt(val,200),255,0)',signalstats,metadata=print:key=lavfi.signalstats.YAVG:file=-", '-f', 'null', '-']).toString().match(/YAVG=([\d.]+)/)[1]);
+  const nvRatio = nvWhite(fs.readdirSync(path.join(nv.dir, 'cfr')).length - 1) / nvWhite(Math.floor((nvMove.t0 - 0.15) * 30));
+  assert.ok(nvRatio > 0.6 && nvRatio < 1.6, `cursor ${nvRatio.toFixed(2)}x its unzoomed size after navigating while zoomed (want ~1)`);
+
+  console.log(`selfcheck OK: cursor under 2x zoom ${csRatio.toFixed(2)}x its unzoomed size, ${nvRatio.toFixed(2)}x after navigating while zoomed; ring takes cursor.ring`);
   console.log(`selfcheck OK: cursors 1 with iframe; sandbox errors ${sandboxErrs}; ripple ${JSON.stringify(ripple)}; type ${ty.dur.toFixed(2)}s luma ${tl}; pace ${p1.dur.toFixed(2)}s -> ${p2.dur.toFixed(2)}s; loggedInSel re-mints`);
   console.log(`selfcheck OK: main ${r.frames} frames/${r.dur.toFixed(1)}s mp4 ${n} frames luma head ${head} tail ${tail}; hold ${h.frames} frames; scroll-zoom luma ${zl}; guard threw`);
 } finally {
