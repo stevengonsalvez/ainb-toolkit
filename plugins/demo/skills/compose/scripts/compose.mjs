@@ -484,12 +484,23 @@ function chapter(an, sp) {
     const v = viewFor(an, { x: x0, y: y0, w: x1 - x0, h: y1 - y0 });
     for (const s of g) s.view = v;
   }
-  // The spotlight glides to the next mark (moves and reshapes) when that one lights soon after
-  // this one's hold ends; otherwise it fades out, and irises in on the next.
+  // The spotlight glides to the next mark (moves and reshapes) when that one lights within
+  // spotlight.glide of this hold ending, inside the same view: across a square re-frame the
+  // camera moves under it, so there it fades out and irises in instead. A glide takes at least
+  // GLIDE: when the next mark lights sooner (pace > 1, or a spotlight waiting for the camera),
+  // this hold ends early to make room, and its label leaves as the glide starts. If that would
+  // leave the hold under HOLD_MIN, too short for the still-check's two stills, it does not glide.
+  // Each run of glides is one spotlight element, so one run's fade-out never touches the next.
+  const GLIDE = F(0.35), HOLD_MIN = 0.7, same = (a, b) => JSON.stringify(a.view) === JSON.stringify(b.view);
+  let run = 0;
   for (const [k, s] of an.spots.entries()) {
     const n = an.spots[k + 1];
-    s.glide = !!n && SP.glide > 0 && n.cf - (s.ct + s.hold) <= SP.glide;
-    if (n) n.glided = s.glide;
+    s.run = run;
+    s.glide = false;
+    if (!n || !(SP.glide > 0) || !same(s, n) || n.cf - (s.ct + s.hold) > SP.glide) { run++; continue; }
+    const start = Math.min(s.ct + s.hold, n.cf - GLIDE);
+    if (start - s.ct < HOLD_MIN) { run++; continue; }
+    s.hold = start - s.ct; s.glide = true; n.glided = true;
   }
 
   const LH = C.layout.labelHeight, GAP = C.layout.labelGap;
@@ -536,7 +547,7 @@ function chapter(an, sp) {
     <div class="rule" id="${name}-rule"></div>
   </div>
 </section>`;
-  const q = (x) => `"#${name}-${x}"`, ww = q('ww'), sl = q('sl');
+  const q = (x) => `"#${name}-${x}"`, ww = q('ww');
   const lines = [
     `tl.fromTo(${q('ghost')}, { y: 60, opacity: 0 }, { y: 0, opacity: 0.055, duration: ${F(1.4)}, ease: "sine.out" }, 0);`,
     `tl.fromTo(${q('kbar')}, { scaleX: 0 }, { scaleX: 1, duration: ${F(0.45)}, ease: "power3.out" }, ${F(0.12)});`,
@@ -561,13 +572,13 @@ function chapter(an, sp) {
     const t0 = a.ct + a.hold + F(0.3), t1 = b.cf;
     lines.push(`tl.fromTo("${cam}", { ${V(a.view)} }, { ${V(b.view)}, duration: ${r3(Math.max(0.05, t1 - t0))}, ease: "power2.inOut", immediateRender: false }, ${r3(Math.min(t0, t1 - 0.05))});`);
   }
-  // Spotlight: one feathered cut-out per chapter, its rect in CSS vars on .sl. Every tween is a
+  // Spotlight: one feathered cut-out per run of glides, its rect in CSS vars on .sl. Every tween is a
   // fromTo with explicit start values: workers seek frames out of order, so a .to() would read
   // its start from whatever frame that worker rendered last.
   const vars = (b) => `"--x": "${b[0]}px", "--y": "${b[1]}px", "--w": "${b[2]}px", "--h": "${b[3]}px"`;
   const iris = (b) => { const dx = b[2] * 0.06 + 6, dy = b[3] * 0.06 + 6; return [b[0] - dx, b[1] - dy, b[2] + 2 * dx, b[3] + 2 * dy].map(r3); };
   for (const [k, s] of an.spots.entries()) {
-    const end = r3(s.ct + s.hold);
+    const end = r3(s.ct + s.hold), sl = q(`sl${s.run}`);
     if (s.glided) {
       const p = an.spots[k - 1], pe = p.ct + p.hold, d = Math.max(1 / C.fps, s.cf - pe);
       lines.push(`tl.fromTo(${sl}, { ${vars(p.box)} }, { ${vars(s.box)}, duration: ${r3(d)}, ease: "power3.inOut", immediateRender: false }, ${r3(s.cf - d)});`);
@@ -575,7 +586,7 @@ function chapter(an, sp) {
       lines.push(`tl.set(${sl}, { visibility: "visible" }, ${r3(s.cf)});`);
       lines.push(`tl.fromTo(${sl}, { opacity: 0 }, { opacity: 1, duration: ${F(0.25)}, ease: "power1.out", immediateRender: false }, ${r3(s.cf)});`);
       lines.push(`tl.fromTo(${sl}, { ${vars(iris(s.box))} }, { ${vars(s.box)}, duration: ${F(0.5)}, ease: "expo.out", immediateRender: false }, ${r3(s.cf)});`);
-      if (SP.sweep) lines.push(`tl.fromTo(${q('sw')}, { xPercent: -110, opacity: 1 }, { xPercent: 240, opacity: 1, duration: ${F(0.8)}, ease: "power2.inOut", immediateRender: false }, ${r3(s.cf + F(0.1))});`);
+      if (SP.sweep) lines.push(`tl.fromTo(${q(`sw${s.run}`)}, { xPercent: -110, opacity: 1 }, { xPercent: 240, opacity: 1, duration: ${F(0.8)}, ease: "power2.inOut", immediateRender: false }, ${r3(s.cf + F(0.1))});`);
     }
     const o = { below: '0% 0%', 'below-cropped': '0% 0%', above: '0% 100%', right: '0% 50%', left: '100% 50%' }[s.dir];
     const dy = { 'below-cropped': -10, below: -10, above: 10 }[s.dir] ?? 0, dx = { right: -10, left: 10 }[s.dir] ?? 0;
@@ -592,7 +603,7 @@ function chapter(an, sp) {
 <div id="${name}-cam" class="cam" style="width:${an.srcW}px;height:${an.srcH}px">
 <video id="${name}-v" class="foot clip" src="assets/footage/${name}.mp4" data-start="${r3(CARD)}" data-duration="${footDur}" data-media-start="0" data-track-index="0" muted playsinline></video>
 </div>
-<div class="sl" id="${name}-sl"><div class="scrim"></div><div class="ring"><div class="sweep" id="${name}-sw"></div></div></div>
+${[...new Set(an.spots.map((s) => s.run))].map((r) => `<div class="sl" id="${name}-sl${r}"><div class="scrim"></div><div class="ring"><div class="sweep" id="${name}-sw${r}"></div></div></div>`).join('\n')}
 ${labels}
 </div></div></div>`;
   const d = project(name, doc(name, total, `${card}\n${win}`, lines.join('\n')));
