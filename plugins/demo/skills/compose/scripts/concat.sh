@@ -10,7 +10,10 @@ CFG=$(realpath "$1")
 { read -r R; read -r NAME; read -r FFMPEG; read -r FFPROBE; read -r FPS; } < <(cd "$D" && node -e '
 const m = await import("./config.mjs"); const c = m.loadConfig(process.argv[1]);
 console.log([c.out, c.name, c.ffmpeg, c.ffprobe, c.fps].join("\n"));' "$CFG")
-mapfile -t NAMES < <(cd "$D" && node -e 'const m=await import("./config.mjs");const c=m.loadConfig(process.argv[1]);console.log(m.segmentNames(c).join("\n"))' "$CFG")
+# Portable across bash 3.2 (macOS /bin/bash): a read loop, no bash-4 array builtins.
+NAMES=()
+while IFS= read -r n; do [ -n "$n" ] && NAMES+=("$n"); done < <(cd "$D" && node -e 'const m=await import("./config.mjs");const c=m.loadConfig(process.argv[1]);console.log(m.segmentNames(c).join("\n"))' "$CFG")
+[ ${#NAMES[@]} -gt 0 ] || { echo "no segments in config"; exit 1; }
 
 # Each segment is a PNG sequence (render.sh). They are joined with the concat filter, one
 # image2 input per segment, so no frame list and no per-frame durations are involved.

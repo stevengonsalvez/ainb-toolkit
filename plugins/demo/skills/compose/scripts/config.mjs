@@ -33,6 +33,8 @@ export function mad(a, b) {
   return d / a.length;
 }
 
+const ffbin = (name) => process.env[name.toUpperCase()] || (existsSync(`/usr/bin/${name}`) ? `/usr/bin/${name}` : name);
+
 const titleCase = (s) => s.replace(/[-_]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 
 export function hexToRgb(hex) {
@@ -106,10 +108,11 @@ export function loadConfig(path) {
     name: raw.name || 'demo',
     takes: abs(raw.takes),
     out: abs(raw.out || './compose'),
-    // env, then config, then PATH. Any build works; without drawtext (libfreetype) check.mjs
-    // tiles lose their captions and it says so.
-    ffmpeg: process.env.FFMPEG || raw.ffmpeg || 'ffmpeg',
-    ffprobe: process.env.FFPROBE || raw.ffprobe || 'ffprobe',
+    // config, then $FFMPEG/$FFPROBE, then the distro build at /usr/bin, then PATH (Homebrew on
+    // macOS, where /usr/bin is read-only). Any build works; without drawtext (libfreetype)
+    // check.mjs tiles lose their captions and it says so.
+    ffmpeg: raw.ffmpeg || ffbin('ffmpeg'),
+    ffprobe: raw.ffprobe || ffbin('ffprobe'),
     format,
     // Output frame rate: render.sh passes it to hyperframes, concat.sh reads the PNGs at it,
     // check.mjs maps times to frames with it, and compose retimes footage onto its grid. One value,

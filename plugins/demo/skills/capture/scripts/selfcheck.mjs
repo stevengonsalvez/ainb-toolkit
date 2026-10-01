@@ -42,7 +42,10 @@ const server = http.createServer((req, res) => {
 }).listen(0);
 const base = `http://127.0.0.1:${server.address().port}`;
 const out = fs.mkdtempSync(path.join(os.tmpdir(), 'demo-capture-check-'));
-const luma = jpg => Number(execFileSync(process.env.FFMPEG || 'ffmpeg', ['-v', 'error', '-i', jpg, '-vf',
+// $FFMPEG/$FFPROBE, else the distro build at /usr/bin, else PATH (Homebrew on macOS, where /usr/bin is read-only).
+const ffbin = name => process.env[name.toUpperCase()] || (fs.existsSync(`/usr/bin/${name}`) ? `/usr/bin/${name}` : name);
+const FFMPEG = ffbin('ffmpeg'), FFPROBE = ffbin('ffprobe');
+const luma = jpg => Number(execFileSync(FFMPEG, ['-v', 'error', '-i', jpg, '-vf',
   'signalstats,metadata=print:key=lavfi.signalstats.YAVG:file=-', '-f', 'null', '-']).toString().match(/YAVG=([\d.]+)/)[1]);
 const frame = (dir, i) => path.join(dir, `f${String(i).padStart(5, '0')}.jpg`);
 
@@ -79,7 +82,7 @@ try {
   // The mp4 must run as long as the take. Zoom glides deliver frames faster than 30fps; an
   // encoder that mishandles those squeezes the timeline and puts every mark late.
   execFileSync(path.join(import.meta.dirname, 'encode.sh'), [r.dir, `${r.dir}.mp4`]);
-  const n = Number(execFileSync(process.env.FFPROBE || 'ffprobe', ['-v', 'error', '-count_frames', '-select_streams', 'v:0',
+  const n = Number(execFileSync(FFPROBE, ['-v', 'error', '-count_frames', '-select_streams', 'v:0',
     '-show_entries', 'stream=nb_read_frames', '-of', 'csv=p=0', `${r.dir}.mp4`]).toString());
   assert.ok(Math.abs(n / 30 - r.dur) < 0.1, `mp4 holds ${n} frames (${(n / 30).toFixed(2)}s) for a ${r.dur.toFixed(2)}s take`);
   // A '%' in the take's path: ffmpeg reads the cfr/ input as a %05d pattern, and an unescaped
@@ -87,7 +90,7 @@ try {
   const pct = path.join(out, 'pct 100%', 'main');
   fs.cpSync(r.dir, pct, { recursive: true });
   execFileSync(path.join(import.meta.dirname, 'encode.sh'), [pct, `${pct}.mp4`]);
-  const np = Number(execFileSync(process.env.FFPROBE || 'ffprobe', ['-v', 'error', '-count_frames', '-select_streams', 'v:0',
+  const np = Number(execFileSync(FFPROBE, ['-v', 'error', '-count_frames', '-select_streams', 'v:0',
     '-show_entries', 'stream=nb_read_frames', '-of', 'csv=p=0', `${pct}.mp4`]).toString());
   assert.equal(np, n, `encode under a '%' path gave ${np} frames, not ${n}`);
   const head = luma(frame(r.dir, 0)), tail = luma(frame(r.dir, r.frames - 1));
@@ -159,7 +162,7 @@ try {
 
   // 10. The cursor keeps its size under a zoom: white pixels (only the cursor is white on /plain)
   //     in a zoomed hold vs an unzoomed one. Measured 1.00-1.34 with the counter-scale, 5.14 without.
-  const white = (dir, k) => Number(execFileSync(process.env.FFMPEG || 'ffmpeg', ['-v', 'error', '-i', path.join(dir, 'cfr', `${String(k).padStart(5, '0')}.jpg`),
+  const white = (dir, k) => Number(execFileSync(FFMPEG, ['-v', 'error', '-i', path.join(dir, 'cfr', `${String(k).padStart(5, '0')}.jpg`),
     '-vf', "format=gray,lutyuv=y='if(gt(val,200),255,0)',signalstats,metadata=print:key=lavfi.signalstats.YAVG:file=-", '-f', 'null', '-']).toString().match(/YAVG=([\d.]+)/)[1]);
   // cursor area in a take's last frame over its area just before the take's first camera move
   const growth = t => {

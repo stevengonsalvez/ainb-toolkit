@@ -41,7 +41,8 @@ re-render keeps the previous one, and it must hold its planned length times the 
 (30fps, passed to HyperFrames as `--fps`) or render.sh fails it.
 Renders run one at a time in the foreground under a timeout of 120s plus 10s per second of
 segment: a harness that kills long background tasks for low memory will otherwise take the
-whole batch out.
+whole batch out. The timeout is GNU `timeout`, else `gtimeout` (Homebrew coreutils); stock macOS
+has neither, so there `render.sh` warns once and renders without a time limit.
 
 A worked example is `examples/ferry/`: a made-up ferry operator's three-page app
 (`serve.mjs`, `app/`), the `beats.mjs` that films it with demo:capture, and
@@ -287,11 +288,14 @@ the full-to-limited range change, which any BT.709 4:2:0 delivery pays.
 - `scripts/compose.mjs`: one standalone HyperFrames project per segment. Separate projects keep
   each render small and lint clean.
 - `scripts/render.sh`, `scripts/concat.sh`: render loop (PNG sequences) and the one final encode (see Encode chain).
-- ffmpeg and ffprobe, everywhere: env `FFMPEG`/`FFPROBE`, then config `"ffmpeg"`/`"ffprobe"`,
-  then whatever is on PATH. Every step, the still-check verdict included, runs on a plain build.
-  The one cosmetic extra is the caption on each contact tile (`drawtext`, libfreetype), which
-  some builds lack (a measured Homebrew 8.1 did): `check.mjs` then prints one warning and writes
-  the tiles uncaptioned. For captions, point `FFMPEG` at a full build such as `/usr/bin/ffmpeg`.
+- ffmpeg and ffprobe, everywhere: config `"ffmpeg"`/`"ffprobe"`, then env `FFMPEG`/`FFPROBE`,
+  then the distro build at `/usr/bin`, then PATH (Homebrew on macOS, where `/usr/bin` is
+  read-only). Every step, the still-check verdict included, runs on a plain build. The one
+  cosmetic extra is the caption on each contact tile (`drawtext`, libfreetype), which some
+  builds lack (Homebrew's default formula, measured on 8.1): `check.mjs` then prints one warning
+  and writes the tiles uncaptioned. Linux hosts pick `/usr/bin/ffmpeg` first, which has it.
+- `render.sh` and `concat.sh` are `#!/bin/bash`, which is bash 3.2 on macOS: they use no bash-4
+  features (no `mapfile`, associative arrays or case-changing expansions).
 - `scripts/check.mjs`: the gate. For square output it frames the source frame with the same
   view as the composition before comparing.
 - `assets/template/`: `hyperframes.json`, `package.json`, and a vendored `gsap.min.js` so a
