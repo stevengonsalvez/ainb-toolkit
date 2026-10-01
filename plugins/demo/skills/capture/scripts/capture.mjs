@@ -236,6 +236,7 @@ export async function capture({ base, state, out, viewport = { width: 1280, heig
       if (!(await el.count())) throw new Error(`beat "${name}": selector ${step.click} matched nothing`);
       const r = await el.boundingBox();
       if (r) { await moveTo(r.x + r.width / 2, r.y + r.height / 2, 300); await page.waitForTimeout(P(220)); }
+      if (filming) events.push({ t: now(), kind: 'click' });
       await el.click({ timeout: 8000 });
     }
     if (step.goto || step.click) {
@@ -262,8 +263,11 @@ export async function capture({ base, state, out, viewport = { width: 1280, heig
       const r = await el.boundingBox();
       if (r) await moveTo(r.x + r.width / 2, r.y + r.height / 2, 300);
       const typed = step.ready ? null : networkQuiet(page, { cap: step.readyCap });
+      events.push({ t: now(), kind: 'click' });
       await el.click({ timeout: 8000 });
+      const t = now();
       await el.type(String(text), { delay: 1000 / cps });
+      events.push({ t, kind: 'type', dur: now() - t, chars: String(text).length });
       if (step.ready) await page.locator(step.ready).first().waitFor({ state: 'visible', timeout: step.readyCap ?? 15000 });
       else await typed();
       await page.waitForTimeout(P(step.settle ?? 400));
@@ -272,10 +276,12 @@ export async function capture({ base, state, out, viewport = { width: 1280, heig
       const r = await rectOf(step.zoom.on, name);
       // Zooming while zoomed: the override may have moved the scroll since camScroll was read.
       if (cam) { const sc = await page.evaluate(() => ({ x: scrollX, y: scrollY })); r.x += sc.x - camScroll.x; r.y += sc.y - camScroll.y; }
+      const t = now();
       await glide(boxFor(r, step.zoom.scale ?? 2), P(step.zoom.ms ?? 700));
+      events.push({ t, kind: 'zoom', dur: now() - t });
     }
     // Clear the override at the end, or the page stays under a scale-1 emulation.
-    if (step.wide)   { await glide({ x: 0, y: 0, w: W, h: H, s: 1 }, P(step.wide === true ? 700 : step.wide)); await setCam(null); }
+    if (step.wide)   { const t = now(); await glide({ x: 0, y: 0, w: W, h: H, s: 1 }, P(step.wide === true ? 700 : step.wide)); await setCam(null); events.push({ t, kind: 'wide', dur: now() - t }); }
     // A mark is the handoff to the compositor: what to point at, and when.
     if (step.mark)   events.push({ t: now(), kind: 'mark', label: step.mark.label, rect: await rectOf(step.mark.on, name), cam });
     if (step.hold)   await hold(P(step.hold));
@@ -298,6 +304,6 @@ export async function capture({ base, state, out, viewport = { width: 1280, heig
   }
   const dur = frames.length ? frames.at(-1).t - t0 : 0;
   fs.writeFileSync(path.join(dir, 'events.json'), JSON.stringify({ chapter, viewport, dur, frames: frames.length, events }, null, 1));
-  return { frames: frames.length, dur, events: events.length, dir };
+  return { frames: frames.length, dur, events: events.filter(e => e.kind === 'mark').length, dir };
   } finally { await browser.close(); }
 }

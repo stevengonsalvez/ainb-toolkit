@@ -62,7 +62,10 @@ try {
   const ev = JSON.parse(fs.readFileSync(path.join(r.dir, 'events.json'), 'utf8'));
   for (const k of ['chapter', 'viewport', 'dur', 'frames', 'events']) assert.ok(k in ev, `events.json missing ${k}`);
   assert.equal(ev.frames, r.frames);
-  for (const e of ev.events) for (const k of ['t', 'kind', 'label', 'rect', 'cam']) assert.ok(k in e, `event missing ${k}`);
+  for (const e of ev.events.filter(e => e.kind === 'mark')) for (const k of ['t', 'kind', 'label', 'rect', 'cam']) assert.ok(k in e, `event missing ${k}`);
+  // Sound cues for demo:compose: one zoom, one wide, one click, each timed inside the take.
+  assert.deepEqual(ev.events.filter(e => e.kind !== 'mark').map(e => e.kind), ['zoom', 'wide', 'click']);
+  for (const e of ev.events) assert.ok(e.t >= 0 && e.t <= ev.dur && (e.dur ?? 0) >= 0, `${e.kind} event out of range`);
   const z = ev.events.find(e => e.label === 'zoomed');
   assert.equal(z.cam.s, 2, 'zoom did not reach scale 2');
   assert.ok(z.cam.y + z.cam.h >= z.rect.y + z.rect.h, 'zoom box does not frame the nav');
@@ -122,6 +125,8 @@ try {
   assert.ok(tl > 200, `typed text did not land (luma ${tl})`);
   assert.ok(ty.dur > 1.0 + 1.5, `type beat too fast for 11 chars at 10 cps (${ty.dur.toFixed(2)}s)`);
   assert.ok(ty.frames >= 30, `hidden-cursor take produced only ${ty.frames} frames`);
+  const tev = JSON.parse(fs.readFileSync(path.join(ty.dir, 'events.json'), 'utf8')).events.find(e => e.kind === 'type');
+  assert.ok(tev?.chars === 11 && tev.dur > 0.9, `type event missing or short: ${JSON.stringify(tev)}`);
 
   // 8. pace scales holds: the same 1s hold at pace 2 films about twice as long.
   const p1 = await capture({ base, out, chapter: 'pace1', beats: [{ goto: '/a', hold: 1000 }] });
