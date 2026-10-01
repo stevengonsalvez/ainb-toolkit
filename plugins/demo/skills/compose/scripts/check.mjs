@@ -88,6 +88,18 @@ function ringMean(buf, [x, y, w, h], lab, off = 34, pad = 30) {
   return n ? s / n : 0;
 }
 
+// The source time shown at composition time `out` of a spot: proof windows play at 1x, less any
+// narration freeze (plan.freezes, [start, length] in composition seconds) between the mark and
+// `out`. Inside a freeze the footage shows the frame before it, so read just before its point.
+function sourceAt(plan, s, out) {
+  let held = 0, inside = false;
+  for (const [f0, d] of plan.freezes || []) {
+    held += Math.max(0, Math.min(out, f0 + d) - Math.max(s.compT, f0));
+    if (out > f0 && out < f0 + d) inside = true;
+  }
+  return s.srcT + (s.shift || 0) + (out - s.compT) - held - (inside ? 0.02 : 0);
+}
+
 const overlaps = (a, b) => a[0] < b[0] + b[2] && b[0] < a[0] + a[2] && a[1] < b[1] + b[3] && b[1] < a[1] + a[3];
 
 function checkChapter(name) {
@@ -114,7 +126,7 @@ function checkChapter(name) {
     const need = (s.litFrom ?? s.compT) + (s.fadeIn ?? 0.25) + 0.1 - s.compT;
     const short = need > s.hold - 0.15, a = Math.min(Math.max(0.5, need), s.hold - 0.15);
     const at = [r3(s.compT + a), r3(s.compT + s.hold - 0.05)];
-    const atSrc = [r3(s.srcT + (s.shift || 0) + a), r3(s.srcT + (s.shift || 0) + s.hold - 0.05)];
+    const atSrc = at.map((t) => r3(sourceAt(plan, s, t)));
     const why = [];
     if (short) why.push(`lit too briefly to check: fully lit at +${r3(need - 0.1)}s, fades out at +${r3(s.hold)}s`);
 
