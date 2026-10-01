@@ -10,11 +10,11 @@ Assemble captured chapters into one demo video. Capture it elsewhere.
 ```
 demo:capture takes/ ──▶ compose.mjs ──▶ projects/<segment>/  (HyperFrames)
   <ch>.mp4                  ▲              │
-  <ch>-events.json      config.json     render.sh ──▶ out/seg/<segment>.mp4
-                        (brand, copy)      │
+  <ch>-events.json      config.json     render.sh ──▶ out/seg/<segment>.mov
+                        (brand, copy)      │      (ProRes .mov, lossless enough to be invisible)
                                         check.mjs  ──▶ hit / miss per mark  ◀── THE GATE
                                            │
-                                        concat.sh ──▶ out/<name>.mp4 + montage
+                                        concat.sh ──▶ out/<name>.mp4 + montage  (the ONE lossy encode)
 ```
 
 Pairs with **demo:capture** (the sibling skill in this plugin), which produces the take
@@ -92,7 +92,7 @@ Only `takes` and `chapters` are required. Everything below shows the default whe
   "pace": 1,
   "targetDuration": 45,               // optional, seconds, whole video
   "hold":   { "min": 1.5, "max": 2.2 },
-  "fadeLead": 0.25,                   // spotlight fades in this long before the mark
+  "fadeLead": 0.25,                   // spotlight fades in this long before the mark (or once the zoom settles)
   "deadHold": 2.0,                    // freezes longer than this get trimmed
   "layout": { "safeMargin": 64, "labelHeight": 48, "labelGap": 14, "maxLabelWords": 6 },
   "check":  { "litRatio": 0.80, "dimRatio": 0.62, "contentSd": 8, "driftMax": 12 }
@@ -115,15 +115,18 @@ speed      2x    ramp    1x     ramp   2x   ramp    1x     ramp
 ```
 
 - **Speed ramp, on by default.** Inside each proof window (from `fadeLead` before a mark to the
-  end of its hold) footage always plays at 1x. Everything else, navigation, loading,
-  cursor travel, plays at `speed.travel` (2x). Speed changes over `speed.rampMs` (250ms of
+  end of its hold) and during every camera move (each zoom and wide, from the `camera` events
+  demo:capture logs) footage always plays at 1x, so a zoom keeps the easing it was filmed with.
+  Everything else, navigation, loading, cursor travel, plays at `speed.travel` (2x). Speed changes over `speed.rampMs` (250ms of
   output time) each side, so it reads as a ramp and never as a jump cut. A gap too short for
   two full ramps gets a shallower peak instead. Marks and spotlights land on the re-timed
   footage; the still-check runs on it. Chapter cards and holds are never sped up.
   `"speed": { "travel": 1 }` turns the ramp off and plays everything at 1x, exactly as before
   the ramp existed. Set `speed` globally, override any key per chapter with `chapters[].speed`.
   `speed.travel` must be between 0.1 and 4, `speed.rampMs` a number >= 0 (0 = hard speed
-  change). There is no proof-speed setting: the spotlight timing and the still-check both rely
+  change). Measured on the ferry example: before camera moves were protected, the zooms into
+  marks played at 1.06-1.20x on average and the wides at 1.59-1.76x; all eight now play at
+  1.00x. Takes filmed before demo:capture logged camera events keep the old timing. There is no proof-speed setting: the spotlight timing and the still-check both rely
   on proof windows playing at 1x, so any other `speed` key is refused.
 - **`pace`** (default 1): one multiplier on card durations (title, switch, end, chapter
   cards), `hold.min`/`hold.max`, `fadeLead` and every fade and card-motion timing. `1.3` gives
@@ -144,20 +147,23 @@ speed      2x    ramp    1x     ramp   2x   ramp    1x     ramp
   windows; overlapping windows share one framing. `"vertical"` is refused: 16:9 cropped to 9:16
   cannot keep a wide mark readable, and a broken vertical is worse than none.
 
-Measured on the ferry example, filmed fresh (two chapters, five marks, 3s title and end cards):
+Measured on the ferry example, filmed fresh (two chapters, five marks, 3s title and end cards),
+with camera moves at 1x:
 
 | settings | video length | still-check |
 |---|---|---|
-| `speed.travel: 1` | 31.17s | 5/5 |
-| default (2x travel ramp) | 26.13s | 5/5 |
-| `format: "square"`, default ramp | 26.13s | 5/5 |
+| `speed.travel: 1` | 31.57s | 5/5 |
+| default (2x travel ramp) | 28.07s | 5/5 |
+| `format: "square"`, default ramp | 28.07s | 5/5 |
+
+Playing the camera moves at 1x added about 1.5s to the default cut (26.4s before).
 
 The ferry app is quick, so travel is a small share of it; the saving grows with loading and
 navigation time.
 
 How it works: `compose.mjs` writes each chapter's footage already cut and re-timed (one ffmpeg
-pass: `select` for the kept ranges, `setpts` with the piecewise speed curve, `fps=30`), so the
-HyperFrames project holds one plain `<video>`. At a constant whole-number speed it nudges each
+pass: `select` for the kept ranges, `setpts` with the piecewise speed curve, `fps=30`, written
+lossless), so the HyperFrames project holds one plain `<video>`. At a constant whole-number speed it nudges each
 piece by under 1/60s so source frames never sit on a half frame, which otherwise made a 1x
 window duplicate then drop a frame.
 
@@ -166,7 +172,12 @@ window duplicate then drop a frame.
 Measured on a 5:36 ten-chapter demo, 47 marks. Change them in config, not in code.
 
 - **Spotlight**: dim everything except the mark's rect (default 60% black scrim, rounded
-  cut-out, accent edge and glow). Fades in 250ms before `t`, holds 1.5 to 2.5s, fades out.
+  cut-out, accent edge and glow). Fades in 250ms before `t`, or once the zoom into the mark has
+  settled in the footage if that is later, holds 1.5 to 2.5s, fades out. Fading in 250ms before
+  `t` regardless put 51% of each ferry zoom's motion under the fading-in cut-out; now 0.7%, the
+  frame that completes the move. Settled means the camera event's end, then the last frame near
+  it that still changes: the final pose lands 1-2 frames after capture logs the end.
+  `plan.json` records when each spotlight starts as `litFrom`.
 - **Labels**: at most 6 words, sentence case, placed clear of the cut-out inside a 64px safe
   margin. Over-long labels warn rather than fail. Rewrite the capture's label candidates for
   clarity; never claim something the footage does not show.
@@ -214,12 +225,52 @@ A failing mark is a config problem, not a code problem. Usual fixes, in order: s
 label, add a `cuts` entry to remove the drifting span, re-mark the chapter in `demo:capture`
 with a tighter `hold` before the next camera move.
 
+## Encode chain
+
+A footage frame used to be lossy-compressed seven times (screencast JPEG, x264 crf18, x264
+crf14, HyperFrames' JPEG frame extraction, JPEG page capture and crf16 encode, then concat at
+crf20). Now every intermediate is lossless or visually so, and the only lossy step a viewer
+sees is the last:
+
+```
+screencast JPEG                       capture, the one source
+  ─▶ take mp4         x264 -qp 0      bit-exact against the JPEGs
+  ─▶ retimed footage  x264 -qp 0      bit-exact
+  ─▶ segment .mov     ProRes 4444     PNG page capture, PNG frame extraction
+  ─▶ final mp4        x264 crf 14     slow, tune animation, yuv420p, BT.709 tags
+```
+
+- HyperFrames' ProRes is untagged and converted from RGB with the BT.601 matrix (read as 601,
+  a crop matches the source at 67.9 dB; as 709, 52.6 dB), so `concat.sh` states its input
+  matrix and writes explicit BT.709 limited-range tags.
+- A `.mov` render makes the composition root transparent, so the background fill lives on a
+  full-bleed `#bg` child. Measured alpha: opaque on every frame.
+- The takes and retimed footage use a lossless H.264 profile that browsers cannot play;
+  ffmpeg, this skill and the montage read them fine. Watch the final mp4.
+
+Measured on the ferry example (five marks, text crop inside each cut-out at `compT + 0.5`
+against the source screencast frame, RGB):
+
+| | before | after |
+|---|---|---|
+| crop PSNR / SSIM, same capture | 38.20 dB / 0.98856 | 43.27 dB / 0.99670 |
+| ceiling: same chain, final at x264 -qp 0 | | 43.85 dB / 0.99813 |
+| final mp4 | 1.6 MB, 26.4s | 2.7 MB, 26.4s (3.3 MB, 27.9s with zooms at 1x) |
+| render.sh, four segments | 33.6s | 74-92s |
+| concat.sh | 4.5s | 7.4-9.7s |
+| `out/seg/` on disk | 3.0 MB | 175-190 MB, about 400-500 MB per minute at 720p30 |
+
+The gap to the ceiling is crf 14; what remains below it is the 4:2:0 round trip and the
+full-to-limited range change, which any BT.709 4:2:0 delivery pays. Rendering is about 2.5x
+slower because, for an alpha format, HyperFrames leaves BeginFrame for its slower capture path.
+`out/seg/` is scratch: delete it once the final mp4 is good.
+
 ## Files
 
 - `scripts/config.mjs`: config load, defaults, font stacks, segment ordering.
 - `scripts/compose.mjs`: one standalone HyperFrames project per segment. Separate projects keep
   each render small and lint clean.
-- `scripts/render.sh`, `scripts/concat.sh`: render loop and final encode.
+- `scripts/render.sh`, `scripts/concat.sh`: render loop and final encode (see Encode chain).
 - ffmpeg and ffprobe, everywhere: env `FFMPEG`/`FFPROBE`, then config `"ffmpeg"`/`"ffprobe"`,
   then whatever is on PATH. Every step, the still-check verdict included, runs on a plain build.
   The one cosmetic extra is the caption on each contact tile (`drawtext`, libfreetype), which

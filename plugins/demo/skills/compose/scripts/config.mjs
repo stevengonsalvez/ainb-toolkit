@@ -99,7 +99,7 @@ export function loadConfig(path) {
     targetDuration: raw.targetDuration,
     chapterCardDur: r3((raw.chapterCardDur ?? 2.0) * pace),
     defaultPersona: raw.defaultPersona || '',
-    fadeLead: r3((raw.fadeLead ?? 0.25) * pace), // spotlight fades in this long before t
+    fadeLead: r3((raw.fadeLead ?? 0.25) * pace), // spotlight fades in this long before t, or once the zoom settles
     deadHold: raw.deadHold ?? 2.0,           // freezes longer than this get trimmed
     hold: Object.fromEntries(Object.entries({ min: 1.5, max: 2.2, ...(raw.hold || {}) }).map(([k, v]) => [k, v * pace])),
     layout: { safeMargin: 64, labelHeight: 48, labelGap: 14, maxLabelWords: 6, ...(raw.layout || {}) },
