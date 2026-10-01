@@ -529,8 +529,16 @@ if (C.targetDuration) {
   // Chapters not filmed yet cannot be measured: leave them out, say so, and keep going.
   const filmed = C.chapters.filter((c) => existsSync(`${C.takes}/${c.name}.mp4`));
   for (const c of C.chapters) if (!filmed.includes(c)) console.warn(`warn: targetDuration leaves out ${c.name}: no footage at ${C.takes}/${c.name}.mp4`);
-  const length = (v) => Object.values(C.cards).reduce((a, c) => a + c.dur, 0)
-    + filmed.reduce((a, c) => { const an = analysis(c), sp = speedFor(c, v); return a + an.CARD + retime(an, sp, fitFor(an, sp).freezes).footDur; }, 0);
+  // Cards with their narration, chapters with their narration freezes, and each segment's beat pad.
+  const length = (v) => segmentNames(C).reduce((t, n) => {
+    const c = C.chapters.find((x) => x.name === n);
+    if (c && !filmed.includes(c)) return t;
+    const an = c && analysis(c), sp = c && speedFor(c, v);
+    // the same rounding as chapter() and the card branch: a pad decides on a beat, and a
+    // millisecond either side of one is a whole beat of difference
+    const foot = c ? r3(retime(an, sp, fitFor(an, sp).freezes).footDur) : 0, base = c ? an.CARD + foot : cardDur(n), pad = padAt(t, base);
+    return t + (c ? r3(an.CARD + pad) + foot : r3(base + pad));
+  }, 0);
   // ponytail: bisection on travel alone; proof windows, cards and holds are never sped up to hit it.
   if (length(travel) > C.targetDuration) {
     let lo = travel, hi = Math.max(travel, 4);
@@ -538,7 +546,8 @@ if (C.targetDuration) {
     for (let k = 0; k < 40 && hi - lo > 0.001; k++) { const m = (lo + hi) / 2; if (length(m) > C.targetDuration) lo = m; else hi = m; }
     travel = r3(Math.max(lo, hi));
   }
-  console.log(`targetDuration ${C.targetDuration}s: speed.travel ${travel}x (cap 4x), planned ${r3(length(travel))}s`);
+  const planned = r3(length(travel));
+  console.log(`targetDuration ${C.targetDuration}s: speed.travel ${travel}x (cap 4x), planned ${planned}s${planned > C.targetDuration + 0.05 ? ', not reachable: cards, proof windows, holds and narration are never sped up' : ''}`);
 }
 
 // With a music bed every segment's start decides its pad, so a segment whose start has moved since
@@ -567,4 +576,7 @@ for (const n of order) {
   // where each narrated mark's anchor word starts against its spotlight being fully lit; 0 by construction
   const lines = m.narration.filter((l) => typeof l.slot === 'number');
   if (lines.length) console.log(`  anchors ${lines.map((l) => { const s = m.spots.find((q) => q.i === l.slot); return `m${l.slot} ${r3(l.at + l.anchor - Math.max(s.compT, s.litFrom + s.fadeIn))}s`; }).join(', ')}`);
+}
+if (C.targetDuration && segmentNames(C).every((n) => TOTALS[n] != null)) {
+  console.log(`targetDuration ${C.targetDuration}s: composed ${r3(segmentNames(C).reduce((a, n) => a + TOTALS[n], 0))}s`);
 }
