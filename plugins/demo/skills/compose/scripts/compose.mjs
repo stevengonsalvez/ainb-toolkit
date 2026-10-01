@@ -110,6 +110,10 @@ html, body { width: ${W}px; height: ${H}px; overflow: hidden; background: ${T.bg
 #fade { position: absolute; inset: 0; background: ${T.bg}; opacity: 0; pointer-events: none; }
 `;
 
+// A segment renders ceil(duration * fps) frames (measured: 3.067s rendered 93 frames, not 92), so a
+// duration that is meant to be whole frames is written rounded DOWN to the millisecond.
+const fdur = (d) => (Math.abs(d * C.fps - Math.round(d * C.fps)) < 1e-6 ? Math.floor(d * 1000 + 1e-6) / 1000 : r3(d));
+
 function doc(id, dur, body, script) {
   return `<!doctype html>
 <html lang="en">
@@ -120,7 +124,7 @@ function doc(id, dur, body, script) {
 <style>${STYLE}</style>
 </head>
 <body>
-<div id="root" data-composition-id="${id}" data-start="0" data-duration="${r3(dur)}" data-width="${W}" data-height="${H}">
+<div id="root" data-composition-id="${id}" data-start="0" data-duration="${fdur(dur)}" data-width="${W}" data-height="${H}">
 <div id="bg"></div>
 ${body}
 <div id="fade"></div>
@@ -138,7 +142,7 @@ window.__timelines["${id}"] = tl;
 // Text-only card composition (title / switch / end).
 function cardDoc(id, c) {
   const dur = c.dur;
-  const body = `<section id="${id}-card" class="card clip" data-start="0" data-duration="${dur}">
+  const body = `<section id="${id}-card" class="card clip" data-start="0" data-duration="${fdur(dur)}">
   <div class="inner" id="${id}-inner">
     <div class="kicker">${esc(c.kicker)}</div>
     <div class="ttl">${esc(c.title)}</div>
@@ -367,12 +371,12 @@ function chapter(an, sp) {
   const footDur = r3(rt.footDur);
   const pad = padToBeat(name, an.CARD + footDur);
   for (const p of fit.placed) if (p.slot !== 'intro') { p.at += pad; p.lit += pad; }
-  const CARD = r3(an.CARD + pad);
+  // With a bed, total is whole frames ending on a beat; the chapter card takes up the difference.
+  const total = an.CARD + footDur + pad, CARD = total - footDur;
   const toComp = (t) => CARD + rt.toOut(t);
-  const total = CARD + footDur;
   TOTALS[name] = total;
 
-  const card = `<section id="${name}-card" class="card clip" data-start="0" data-duration="${CARD}" data-track-index="2">
+  const card = `<section id="${name}-card" class="card clip" data-start="0" data-duration="${r3(CARD)}" data-track-index="2">
   <div class="inner" id="${name}-inner">
     <div class="kicker">${esc(cfg.persona || C.defaultPersona || '')}</div>
     <div class="ttl">${esc(cfg.title)}</div>
@@ -462,7 +466,7 @@ function chapter(an, sp) {
 </div>`;
   const d = project(name, doc(name, total, `${vid}\n${card}\n${overlays}`, lines.join('\n')));
   renderFootage(an, rt, `${d}/assets/footage/${name}.mp4`);
-  const meta = { name, kind: 'chapter', start: startOf(name), total: r3(total), srcDur: r3(an.dur), cardDur: CARD, srcW: an.srcW, srcH: an.srcH,
+  const meta = { name, kind: 'chapter', start: startOf(name), total: GRID ? total : r3(total), srcDur: r3(an.dur), cardDur: CARD, srcW: an.srcW, srcH: an.srcH,
     speed: sp, kept: an.kept.map((k) => k.map(r3)), cuts: r3(an.dur - rt.kept.reduce((a, [x, y]) => a + y - x, 0)),
     footDur, spots: report,
     // narration freezes as [start, length] in composition seconds; check.mjs maps stills through them
@@ -506,7 +510,13 @@ const startOf = (n) => {
 };
 // With a music bed, each segment's leading card grows by under one beat so the segment ends,
 // to the frame, on a beat: every cut lands on the music.
-const padAt = (start, total) => (GRID ? Math.round(GRID.after(start + total - 1e-3) * C.fps) / C.fps - start - total : 0);
+// Starts are counted in whole frames (each segment renders whole frames), so the padded segment
+// ends exactly on the frame nearest the beat.
+const padAt = (start, total) => {
+  if (!GRID) return 0;
+  const s0 = Math.round(start * C.fps);
+  return (Math.round(GRID.after(s0 / C.fps + total - 1e-3) * C.fps) - s0) / C.fps - total;
+};
 function padToBeat(n, total) {
   if (!GRID) return 0;
   const start = startOf(n);
@@ -534,10 +544,10 @@ if (C.targetDuration) {
     const c = C.chapters.find((x) => x.name === n);
     if (c && !filmed.includes(c)) return t;
     const an = c && analysis(c), sp = c && speedFor(c, v);
-    // the same rounding as chapter() and the card branch: a pad decides on a beat, and a
+    // the same arithmetic as chapter() and the card branch: a pad decides on a beat, and a
     // millisecond either side of one is a whole beat of difference
     const foot = c ? r3(retime(an, sp, fitFor(an, sp).freezes).footDur) : 0, base = c ? an.CARD + foot : cardDur(n), pad = padAt(t, base);
-    return t + (c ? r3(an.CARD + pad) + foot : r3(base + pad));
+    return t + (GRID ? base + pad : c ? an.CARD + foot : r3(base));
   }, 0);
   // ponytail: bisection on travel alone; proof windows, cards and holds are never sped up to hit it.
   if (length(travel) > C.targetDuration) {
@@ -562,12 +572,12 @@ for (const n of order) {
   const card = C.cards[n];
   if (card) {
     const clip = NAR[n]?.card, N = A?.narration, base = cardDur(n);
-    card.dur = r3(base + padToBeat(n, base));
+    card.dur = GRID ? base + padToBeat(n, base) : r3(base);
     TOTALS[n] = card.dur;
     project(n, cardDoc(n, card));
     const narration = clip ? [{ slot: 'card', at: N.lead, dur: clip.dur, file: clip.file, text: clip.text, anchor: clip.anchor, words: clip.words }] : [];
     writeFileSync(`${C.out}/work/${n}.plan.json`, JSON.stringify({ name: n, kind: 'card', start, total: card.dur, spots: [], narration }, null, 1));
-    console.log(`${n}: card ${card.dur}s`);
+    console.log(`${n}: card ${r3(card.dur)}s`);
     continue;
   }
   const cfg = C.chapters.find((c) => c.name === n);
