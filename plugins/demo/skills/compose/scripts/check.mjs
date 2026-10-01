@@ -26,12 +26,15 @@ const W = C.width, H = C.height, K = C.check;
 const drawtext = / drawtext /.test(execFileSync(C.ffmpeg, ['-hide_banner', '-filters']).toString());
 if (!drawtext) console.warn(`warn: ${C.ffmpeg} has no drawtext filter, so contact tiles carry no captions. For captions set FFMPEG (or "ffmpeg" in the config) to a full build, e.g. /usr/bin/ffmpeg.`);
 
-function grayFrame(mp4, t, w = W, h = H) {
-  const buf = execFileSync(C.ffmpeg, ['-nostdin', '-loglevel', 'error', '-ss', String(t), '-i', mp4,
+// One frame as luma: of a video at time t, or of an image when t is null.
+function grayFrame(file, t, w = W, h = H) {
+  const buf = execFileSync(C.ffmpeg, ['-nostdin', '-loglevel', 'error', ...(t == null ? [] : ['-ss', String(t)]), '-i', file,
     '-frames:v', '1', '-vf', `scale=${w}:${h},format=gray`, '-f', 'rawvideo', '-'], { maxBuffer: 1 << 28 });
-  if (buf.length < w * h) throw new Error(`no frame at ${t}s of ${mp4}`);
+  if (buf.length < w * h) throw new Error(`no frame at ${t}s of ${file}`);
   return buf;
 }
+// A rendered segment is a directory of PNGs, frame_000001.png at time 0, 30 per second.
+const segFrame = (seg, n, t) => `${seg}/frame_${String(Math.min(n, Math.round(t * 30) + 1)).padStart(6, '0')}.png`;
 
 // The source frame as the composition frames it: scaled by view.s, placed at view.x/y, and
 // `bg` where the footage does not reach. Identity when the output matches the footage.
@@ -93,8 +96,9 @@ function checkChapter(name) {
   if (!existsSync(planPath)) throw new Error(`${name}: no plan, run compose.mjs first`);
   const plan = JSON.parse(readFileSync(planPath, 'utf8'));
   if (plan.kind === 'card') return [];
-  const seg = `${C.out}/out/seg/${name}.mov`;
+  const seg = `${C.out}/out/seg/${name}`;
   if (!existsSync(seg)) throw new Error(`${name}: no rendered segment at ${seg}, run render.sh first`);
+  const nSeg = readdirSync(seg).length;
   const src = `${C.takes}/${name}.mp4`;
   const stillDir = `${C.out}/work/stills/${name}`;
   rmSync(stillDir, { recursive: true, force: true }); mkdirSync(stillDir, { recursive: true });
@@ -110,7 +114,7 @@ function checkChapter(name) {
     const atSrc = [r3(s.srcT + (s.shift || 0) + lead), r3(s.srcT + (s.shift || 0) + s.hold - 0.05)];
     const why = [];
 
-    const ren = at.map((t) => grayFrame(seg, t));
+    const ren = at.map((t) => grayFrame(segFrame(seg, nSeg, t), null));
     const sw = plan.srcW ?? W, sh = plan.srcH ?? H, view = s.view ?? { s: 1, x: 0, y: 0 };
     const raw = atSrc.map((t) => framed(grayFrame(src, t, sw, sh), sw, sh, view, bgLuma));
 
@@ -138,7 +142,7 @@ function checkChapter(name) {
     // contact tiles for eyeballing alongside the numbers, named 000.png, 001.png, ... in mark order
     for (const [k, t] of at.entries()) {
       const cap = drawtext ? `,drawtext=text='m${s.i} ${'ab'[k]} t=${t}':x=6:y=6:fontsize=18:fontcolor=cyan:box=1:boxcolor=black` : '';
-      execFileSync(C.ffmpeg, ['-nostdin', '-loglevel', 'error', '-y', '-ss', String(t), '-i', seg, '-frames:v', '1',
+      execFileSync(C.ffmpeg, ['-nostdin', '-loglevel', 'error', '-y', '-i', segFrame(seg, nSeg, t), '-frames:v', '1',
         '-vf', `scale=${W / 2}:${H / 2}${cap}`, `${stillDir}/${String(2 * rows.length - 2 + k).padStart(3, '0')}.png`]);
     }
   }

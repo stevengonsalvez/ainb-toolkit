@@ -12,18 +12,19 @@ const m = await import("./config.mjs"); const c = m.loadConfig(process.argv[1]);
 console.log([c.out, c.name, c.ffmpeg, c.ffprobe].join("\n"));' "$CFG")
 mapfile -t NAMES < <(cd "$D" && node -e 'const m=await import("./config.mjs");const c=m.loadConfig(process.argv[1]);console.log(m.segmentNames(c).join("\n"))' "$CFG")
 
-L=$R/work/concat.txt; : > "$L"
+# Each segment is a PNG sequence (render.sh). They are joined with the concat filter, one
+# image2 input per segment, so no frame list and no per-frame durations are involved.
+IN=()
 for n in "${NAMES[@]}"; do
-  [ -s "$R/out/seg/$n.mov" ] || { echo "missing segment: $n"; exit 1; }
-  printf "file '%s'\n" "$R/out/seg/$n.mov" >> "$L"
+  [ -f "$R/out/seg/$n/frame_000001.png" ] || { echo "missing segment: $n"; exit 1; }
+  IN+=(-framerate 30 -i "$R/out/seg/$n/frame_%06d.png")
 done
 OUT=$R/out/$NAME.mp4
-# hyperframes 0.8.40 writes its ProRes untagged, converted from RGB with the BT.601 matrix
-# (measured: read as 601 the crop matches the source at 67.9 dB, as 709 at 52.6 dB), so the
-# input matrix is stated rather than left to a default. setparams writes the BT.709 tags: the
-# -color_* output options alone left primaries and transfer "unknown" (ffmpeg 8.1).
-"$FFMPEG" -loglevel error -y -f concat -safe 0 -i "$L" -an \
-  -vf "scale=in_color_matrix=bt601:in_range=tv:out_color_matrix=bt709:out_range=tv,format=yuv420p,setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv" \
+# The PNGs are RGB (sRGB), so there is no input matrix to guess: convert once to BT.709 limited
+# range. setparams writes the BT.709 tags: the -color_* output options alone left primaries and
+# transfer "unknown" (ffmpeg 8.1).
+"$FFMPEG" -loglevel error -y "${IN[@]}" -an \
+  -filter_complex "concat=n=${#NAMES[@]}:v=1:a=0,scale=out_color_matrix=bt709:out_range=tv,format=yuv420p,setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv" \
   -c:v libx264 -preset slow -crf 14 -tune animation -movflags +faststart "$OUT"
 DUR=$("$FFPROBE" -v error -show_entries format=duration -of csv=p=0 "$OUT")
 "$FFMPEG" -loglevel error -y -i "$OUT" -vf "fps=12/${DUR%.*},scale=320:-1,tile=4x3" -frames:v 1 "$R/out/$NAME-montage.png"
