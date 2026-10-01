@@ -54,6 +54,23 @@ function stableUntil(mp4, t) {
   return t0 + n / 10;
 }
 
+// A camera move's last pose reaches the footage up to a few frames after capture logs its end
+// (measured: the final zoom step landed 1-2 frames late, with 3-4 frame gaps mid-glide). Returns the
+// time of the last frame near the logged end that still differs from the one before it
+// (mean abs luma diff > 0.5 at 160x90; the drifting cursor alone measures under 0.1).
+function settledAt(mp4, t1) {
+  const fw = 160 * 90, a = Math.max(0, t1 - 0.2);
+  const buf = execFileSync(C.ffmpeg, ['-nostdin', '-loglevel', 'error', '-ss', String(a), '-i', mp4, '-t', '0.6',
+    '-vf', 'scale=160:90,format=gray', '-f', 'rawvideo', '-'], { maxBuffer: 1 << 26 });
+  let last = -1;
+  for (let k = 1; k < Math.floor(buf.length / fw); k++) {
+    let d = 0;
+    for (let p = 0; p < fw; p++) d += Math.abs(buf[k * fw + p] - buf[(k - 1) * fw + p]);
+    if (d / fw > 0.5) last = k;
+  }
+  return last < 0 ? t1 : Math.max(t1, Math.ceil(a * 30) / 30 + last / 30);
+}
+
 // subtract intervals `cuts` from [0,dur] -> kept ranges
 function keep(dur, cuts) {
   cuts = cuts.filter(([a, b]) => b - a > 0.05).sort((x, y) => x[0] - y[0]);
@@ -181,6 +198,12 @@ function analyze(cfg) {
   }
   // camera moves (zoom and wide glides), logged by demo:capture; older takes have none
   const moves = ev.events.filter((e) => e.kind === 'camera').map((e) => [e.t0, e.t1]);
+  // A spotlight fades in fadeLead before its mark, or once the camera move into it has settled in
+  // the footage, whichever is later: a cut-out fading in over a moving frame points at nothing.
+  for (const s of spots) {
+    const mv = moves.filter(([a]) => a < s.T).at(-1);
+    s.from = mv && mv[1] > s.T - C.fadeLead - 0.3 ? Math.max(s.T - C.fadeLead, settledAt(mp4, mv[1])) : s.T - C.fadeLead;
+  }
 
   // cuts: dead-hold trims outside protected windows, plus configured cuts
   const prot = spots.map((s) => [s.T - 0.6, s.T + s.hold + 0.6]);
@@ -340,11 +363,11 @@ function chapter(an, sp) {
   // Spots whose windows overlap share one view (their union), so no spotlight moves while lit.
   // Grouped in OUTPUT time, where the camera move is scheduled: travel speed shrinks the gaps,
   // and a source-time split left moves with no room (end before start).
-  for (const s of an.spots) s.ct = toComp(s.T);
+  for (const s of an.spots) { s.ct = toComp(s.T); s.cf = toComp(s.from); }
   const groups = [];
   for (const s of an.spots) {
     const g = groups.at(-1), prev = g?.at(-1);
-    if (prev && s.ct - C.fadeLead < prev.ct + prev.hold + F(0.3) + 0.1) g.push(s); else groups.push([s]);
+    if (prev && s.cf < prev.ct + prev.hold + F(0.3) + 0.1) g.push(s); else groups.push([s]);
   }
   for (const g of groups) {
     const x0 = Math.min(...g.map((s) => s.fr.x)), y0 = Math.min(...g.map((s) => s.fr.y));
@@ -376,7 +399,7 @@ function chapter(an, sp) {
     }
     const ct = s.ct;
     report.push({
-      i: s.i, label: s.label, srcT: r3(s.m.t), shift: s.shift || 0, compT: r3(ct), hold: r3(s.hold),
+      i: s.i, label: s.label, srcT: r3(s.m.t), shift: s.shift || 0, compT: r3(ct), litFrom: r3(s.cf), hold: r3(s.hold),
       place: pick[0], box: [x, y, w, h].map(Math.round),
       labBox: [pick[2].left, pick[2].top, lw, LH].map(Math.round), view: v,
     });
@@ -398,14 +421,14 @@ function chapter(an, sp) {
   for (let i = 1; i < groups.length; i++) {
     const a = groups[i - 1].at(-1), b = groups[i][0];
     if (JSON.stringify(a.view) === JSON.stringify(b.view)) continue;
-    const t0 = a.ct + a.hold + F(0.3), t1 = b.ct - C.fadeLead;
+    const t0 = a.ct + a.hold + F(0.3), t1 = b.cf;
     lines.push(`tl.to("${cam}", { ${V(b.view)}, duration: ${r3(Math.max(0.05, t1 - t0))}, ease: "power2.inOut" }, ${r3(Math.min(t0, t1 - 0.05))});`);
   }
   for (const s of an.spots) {
     const dy = { 'below-cropped': -8, below: -8, above: 8, right: 0, left: 0 }[s.dir] ?? 0;
     const dx = { right: -8, left: 8 }[s.dir] || 0;
-    lines.push(`tl.fromTo("#${name}-s${s.i}", { opacity: 0 }, { opacity: 1, duration: ${F(0.25)}, ease: "power1.out" }, ${r3(s.ct - C.fadeLead)});`);
-    lines.push(`tl.fromTo("#${name}-l${s.i}", { opacity: 0, x: ${dx}, y: ${dy} }, { opacity: 1, x: 0, y: 0, duration: ${F(0.3)}, ease: "power2.out" }, ${r3(s.ct - F(0.1))});`);
+    lines.push(`tl.fromTo("#${name}-s${s.i}", { opacity: 0 }, { opacity: 1, duration: ${F(0.25)}, ease: "power1.out" }, ${r3(s.cf)});`);
+    lines.push(`tl.fromTo("#${name}-l${s.i}", { opacity: 0, x: ${dx}, y: ${dy} }, { opacity: 1, x: 0, y: 0, duration: ${F(0.3)}, ease: "power2.out" }, ${r3(Math.max(s.cf, s.ct - F(0.1)))});`);
     lines.push(`tl.to(["#${name}-s${s.i}", "#${name}-l${s.i}"], { opacity: 0, duration: ${F(0.3)}, ease: "power1.in" }, ${r3(s.ct + s.hold)});`);
   }
 
