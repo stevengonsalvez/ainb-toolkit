@@ -276,7 +276,8 @@ function retime(an, sp) {
   return { pieces, footDur: nominal, toOut: (t) => outOfU(toU(t)), kept: an.kept, U };
 }
 
-// Write the re-timed footage: cuts dropped, pieces re-timed, resampled to 30fps.
+// Write the re-timed footage: cuts dropped, pieces re-timed, resampled to 30fps. Lossless
+// (x264 -qp 0, no pixel-format change): concat.sh makes the one lossy encode.
 function renderFootage(an, rt, out) {
   const f = (x) => x.toFixed(6);
   const sel = an.kept.map(([a, b]) => `between(t,${f(a)},${f(b)})`).join('+');
@@ -289,8 +290,8 @@ function renderFootage(an, rt, out) {
     o = i === rt.pieces.length - 1 ? e : `if(lt(ld(0),${f(p.u1)}),${e},${o})`;
   }
   execFileSync(C.ffmpeg, ['-nostdin', '-loglevel', 'error', '-y', '-i', an.mp4,
-    '-vf', `select='${sel}',setpts='(st(0,${u});${o})/TB',fps=30,tpad=stop_mode=clone:stop_duration=0.2,format=yuv420p`,
-    '-an', '-c:v', 'libx264', '-crf', '14', '-preset', 'veryfast', out]);
+    '-vf', `select='${sel}',setpts='(st(0,${u});${o})/TB',fps=30,tpad=stop_mode=clone:stop_duration=0.2`,
+    '-an', '-c:v', 'libx264', '-qp', '0', '-preset', 'veryfast', out]);
 }
 
 // ---------- output framing ----------
