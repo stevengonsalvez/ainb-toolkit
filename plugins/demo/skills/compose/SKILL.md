@@ -214,12 +214,26 @@ music file ──▶ hyperframes beats ─▶ card padding, every cut on a beat 
 - **Music bed**, only when `audio.music.file` names one (bring your own, licensed). Levelled to
   `level` LUFS, faded in and out so it ends with the last card, looped if short, and ducked
   `duck` dB (default 11) under every narration line: down over 0.25s before a line, back up over
-  0.6s after, lines closer than 1.35s share one duck. With `snap` (default) `hyperframes beats`
-  finds the beats and each segment's leading card grows by under one beat, so every cut lands on
-  a beat to the frame. Re-cutting one chapter moves every later start, so with a bed `compose.mjs`
-  also composes again each later segment whose start has moved, and `audio.mjs` fails when a cut
-  sits more than a frame off a beat (a segment rendered from a stale plan). Measured on the ferry
-  example with a 100 BPM bed: all four cuts within 4ms of a detected beat, duck depth 11.00 dB.
+  0.6s after, lines closer than 1.35s share one duck. With `snap` (default) each segment's
+  leading card grows by under one beat so every cut lands on a beat, to the nearest frame (so
+  within half a frame, 16.7ms at 30fps). `hyperframes beats` only seeds the tempo: on a 100 BPM
+  tick bed it reported 101.4 BPM, which walked its beats 0.8s off the ticks within a minute. The
+  grid is a steady period and phase fitted to the bed's own onsets, and a bed with no beat steady
+  enough (fit contrast under 2.5) gets a warning and unsnapped cuts rather than a failure. Every
+  segment is whole frames (a duration that is not renders one frame too many), and starts are
+  counted in frames, so a fresh compose lands its cuts on the first run. Re-cutting one chapter
+  moves every later start, so with a bed `compose.mjs` also composes again each later segment
+  whose start has moved, and `audio.mjs` fails when a cut sits more than a frame off the grid,
+  which only a segment rendered from a stale plan can do: re-run `compose.mjs` and `render.sh`.
+
+  | bed (ferry example, measured) | detector | fitted | cuts off the beat | result |
+  |---|---|---|---|---|
+  | 100 BPM ticks, frame-quantised onsets | 101.4 BPM | 100.00 BPM | 15, 15, 15, 15 ms | snapped |
+  | 100 BPM pad, kick and hats | 100 BPM | 100.00 BPM | 0, 0, 0, 0 ms | snapped |
+  | 128 BPM four-on-the-floor kick | 127.9 BPM | 128.00 BPM | 14, 7, 12, 3 ms | snapped |
+  | pink-noise drone, no beat | 245.9 BPM | contrast 1.22 | n/a | warned, not snapped |
+
+  Duck depth measured 11.00 dB.
 - **Narration**, only when lines are configured: `narration` on a card (spoken over it; the card
   stays up until the line ends) and on a chapter (`intro` over the chapter card, `marks` one line
   per mark, `null` to skip one). `hyperframes tts` (Kokoro, local) speaks each line once and caches
