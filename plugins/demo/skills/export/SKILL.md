@@ -56,7 +56,10 @@ A `--from`/`--to` that cuts a spotlight is refused with the spotlight's lit rang
 **GIF** via gifski when installed (libimagequant, temporal dithering). Without it the export
 warns once and uses ffmpeg `palettegen=stats_mode=diff` + `paletteuse=dither=bayer:bayer_scale=3`,
 coarser on gradients. Install: `brew install gifski` or `cargo install gifski`. Over budget,
-the export steps quality down by 10 to 60, then width down by 160 to 640, then fails.
+the export steps gifski's quality down by 10 to 60 (the ffmpeg palette has no quality knob), then
+width down by 160 to 640, then fails. The snippet carries the width the GIF came out at. On the
+ferry loop the ffmpeg fallback is 5.024 MB at 960 px, just over budget, so it steps to 800 px:
+3.868 MB, 15.2 s.
 
 **WebP** via ffmpeg's `libwebp_anim` when the build has it, else `img2webp` (libwebp's own
 tool, the `webp` package). Ubuntu's ffmpeg 6.1 has libwebp; Homebrew's ffmpeg 9 does not, so
