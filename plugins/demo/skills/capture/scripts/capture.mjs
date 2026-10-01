@@ -555,7 +555,7 @@ async function deterministic({ W, H, cap, dir, state, overlayArgs }) {
   // N sub-frames; -update keeps the last output, the full average). Two at a time.
   // A take that falls back is re-filmed into the same directory, so close() kills and awaits every
   // job first; a job that ends after that is ignored rather than writing into the new take.
-  const queue = [], busy = [], kids = new Set();
+  const queue = [], busy = [], kids = new Set(), jobErrors = [];
   let cancelled = false;
   const average = (sub, N, out) => queue.push([sub, N, out]) && drain();
   const drain = () => {
@@ -567,7 +567,7 @@ async function deterministic({ W, H, cap, dir, state, overlayArgs }) {
           '-vf', `tmix=frames=${N}`, '-update', '1', out], e => {
           kids.delete(kid);
           if (cancelled) return res();
-          if (e) return rej(e);
+          if (e) { jobErrors.push(`${out}: ${String(e.message).split('\n').slice(-2).join(' ')}`); return rej(e); }
           fs.rmSync(sub, { recursive: true, force: true }); res();
         });
         kids.add(kid);
@@ -575,7 +575,12 @@ async function deterministic({ W, H, cap, dir, state, overlayArgs }) {
       busy.push(job); job.finally(() => { busy.splice(busy.indexOf(job), 1); drain(); }).catch(() => {});
     }
   };
-  const averaged = async () => { while (queue.length || busy.length) await Promise.all(busy); };
+  // A failed job has left `busy` by the time anything awaits it, so failures are collected and
+  // reported here; a silently missing frame used to cut the encoded take short at that frame.
+  const averaged = async () => {
+    while (queue.length || busy.length) await Promise.allSettled(busy);
+    if (jobErrors.length) throw new Error(`motion blur averaging failed for ${jobErrors.length} frame(s): ${jobErrors[0]}`);
+  };
   const cancelBlur = async () => { cancelled = true; queue.length = 0; for (const k of kids) k.kill('SIGKILL'); await Promise.allSettled([...busy]); };
   const name = k => `${String(k).padStart(5, '0')}.png`;
   const pump = (async () => {
@@ -672,6 +677,9 @@ async function deterministic({ W, H, cap, dir, state, overlayArgs }) {
       pumping = false; await pump.catch(() => {});
       if (failure) throw failure;
       await averaged(); fs.rmSync(path.join(dir, 'sub'), { recursive: true, force: true });
+      // Every frame must be on disk: encode.sh reads cfr/ as a sequence and stops at the first gap.
+      const gapAt = Array.from({ length: n }, (_, k) => k).find(k => !fs.existsSync(path.join(dir, 'cfr', name(k))));
+      if (gapAt !== undefined) throw new Error(`frame ${gapAt} of ${n} is missing from ${path.join(dir, 'cfr')}`);
       const spans = [];
       for (const k of blurFrames) { if (spans.length && spans.at(-1)[1] === k - 1) spans.at(-1)[1] = k; else spans.push([k, k]); }
       return { frames: n, dur: (n - 1) / fps, fps, dpr, blurSpans: spans };
