@@ -183,15 +183,17 @@ h1 small { color: var(--muted); font-weight: 400; margin-left: 8px; }
 .tip { position: absolute; max-width: min(360px, 80%); background: var(--panel); color: var(--fg); border: 1px solid #2f343e; border-left: 4px solid var(--accent); border-radius: 8px; padding: 8px 12px; font-size: 15px; pointer-events: none; }
 nav { display: flex; align-items: center; gap: 12px; width: 100%; max-width: 1280px; }
 nav button.step { background: var(--panel); color: var(--fg); border: 1px solid #2f343e; border-radius: 8px; padding: 8px 14px; font: inherit; cursor: pointer; }
-nav button.step:disabled { opacity: .4; cursor: default; }
-.dots { display: flex; gap: 6px; flex: 1; justify-content: center; flex-wrap: wrap; }
-.dots button { width: 12px; height: 12px; border-radius: 50%; border: 0; padding: 0; background: #3f4450; cursor: pointer; }
-.dots button[aria-current="step"] { background: var(--accent); transform: scale(1.25); }
+nav button.step[aria-disabled="true"] { opacity: .4; cursor: default; }
+.dots { display: flex; gap: 2px; flex: 1; justify-content: center; flex-wrap: wrap; }
+.dots button { width: 24px; height: 24px; border-radius: 50%; border: 0; padding: 0; background: none; cursor: pointer; display: grid; place-items: center; }
+.dots button::before { content: ""; width: 12px; height: 12px; border-radius: 50%; background: #3f4450; }
+.dots button[aria-current="step"]::before { background: var(--accent); transform: scale(1.25); }
 .count { color: var(--muted); font-variant-numeric: tabular-nums; min-width: 4.5em; text-align: right; }
 :focus { outline: none; }
 :focus-visible { outline: 3px solid #facc15; outline-offset: 3px; }
-@media (prefers-reduced-motion: reduce) { .hot::after { animation: none; } .dots button { transition: none; } }
-@media (max-width: 600px) { body { padding: 8px; } .tip { font-size: 13px; padding: 6px 9px; } nav button.step { padding: 6px 10px; } }
+@media (prefers-reduced-motion: reduce) { .hot::after { animation: none; } }
+@media (max-width: 600px) { body { padding: 8px; } .tip { font-size: 13px; padding: 6px 9px; } nav button.step { padding: 6px 10px; }
+  nav { flex-wrap: wrap; } .count { flex: 1; text-align: center; } .dots { order: 3; flex-basis: 100%; } }
 </style>
 </head>
 <body>
@@ -208,30 +210,41 @@ const steps = ${JSON.stringify(data).replace(/</g, '\\u003c')};
 let at = 0;
 const $ = (id) => document.getElementById(id);
 const dots = steps.map((s, k) => { const b = document.createElement('button'); b.type = 'button'; b.setAttribute('aria-label', 'Step ' + (k + 1) + ': ' + s.label); b.onclick = () => go(k); $('dots').appendChild(b); return b; });
-// Labels sit below the hotspot, or above it when it reaches the bottom of the frame.
+// The label sits below the hotspot, else above it, else inside its lower edge (a hotspot as
+// tall as the frame), measured at the size it renders, so it never leaves the frame.
+function place() {
+  const s = steps[at], st = $('stage'), tip = $('tip'), W = st.clientWidth, H = st.clientHeight, g = 10;
+  const x = s.x / 100 * W, y = s.y / 100 * H, h = s.h / 100 * H, tw = tip.offsetWidth, th = tip.offsetHeight;
+  const top = y + h + g + th <= H ? y + h + g : y - g - th >= 0 ? y - g - th : Math.min(H - th - g, Math.max(g, y + h - th - g));
+  Object.assign(tip.style, { left: Math.max(g, Math.min(W - tw - g, x)) + 'px', top: top + 'px' });
+}
+const last = () => at === steps.length - 1;
 function go(k) {
   at = Math.max(0, Math.min(steps.length - 1, k));
   const s = steps[at], hot = $('hot'), tip = $('tip');
   $('pic').src = s.src; $('pic').alt = 'Step ' + (at + 1) + ' of ' + steps.length + ': ' + s.label;
   $('stage').style.aspectRatio = s.ar;
   Object.assign(hot.style, { left: s.x + '%', top: s.y + '%', width: s.w + '%', height: s.h + '%' });
-  hot.setAttribute('aria-label', (at + 1 < steps.length ? 'Next: ' : 'Done: ') + s.label);
+  hot.setAttribute('aria-label', s.label + (last() ? '. Start over' : '. Next step'));
   tip.textContent = s.label;
-  const below = s.y + s.h < 78;
-  Object.assign(tip.style, { left: Math.min(s.x, 60) + '%', top: below ? 'calc(' + (s.y + s.h) + '% + 10px)' : '', bottom: below ? '' : 'calc(' + (100 - s.y) + '% + 10px)' });
   $('chapter').textContent = s.chapter;
   $('count').textContent = (at + 1) + ' / ' + steps.length;
-  $('prev').disabled = at === 0; $('next').disabled = at === steps.length - 1;
+  // aria-disabled, not disabled: a disabled button drops keyboard focus to the page.
+  $('prev').setAttribute('aria-disabled', at === 0);
+  $('next').innerHTML = last() ? 'Start over &#8634;' : 'Next &rarr;';
   dots.forEach((d, j) => { if (j === at) d.setAttribute('aria-current', 'step'); else d.removeAttribute('aria-current'); });
+  place();
 }
-$('hot').onclick = () => go(at + 1);
+const forward = () => go(last() ? 0 : at + 1);       // the last step's hotspot and button start over
+$('hot').onclick = forward;
+$('next').onclick = forward;
 $('prev').onclick = () => go(at - 1);
-$('next').onclick = () => go(at + 1);
+addEventListener('resize', place);
 addEventListener('keydown', (e) => {
   if (e.key === 'ArrowRight' || (e.key === 'Enter' && e.target === document.body)) { e.preventDefault(); go(at + 1); }
   else if (e.key === 'ArrowLeft') { e.preventDefault(); go(at - 1); }
-  else if (e.key === 'Home') go(0);
-  else if (e.key === 'End') go(steps.length - 1);
+  else if (e.key === 'Home') { e.preventDefault(); go(0); }
+  else if (e.key === 'End') { e.preventDefault(); go(steps.length - 1); }
 });
 go(0);
 </script>
