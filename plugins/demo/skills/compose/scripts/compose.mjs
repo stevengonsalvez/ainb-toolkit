@@ -213,7 +213,7 @@ function analyze(cfg) {
   }
   const kept = keep(dur - 0.03, cuts);
   const vp = ev.viewport || { width: 1280, height: 720 };
-  return { cfg, name, mp4, dur, spots, moves, kept, srcW: vp.width, srcH: vp.height, CARD: cfg.cardDur ?? C.chapterCardDur };
+  return { cfg, name, mp4, dur, spots, moves, kept, srcW: vp.width, srcH: vp.height, fps: ev.fps ?? 30, CARD: cfg.cardDur ?? C.chapterCardDur };
 }
 
 // ---------- speed ramp ----------
@@ -272,8 +272,9 @@ function retime(an, sp) {
     const p = pieces[i], kb = p.k0 + (p.k1 - p.k0) * (b - p.u0) / (p.u1 - p.u0);
     pieces.splice(i, 1, { u0: p.u0, u1: b, k0: p.k0, k1: kb }, { u0: b, u1: p.u1, k0: kb, k1: p.k1 });
   }
-  // Frame phase: at a constant whole-number speed v, source frames land on v evenly spaced
-  // phases of the 30fps output grid. If one sits on a half frame, float noise flips the fps
+  // Frame phase: at a constant whole-number speed v, source frames land evenly spaced on the
+  // output grid, sp = fps / (srcFps * v) output frames apart (1/v for a 30fps take; 1/(2v) for a
+  // 60fps one, whose every other frame otherwise sat exactly on the half). If one sits on a half frame, float noise flips the fps
   // filter's rounding and a 1x proof window stutters (a duplicated then a dropped frame,
   // measured). So each constant piece is nudged off its NOMINAL start by under 1/60s (clamped
   // at 0) to keep every phase clear of the half, and each ramp is stretched (`sc`) to run from
@@ -287,8 +288,9 @@ function retime(an, sp) {
     if (p.k0 === p.k1 && Math.abs(v - Math.round(v)) < 1e-9) {
       const q = Math.round(v), i = U.findLastIndex((x) => x <= p.u0 + 1e-9);
       const base = C.fps * (start + p.k0 * (U[i] - an.kept[i][0] - p.u0));
-      const want = (1 / (2 * q) + 0.5) % (1 / q), have = ((base % (1 / q)) + 1 / q) % (1 / q);
-      let d = want - have; if (d > 0.5 / q) d -= 1 / q; if (d < -0.5 / q) d += 1 / q;
+      const sp = C.fps / (an.fps * q);
+      const want = (sp / 2 + 0.5) % sp, have = ((base % sp) + sp) % sp;
+      let d = want - have; if (d > sp / 2) d -= sp; if (d < -sp / 2) d += sp;
       p.o0 = Math.max(0, start + d / C.fps); p.sc = 1;
     } else {
       p.o0 = end; p.sc = len > 0 ? Math.max(0, (nominal - end) / len) : 1;
@@ -304,7 +306,8 @@ function retime(an, sp) {
 }
 
 // Write the re-timed footage: cuts dropped, pieces re-timed, resampled to C.fps and scaled to the
-// take's CSS viewport (srcW x srcH), which is what the composition lays out. A deterministic take is
+// take's CSS viewport (srcW x srcH, rounded down to even as encode.sh does: 4:2:0 needs it),
+// which is what the composition lays out. A deterministic take is
 // 2x its viewport at 60fps, so this is a lanczos downsample, a sharpness gain over filming at 1x
 // (supersampling). Lossless (x264 -qp 0, libx264rgb for an RGB take, so no colour conversion):
 // concat.sh makes the one lossy encode.
@@ -321,7 +324,7 @@ function renderFootage(an, rt, out) {
   }
   const pix = execFileSync(C.ffprobe, ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=pix_fmt', '-of', 'csv=p=0', an.mp4]).toString().trim();
   execFileSync(C.ffmpeg, ['-nostdin', '-loglevel', 'error', '-y', '-i', an.mp4,
-    '-vf', `select='${sel}',setpts='(st(0,${u});${o})/TB',fps=${C.fps},scale=${an.srcW}:${an.srcH}:flags=lanczos,tpad=stop_mode=clone:stop_duration=0.2`,
+    '-vf', `select='${sel}',setpts='(st(0,${u});${o})/TB',fps=${C.fps},scale=${an.srcW >> 1 << 1}:${an.srcH >> 1 << 1}:flags=lanczos,tpad=stop_mode=clone:stop_duration=0.2`,
     '-an', '-c:v', /^(gbr|rgb|bgr)/.test(pix) ? 'libx264rgb' : 'libx264', '-qp', '0', '-preset', 'veryfast', out]);
 }
 
