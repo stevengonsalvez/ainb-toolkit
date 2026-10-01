@@ -62,8 +62,14 @@ try {
   const ev = JSON.parse(fs.readFileSync(path.join(r.dir, 'events.json'), 'utf8'));
   for (const k of ['chapter', 'viewport', 'dur', 'frames', 'events']) assert.ok(k in ev, `events.json missing ${k}`);
   assert.equal(ev.frames, r.frames);
-  for (const e of ev.events) for (const k of ['t', 'kind', 'label', 'rect', 'cam']) assert.ok(k in e, `event missing ${k}`);
   const z = ev.events.find(e => e.label === 'zoomed');
+  for (const e of ev.events.filter(e => e.kind === 'mark')) for (const k of ['t', 'kind', 'label', 'rect', 'cam']) assert.ok(k in e, `event missing ${k}`);
+  // Every camera glide (zoom and wide, 500ms each: 11 steps of at least 30ms) is logged with its span,
+  // so compose can play it at 1x.
+  const moves = ev.events.filter(e => e.kind === 'camera');
+  assert.equal(moves.length, 2, `expected 2 camera events, got ${moves.length}`);
+  for (const m of moves) assert.ok(m.t1 - m.t0 >= 0.3, `camera event span ${m.t0}..${m.t1} shorter than its 11 steps of 30ms`);
+  assert.ok(moves[0].t1 <= z.t, 'zoom ended after the mark that follows it');
   assert.equal(z.cam.s, 2, 'zoom did not reach scale 2');
   assert.ok(z.cam.y + z.cam.h >= z.rect.y + z.rect.h, 'zoom box does not frame the nav');
   // The mp4 must run as long as the take. Zoom glides deliver frames faster than 30fps; an

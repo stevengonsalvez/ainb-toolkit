@@ -179,6 +179,8 @@ function analyze(cfg) {
       a.hold = Math.min(a.hold, b.T - a.T - 0.25);
     }
   }
+  // camera moves (zoom and wide glides), logged by demo:capture; older takes have none
+  const moves = ev.events.filter((e) => e.kind === 'camera').map((e) => [e.t0, e.t1]);
 
   // cuts: dead-hold trims outside protected windows, plus configured cuts
   const prot = spots.map((s) => [s.T - 0.6, s.T + s.hold + 0.6]);
@@ -191,15 +193,16 @@ function analyze(cfg) {
   }
   const kept = keep(dur - 0.03, cuts);
   const vp = ev.viewport || { width: 1280, height: 720 };
-  return { cfg, name, mp4, dur, spots, kept, srcW: vp.width, srcH: vp.height, CARD: cfg.cardDur ?? C.chapterCardDur };
+  return { cfg, name, mp4, dur, spots, moves, kept, srcW: vp.width, srcH: vp.height, CARD: cfg.cardDur ?? C.chapterCardDur };
 }
 
 // ---------- speed ramp ----------
 // Footage time is re-mapped in two steps: source t -> kept time u (cuts removed) -> output time.
 // Output time is built from pieces over u, each with a slowness k = output s per source s that
 // runs linearly from k0 to k1, so a ramp is a smooth change of speed rather than a jump.
-// Proof windows (fadeLead before a mark through the end of its hold) play at 1x;
-// everything between them plays at speed.travel, with a ramp of rampMs of output time each side.
+// Proof windows (fadeLead before a mark through the end of its hold) and every camera move play
+// at 1x, so a zoom keeps its designed easing; everything between them plays at speed.travel,
+// with a ramp of rampMs of output time each side.
 function retime(an, sp) {
   const U = []; let acc = 0;
   for (const [a, b] of an.kept) { U.push(acc); acc += b - a; }
@@ -209,10 +212,11 @@ function retime(an, sp) {
     return uEnd;
   };
   const kp = 1, kt = 1 / sp.travel;
-  // proof windows in u, merged when they touch
+  // 1x windows in u (proof windows and camera moves), merged when they touch
   const win = [];
-  for (const s of an.spots) {
-    const w = [Math.max(0, toU(s.T - C.fadeLead)), Math.min(uEnd, toU(s.T + s.hold))];
+  const spans = [...an.spots.map((s) => [s.T - C.fadeLead, s.T + s.hold]), ...an.moves]
+    .map(([a, b]) => [Math.max(0, toU(a)), Math.min(uEnd, toU(b))]).filter(([a, b]) => b > a).sort((x, y) => x[0] - y[0]);
+  for (const w of spans) {
     if (win.length && w[0] <= win.at(-1)[1]) win.at(-1)[1] = Math.max(win.at(-1)[1], w[1]); else win.push(w);
   }
   const pieces = [];

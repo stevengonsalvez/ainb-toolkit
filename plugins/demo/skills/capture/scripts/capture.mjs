@@ -207,8 +207,11 @@ export async function capture({ base, state, out, viewport = { width: 1280, heig
 
   // Ease the camera between two viewport boxes so the push-in reads as a move,
   // not a cut. Each step is its own override; the screencast repaints on each.
+  // Each move is logged as a `camera` event (start t0, end t1): compose plays it at 1x and
+  // lights a spotlight only once it has ended.
   const glide = async (to, ms) => {
     const from = cam || { x: 0, y: 0, w: W, h: H, s: 1 };
+    const t0 = now();
     const steps = Math.max(6, Math.round(ms / 45));
     for (let i = 1; i <= steps; i++) {
       const e = smoothstep(i / steps);
@@ -219,6 +222,7 @@ export async function capture({ base, state, out, viewport = { width: 1280, heig
       });
       await page.waitForTimeout(30);
     }
+    events.push({ t: t0, kind: 'camera', t0, t1: now(), cam: to.s === 1 ? null : to });
   };
   const boxFor = (r, s) => {
     const vw = W / s, vh = H / s;
@@ -298,6 +302,6 @@ export async function capture({ base, state, out, viewport = { width: 1280, heig
   }
   const dur = frames.length ? frames.at(-1).t - t0 : 0;
   fs.writeFileSync(path.join(dir, 'events.json'), JSON.stringify({ chapter, viewport, dur, frames: frames.length, events }, null, 1));
-  return { frames: frames.length, dur, events: events.length, dir };
+  return { frames: frames.length, dur, events: events.filter(e => e.kind === 'mark').length, dir };
   } finally { await browser.close(); }
 }
