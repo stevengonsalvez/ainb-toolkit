@@ -174,6 +174,10 @@ export function loadConfig(path) {
   };
 }
 
+// Frames in a video, counted from its packets (exact for the packed segments).
+export function frameCount(C, file) {
+  return +execFileSync(C.ffprobe, ['-v', 'error', '-count_packets', '-select_streams', 'v:0', '-show_entries', 'stream=nb_read_packets', '-of', 'csv=p=0', file]).toString();
+}
 // The seam into each segment: blur crossfade, or whip where a chapter hands over to another
 // chapter or a switch card. Duration snapped to whole frames; 0 with transitions off.
 export function seams(C) {

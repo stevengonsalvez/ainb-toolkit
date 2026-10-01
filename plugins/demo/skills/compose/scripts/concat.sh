@@ -26,11 +26,11 @@ for n in "${NAMES[@]}"; do
   IN+=(-i "$R/out/seg/$n.mp4")
 done
 GRAPH=$(cd "$D" && node -e '
-const fs = await import("node:fs"); const cp = await import("node:child_process"); const m = await import("./config.mjs"); const c = m.loadConfig(process.argv[1]);
+const fs = await import("node:fs"); const m = await import("./config.mjs"); const c = m.loadConfig(process.argv[1]);
 const names = m.segmentNames(c), seams = m.seams(c);
 let f = "", acc = 0; const tl = [];
 names.forEach((n, i) => {
-  const frames = +cp.execFileSync(c.ffprobe, ["-v", "error", "-count_packets", "-select_streams", "v:0", "-show_entries", "stream=nb_read_packets", "-of", "csv=p=0", `${c.out}/out/seg/${n}.mp4`]).toString();
+  const frames = m.frameCount(c, `${c.out}/out/seg/${n}.mp4`);
   const d = Math.round(seams[i].dur * c.fps);          // overlap in frames
   const start = acc - d; tl.push({ name: n, start: start / c.fps, dur: frames / c.fps, seam: seams[i].kind, seamDur: d / c.fps });
   if (i) f += d ? `[a${i - 1}][${i}:v]xfade=transition=${seams[i].kind === "whip" ? "smoothleft" : "fade"}:duration=${d / c.fps}:offset=${start / c.fps}[a${i}];`

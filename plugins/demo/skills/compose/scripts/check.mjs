@@ -14,7 +14,7 @@
 //           -> DEFECT 2: a label never covers its own spotlight
 import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync, mkdirSync, rmSync, existsSync, readdirSync } from 'node:fs';
-import { loadConfig, segmentNames, screenRect, r3, hexToRgb, grayFrames } from './config.mjs';
+import { loadConfig, segmentNames, screenRect, frameCount, r3, hexToRgb, grayFrames } from './config.mjs';
 
 const cfgPath = process.argv[2];
 if (!cfgPath) { console.error('usage: check.mjs <config.json> [chapter ...]'); process.exit(2); }
@@ -103,7 +103,7 @@ function checkChapter(name) {
   if (plan.kind === 'card') return [];
   const seg = `${C.out}/out/seg/${name}.mp4`;
   if (!existsSync(seg)) throw new Error(`${name}: no rendered segment at ${seg}, run render.sh first`);
-  const nSeg = +execFileSync(C.ffprobe, ['-v', 'error', '-count_packets', '-select_streams', 'v:0', '-show_entries', 'stream=nb_read_packets', '-of', 'csv=p=0', seg]).toString();
+  const nSeg = frameCount(C, seg);
   const src = `${C.takes}/${name}.mp4`;
   const stillDir = `${C.out}/work/stills/${name}`;
   rmSync(stillDir, { recursive: true, force: true }); mkdirSync(stillDir, { recursive: true });
