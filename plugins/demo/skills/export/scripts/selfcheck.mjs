@@ -133,11 +133,13 @@ try {
   const p3 = timeline(loadConfig(join(root, 'pace3.config.json'))).chapters[0].spots;
   ok(p3.every((sp) => sp.settled >= Math.max(sp.lit, sp.at - 0.3) + 0.9 - 1e-6 && sp.settled < sp.end), `at pace 3 the poster frame has the label fully in: ${p3.map((sp) => `${sp.at} -> ${sp.settled}`).join(', ')}`);
 
+  w(join(root, 'compose/export/interactive/step-09.webp'), 'stale');
   r = run('interactive', cfg, '--inline', 'no');
   ok(r.status === 0, `interactive exits 0${r.status ? `: ${r.stderr.trim()}` : ''}`);
   if (r.status === 0) {
     const out = join(root, 'compose/export/interactive'), st = JSON.parse(readFileSync(join(out, 'steps.json'), 'utf8'));
     ok(st.steps.length === 3 && /no target rect/.test(r.stderr), `3 steps (2 marks, 1 click with a rect); the click without one is skipped and said`);
+    ok(!existsSync(join(out, 'step-09.webp')) && !readdirSync(out).some((f) => f.startsWith('.step-')), 'a step image left from an earlier run, and the decode temps, are gone');
     ok(st.steps[0].label === 'First proof' && st.steps[2].label === 'Second proof', `step labels are compose's spotlight labels, not the capture's: ${st.steps.map((x) => x.label)}`);
     let bad = 0;
     for (const s of st.steps) {

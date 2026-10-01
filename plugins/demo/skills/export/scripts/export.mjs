@@ -66,6 +66,8 @@ function readme() {
     if (loop.short) console.warn(`warn: no 8-12s stretch holds whole spotlights; the loop runs ${r3(loop.b - loop.a)}s`);
   }
   const hero = loop.spots.at(-1);
+  // This run's files only: a WebP or snippet left from an earlier run must not outlive it.
+  for (const f of ['demo.gif', 'demo.webp', 'poster.png', 'picture.html', 'bundle.json']) rmSync(join(out, f), { force: true });
   const work = mkdtempSync(join(tmpdir(), 'demo-export-'));
   try {
     // Frames once, at the loop's size and rate; the GIF and the WebP are both made from them.
@@ -136,6 +138,8 @@ function interactive() {
   const { steps: S, skipped } = steps(C, tl);
   if (!S.length) throw new Error('no marks in the takes: nothing to build steps from');
   if (skipped) console.warn(`warn: ${skipped} click/type cues carry no target rect, so they are not steps (demo:capture records only their time)`);
+  // This run's files only: step images, page and steps.json from an earlier run must not linger.
+  for (const f of readdirSync(out)) if (/^(\.?step-\d+\.(webp|png)|index\.html|steps\.json)$/.test(f)) rmSync(join(out, f));
   const imgs = [], hot = [];
   for (const [k, s] of S.entries()) {
     const png = `${C.takes}/${s.chapter}/cfr/${String(s.frame).padStart(5, '0')}.png`;
