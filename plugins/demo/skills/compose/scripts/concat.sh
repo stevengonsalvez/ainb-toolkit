@@ -1,6 +1,7 @@
 #!/bin/bash
 # concat.sh <config.json>
-# Concatenates the rendered segments in config order into the final silent mp4 and a contact sheet.
+# Concatenates the rendered segments in config order into the final mp4 and a contact sheet, then
+# runs audio.mjs, which adds the sound and writes the captions.
 # This is the ONE lossy encode in the chain: x264 crf 16 (config "crf"), preset slow, tune animation (flat UI,
 # sharp text), 4:2:0, BT.709 limited range with explicit tags, faststart for the web.
 set -eu
@@ -54,3 +55,5 @@ DUR=$("$FFPROBE" -v error -show_entries format=duration -of csv=p=0 "$OUT")
 "$FFMPEG" -loglevel error -y -i "$OUT" -vf "fps=12/${DUR%.*},scale=320:-1,tile=4x3" -frames:v 1 -update 1 "$R/out/$NAME-montage.png"
 echo "$OUT  ${DUR}s  $(du -h "$OUT" | cut -f1)"
 echo "$R/out/$NAME-montage.png"
+# Sound, captions and the loudness check (audio.mjs); exits non-zero when the mix misses its target.
+node "$D/audio.mjs" "$CFG"
