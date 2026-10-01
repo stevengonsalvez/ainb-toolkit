@@ -34,7 +34,7 @@ First run only, from that directory: `npm ci`, then
 
 ```bash
 cd "$SKILL_DIR"
-npm run check                                   # self-check, ~11 min, no app needed
+npm run check                                   # self-check, ~8 min, no app needed
 node scripts/run.mjs /path/to/beats.mjs [chapter ...]   # capture + encode each chapter
 scripts/montage.sh <out>/<chapter>.mp4          # 4x3 contact sheet; LOOK at it
 ```
@@ -112,8 +112,8 @@ Measured on the ferry example (8 cores, no GPU, one take at a time):
 | setting | capture time | a 5-minute demo films in | fast moves look |
 |---|---|---|---|
 | `capture: { blur: false }` (drafts) | about 6.5x real time | about 33 minutes | sharp, stepping frame to frame |
-| `capture: { blur: { spacing: 4 } }` (middle ground) | about 22x | about 1 hour 50 minutes | smeared, faint steps up close |
-| default (final takes) | about 42x | about 3 hours 30 minutes | smooth smear |
+| `capture: { blur: { spacing: 4 } }` (middle ground) | about 17x | about 1 hour 25 minutes | smeared, faint steps up close |
+| default (final takes) | about 35x | about 2 hours 55 minutes | smooth smear |
 
 Screencast mode films at 1x. Set the option file-wide or per chapter: the footage is the same 2x,
 60fps and deterministic in every case, only fast moves differ. Fact 14 has the per-chapter numbers.
@@ -130,16 +130,25 @@ fares, 2560x1440): at the old spacing of about 4px every glyph showed as a stack
 copies, and even at 1.5px each sample lands its glyph edges on whole pixels, so faint steps remain.
 So a frame the camera moves also gets a gap fill: the averaged frame is mixed with copies of
 itself warped (linear interpolation) by fractions of one gap's camera move: a scale about the
-zoom's fixed point plus a shift, so radial for a zoom and linear for a pan, at most 0.5px apart.
-The fixed point of a zoom, which barely moves, stays as sharp as the samples. A pointer-only frame
-gets no fill.
+zoom's fixed point plus a shift, so radial for a zoom and linear for a pan. The gap it spans is the
+wider of the shutter's first and last (a spring speeds up or slows down across it), and the copies
+sit at most 0.5px apart at the frame corner that move moves furthest. The fixed point of a zoom,
+which barely moves, stays as sharp as the samples. A frame where only the pointer moves gets no
+fill.
 
-Measured on that frame, with the anisotropy of its glyph region (structure tensor, smaller over
-larger eigenvalue: 0 is a perfect smear, the unblurred frame scores 0.84): 0.226 at the old
-spacing without fill, 0.187 at `spacing: 4` with fill, 0.180 at the default. The default ferry
+Averaging runs in ffmpeg alongside the capture, two frames at a time; while four blurred frames
+wait, rendering waits too, so temporary sub-frames stay bounded (16 MB at most on the ferry
+takes). A job that fails, or exits 0 without writing its frame, stops the take at once.
+
+Measured with the anisotropy of the glyph region (structure tensor, smaller over larger
+eigenvalue: 0 is a perfect smear, the unblurred frame scores 0.84), at the same camera pose in
+each take: at peak speed (frame 380) 0.226 at the old spacing without fill, 0.207 at `spacing: 4`,
+0.180 at the default; slowing down near the end of the zoom (10 frames later) 0.399, 0.349 and
+0.348. Looked at: the old frames show stacked copies (two clear edges per glyph while slowing
+down), the default a continuous smear. The default ferry
 takes peak at 47 and 64 samples per frame, at most 1.5px apart (1.94px on the fares frames that hit
 the cap, gap-filled too). `events.json` records `capture.blur.spans` (blurred frame ranges) and
-`maxSamples`, `maxGap` and `filled` (frames that got the gap fill).
+`maxSamples`, `maxGap`, `filled` (frames that got the gap fill) and `peakTempMB`.
 
 Rules the deterministic path imposes, all measured:
 - Page time only moves inside the rig's frame loop. Beats are fine as written; custom code
@@ -294,7 +303,7 @@ file's `cursor` keys one by one.
 11. **Deterministic capture needs chrome-headless-shell and the density flag.** `HeadlessExperimental.beginFrame` is gone from full Chrome 147+ and survives in the headless shell, which Playwright 1.62 launches for headless Chromium (Chrome for Testing 151, revision 1234). The density must come from `--force-device-scale-factor`: an emulated deviceScaleFactor reports 2 but beginFrame returns 1280x720 pixels. The rig checks the first frame's size and falls back if it is wrong.
 12. **Deterministic frames are exact.** `npm run check`: 2560x1440, `avg_frame_rate 60/1`, frame count = duration x 60 + 1, and 0 repeated frames out of 122 on a page animating every frame. The first ~24 beginFrames after a load repeat while the pipeline primes, so the rig draws 30 before filming. The PNGs survive `encode.sh` bit-exact (libx264rgb `-qp 0`, PSNR inf against the frame). Identical consecutive frames (a still hold) are hard links, so a hold costs no disk.
 13. **An open SSE stream and any dynamic `import()` hold virtual time for good; a websocket does not.** Under `pauseIfNetworkFetchesPending` page time stood still until something forced it: a 0ms and an 800ms lazy module alike, and a lazy route of a real SPA (its first deterministic take fell back to screencast before `network: 'auto'` existed). `npm run check` asserts all three outcomes: the lazy module stays deterministic under `auto`, the SSE page films on under `auto` and says so once, and falls back to screencast under `pause` and says so once. A websocket pushing every 200ms did not hold it.
-14. **Deterministic capture costs wall time, most of it motion blur.** The ferry example on 8 cores without a GPU, one run at a time: departures (12.5s of footage) filmed in 530s with the default blur, 259s with `blur: { spacing: 4 }`, 84s with `blur: false`, 12s in screencast mode; fares (10.9 to 11.0s) in 459s, 265s, 69s and 11s. So about 42x, 22x and 6.5x real time. The default renders 248 of departures' 753 frames again at up to 47 samples, and the gap-fill averaging runs alongside on the same cores (with cubic interpolation it took 536s and, at `spacing: 4`, 412s, at the same smoothness). A 5-minute demo: about 3 hours 30 minutes with the default, 1 hour 50 minutes at `spacing: 4`, 33 minutes with `blur: false`.
+14. **Deterministic capture costs wall time, most of it motion blur.** The ferry example on 8 cores without a GPU, one run at a time: departures (12.5s of footage) filmed in 407s with the default blur, 209s with `blur: { spacing: 4 }`, 84s with `blur: false`, 12s in screencast mode; fares (10.9 to 11.0s) in 403s, 197s, 69s and 11s. So about 35x, 17x and 6.5x real time. The default renders 248 of departures' 753 frames again at up to 47 samples, with the averaging running alongside on the same cores. Running the gap fill on tmix's last output only (it used to fill all N outputs and keep the last, identical result) took the default from 530s and 459s, and `spacing: 4` from 259s and 265s. A 5-minute demo: about 2 hours 55 minutes with the default, 1 hour 25 minutes at `spacing: 4`, 33 minutes with `blur: false`.
 
 ## Defects the rig already handles
 
