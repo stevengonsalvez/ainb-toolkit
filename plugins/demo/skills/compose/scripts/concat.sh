@@ -17,7 +17,8 @@ mapfile -t NAMES < <(cd "$D" && node -e 'const m=await import("./config.mjs");co
 IN=()
 for n in "${NAMES[@]}"; do
   [ -f "$R/out/seg/$n/frame_000001.png" ] || { echo "missing segment: $n"; exit 1; }
-  IN+=(-framerate "$FPS" -i "$R/out/seg/$n/frame_%06d.png")
+  # '%' in the path is doubled: ffmpeg reads the input as a %06d sequence pattern.
+  p=$R/out/seg/$n; IN+=(-framerate "$FPS" -i "${p//%/%%}/frame_%06d.png")
 done
 OUT=$R/out/$NAME.mp4
 # Guard for the #bg invariant (compose.mjs): hyperframes writes a frame as RGB when every pixel
@@ -37,6 +38,6 @@ for (const d of process.argv.slice(1)) for (const f of fs.readdirSync(d)) if (/^
   -filter_complex "concat=n=${#NAMES[@]}:v=1:a=0,scale=out_color_matrix=bt709:out_range=tv,format=yuv420p,setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv" \
   -c:v libx264 -preset slow -crf 14 -tune animation -movflags +faststart "$OUT"
 DUR=$("$FFPROBE" -v error -show_entries format=duration -of csv=p=0 "$OUT")
-"$FFMPEG" -loglevel error -y -i "$OUT" -vf "fps=12/${DUR%.*},scale=320:-1,tile=4x3" -frames:v 1 "$R/out/$NAME-montage.png"
+"$FFMPEG" -loglevel error -y -i "$OUT" -vf "fps=12/${DUR%.*},scale=320:-1,tile=4x3" -frames:v 1 -update 1 "$R/out/$NAME-montage.png"
 echo "$OUT  ${DUR}s  $(du -h "$OUT" | cut -f1)"
 echo "$R/out/$NAME-montage.png"

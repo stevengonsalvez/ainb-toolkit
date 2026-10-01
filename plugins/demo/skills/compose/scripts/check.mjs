@@ -147,13 +147,14 @@ function checkChapter(name) {
     for (const [k, t] of at.entries()) {
       const cap = drawtext ? `,drawtext=text='m${s.i} ${'ab'[k]} t=${t}':x=6:y=6:fontsize=18:fontcolor=cyan:box=1:boxcolor=black` : '';
       execFileSync(C.ffmpeg, ['-nostdin', '-loglevel', 'error', '-y', '-i', segFrame(seg, nSeg, t), '-frames:v', '1',
-        '-vf', `scale=${W / 2}:${H / 2}${cap}`, `${stillDir}/${String(2 * rows.length - 2 + k).padStart(3, '0')}.png`]);
+        '-vf', `scale=${W / 2}:${H / 2}${cap}`, '-update', '1', `${stillDir}/${String(2 * rows.length - 2 + k).padStart(3, '0')}.png`]);
     }
   }
   // An image2 sequence, not -pattern_type glob, which some builds do not support.
   const tiles = readdirSync(stillDir).length;
-  if (tiles) execFileSync(C.ffmpeg, ['-loglevel', 'error', '-y', '-i', `${stillDir}/%03d.png`,
-    '-vf', `tile=2x${Math.ceil(tiles / 2)}`, '-frames:v', '1', `${C.out}/work/stills-${name}.png`]);
+  // '%' in the path is doubled: ffmpeg reads the input as a %03d sequence pattern.
+  if (tiles) execFileSync(C.ffmpeg, ['-loglevel', 'error', '-y', '-i', `${stillDir.replace(/%/g, '%%')}/%03d.png`,
+    '-vf', `tile=2x${Math.ceil(tiles / 2)}`, '-frames:v', '1', '-update', '1', `${C.out}/work/stills-${name}.png`]);
   return rows;
 }
 

@@ -8,6 +8,7 @@
 set -euo pipefail
 FFMPEG=${FFMPEG:-ffmpeg}
 dir=${1:?chapter dir}; out=${2:-$dir.mp4}
-"$FFMPEG" -v error -y -framerate 30 -i "$dir/cfr/%05d.jpg" \
+# '%' in the directory is doubled: ffmpeg reads the input as a %05d sequence pattern.
+"$FFMPEG" -v error -y -framerate 30 -i "${dir//%/%%}/cfr/%05d.jpg" \
   -vf "scale=trunc(iw/2)*2:trunc(ih/2)*2" \
   -c:v libx264 -qp 0 -preset veryfast -movflags +faststart "$out"
