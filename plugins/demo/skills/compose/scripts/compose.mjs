@@ -407,7 +407,7 @@ function chapter(an, sp) {
     }
     const ct = s.ct;
     report.push({
-      i: s.i, label: s.label, srcT: r3(s.m.t), shift: s.shift || 0, compT: r3(ct), litFrom: r3(s.cf), hold: r3(s.hold),
+      i: s.i, label: s.label, srcT: r3(s.m.t), shift: s.shift || 0, compT: r3(ct), litFrom: r3(s.cf), fadeIn: F(0.25), hold: r3(s.hold),
       place: pick[0], box: [x, y, w, h].map(Math.round),
       labBox: [pick[2].left, pick[2].top, lw, LH].map(Math.round), view: v,
     });
