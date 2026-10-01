@@ -756,7 +756,9 @@ async function deterministic({ W, H, cap, dir, state, overlayArgs }) {
     // The frame loop may be stuck in a call to a dead browser: wait for it a few seconds at most.
     close: async () => {
       closing = true; pumping = false;
-      await Promise.race([pump.catch(() => {}), new Promise(r => setTimeout(r, 3000))]);
+      let wait;
+      await Promise.race([pump.catch(() => {}), new Promise(r => { wait = setTimeout(r, 3000); })]);
+      clearTimeout(wait);                                   // else node lingers out the 3 s
       await cancelBlur(); await browser.close().catch(() => {});
     },
   };
