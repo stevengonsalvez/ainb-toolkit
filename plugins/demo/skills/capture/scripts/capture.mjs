@@ -520,25 +520,33 @@ async function deterministic({ W, H, cap, dir, state, overlayArgs }) {
     const a = screen(), cam = camera.clone(), cur = cursor.clone(), dt = blur.shutter * FI / 1000;
     cam.step(dt); cur.step(st / 1000, dt);
     const b = screen(cam, cur);
-    let best = { d: Math.hypot(b.x - a.x, b.y - a.y), dx: b.x - a.x, dy: b.y - a.y };
+    let d = Math.hypot(b.x - a.x, b.y - a.y);
     for (const [fx, fy] of [[0, 0], [1, 0], [0, 1], [1, 1]]) {
       const px = b.b.x + fx * b.b.w, py = b.b.y + fy * b.b.h;            // page point at the later corner
-      const dx = fx * W - (px - a.b.x) * a.b.s, dy = fy * H - (py - a.b.y) * a.b.s;
-      if (Math.hypot(dx, dy) > best.d) best = { d: Math.hypot(dx, dy), dx, dy };
+      d = Math.max(d, Math.hypot(fx * W - (px - a.b.x) * a.b.s, fy * H - (py - a.b.y) * a.b.s));
     }
-    return { d: best.d * dpr };
+    return { d: d * dpr };
   };
   // The camera's move across one gap between samples, as an output-pixel map D = k S + (ox, oy)
-  // (scale about the origin plus a shift: radial for a zoom, linear for a pan).
-  const gapWarp = gap => {
-    const a = camera.box(), cam = camera.clone(); cam.step(gap); const g = cam.box();
-    return { k: g.s / a.s, ox: (a.x - g.x) * g.s * dpr, oy: (a.y - g.y) * g.s * dpr };
+  // (scale about the origin plus a shift: radial for a zoom, linear for a pan), and `reach`, the
+  // furthest it moves a frame corner (a vector, not a sum of the two parts). Of the first and the
+  // last gap of the shutter, the larger: a spring speeds up or slows down across it, and the fill
+  // has to span the widest gap (the narrower ones get at most that difference extra).
+  const gapWarp = N => {
+    const g = blur.shutter * FI / 1000 / N, cam = camera.clone(), map = (a, b) => {
+      const k = b.s / a.s, ox = (a.x - b.x) * b.s * dpr, oy = (a.y - b.y) * b.s * dpr;
+      const reach = Math.max(...[[0, 0], [W * dpr, 0], [0, H * dpr], [W * dpr, H * dpr]].map(([X, Y]) => Math.hypot((k - 1) * X + ox, (k - 1) * Y + oy)));
+      return { k, ox, oy, reach };
+    };
+    const a0 = cam.box(); cam.step(g); const first = map(a0, cam.box());
+    cam.step(g * Math.max(0, N - 2)); const a1 = cam.box(); cam.step(g); const last = map(a1, cam.box());
+    return first.reach >= last.reach ? first : last;
   };
   // Gap fill: average K copies of the blurred frame, each warped by j/K of that map, so every
   // sample spreads continuously across the gap to the next (copies at most 0.5px apart).
   // Pixels the camera does not move (the fixed point of a zoom) stay as sharp as the samples.
-  const fillGraph = (w, gapPx) => {
-    const K = Math.ceil(gapPx / 0.5), WW = W * dpr, HH = H * dpr, parts = [];
+  const fillGraph = w => {
+    const K = Math.ceil(w.reach / 0.5), WW = W * dpr, HH = H * dpr, parts = [];
     for (let j = 0; j < K; j++) {
       const f = j / K, kk = 1 + (w.k - 1) * f, src = ([X, Y]) => [((X - w.ox * f) / kk).toFixed(3), ((Y - w.oy * f) / kk).toFixed(3)];
       const [p0, p1, p2, p3] = [[0, 0], [WW, 0], [0, HH], [WW, HH]].map(src);
@@ -652,8 +660,8 @@ async function deterministic({ W, H, cap, dir, state, overlayArgs }) {
           // at). Glyph edges still land on whole pixels in each sample, so a camera move also gets
           // the gap fill above, which turns the remaining steps into a continuous smear.
           const N = clamp(Math.ceil(sm.d / blur.spacing), blur.samples, blur.max), gap = sm.d / N;
-          const w = gapWarp(blur.shutter * FI / 1000 / N), camGap = Math.hypot(w.ox, w.oy) + Math.abs(w.k - 1) * W * dpr;
-          const fillPx = Math.min(gap, camGap), fill = fillPx > 0.5 ? fillGraph(w, fillPx) : '';   // under 0.5px: nothing to fill
+          // The fill follows the camera's own gap, so a frame the pointer leads gets none.
+          const w = gapWarp(N), fill = w.reach > 0.5 ? fillGraph(w) : '';   // under 0.5px: nothing to fill
           stats.maxSamples = Math.max(stats.maxSamples, N); stats.maxGap = Math.max(stats.maxGap, +gap.toFixed(2)); if (fill) stats.filled++;
           // Backpressure: each waiting frame holds up to `max` full-size PNGs on disk, so rendering
           // waits while QMAX frames are already queued for ffmpeg.
