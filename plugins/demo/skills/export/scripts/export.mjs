@@ -33,6 +33,9 @@ for (let i = 0; i < rest.length; i += 2) {
   opt[k] = o.n ? +v : v;
 }
 const C = loadConfig(cfgPath);
+process.env.FFMPEG = C.ffmpeg;                       // the config's ffmpeg, else $FFMPEG, /usr/bin, PATH
+try { execFileSync(FFMPEG(), ['-version'], { stdio: 'ignore' }); }
+catch { console.error(`error: ffmpeg not found (tried ${FFMPEG()}): install it, or point $FFMPEG or the config's "ffmpeg" at one`); process.exit(1); }
 const tl = timeline(C);
 const video = `${C.out}/out/${C.name}.mp4`;
 const MB = (f) => r3(statSync(f).size / 1e6);

@@ -13,6 +13,7 @@ export const SKILL = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 export const r3 = (x) => Math.round(x * 1000) / 1000;
 
 // ffmpeg resolution, as in the other skills: $FFMPEG, else the distro build at /usr/bin, else PATH.
+// export.mjs sets $FFMPEG from the compose config first, so the config's `ffmpeg` key wins.
 const ffbin = (name) => process.env[name.toUpperCase()] || (existsSync(`/usr/bin/${name}`) ? `/usr/bin/${name}` : name);
 export const FFMPEG = () => ffbin('ffmpeg');
 let encoders;

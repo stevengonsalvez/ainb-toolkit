@@ -121,6 +121,10 @@ try {
     r = run(...args);
     ok(r.status === 2 && /usage:/.test(r.stderr), `${what} is refused (exit ${r.status}: ${r.stderr.split('\n')[0]})`);
   }
+  // The config's own "ffmpeg" wins, as in demo:compose; a missing one is named.
+  w(join(root, 'noff.config.json'), { ...JSON.parse(readFileSync(cfg, 'utf8')), ffmpeg: '/nonexistent/ffmpeg' });
+  r = run('readme', join(root, 'noff.config.json'));
+  ok(r.status === 1 && /ffmpeg not found \(tried \/nonexistent\/ffmpeg\)/.test(r.stderr), `a missing ffmpeg is named: ${r.stderr.trim()}`);
 
   r = run('interactive', cfg, '--inline', 'no');
   ok(r.status === 0, `interactive exits 0${r.status ? `: ${r.stderr.trim()}` : ''}`);
