@@ -381,6 +381,19 @@ export function mix(C) {
 
   const L = new Float32Array(n), Rt = new Float32Array(n);
   for (let i = 0; i < n; i++) { const c = sfx[i] + voice[i]; L[i] = c + (mL ? mL[i] : 0); Rt[i] = c + (mR ? mR[i] : 0); }
+  // Nothing to hear (every effect off, no narration, no music): leave the video silent, drop any
+  // track an earlier mix left, and skip the loudness gate, which cannot measure silence.
+  let peak = 0;
+  for (let i = 0; i < n; i++) peak = Math.max(peak, Math.abs(L[i]), Math.abs(Rt[i]));
+  if (!peak) {
+    const tmp = `${C.out}/out/.${C.name}.audio.mp4`;
+    execFileSync(C.ffmpeg, ['-nostdin', '-loglevel', 'error', '-y', '-i', final, '-map', '0:v', '-c', 'copy', '-movflags', '+faststart', tmp]);
+    renameSync(tmp, final);
+    Object.assign(report, { silent: true, ok: true });
+    writeFileSync(`${C.out}/out/${C.name}.audio.json`, JSON.stringify(report, null, 1));
+    console.log(`audio: nothing to mix, video left silent; captions ${caps.captions}  chapters ${caps.chapters}`);
+    return report;
+  }
   writeWav(C, `${work}/mix.wav`, [L, Rt]);
 
   // Master. A mix with narration or music is a programme: measure its integrated loudness, apply
