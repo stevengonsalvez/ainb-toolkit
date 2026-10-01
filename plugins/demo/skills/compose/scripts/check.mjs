@@ -108,10 +108,15 @@ function checkChapter(name) {
     const box = [s.box[0] + 6, s.box[1] + 6, s.box[2] - 12, s.box[3] - 12];
     // Still A: 0.5s after the mark, or later if the spotlight only started at litFrom (it waits for
     // the camera to settle): sampling mid-fade read a correct render as "no scrim".
-    const lead = Math.max(0.5, (s.litFrom ?? s.compT) + (s.fadeIn ?? 0.25) + 0.1 - s.compT);
-    const at = [r3(s.compT + lead), r3(s.compT + s.hold - 0.05)];
-    const atSrc = [r3(s.srcT + (s.shift || 0) + lead), r3(s.srcT + (s.shift || 0) + s.hold - 0.05)];
+    // Still B is 0.05s before the fade-out. A must stay at least 0.1s before B: a later A sat in the
+    // fade-out (a false "no scrim") and ran the drift test backwards. A hold too short for that is
+    // reported as such, and the scrim and drift tests, which cannot be read there, are skipped.
+    const need = (s.litFrom ?? s.compT) + (s.fadeIn ?? 0.25) + 0.1 - s.compT;
+    const short = need > s.hold - 0.15, a = Math.min(Math.max(0.5, need), s.hold - 0.15);
+    const at = [r3(s.compT + a), r3(s.compT + s.hold - 0.05)];
+    const atSrc = [r3(s.srcT + (s.shift || 0) + a), r3(s.srcT + (s.shift || 0) + s.hold - 0.05)];
     const why = [];
+    if (short) why.push(`lit too briefly to check: fully lit at +${r3(need - 0.1)}s, fades out at +${r3(s.hold)}s`);
 
     const ren = at.map((t) => grayFrame(segFrame(seg, nSeg, t), null));
     const sw = plan.srcW ?? W, sh = plan.srcH ?? H, view = s.view ?? { s: 1, x: 0, y: 0 };
@@ -120,8 +125,8 @@ function checkChapter(name) {
     // lit: undimmed inside, dimmed outside, measured against the same frame of the source
     const litR = [0, 1].map((k) => stats(ren[k], box).mean / Math.max(1, stats(raw[k], box).mean));
     const dimR = [0, 1].map((k) => ringMean(ren[k], s.box, s.labBox) / Math.max(1, ringMean(raw[k], s.box, s.labBox)));
-    if (Math.min(...litR) < K.litRatio) why.push(`dim cut-out ${r3(Math.min(...litR))}`);
-    if (Math.max(...dimR) > K.dimRatio) why.push(`no scrim ${r3(Math.max(...dimR))}`);
+    if (!short && Math.min(...litR) < K.litRatio) why.push(`dim cut-out ${r3(Math.min(...litR))}`);
+    if (!short && Math.max(...dimR) > K.dimRatio) why.push(`no scrim ${r3(Math.max(...dimR))}`);
 
     // content: the cut-out is over UI, not flat background
     const sd = Math.max(...raw.map((f) => stats(f, box).sd));
@@ -129,7 +134,7 @@ function checkChapter(name) {
 
     // stable: the frame under the cut-out has not moved by the end of the hold
     const drift = diff(raw[0], raw[1], box);
-    if (drift > K.driftMax) why.push(`drift ${r3(drift)}`);
+    if (!short && drift > K.driftMax) why.push(`drift ${r3(drift)}`);
 
     // label clear of its own spotlight
     if (overlaps(s.labBox, s.box)) why.push('label covers spotlight');
