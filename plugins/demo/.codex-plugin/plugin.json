@@ -1,7 +1,7 @@
 {
   "name": "demo",
   "version": "0.2.0",
-  "description": "Film any running app as real, re-recordable product footage, then compose it into a styled walkthrough video",
+  "description": "Film any running app as real, re-recordable product footage, compose it into a styled walkthrough video, then export a README GIF and an interactive click-through",
   "author": {
     "name": "Steven Gonsalvez",
     "url": "https://github.com/stevengonsalvez"
@@ -15,11 +15,12 @@
     "video",
     "capture",
     "playwright",
-    "hyperframes"
+    "hyperframes",
+    "gif"
   ],
   "interface": {
     "displayName": "Demo",
-    "shortDescription": "Capture a product demo from a live app and compose it into a video",
+    "shortDescription": "Capture a product demo from a live app, compose it into a video, export a GIF or click-through",
     "category": "delivery",
     "capabilities": [
       "Instructions"

@@ -1,18 +1,21 @@
 # demo
 
-Film any running app as real product footage, then compose that footage into a styled
-walkthrough video. Three skills:
+Film any running app as real product footage, compose that footage into a styled
+walkthrough video, then export it for places a video player does not reach. Four skills:
 
 | Skill | Does |
 |---|---|
 | `demo:capture` | Drives a real browser through an app with Playwright and records it: real clicks, real navigation, sharp in-browser camera zooms. Emits per-chapter mp4 plus `events.json` (timed marks with element rects and the camera box). |
 | `demo:compose` | Turns that output plus a small config into the finished video: spotlight and short label at each mark, chapter cards, sound effects timed from the capture, optional music bed and narration whose words fire the spotlights, -14 LUFS mix, WebVTT captions and chapters. Renders with HyperFrames. |
+| `demo:export` | Turns the finished demo into a README bundle (looping GIF, animated WebP, poster and a `<picture>` snippet that shows reduced-motion readers the poster) and a self-contained interactive click-through page, one step per mark, from the capture's lossless frames. |
 | `demo:brag` | Routes to the upstream [brag](https://github.com/latent-spaces/brag) skill for a launch video read from a repository rather than a running app. |
 
 ```
 beats.mjs ──▶ demo:capture ──▶ takes/<chapter>.mp4 + events.json ──▶ demo:compose ──▶ demo.mp4
-                   │                                                      │
-             real clicks, zooms                             spotlights, labels, cards
+                   │                                                      │       │
+             real clicks, zooms                             spotlights, labels,   ▼
+                                                            cards           demo:export
+                                                                      GIF/WebP/poster + click-through
 ```
 
 ## Install
@@ -49,6 +52,8 @@ committed to this repository.
 ## Which skill
 
 - A logged-in app whose UI you want to show: `demo:capture`, then `demo:compose`.
+- A demo for a README, docs page or anywhere without a video player: `demo:export` after
+  `demo:compose` (a looping GIF bundle, or an interactive click-through).
 - A repository you want to announce: `demo:brag`.
 - Re-cutting existing footage with different labels or branding: `demo:compose` alone. The
   capture stays annotation-free so annotations are re-timeable without re-recording.
