@@ -140,6 +140,8 @@ function interactive() {
   if (skipped) console.warn(`warn: ${skipped} click/type cues carry no target rect, so they are not steps (demo:capture records only their time)`);
   // This run's files only: step images, page and steps.json from an earlier run must not linger.
   for (const f of readdirSync(out)) if (/^(\.?step-\d+\.(webp|png)|index\.html|steps\.json)$/.test(f)) rmSync(join(out, f));
+  const webpBy = hasEncoder('libwebp') ? 'ffmpeg' : which('cwebp') ? 'cwebp' : null;
+  if (!webpBy) console.warn(`warn: no WebP encoder (${FFMPEG()} has no libwebp, cwebp is not installed): step images are PNG, about 2.7x the size. Install the webp package for cwebp`);
   const imgs = [], hot = [];
   for (const [k, s] of S.entries()) {
     const png = `${C.takes}/${s.chapter}/cfr/${String(s.frame).padStart(5, '0')}.png`;
