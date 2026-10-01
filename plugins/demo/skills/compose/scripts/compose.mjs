@@ -543,7 +543,8 @@ function chapter(an, sp) {
     `tl.fromTo(${q('kick')}, { opacity: 0, x: -24 }, { opacity: 1, x: 0, duration: ${F(0.5)}, ease: "power3.out" }, ${F(0.15)});`,
     `tl.fromTo("#${name}-ttl .w", { yPercent: 108 }, { yPercent: 0, duration: ${F(0.7)}, ease: "power4.out", stagger: ${F(0.06)} }, ${F(0.22)});`,
     `tl.fromTo(${q('rule')}, { scaleX: 0 }, { scaleX: 1, duration: ${F(0.5)}, ease: "power2.out" }, ${F(0.45)});`,
-    `tl.fromTo([${q('box')}, ${q('ghost')}], { opacity: 1, y: 0, filter: "blur(0px)" }, { opacity: 0, y: -28, filter: "blur(8px)", duration: ${r3(cardEnd - CARD + F(0.2))}, ease: "power2.in", immediateRender: false }, ${r3(CARD - F(0.2))});`,
+    `tl.fromTo(${q('box')}, { opacity: 1, y: 0, filter: "blur(0px)" }, { opacity: 0, y: -28, filter: "blur(8px)", duration: ${r3(cardEnd - CARD + F(0.2))}, ease: "power2.in", immediateRender: false }, ${r3(CARD - F(0.2))});`,
+    `tl.fromTo(${q('ghost')}, { opacity: 0.055 }, { opacity: 0, duration: ${r3(cardEnd - CARD + F(0.2))}, ease: "power2.in", immediateRender: false }, ${r3(CARD - F(0.2))});`,
   ];
   // The window arrives tilted and eases flat before the first spotlight lights; the transform is
   // then reset to 2D identity so the footage is never resampled through a 3D layer.
