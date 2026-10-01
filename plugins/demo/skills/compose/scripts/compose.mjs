@@ -303,15 +303,20 @@ function retime(an, sp, freezes = []) {
   // Narration freezes (audio.mjs fitNarration): whole frames of output inserted at a source point.
   // Every piece from there on starts that much later, and the fps filter repeats the frame before
   // the jump. Whole frames leave the frame phases above untouched.
+  // A freeze at the very end of the kept footage (a hold reaching the end of the take) has no piece
+  // after it to push: it holds the last frame instead (renderFootage's tpad), as `tail`, plus 0.5s
+  // more so the chapter's closing fade starts after the spotlight's hold, not on top of it.
   let held = 0;
   for (const p of pieces) { held = freezes.reduce((a, f) => a + (toU(f.t) <= p.u0 + 1e-9 ? f.d : 0), 0); p.o0 += held; }
-  nominal += held;
+  let tail = freezes.reduce((a, f) => a + (toU(f.t) >= uEnd - 1e-9 ? f.d : 0), 0);
+  nominal += held + tail;
+  if (tail) { tail += 0.5; nominal += 0.5; }
   const outOfU = (u) => {
     const p = pieces.find((q) => u < q.u1) ?? pieces.at(-1);
     const x = Math.min(u, p.u1) - p.u0;
-    return p.o0 + p.sc * (p.k0 * x + (p.k1 - p.k0) * x * x / (2 * (p.u1 - p.u0)));
+    return p.o0 + p.sc * (p.k0 * x + (p.k1 - p.k0) * x * x / (2 * (p.u1 - p.u0))) + (u >= uEnd - 1e-9 && tail ? tail - 0.5 : 0);
   };
-  return { pieces, footDur: nominal, toOut: (t) => outOfU(toU(t)), kept: an.kept, U };
+  return { pieces, tail, footDur: nominal, toOut: (t) => outOfU(toU(t)), kept: an.kept, U };
 }
 
 // Write the re-timed footage: cuts dropped, pieces re-timed, resampled to C.fps and scaled to the
@@ -333,7 +338,7 @@ function renderFootage(an, rt, out) {
   }
   const pix = execFileSync(C.ffprobe, ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=pix_fmt', '-of', 'csv=p=0', an.mp4]).toString().trim();
   execFileSync(C.ffmpeg, ['-nostdin', '-loglevel', 'error', '-y', '-i', an.mp4,
-    '-vf', `select='${sel}',setpts='(st(0,${u});${o})/TB',fps=${C.fps},scale=${an.srcW >> 1 << 1}:${an.srcH >> 1 << 1}:flags=lanczos,tpad=stop_mode=clone:stop_duration=0.2`,
+    '-vf', `select='${sel}',setpts='(st(0,${u});${o})/TB',fps=${C.fps},scale=${an.srcW >> 1 << 1}:${an.srcH >> 1 << 1}:flags=lanczos,tpad=stop_mode=clone:stop_duration=${f(0.2 + rt.tail)}`,
     '-an', '-c:v', /^(gbr|rgb|bgr)/.test(pix) ? 'libx264rgb' : 'libx264', '-qp', '0', '-preset', 'veryfast', out]);
 }
 
