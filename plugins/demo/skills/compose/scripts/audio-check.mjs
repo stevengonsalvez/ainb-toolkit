@@ -2,7 +2,7 @@
 // audio-check.mjs: the sound layer's timing logic on synthetic input, no TTS, no render, a second.
 // node audio-check.mjs   (exit 1 on the first failure)
 import assert from 'node:assert/strict';
-import { parseLine, align, fitNarration, locateAnchor } from './audio.mjs';
+import { parseLine, align, fitNarration, locateAnchor, fitGrid } from './audio.mjs';
 import { vtt } from './captions.mjs';
 
 // 1. `{@name}` marks the word after it; without one the first word is the anchor.
@@ -56,6 +56,21 @@ for (const f of freezes) assert.ok(Math.abs(f.d * 30 - Math.round(f.d * 30)) < 1
   const out = vtt([{ start: 0, end: 1, text: 'Fares & <b>tax</b> --> more' }]);
   assert.ok(out.includes('Fares &amp; &lt;b&gt;tax&lt;/b&gt; --&gt; more'), out);
   assert.equal(out.split('-->').length, 2, 'a cue text --> reads as a second timing line');
+}
+
+// 3e. The beat grid is fitted to the bed's onsets, not taken from the detector: a detector that is
+//     1.4% fast (as hyperframes beats was on a 100 BPM tick bed) still yields the true period and
+//     phase, and onsets with no beat in them are refused (contrast under 2.5).
+{
+  const hop = 0.005, n = 60 / hop;
+  const ticks = new Float32Array(n), noise = new Float32Array(n);
+  let q = 7; const rnd = () => ((q = (q * 48271) % 2147483647) / 2147483647);
+  for (let k = 0; k < n; k++) { noise[k] = 3 * rnd(); ticks[k] = 0.3 * rnd(); }
+  for (let t = 0.1; t < 60; t += 0.6) ticks[Math.round(t / hop)] += 20;
+  const fast = Array.from({ length: 100 }, (_, k) => 0.2 + k * 0.6 / 1.014);
+  const g = fitGrid(ticks, fast);
+  assert.ok(Math.abs(g.period - 0.6) < 0.0002 && Math.abs(g.phase - 0.1) < 0.006 && g.contrast > 2.5, `grid ${JSON.stringify(g)}`);
+  assert.ok(fitGrid(noise, fast).contrast < 2.5, 'a beatless bed passed as a beat');
 }
 
 // 4. locateAnchor finds where a tail clip starts inside a line. Synthetic speech: tone syllables in

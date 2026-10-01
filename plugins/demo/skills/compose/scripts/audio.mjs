@@ -223,30 +223,85 @@ export function fitNarration(spots, clips, timeline, N, fps = 30) {
 }
 
 // ---------- music beats ----------
-// Beat times in VIDEO seconds (music.start already taken off), from `hyperframes beats` run on
-// a throwaway project holding just the bed. Cached until the music file changes.
+// The bed's beat grid in VIDEO seconds, or null when there is no bed, `snap` is off, or the bed has
+// no beat steady enough to cut on (said once, and the cuts are simply not snapped).
+// `hyperframes beats` gives the tempo; the grid itself is then fitted to the bed's own onsets, a
+// steady period and phase, because the detector's beats can drift: on a 100 BPM tick bed it
+// reported 101.4 BPM, which walked its beats 0.8s off the ticks over a minute. Fitted on four beds
+// (100 BPM ticks, 100 BPM pad and kick, 128 BPM four-on-the-floor kick, a drone with no beat):
+// every tempo exact to 0.01 BPM, phase within 15ms of the measured onsets, and the drone refused.
+const ONSET_HOP = 0.005, MIN_CONTRAST = 2.5;
 export function beatGrid(C) {
   const A = audioSettings(C);
   if (!A?.music || !A.music.snap) return null;
   const dir = `${C.out}/work/audio/beats`, name = basename(A.music.file);
-  const json = `${dir}/beats/${name}.json`;
-  if (!existsSync(json) || statSync(json).mtimeMs < statSync(A.music.file).mtimeMs) {
+  const json = `${dir}/beats/${name}.json`, fitted = `${dir}/grid.json`;
+  if (!existsSync(fitted) || statSync(fitted).mtimeMs < statSync(A.music.file).mtimeMs) {
     rmSync(dir, { recursive: true, force: true }); mkdirSync(dir, { recursive: true });
     copyFileSync(A.music.file, `${dir}/${name}`);
     writeFileSync(`${dir}/index.html`, `<!doctype html><html><head><meta charset="UTF-8"></head><body>
 <div id="root" data-composition-id="beats" data-start="0" data-duration="1" data-width="320" data-height="180">
 <audio id="music" data-timeline-role="music" src="${name}" data-start="0" data-duration="1"></audio>
 </div><script>window.__timelines = {};</script></body></html>\n`);
-    hf(['beats', dir, '--json'], dir);
+    let grid;
+    try {
+      hf(['beats', dir, '--json'], dir);
+      const beats = JSON.parse(readFileSync(json, 'utf8')).beats.map((b) => b.time);
+      grid = fitGrid(onsetEnvelope(decode(C, ['-i', A.music.file], 1)), beats);
+    } catch (e) { grid = { error: String(e.message).split('\n')[0] }; }
+    writeFileSync(fitted, JSON.stringify(grid));
   }
-  // The bed loops (mix), so the grid repeats with it: beat b of pass k sits at video time
-  // k * len + b - start, for any length of video.
-  const beats = JSON.parse(readFileSync(json, 'utf8')).beats.map((b) => b.time), len = probe(C, A.music.file), off = A.music.start;
-  const near = (t) => { const k = Math.floor((t + off) / len); return [k - 1, k, k + 1].flatMap((q) => beats.map((b) => q * len + b - off)).filter((v) => v > 0); };
+  const g = JSON.parse(readFileSync(fitted, 'utf8'));
+  if (g.error || !(g.contrast >= MIN_CONTRAST)) {
+    console.warn(`warn: ${basename(A.music.file)}: no steady beat to cut on (${g.error || `contrast ${r3(g.contrast)}, needs ${MIN_CONTRAST}`}); cuts are not snapped`);
+    return null;
+  }
+  // The bed loops from its own start (mix), so pass q's beats sit at q * len + phase + j * period,
+  // for any length of video.
+  const len = probe(C, A.music.file), off = A.music.start;
+  const near = (t) => {
+    const out = [], q0 = Math.floor((t + off) / len);
+    for (let q = q0 - 1; q <= q0 + 1; q++) {
+      const j0 = Math.floor((t + off - q * len - g.phase) / g.period);
+      for (let j = Math.max(0, j0 - 1); j <= j0 + 2; j++) {
+        const b = g.phase + j * g.period;
+        if (b < len) out.push(q * len + b - off);
+      }
+    }
+    return out.filter((v) => v > 0);
+  };
   return {
+    bpm: r3(60 / g.period),
     after: (t) => Math.min(...near(t).filter((v) => v >= t)),
     nearest: (t) => near(t).reduce((a, v) => (Math.abs(v - t) < Math.abs(a - t) ? v : a), Infinity),
   };
+}
+// Onset strength: the rise in log energy from one 5ms hop to the next.
+export function onsetEnvelope(x) {
+  const h = Math.round(ONSET_HOP * SR), n = Math.floor(x.length / h), e = new Float32Array(n), o = new Float32Array(n);
+  for (let k = 0; k < n; k++) { let s = 0; for (let i = k * h; i < (k + 1) * h; i++) s += x[i] * x[i]; e[k] = 10 * Math.log10(s / h + 1e-10); }
+  for (let k = 1; k < n; k++) o[k] = Math.max(0, e[k] - e[k - 1]);
+  return o;
+}
+// The steady grid (period within 4% of the detector's median beat gap, any phase) that sits on the
+// most onset strength, coarse then fine; `contrast` is that grid's strength over the same grid at
+// the median other phase, near 1 when there is no beat to find.
+export function fitGrid(o, beats) {
+  if (beats.length < 4) throw new Error('fewer than 4 beats detected');
+  const gaps = beats.slice(1).map((b, i) => b - beats[i]).sort((a, b) => a - b), p0 = gaps[gaps.length >> 1], dur = o.length * ONSET_HOP;
+  const at = (t) => { const x = t / ONSET_HOP, k = Math.floor(x), f = x - k; return (o[k] ?? 0) * (1 - f) + (o[k + 1] ?? 0) * f; };
+  const score = (p, ph) => { let s = 0, m = 0; for (let t = ph; t < dur; t += p) { s += at(t); m++; } return s / m; };
+  const search = (pa, pb, ps, fs) => {
+    let best = { s: -1 };
+    for (let p = pa; p <= pb; p += ps) for (let ph = 0; ph < p; ph += fs) { const s = score(p, ph); if (s > best.s) best = { s, p, ph }; }
+    return best;
+  };
+  let b = search(p0 * 0.96, p0 * 1.04, 0.0005, ONSET_HOP);
+  b = search(b.p - 0.0006, b.p + 0.0006, 0.00002, 0.001);
+  const others = [];
+  for (let ph = 0; ph < b.p; ph += ONSET_HOP) if (Math.abs(ph - b.ph) > 0.05 && Math.abs(ph - b.ph) < b.p - 0.05) others.push(score(b.p, ph));
+  others.sort((x, y) => x - y);
+  return { period: b.p, phase: b.ph, detected: r3(60 / p0), contrast: r3(Math.min(1e6, b.s / (others[others.length >> 1] || 1e-9))) };
 }
 
 // ---------- sound effects ----------
