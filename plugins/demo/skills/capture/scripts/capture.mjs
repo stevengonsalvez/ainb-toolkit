@@ -602,7 +602,11 @@ async function deterministic({ W, H, cap, dir, state, overlayArgs }) {
   const QMAX = 4, queue = [], busy = [], kids = new Set();
   let cancelled = false, tempBytes = 0;
   const abort = e => { if (failure || closing) return; failure = e; pumping = false; rejectFailed(e); for (const w of waiters) w.reject(e); };
+  // A browser or renderer that dies leaves CDP calls pending for good (measured: a killed browser
+  // hung the frame loop until the hard timeout), so its death ends the take at once, as a fallback.
   let closing = false;
+  browser.on('disconnected', () => abort(new Fallback('the browser exited mid-take')));
+  page.on('crash', () => abort(new Fallback('the page crashed mid-take')));
   const average = item => { queue.push(item); drain(); };
   const drain = () => {
     while (!cancelled && !failure && busy.length < 2 && queue.length) {
@@ -749,7 +753,12 @@ async function deterministic({ W, H, cap, dir, state, overlayArgs }) {
       for (const k of blurFrames) { if (spans.length && spans.at(-1)[1] === k - 1) spans.at(-1)[1] = k; else spans.push([k, k]); }
       return { frames: n, dur: (n - 1) / fps, fps, dpr, blurSpans: spans, blurStats: stats };
     },
-    close: async () => { closing = true; pumping = false; await pump.catch(() => {}); await cancelBlur(); await browser.close(); },
+    // The frame loop may be stuck in a call to a dead browser: wait for it a few seconds at most.
+    close: async () => {
+      closing = true; pumping = false;
+      await Promise.race([pump.catch(() => {}), new Promise(r => setTimeout(r, 3000))]);
+      await cancelBlur(); await browser.close().catch(() => {});
+    },
   };
   return rec;
 }
