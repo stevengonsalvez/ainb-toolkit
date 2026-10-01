@@ -542,7 +542,7 @@ async function deterministic({ W, H, cap, dir, state, overlayArgs }) {
     for (let j = 0; j < K; j++) {
       const f = j / K, kk = 1 + (w.k - 1) * f, src = ([X, Y]) => [((X - w.ox * f) / kk).toFixed(3), ((Y - w.oy * f) / kk).toFixed(3)];
       const [p0, p1, p2, p3] = [[0, 0], [WW, 0], [0, HH], [WW, HH]].map(src);
-      parts.push(`[f${j}]perspective=x0=${p0[0]}:y0=${p0[1]}:x1=${p1[0]}:y1=${p1[1]}:x2=${p2[0]}:y2=${p2[1]}:x3=${p3[0]}:y3=${p3[1]}:interpolation=cubic[g${j}]`);
+      parts.push(`[f${j}]perspective=x0=${p0[0]}:y0=${p0[1]}:x1=${p1[0]}:y1=${p1[1]}:x2=${p2[0]}:y2=${p2[1]}:x3=${p3[0]}:y3=${p3[1]}:interpolation=linear[g${j}]`);
     }
     return `,format=gbrp,split=${K}${Array.from({ length: K }, (_, j) => `[f${j}]`).join('')};${parts.join(';')};${Array.from({ length: K }, (_, j) => `[g${j}]`).join('')}mix=inputs=${K}`;
   };
