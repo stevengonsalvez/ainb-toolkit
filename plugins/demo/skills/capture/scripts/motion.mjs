@@ -53,6 +53,8 @@ class Channel {
   step(dt, p) { if (dt > 0) [this.x, this.v] = ((r) => [this.to + r[0], r[1]])(spring1d(this.x - this.to, this.v, dt, p.k, p.c, p.m)); }
   snap(x) { this.x = this.to = x; this.v = 0; }
 }
+// A copy that can be stepped ahead without moving the original (for looking over a shutter).
+const copy = (o) => { const c = Object.create(Object.getPrototypeOf(o)); for (const [k, v] of Object.entries(o)) c[k] = v instanceof Channel ? Object.assign(new Channel(0), v) : v; return c; };
 
 // Camera over a W x H CSS viewport: scale s plus the framing centre (u, v) in travel space,
 // where u = 0 puts the visible box's left edge at 0 and u = 1 its right edge at W. Any u in
@@ -94,17 +96,7 @@ export class Camera {
     return false;
   }
   get wide() { return this.s.x <= PREAIM && this.s.to === 1; }
-}
-
-// How far the image moves between two camera boxes, in output (CSS) px: the largest
-// displacement of a frame corner. Drives motion blur.
-export function camMotion(a, b, W, H) {
-  let d = 0;
-  for (const [fx, fy] of [[0, 0], [1, 0], [0, 1], [1, 1]]) {
-    const px = b.x + fx * b.w, py = b.y + fy * b.h;              // page point at b's corner
-    d = Math.max(d, Math.hypot((px - a.x) * a.s - fx * W, (py - a.y) * a.s - fy * H));
-  }
-  return d;
+  clone() { return copy(this); }
 }
 
 // Cursor: a 2D spring chasing waypoints in page CSS px. Move targets come from beats; a click
@@ -155,6 +147,7 @@ export class Cursor {
     return t + lead;
   }
   settled() { return Math.hypot(this.x.x - this.x.to, this.y.x - this.y.to) < 0.5 && Math.hypot(this.x.v, this.y.v) < 40; }
+  clone() { return copy(this); }
 }
 
 // Tilt from horizontal velocity (px/s): Cap rotates by dx over the last 400ms * 0.03 * amount

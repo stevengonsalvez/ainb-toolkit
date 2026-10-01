@@ -34,7 +34,7 @@ First run only, from that directory: `npm ci`, then
 
 ```bash
 cd "$SKILL_DIR"
-npm run check                                   # self-check, ~6 min, no app needed
+npm run check                                   # self-check, ~8 min, no app needed
 node scripts/run.mjs /path/to/beats.mjs [chapter ...]   # capture + encode each chapter
 scripts/montage.sh <out>/<chapter>.mp4          # 4x3 contact sheet; LOOK at it
 ```
@@ -98,7 +98,7 @@ capture.mode
 capture: {
   mode: 'deterministic',  // or 'screencast'
   dpr: 2, fps: 60,        // pixel density and frame rate (deterministic only)
-  blur: { samples: 4, max: 16, spacing: 2, shutter: 0.5, threshold: 2 },  // on by default; false for drafts (about 3x faster)
+  blur: { samples: 4, max: 64, spacing: 1.5, shutter: 0.5, threshold: 2 },  // on by default; false for drafts, spacing 4 in between
   network: 'auto',        // or 'pause' / 'advance': requests that hold page time, see above
   unstickMs: 1500,        // wall ms a frame waits on the network before 'auto' forces it
   stallMs: 10000,         // wall ms before falling back: page time stuck, or any wait under 'pause'
@@ -106,20 +106,49 @@ capture: {
 }
 ```
 
-**Motion blur** (deterministic only, ON by default). A frame where the camera or the pointer moved more than
-`threshold` CSS px since the last frame is rendered `samples` or more times across `shutter` of the
-frame interval (0.5: a 180 degree shutter) and averaged. Static pixels average to themselves, so a
-hold stays exactly as sharp as without blur, and only what moves smears. The count grows with
-speed so samples sit at most `spacing` px apart, up to `max`: four samples on a fast zoom filmed
-separate ghost copies of the text (looked at), the adaptive count a continuous smear.
-`events.json` lists the blurred frames as `capture.blur.spans` (frame index ranges).
+**Motion blur** (deterministic only, ON by default). Pick the setting by how final the take is.
+Measured on the ferry example (8 cores, no GPU, one take at a time):
 
-**What it costs.** Measured on the ferry example (8 cores, no GPU, one take at a time):
-deterministic capture runs at about **19x real time with blur** and about **6.5x without**
-(screencast: 1x). For a 5-minute demo that is roughly **95 minutes of filming with blur** against
-about 33 minutes without. Blur is the final-take setting. For draft takes, while beats are still
-changing, set `capture: { blur: false }` (file-wide or per chapter): same 2x, 60fps, deterministic
-footage, a third of the wait, only fast moves are sharp instead of smeared. Fact 14 has the per-chapter numbers.
+| setting | capture time | a 5-minute demo films in | fast moves look |
+|---|---|---|---|
+| `capture: { blur: false }` (drafts) | about 6.5x real time | about 33 minutes | sharp, stepping frame to frame |
+| `capture: { blur: { spacing: 4 } }` (middle ground) | about 17x | about 1 hour 25 minutes | smeared, faint steps up close |
+| default (final takes) | about 35x | about 2 hours 55 minutes | smooth smear |
+
+Screencast mode films at 1x. Set the option file-wide or per chapter: the footage is the same 2x,
+60fps and deterministic in every case, only fast moves differ. Fact 14 has the per-chapter numbers.
+
+How it works. Before each frame the rig steps copies of the spring solver across the shutter
+(`shutter` of the frame interval, 0.5: a 180 degree shutter) and measures how far anything on
+screen moves over it: the frame corner the camera moves most, or the pointer. Past `threshold`
+output px, the frame is rendered enough times that the samples sit at most `spacing` (1.5) output
+px apart, from `samples` (4) up to `max` (64), and averaged. Static pixels average to themselves,
+so a hold stays exactly as sharp as without blur.
+
+Two things the samples alone leave behind, both looked at on a fast ferry zoom (frame 380 of
+fares, 2560x1440): at the old spacing of about 4px every glyph showed as a stack of striated
+copies, and even at 1.5px each sample lands its glyph edges on whole pixels, so faint steps remain.
+So a frame the camera moves also gets a gap fill: the averaged frame is mixed with copies of
+itself warped (linear interpolation) by fractions of one gap's camera move: a scale about the
+zoom's fixed point plus a shift, so radial for a zoom and linear for a pan. The gap it spans is the
+wider of the shutter's first and last (a spring speeds up or slows down across it), and the copies
+sit at most 0.5px apart at the frame corner that move moves furthest. The fixed point of a zoom,
+which barely moves, stays as sharp as the samples. A frame where only the pointer moves gets no
+fill.
+
+Averaging runs in ffmpeg alongside the capture, two frames at a time; while four blurred frames
+wait, rendering waits too, so temporary sub-frames stay bounded (16 MB at most on the ferry
+takes). A job that fails, or exits 0 without writing its frame, stops the take at once.
+
+Measured with the anisotropy of the glyph region (structure tensor, smaller over larger
+eigenvalue: 0 is a perfect smear, the unblurred frame scores 0.84), at the same camera pose in
+each take: at peak speed (frame 380) 0.226 at the old spacing without fill, 0.207 at `spacing: 4`,
+0.180 at the default; slowing down near the end of the zoom (10 frames later) 0.399, 0.349 and
+0.348. Looked at: the old frames show stacked copies (two clear edges per glyph while slowing
+down), the default a continuous smear. The default ferry
+takes peak at 47 and 64 samples per frame, at most 1.5px apart (1.94px on the fares frames that hit
+the cap, gap-filled too). `events.json` records `capture.blur.spans` (blurred frame ranges) and
+`maxSamples`, `maxGap`, `filled` (frames that got the gap fill) and `peakTempMB`.
 
 Rules the deterministic path imposes, all measured:
 - Page time only moves inside the rig's frame loop. Beats are fine as written; custom code
@@ -274,7 +303,7 @@ file's `cursor` keys one by one.
 11. **Deterministic capture needs chrome-headless-shell and the density flag.** `HeadlessExperimental.beginFrame` is gone from full Chrome 147+ and survives in the headless shell, which Playwright 1.62 launches for headless Chromium (Chrome for Testing 151, revision 1234). The density must come from `--force-device-scale-factor`: an emulated deviceScaleFactor reports 2 but beginFrame returns 1280x720 pixels. The rig checks the first frame's size and falls back if it is wrong.
 12. **Deterministic frames are exact.** `npm run check`: 2560x1440, `avg_frame_rate 60/1`, frame count = duration x 60 + 1, and 0 repeated frames out of 122 on a page animating every frame. The first ~24 beginFrames after a load repeat while the pipeline primes, so the rig draws 30 before filming. The PNGs survive `encode.sh` bit-exact (libx264rgb `-qp 0`, PSNR inf against the frame). Identical consecutive frames (a still hold) are hard links, so a hold costs no disk.
 13. **An open SSE stream and any dynamic `import()` hold virtual time for good; a websocket does not.** Under `pauseIfNetworkFetchesPending` page time stood still until something forced it: a 0ms and an 800ms lazy module alike, and a lazy route of a real SPA (its first deterministic take fell back to screencast before `network: 'auto'` existed). `npm run check` asserts all three outcomes: the lazy module stays deterministic under `auto`, the SSE page films on under `auto` and says so once, and falls back to screencast under `pause` and says so once. A websocket pushing every 200ms did not hold it.
-14. **Deterministic capture costs wall time, most of it motion blur.** The ferry example on 8 cores without a GPU, one run at a time: departures (12.5s of footage) filmed in 233s with blur, 84s with `blur: false`, 12s in screencast mode; fares (11.0s) in 210s, 69s and 11s. So about 19x real time with blur and 6.5x without: blur renders 254 of departures' 751 frames again at 4 to 16 samples, about 0.6s more per blurred frame. A 5-minute demo: about 95 minutes with blur (the default), about 33 with `blur: false` (drafts).
+14. **Deterministic capture costs wall time, most of it motion blur.** The ferry example on 8 cores without a GPU, one run at a time: departures (12.5s of footage) filmed in 407s with the default blur, 209s with `blur: { spacing: 4 }`, 84s with `blur: false`, 12s in screencast mode; fares (10.9 to 11.0s) in 403s, 197s, 69s and 11s. So about 35x, 17x and 6.5x real time. The default renders 248 of departures' 753 frames again at up to 47 samples, with the averaging running alongside on the same cores. Running the gap fill on tmix's last output only (it used to fill all N outputs and keep the last, identical result) took the default from 530s and 459s, and `spacing: 4` from 259s and 265s. A 5-minute demo: about 2 hours 55 minutes with the default, 1 hour 25 minutes at `spacing: 4`, 33 minutes with `blur: false`.
 
 ## Defects the rig already handles
 
@@ -290,7 +319,7 @@ One per chapter, written next to the frames at `<out>/<chapter>/events.json`; `<
   "chapter": "home-to-reports",
   "viewport": { "width": 1280, "height": 720 },
   "dpr": 2, "fps": 60,
-  "capture": { "mode": "deterministic", "blur": { "samples": 4, "shutter": 0.5, "spans": [[34, 51]] } },
+  "capture": { "mode": "deterministic", "blur": { "samples": 4, "shutter": 0.5, "spans": [[34, 51]], "maxSamples": 33, "maxGap": 1.5, "filled": 18 } },
   "dur": 10.85,
   "frames": 652,
   "events": [
@@ -374,4 +403,4 @@ Takes land in `<copy>/takes/`, where the compose config expects them.
   demo:compose makes the only lossy encode. Browsers cannot play the lossless profiles, ffmpeg
   and the montage can.
 - `scripts/montage.sh`: contact sheet for grading a take.
-- `scripts/selfcheck.mjs`: local throwaway server; asserts the springs (a retarget keeps velocity, a zoom from wide is pre-aimed, the camera settles exactly, a planned click lands within half a pixel), path guard (including a sibling path such as `/reports-archive`), zoom framing, events.json schema, 2560x1440 at exactly 60fps with every frame in the mp4, 0 repeated frames on an animated page, the SSE fallback with its one message, motion blur only inside camera moves, non-blank head, non-splash tail, screencast hold frame count, scroll-then-zoom in both modes, bare-text mis-click failing, one cursor on a page with an iframe, the cursor mounting where storage throws, every click restarting its feedback, a `type` beat typing key by key in both modes with a hidden cursor, `pace: 2` lengthening a hold, `loggedInSel` re-minting a dead session, and the pointer keeping its size under a 2x zoom and after navigating while zoomed, in both modes, with the click ring taking `cursor.ring`.
+- `scripts/selfcheck.mjs`: local throwaway server; asserts the springs (a retarget keeps velocity, a zoom from wide is pre-aimed, the camera settles exactly, a planned click lands within half a pixel), path guard (including a sibling path such as `/reports-archive`), zoom framing, events.json schema, 2560x1440 at exactly 60fps with every frame in the mp4, 0 repeated frames on an animated page, the SSE fallback with its one message, motion blur only inside camera moves with samples at most 1.5px apart and camera frames gap-filled (also when capped), a failing blur job failing the take, non-blank head, non-splash tail, screencast hold frame count, scroll-then-zoom in both modes, bare-text mis-click failing, one cursor on a page with an iframe, the cursor mounting where storage throws, every click restarting its feedback, a `type` beat typing key by key in both modes with a hidden cursor, `pace: 2` lengthening a hold, `loggedInSel` re-minting a dead session, and the pointer keeping its size under a 2x zoom and after navigating while zoomed, in both modes, with the click ring taking `cursor.ring`.

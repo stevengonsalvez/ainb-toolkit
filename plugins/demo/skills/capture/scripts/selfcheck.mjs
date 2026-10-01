@@ -57,6 +57,8 @@ const out = fs.mkdtempSync(path.join(os.tmpdir(), 'demo-capture-check-'));
 const ffbin = name => process.env[name.toUpperCase()] || (fs.existsSync(`/usr/bin/${name}`) ? `/usr/bin/${name}` : name);
 const FFMPEG = ffbin('ffmpeg'), FFPROBE = ffbin('ffprobe');
 const SC = { mode: 'screencast' };
+// Motion blur multiplies capture time (fact 14); takes that do not test it film without it.
+const NB = { blur: false };
 const ev = t => JSON.parse(fs.readFileSync(path.join(t.dir, 'events.json'), 'utf8'));
 // Output frame k of a take (cfr/ is the constant-rate sequence: PNG when deterministic, JPEG from screencast).
 const frame = (t, k) => { const f = path.join(t.dir, 'cfr', String(k).padStart(5, '0')); return fs.existsSync(`${f}.png`) ? `${f}.png` : `${f}.jpg`; };
@@ -66,6 +68,21 @@ const yavg = (img, vf = '') => Number(execFileSync(FFMPEG, ['-v', 'error', '-i',
 const luma = img => yavg(img);
 const probe = mp4 => JSON.parse(execFileSync(FFPROBE, ['-v', 'error', '-count_frames', '-select_streams', 'v:0',
   '-show_entries', 'stream=width,height,avg_frame_rate,nb_read_frames', '-of', 'json', mp4]).toString()).streams[0];
+// An ffmpeg stand-in for capture's blur jobs (the only calls with tmix): every other call, and
+// every job after the first, runs the real ffmpeg. For the first job, `nowrite` exits 0 without
+// writing its frame; `stall` marks `started`, waits, then marks `finished` and runs.
+const ffStandIn = (mode, marks) => {
+  const f = path.join(marks, `ffmpeg-${mode}.sh`);
+  fs.writeFileSync(f, `#!/bin/sh
+case "$*" in *tmix=*) ;; *) exec "${FFMPEG}" "$@";; esac
+if mkdir "${marks}/first" 2>/dev/null; then
+  ${mode === 'nowrite' ? 'exit 0' : `touch "${marks}/started"; sleep 8; touch "${marks}/finished"`}
+fi
+exec "${FFMPEG}" "$@"
+`);
+  fs.chmodSync(f, 0o755);
+  return f;
+};
 const encode = (dir, mp4) => execFileSync(path.join(import.meta.dirname, 'encode.sh'), [dir, mp4]);
 
 try {
@@ -182,13 +199,13 @@ try {
   //    through and the take stays deterministic with latency edited out elsewhere. A stream that
   //    never ends holds it at every frame: 'auto' films on with page time running regardless and
   //    says so; 'pause' instead falls back to screencast, says so once, and records the mode it used.
-  const lz = await capture({ base, out, chapter: 'lazy', beats: [{ goto: '/lazy' }, { click: '#go', ready: 'body[style*="rgb(255, 255, 255)"]', hold: 300 }] });
+  const lz = await capture({ base, out, chapter: 'lazy', capture: NB, beats: [{ goto: '/lazy' }, { click: '#go', ready: 'body[style*="rgb(255, 255, 255)"]', hold: 300 }] });
   assert.deepEqual([lz.mode, ev(lz).capture.network], ['deterministic', 'pause'], `lazy import: ${JSON.stringify(ev(lz).capture)}`);
   assert.ok(luma(last(lz)) > 200, 'lazy module never loaded');
   const warned = []; const warn = console.warn; console.warn = (...a) => { warned.push(a.join(' ')); };
   let fb, ss;
   try {
-    ss = await capture({ base, out, chapter: 'sse-auto', beats: [{ goto: '/sse', hold: 600 }] });
+    ss = await capture({ base, out, chapter: 'sse-auto', capture: NB, beats: [{ goto: '/sse', hold: 600 }] });
     fb = await capture({ base, out, chapter: 'sse', capture: { stallMs: 3000, network: 'pause' }, beats: [{ goto: '/sse', hold: 600 }] });
   } finally { console.warn = warn; }
   assert.deepEqual([ss.mode, ev(ss).capture.network], ['deterministic', 'advance'], `SSE under auto: ${JSON.stringify(ev(ss).capture)}`);
@@ -198,22 +215,35 @@ try {
   assert.equal(warned.filter(w => /re-filming it in screencast mode/.test(w)).length, 1, `fallback message: ${JSON.stringify(warned)}`);
   assert.equal(warned.filter(w => /page time running regardless of the network/.test(w)).length, 1, `auto message: ${JSON.stringify(warned)}`);
 
-  // 5b. A fallback while blur jobs are still averaging: they are killed and awaited before the
+  // 5b. A fallback while a blur job is still averaging: jobs are killed and awaited before the
   //     re-film wipes the directory. Before, a job finishing late threw ENOENT, uncaught, and took
-  //     node down (reproduced at a 12.5s timeout), or could write a stray PNG into the new take.
-  //     Two timeouts land the fallback at different points of a take that is blurred throughout.
+  //     node down, or could write a stray PNG into the new take. Event-driven: the first job's
+  //     ffmpeg stand-in marks `started` and waits; the test then kills the browser, which forces
+  //     the fallback with that job in flight. `finished` must never appear (the job was killed).
   const zz = [{ goto: '/plain' }];
-  for (let i = 0; i < 8; i++) zz.push({ zoom: { on: '#z', scale: 2.5, ms: 400 } }, { wide: 400 });
+  for (let i = 0; i < 4; i++) zz.push({ zoom: { on: '#z', scale: 2.5, ms: 400 } }, { wide: 400 });
+  const marks = fs.mkdtempSync(path.join(out, 'marks-'));
   console.warn = () => {};
+  const ffPrev = process.env.FFMPEG; process.env.FFMPEG = ffStandIn('stall', marks);
+  let mb;
   try {
-    for (const ms of [10000, 12500]) {
-      const mb = await capture({ base, out, chapter: 'midblur', capture: { timeoutMs: ms }, beats: zz });
-      await new Promise(r => setTimeout(r, 3000));          // room for a late job to misbehave
-      const left = fs.readdirSync(path.join(mb.dir, 'cfr')).filter(f => !f.endsWith('.jpg'));
-      assert.ok(mb.mode === 'screencast' && /hard timeout/.test(ev(mb).capture.fallback) && !left.length && !fs.existsSync(path.join(mb.dir, 'sub')),
-        `fallback at ${ms}ms mid-blur: mode ${mb.mode}, stray ${left.slice(0, 3)}`);
-    }
-  } finally { console.warn = warn; }
+    const filming = capture({ base, out, chapter: 'midblur', beats: zz });
+    filming.catch(() => {});                               // an early reject fails the assert below, not node
+    for (let i = 0; i < 1200 && !fs.existsSync(path.join(marks, 'started')); i++) await new Promise(r => setTimeout(r, 100));
+    assert.ok(fs.existsSync(path.join(marks, 'started')), 'no blur job started');
+    for (const pid of execFileSync('pgrep', ['-P', String(process.pid), '-f', 'headless']).toString().trim().split('\n')) process.kill(+pid, 'SIGKILL');
+    // The browser's death itself must end the take (the disconnect handler), re-film included,
+    // well inside 30 s: without it the frame loop hangs on a dead CDP call until the hard timeout.
+    let late;
+    mb = await Promise.race([filming, new Promise((_, rej) => { late = setTimeout(() => rej(new Error('the take did not end within 30 s of the browser dying')), 30000); })]);
+    clearTimeout(late);
+    await new Promise(r => setTimeout(r, 2000));            // room for a late job to misbehave
+  } finally { console.warn = warn; if (ffPrev === undefined) delete process.env.FFMPEG; else process.env.FFMPEG = ffPrev; }
+  const left = fs.readdirSync(path.join(mb.dir, 'cfr')).filter(f => !f.endsWith('.jpg'));
+  assert.ok(mb.mode === 'screencast' && !fs.existsSync(path.join(marks, 'finished')) && !left.length && !fs.existsSync(path.join(mb.dir, 'sub')),
+    `fallback with a blur job in flight: mode ${mb.mode} (${ev(mb).capture.fallback}), job finished ${fs.existsSync(path.join(marks, 'finished'))}, stray ${left.slice(0, 3)}`);
+  //    And it fell back for that reason, not a generic failure.
+  assert.match(ev(mb).capture.fallback, /browser exited mid-take/, `fallback cause ${ev(mb).capture.fallback}`);
 
   // 6. Motion blur only where something moves: the camera is the only mover in this take (no
   //    clicks, no marks), so every blurred frame sits inside a camera move.
@@ -221,6 +251,23 @@ try {
   const be = ev(bl), spans = be.capture.blur.spans, mv = be.events.filter(m => m.kind === 'camera').map(m => [m.t0 * 60, m.t1 * 60]);
   assert.ok(spans.length >= 2, `expected blur on both camera moves, got ${JSON.stringify(spans)}`);
   for (const [a, b] of spans) assert.ok(mv.some(([u, v]) => a >= u - 1 && b <= v + 1), `blurred frames ${a}-${b} outside the camera moves ${JSON.stringify(mv)}`);
+  //    The sample count follows the motion over the shutter: neighbouring samples never sit more
+  //    than `spacing` (1.5) output px apart, and every camera frame gets the gap fill. Capped at 6
+  //    samples, the same move has wider gaps, still filled.
+  const bb = be.capture.blur;
+  assert.ok(bb.maxGap > 0 && bb.maxGap <= 1.5 && bb.maxSamples > 6 && bb.filled > 0, `blur sampling ${JSON.stringify(bb)}`);
+  const capped = ev(await capture({ base, out, chapter: 'blur-capped', capture: { blur: { max: 6 } }, beats: [{ goto: '/plain', hold: 300 }, { zoom: { on: '#z', scale: 2, ms: 500 } }] })).capture.blur;
+  assert.ok(capped.maxSamples === 6 && capped.maxGap > 1.5 && capped.filled > 0, `capped blur ${JSON.stringify(capped)}`);
+  //    A blur job that fails must fail the take, at once: its error used to be dropped, leaving a
+  //    hole in cfr/ that encode.sh read as the end of the take (cut short, exit 0). Two ways:
+  //    ffmpeg failing outright, and ffmpeg exiting 0 for one frame without writing it.
+  const ff = process.env.FFMPEG;
+  try {
+    process.env.FFMPEG = '/bin/false';
+    await assert.rejects(capture({ base, out, chapter: 'blur-fails', beats: [{ goto: '/plain', hold: 200 }, { zoom: { on: '#z', scale: 2, ms: 300 } }] }), /motion blur averaging failed/);
+    process.env.FFMPEG = ffStandIn('nowrite', fs.mkdtempSync(path.join(out, 'marks-')));
+    await assert.rejects(capture({ base, out, chapter: 'blur-gap', beats: [{ goto: '/plain', hold: 200 }, { zoom: { on: '#z', scale: 2, ms: 300 } }] }), /wrote no frame|is missing/);
+  } finally { if (ff === undefined) delete process.env.FFMPEG; else process.env.FFMPEG = ff; }
 
   // 7. Holds must keep producing frames (screencast only emits on repaint).
   const h = await capture({ base, out, chapter: 'hold', capture: SC, beats: [{ goto: '/a', hold: 2500 }] });
@@ -229,7 +276,7 @@ try {
   // 8. Zoom after scroll frames the target (override viewport is document-relative; under
   //    deterministic capture its x/y are device pixels too).
   const zl = {};
-  for (const [m, c] of [['det', {}], ['sc', SC]]) {
+  for (const [m, c] of [['det', NB], ['sc', SC]]) {
     const sz = await capture({ base, out, chapter: `scrollzoom-${m}`, capture: c, beats: [{ goto: '/tall' }, { scroll: 1700 }, { zoom: { on: '#w', scale: 2, ms: 400 }, hold: 800 }] });
     zl[m] = luma(last(sz));
     assert.ok(zl[m] > 200, `${m}: zoom after scroll missed the target (luma ${zl[m]})`);
@@ -270,7 +317,7 @@ try {
   // 11. type beat types key by key on the take's clock (fill() would finish in one frame), and a
   //     hidden cursor still keeps a screencast hold emitting frames.
   const ty = {};
-  for (const [m, c] of [['det', {}], ['sc', SC]]) {
+  for (const [m, c] of [['det', NB], ['sc', SC]]) {
     const t = await capture({ base, out, chapter: `type-${m}`, capture: c, cursor: { hidden: true }, beats: [{ goto: '/type' }, { type: { into: '#q', text: 'ferry times', cps: 10 } }, { hold: 1500 }] });
     ty[m] = [t.dur, luma(last(t))];
     const cue = ev(t).events.find(x => x.kind === 'type');
@@ -308,7 +355,7 @@ try {
     return white(last(t)) / before;
   };
   const cs = {};
-  for (const [m, c] of [['det', {}], ['sc', SC]]) {
+  for (const [m, c] of [['det', NB], ['sc', SC]]) {
     cs[m] = [growth(await capture({ base, out, chapter: `counter-${m}`, capture: c, beats: [{ goto: '/plain', hold: 700 }, { zoom: { on: '#z', scale: 2, ms: 300 }, hold: 700 }] })),
       growth(await capture({ base, out, chapter: `counter-nav-${m}`, capture: c, beats: [{ goto: '/plain', hold: 700 },
         { zoom: { on: '#z', scale: 2, ms: 300 } }, { name: 'go', click: '#go', expectPath: '/plain2', hold: 700 }] }))];
@@ -317,7 +364,7 @@ try {
 
   const f2 = v => v.toFixed(2);
   console.log(`selfcheck OK: springs ${JSON.stringify(springs)}; pre-aim holds the fixed point; retarget keeps velocity; settles exact; ms 0 cuts; click lands at ${press.toFixed(3)}s; shake 100ms`);
-  console.log(`selfcheck OK: main ${r.frames} frames/${r.dur.toFixed(2)}s 2560x1440@60 mp4 ${n} frames luma head ${head} tail ${tail}; anim ${md5.length} frames 0 repeats; blur spans ${JSON.stringify(spans)} inside camera moves`);
+  console.log(`selfcheck OK: main ${r.frames} frames/${r.dur.toFixed(2)}s 2560x1440@60 mp4 ${n} frames luma head ${head} tail ${tail}; anim ${md5.length} frames 0 repeats; blur spans ${JSON.stringify(spans)} inside camera moves, up to ${bb.maxSamples} samples ${bb.maxGap}px apart, capped run filled ${capped.filled} frames`);
   console.log(`selfcheck OK: lazy import stays deterministic; SSE runs on under auto, falls back to ${fb.mode} under pause, one message each; screencast hold ${h.frames} frames; scroll-zoom luma ${zl.det}/${zl.sc}; guard threw`);
   console.log(`selfcheck OK: cursor under 2x zoom det ${cs.det.map(f2)} sc ${cs.sc.map(f2)} (zoomed, after nav); ring per click ${JSON.stringify(ripple)}; type det ${f2(ty.det[0])}s sc ${f2(ty.sc[0])}s; pace ${f2(p1.dur)}s -> ${f2(p2.dur)}s; loggedInSel re-mints; sandbox errors ${sandboxErrs}`);
 } finally {
