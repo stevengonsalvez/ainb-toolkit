@@ -3,6 +3,7 @@
 // node audio-check.mjs   (exit 1 on the first failure)
 import assert from 'node:assert/strict';
 import { parseLine, align, fitNarration, locateAnchor } from './audio.mjs';
+import { vtt } from './captions.mjs';
 
 // 1. `{@name}` marks the word after it; without one the first word is the anchor.
 assert.deepEqual(parseLine('Click {@save}Save and it syncs.'), { words: ['Click', 'Save', 'and', 'it', 'syncs.'], anchor: 1, text: 'Click Save and it syncs.' });
@@ -37,6 +38,24 @@ for (const f of freezes) assert.ok(Math.abs(f.d * 30 - Math.round(f.d * 30)) < 1
   const tc = timeline(r.freezes), p = r.placed.find((x) => x.slot === 0);
   assert.ok(Math.abs(p.at + p.anchor - (tc(1.2) + 0.25)) < 1e-9, 'anchor is not on the settled spotlight');
   assert.equal(r.freezes[0].t, 1.2);
+}
+
+// 3c. A spotlight that starts before its mark (no camera to wait for: from = T - fade) and a
+//     first-mark freeze: the freeze goes where the fade starts, so the fade, and the anchor word
+//     with it, come after the freeze rather than the spotlight sitting lit through it.
+{
+  const sp = [{ T: 1.0, hold: 1.5, from: 0.75, fade: 0.25 }];
+  const r = fitNarration(sp, { intro: { dur: 3.0 }, marks: [{ dur: 1.0, anchor: 0.3 }] }, timeline, N);
+  const tc = timeline(r.freezes), p = r.placed.find((x) => x.slot === 0);
+  assert.equal(r.freezes[0].t, 0.75, 'first-mark freeze is not at the start of the fade');
+  assert.ok(Math.abs(p.at + p.anchor - (tc(0.75) + 0.25)) < 1e-9 && Math.abs(tc(0.75) + 0.25 - tc(1.0)) < 1e-9, 'anchor is not on the fade end');
+}
+
+// 3d. Caption text is escaped: '&', '<' and '-->' would otherwise be read as markup or timing.
+{
+  const out = vtt([{ start: 0, end: 1, text: 'Fares & <b>tax</b> --> more' }]);
+  assert.ok(out.includes('Fares &amp; &lt;b&gt;tax&lt;/b&gt; --&gt; more'), out);
+  assert.equal(out.split('-->').length, 2, 'a cue text --> reads as a second timing line');
 }
 
 // 4. locateAnchor finds where a tail clip starts inside a line. Synthetic speech: tone syllables in
