@@ -116,7 +116,8 @@ export function loadConfig(path) {
     format,
     // Output frame rate: render.sh passes it to hyperframes, concat.sh reads the PNGs at it,
     // check.mjs maps times to frames with it, and compose retimes footage onto its grid. One value,
-    // not a setting: only 30 has been measured end to end (the takes themselves are 30fps).
+    // not a setting: only 30 has been measured end to end. Takes are 30fps (screencast) or 60fps at 2x
+    // (deterministic); renderFootage resamples and scales either onto this grid.
     fps: 30,
     width: raw.width || FORMATS[format][0],
     height: raw.height || FORMATS[format][1],
