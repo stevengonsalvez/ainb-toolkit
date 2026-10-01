@@ -228,8 +228,8 @@ spotlight geometry rasterise at master size instead of being upscaled (HyperFram
 - **Cards**: edge-anchored type over the backdrop, an oversized ghost word (the chapter number
   on chapter cards) drifting at 5.5% opacity behind, a hairline, and an entrance per kind: title
   words rise out of a blur on expo out, chapter words rise out of line masks on power4, switch
-  cards push in from the right, the end card resolves from a blur and scale and is the one
-  segment that fades out (to `theme.bg`). Each card leaves through its seam.
+  cards push in from the right, the end card resolves from a blur and scale. Each card leaves
+  through its seam; the film's last segment, end card or chapter, fades out to `theme.bg`.
 
 Measured on the ferry example (two chapters, five marks), 8-core host with no GPU, under a load
 average of 12 to 20 from other renders (so wall times are upper bounds):
@@ -242,7 +242,9 @@ average of 12 to 20 from other renders (so wall times are upper bounds):
 | `format: "square"`, 1440x1440 at 60 | 701s | 24.4s | 193 MB | 7.3 MB | 5/5 |
 | `quality: "draft"`, 720p30 framed | 203s | 7.1s | 65 MB | 4.3 MB | 5/5 |
 
-So a 5-minute film takes about 2.5 hours at the master on this host, under load, and about 35
+`out/seg/` sizes above were packed with x264's default keyframe interval; render.sh now packs with a
+keyframe every 30 frames, about 20% more (the fresh-clone default run: see the PR). So a 5-minute
+film takes about 2.5 hours at the master on this host, under load, and about 35
 minutes as a draft: iterate in draft, render the master once. A bare 1440p60 window
 probe (no blur, grain or tilt) captured at 12.2s per second with 4 workers and 41s with the
 single worker HyperFrames picks on its own, so `workers` matters more than any effect. The
@@ -268,8 +270,14 @@ Measured on a 5:36 ten-chapter demo, 47 marks. Change them in config, not in cod
   2px blur, `spotlight.blur`), through a cut-out feathered over 18px outside the rect, with a thin
   accent edge and glow. It irises in (from 6% larger, expo out over 0.5s) with one light sweep
   across the lit rect (`spotlight.sweep`). When the next mark lights within `spotlight.glide`
-  (2.5s) of this hold ending, the cut-out does not fade out: it glides, moving and reshaping onto
-  the next rect over the gap with the camera move, and the label swaps. It fades in 250ms before `t`, or once the zoom into the mark has
+  (2.5s) of this hold ending and the square view does not change between them, the cut-out does
+  not fade out: it glides, moving and reshaping onto the next rect over the gap with the camera
+  move. A glide lasts at least 0.35s: if the next mark lights sooner (pace above 1, or a spotlight
+  waiting for the camera), this hold ends early to make room and its label leaves as the glide
+  starts; if that would leave the hold under 0.7s, too short for the two stills, it fades
+  instead. Across a square re-frame the camera moves under the cut-out, so there it always fades
+  out and irises in. Each run of glides is its own element, so one mark's fade-out can never touch
+  the next (a shared one hid a mark lit within 0.3s of the last hold, found in review). It fades in 250ms before `t`, or once the zoom into the mark has
   settled in the footage if that is later, holds 1.5 to 2.5s, fades out. Fading in 250ms before
   `t` regardless put 51% of each ferry zoom's motion under the fading-in cut-out; now 0.7%, the
   frame that completes the move. Settled means the camera event's end (from demo:capture), then
@@ -399,9 +407,11 @@ encode (text crop inside each cut-out against the source screencast frame, RGB):
 - The takes and retimed footage use a lossless H.264 profile that browsers cannot play;
   ffmpeg, this skill and the montage read them fine. Watch the final mp4.
 - render.sh packs each segment's PNGs into a lossless RGB mp4 and deletes them: at 1440p60 the
-  ferry's PNGs were 3.3 GB for 30s of video, 367 MB packed (fares: 1011 MB to 115 MB, 12s to pack,
-  PSNR infinite against every PNG checked). So `out/seg/` holds about 700 MB per minute at the
-  master, where PNGs would have been 6.6 GB. It is scratch: delete it once the final mp4 is good.
+  ferry's PNGs were 3.3 GB for 30s of video (fares: 1011 MB of PNG, 141 MB packed, PSNR infinite
+  against every PNG checked). A keyframe every 30 frames keeps each still-check seek short: with
+  x264's default of 250 the ferry check took 45.7s, now 29.1s, for 20% more disk (fares 115 MB at
+  250). So `out/seg/` holds well under 1 GB per minute at the master, where PNGs would have been
+  6.6 GB. It is scratch: delete it once the final mp4 is good.
   A render needs room for one segment's PNGs while it runs (about 110 MB per second of segment).
 
 At 720p the gap to the ceiling was crf 14; what remains below the ceiling is the 4:2:0 conversion and
