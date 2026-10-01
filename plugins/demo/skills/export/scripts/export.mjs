@@ -44,6 +44,7 @@ function readme() {
     const cut = cutSpots([a, b], all);
     if (cut.length) throw new Error(`--from ${a} --to ${b} cuts the spotlight "${cut[0].label}" (lit ${cut[0].lit}s to ${cut[0].end}s): start before it lights or end after it fades`);
     loop = { a, b, spots: all.filter((s) => s.lit >= a && s.end <= b), title: tl.chapters.find((c) => c.a0 <= a && b <= c.a1 + 1)?.title ?? C.name };
+    if (!loop.spots.length) throw new Error(`--from ${a} --to ${b} holds no whole spotlight, so there is nothing for the poster or the alt text: widen it to take one in (${all.map((s) => `"${s.label}" ${s.lit}s to ${s.end}s`).join(', ')})`);
   } else {
     loop = pickLoop(tl.chapters, { seam: seamOf(video), motion: motionOf(video) });
     if (!loop) throw new Error('no chapter has a spotlight to loop; pass --from and --to');

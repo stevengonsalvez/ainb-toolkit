@@ -4,7 +4,7 @@
 // random inputs, then both exports end to end on a synthetic demo in a directory whose name has
 // a space and a `%`. Every guard is also fed the input it must refuse.
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { pickLoop, cutSpots, onFrame, clipTo, shortLabel, lint, FFMPEG, SKILL, r3 } from './lib.mjs';
@@ -102,6 +102,8 @@ try {
   ok(r.status !== 0 && /over the 0.001 MB budget/.test(r.stderr), 'a GIF over its budget fails the export');
   r = run('readme', cfg, '--from', '5', '--to', '9', '--out', join(root, 'cut'));
   ok(r.status !== 0 && /cuts the spotlight/.test(r.stderr), '--from/--to that cut a spotlight fail the export');
+  r = run('readme', cfg, '--from', '0', '--to', '2', '--out', join(root, 'nospot'));
+  ok(r.status === 1 && /holds no whole spotlight/.test(r.stderr) && !existsSync(join(root, 'nospot/demo.gif')), `--from/--to holding no spotlight fail before encoding: ${r.stderr.trim()}`);
 
   r = run('interactive', cfg, '--inline', 'no');
   ok(r.status === 0, `interactive exits 0${r.status ? `: ${r.stderr.trim()}` : ''}`);
