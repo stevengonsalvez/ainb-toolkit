@@ -137,7 +137,7 @@ function interactive() {
   mkdirSync(out, { recursive: true });
   const { steps: S, skipped } = steps(C, tl);
   if (!S.length) throw new Error('no marks in the takes: nothing to build steps from');
-  if (skipped) console.warn(`warn: ${skipped} click/type cues carry no target rect, so they are not steps (demo:capture records only their time)`);
+  if (skipped) console.warn(`warn: ${skipped} click/type cues carry no target rect, so they are not steps (the take predates demo:capture recording click and type targets; re-film it to include them)`);
   // This run's files only: step images, page and steps.json from an earlier run must not linger.
   for (const f of readdirSync(out)) if (/^(\.?step-\d+\.(webp|png)|index\.html|steps\.json)$/.test(f)) rmSync(join(out, f));
   const webpBy = hasEncoder('libwebp') ? 'ffmpeg' : which('cwebp') ? 'cwebp' : null;
