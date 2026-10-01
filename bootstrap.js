@@ -1668,9 +1668,12 @@ async function handlePackagesStructureCopy(tool, config, overrideHomeDir = null,
                         // but Claude Code only looks in ~/.claude/skills/ for user-invocable skills.
                         // Own plugins (own-plugin: true) are exempt: their skills live ONLY in the
                         // plugin install; a flat copy would resurrect the pre-plugin sync drift.
+                        // `flatten-skills: false` opts a third-party plugin out too, for plugins
+                        // whose skill names are generic (ask, reviewer) and would crowd the
+                        // global namespace; they stay reachable as <plugin>:<skill>.
                         scriptLines.push('echo "Copying plugin skills to skills directory..."');
                         scriptLines.push(`mkdir -p "\${HOME}/${config.targetSubdir}/skills"`);
-                        for (const p of claudePlugins.filter(x => !x['own-plugin'])) {
+                        for (const p of claudePlugins.filter(x => !x['own-plugin'] && x['flatten-skills'] !== false)) {
                             const marketplaceId = p.marketplace_id || `${p.name}-marketplace`;
                             scriptLines.push(`for skill_dir in "\${HOME}/.claude/plugins/cache/${marketplaceId}/${p.name}"/*/skills/*/; do`);
                             scriptLines.push(`  if [ -d "$skill_dir" ] && [ -f "$skill_dir/SKILL.md" ]; then`);

@@ -12,22 +12,24 @@
 //  - Zoom uses Emulation.setDeviceMetricsOverride's viewport clip. CSS
 //    transform on <html> re-rasters crisply but makes the root the containing
 //    block for position:fixed, which throws fixed chrome into mid-frame.
-//  - Never select by bare text. `text=PERFORM` matched a Pulse article headline
-//    and navigated away from the nav entirely. Scope every selector.
+//  - Never select by bare text. A bare text selector for a nav label matched an
+//    article headline and navigated away from the nav entirely. Scope every selector.
 import fs from 'fs'; import path from 'path';
-
-// ~/.cache/ms-playwright was wiped externally twice; browsers live here instead.
-// Must be set before playwright loads, hence the dynamic import.
-process.env.PLAYWRIGHT_BROWSERS_PATH ??= '/home/claude/.local/pw-browsers';
-const { chromium } = await import('@playwright/test');
+// Browsers come from $PLAYWRIGHT_BROWSERS_PATH when set, else Playwright's own default.
+import { chromium } from '@playwright/test';
 
 const smoothstep = p => p * p * (3 - 2 * p);
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
+// String paths match on a segment boundary: '/reports' accepts '/reports' and '/reports/x',
+// never '/reports-archive'. (A pathname carries no '?' or '#', so '/' is the only boundary.)
+const onPath = (expected, got) => expected instanceof RegExp ? expected.test(got)
+  : got === expected || got.startsWith(expected.endsWith('/') ? expected : expected + '/');
+
 // A mis-click must fail the take, not quietly film the wrong screen.
 export function checkPath(expected, url, name = '?') {
   const got = new URL(url).pathname;
-  const ok = expected instanceof RegExp ? expected.test(got) : got.startsWith(expected);
+  const ok = onPath(expected, got);
   if (!ok) throw new Error(`beat "${name}": expected path ${expected}, got ${got}`);
 }
 
@@ -52,10 +54,10 @@ function networkQuiet(page, { quiet = 500, cap = 8000 } = {}) {
 
 // Drive the real login form and save storageState. Never hand-write a token
 // into a state file: it fails silently and films the /login page instead.
-// Defaults match SHOT: #email is input[type=text], a cookie modal covers the
+// Defaults match the first SPA this was built on: #email is input[type=text], a cookie modal covers the
 // submit button, and type() (not fill()) is what the controlled inputs accept.
 export async function mintState({ base, email, password, state, loginPath = '/login',
-  emailSel = '#email', passwordSel = '#password',
+  emailSel = '#email', passwordSel = '#password', loggedInSel,
   submitSel = 'role=button[name=/^(log in|sign in)$/i]', dismissSel = '#rcc-decline-button' }) {
   const browser = await chromium.launch();
   try {
@@ -67,30 +69,77 @@ export async function mintState({ base, email, password, state, loginPath = '/lo
     await page.locator(emailSel).type(email);
     await page.locator(passwordSel).type(password);
     await page.locator(submitSel).click();
-    await page.waitForURL(u => !u.pathname.startsWith(loginPath), { timeout: 20000 })
+    await page.waitForURL(u => !onPath(loginPath, u.pathname), { timeout: 20000 })
       .catch(() => { throw new Error(`login as ${email} did not leave ${loginPath}`); });
+    if (loggedInSel) await page.locator(loggedInSel).first().waitFor({ timeout: 20000 })
+      .catch(() => { throw new Error(`login as ${email}: ${loggedInSel} never appeared`); });
     fs.mkdirSync(path.dirname(state), { recursive: true });
     await ctx.storageState({ path: state });
   } finally { await browser.close(); }
 }
 
-// Reuse `state` if it still gets past the login page, otherwise mint a fresh one.
+// Reuse `state` if it still looks logged in, otherwise mint a fresh one. "Logged in" means
+// `login.loggedInSel` is visible when set; otherwise only "the probe did not land on loginPath",
+// which reuses a dead session on apps that send logged-out users somewhere else.
 export async function ensureState({ base, state, login, probe = '/home' }) {
   if (fs.existsSync(state)) {
     const browser = await chromium.launch();
-    const ctx = await browser.newContext({ storageState: state });
-    const page = await ctx.newPage();
-    const quiet = networkQuiet(page);
-    await page.goto(base + probe); await quiet(); await page.waitForTimeout(1000);
-    const got = new URL(page.url()).pathname;
-    await browser.close();
-    if (!got.startsWith(login.loginPath ?? '/login')) return 'reused';
+    let alive;
+    try {
+      const page = await (await browser.newContext({ storageState: state })).newPage();
+      const quiet = networkQuiet(page);
+      await page.goto(base + probe); await quiet(); await page.waitForTimeout(1000);
+      alive = login.loggedInSel
+        // isVisible() does not wait: an SPA still rendering its shell would read as logged out.
+        ? await page.locator(login.loggedInSel).first().waitFor({ state: 'visible', timeout: 5000 }).then(() => true, () => false)
+        : !onPath(login.loginPath ?? '/login', new URL(page.url()).pathname);
+    } finally { await browser.close(); }
+    if (alive) return 'reused';
   }
   await mintState({ base, state, ...login });
   return 'minted';
 }
 
-export async function capture({ base, state, out, viewport = { width: 1280, height: 720 }, beats, chapter, localStorage: ls = {} }) {
+// Init script: cursor, click ripple and localStorage seeding, run in every document.
+// Exported so the self-check can drive it on a bare page.
+export function overlay({ ls, hidden, ringColor }) {
+  // e.g. consent keys: a consent banner otherwise covers the lower third of every frame.
+  // Storage throws in sandboxed documents; skipping it there must not stop the cursor mounting.
+  for (const [k, v] of Object.entries(ls)) try { localStorage.setItem(k, v); } catch {}
+  // Top frame only: in an iframe the overlay filmed a second cursor inside the iframe.
+  if (window !== window.top) return;
+  const mount = () => {
+    if (document.getElementById('__cur')) return;
+    const d = document.createElement('div'); d.id = '__cur';
+    // A hidden cursor still moves: its repaints are what keep the screencast emitting during a hold.
+    // `scale: var(--__demo-cs)` is the camera's counter-scale (set by setCam on these two elements,
+    // under a name no app uses), so the pointer keeps its size
+    // under a zoom; it composes with `translate`, the pointer position, about the arrow's tip.
+    d.style.cssText = 'position:fixed;top:0;left:0;width:20px;height:26px;pointer-events:none;z-index:2147483647;transition:translate .05s linear;will-change:translate;transform-origin:0 0;scale:var(--__demo-cs,1);filter:drop-shadow(0 1px 2px rgba(0,0,0,.45));background:no-repeat center/contain url("data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'20\' height=\'26\' viewBox=\'0 0 18 24\'%3E%3Cpath d=\'M2 2 L2 18 L6.5 13.8 L9.2 20 L11.8 19 L9.1 13 L14.5 13 Z\' fill=\'white\' stroke=\'black\' stroke-width=\'1.4\' stroke-linejoin=\'round\'/%3E%3C/svg%3E")' + (hidden ? ';opacity:0.004' : '');
+    document.body.appendChild(d);
+    const ring = document.createElement('div'); ring.id = '__ring';
+    // A thin dark outline keeps the default white ring visible on a white page.
+    ring.style.cssText = `position:fixed;top:0;left:0;width:52px;height:52px;border-radius:50%;border:2px solid ${ringColor};box-shadow:0 0 0 1px rgba(0,0,0,.25);scale:var(--__demo-cs,1);pointer-events:none;z-index:2147483646;opacity:0`;
+    document.body.appendChild(ring);
+    addEventListener('mousemove', e => { d.style.translate = `${e.clientX}px ${e.clientY}px`; }, { passive: true });
+    if (hidden) return;
+    // Click ripple, so a viewer can see WHERE the click landed. Reset every property it animates,
+    // or the second click starts already at scale(1.7) and never visibly expands.
+    addEventListener('mousedown', e => {
+      Object.assign(ring.style, { transition: 'none', transform: 'scale(1)', opacity: '1', left: `${e.clientX - 26}px`, top: `${e.clientY - 26}px` });
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        Object.assign(ring.style, { transition: 'opacity .5s ease, transform .5s ease', transform: 'scale(1.7)', opacity: '0' });
+      }));
+    }, true);
+  };
+  document.readyState === 'loading' ? addEventListener('DOMContentLoaded', mount) : mount();
+}
+
+// pace multiplies every filmed duration (zoom/wide ms, hold, settle, cursor glides); 2 = twice as slow.
+// cursor.speed is px/s; unset keeps the fixed 300ms click glide and 200ms re-centre glide.
+// cursor.ring is the click ring's CSS colour: neutral white unless the beats file sets one.
+export async function capture({ base, state, out, viewport = { width: 1280, height: 720 }, beats, chapter,
+  localStorage: ls = {}, pace = 1, cursor = {} }) {
   const { width: W, height: H } = viewport;
   if (!beats[0]?.goto) throw new Error(`chapter "${chapter}": first beat must be a goto (filming starts once it has painted)`);
   const dir = path.join(out, chapter);
@@ -101,26 +150,7 @@ export async function capture({ base, state, out, viewport = { width: 1280, heig
   const ctx = await browser.newContext({ viewport, deviceScaleFactor: 1, storageState: state });
   const page = await ctx.newPage();
 
-  await page.addInitScript(ls => {
-    // e.g. consent keys: a consent banner otherwise covers the lower third of every frame.
-    for (const [k, v] of Object.entries(ls)) localStorage.setItem(k, v);
-    const mount = () => {
-      if (document.getElementById('__cur')) return;
-      const d = document.createElement('div'); d.id = '__cur';
-      d.style.cssText = 'position:fixed;top:0;left:0;width:20px;height:26px;pointer-events:none;z-index:2147483647;transition:transform .05s linear;will-change:transform;background:no-repeat center/contain url("data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'20\' height=\'26\' viewBox=\'0 0 18 24\'%3E%3Cpath d=\'M2 2 L2 18 L6.5 13.8 L9.2 20 L11.8 19 L9.1 13 L14.5 13 Z\' fill=\'white\' stroke=\'black\' stroke-width=\'1.4\' stroke-linejoin=\'round\'/%3E%3C/svg%3E")';
-      document.body.appendChild(d);
-      const ring = document.createElement('div'); ring.id = '__ring';
-      ring.style.cssText = 'position:fixed;top:0;left:0;width:0;height:0;border-radius:50%;border:2px solid #1ABC9C;pointer-events:none;z-index:2147483646;opacity:0';
-      document.body.appendChild(ring);
-      addEventListener('mousemove', e => { d.style.transform = `translate(${e.clientX}px,${e.clientY}px)`; }, { passive: true });
-      // Click ripple, so a viewer can see WHERE the click landed.
-      addEventListener('mousedown', e => {
-        ring.style.cssText += `;left:${e.clientX - 26}px;top:${e.clientY - 26}px;width:52px;height:52px;opacity:1;transition:none`;
-        requestAnimationFrame(() => { ring.style.transition = 'opacity .5s ease, transform .5s ease'; ring.style.transform = 'scale(1.7)'; ring.style.opacity = '0'; });
-      }, true);
-    };
-    document.readyState === 'loading' ? addEventListener('DOMContentLoaded', mount) : mount();
-  }, ls);
+  await page.addInitScript(overlay, { ls, hidden: !!cursor.hidden, ringColor: cursor.ring || '#FFFFFF' });
 
   const cdp = await ctx.newCDPSession(page);
   const frames = []; const events = [];
@@ -138,34 +168,52 @@ export async function capture({ base, state, out, viewport = { width: 1280, heig
   // after a 520px scroll, y=0 filmed the blank page top. Add the scroll, read once while unzoomed
   // (an active override moves scrollX/Y itself, so re-reading mid-glide compounds).
   let camScroll = { x: 0, y: 0 };
+  // The override zooms the overlay with the page (measured 1.5x bigger at scale 1.5), so each pose
+  // also sets the cursor's counter-scale, sent alongside the override rather than after it.
+  // The override outlives a navigation but the new document's overlay starts at scale 1, so the
+  // counter-scale is re-applied on every DOMContentLoaded (after the overlay mounts) and again after
+  // each navigating beat's wait. Without it, a click while zoomed filmed the next page's cursor at 2x.
+  const counter = v => cdp.send('Runtime.evaluate', { expression:
+    `for (const id of ['__cur', '__ring']) document.getElementById(id)?.style.setProperty('--__demo-cs', '${v ? 1 / v.s : 1}')` });
+  // ponytail: two re-apply sites patch it in after the overlay mounts, so a frame or two after a
+  // navigation can still show it at 2x. Wave 2's deterministic capture makes it known at mount.
+  page.on('domcontentloaded', () => { if (cam) counter(cam).catch(() => {}); });
   const setCam = async v => {
     const prev = cam; cam = v;
-    if (!v) { await cdp.send('Emulation.clearDeviceMetricsOverride'); return; }
+    if (!v) { await Promise.all([cdp.send('Emulation.clearDeviceMetricsOverride'), counter(v)]); return; }
     if (!prev) camScroll = await page.evaluate(() => ({ x: scrollX, y: scrollY }));
-    await cdp.send('Emulation.setDeviceMetricsOverride', {
+    await Promise.all([cdp.send('Emulation.setDeviceMetricsOverride', {
       width: W, height: H, deviceScaleFactor: 1, mobile: false,
       viewport: { x: v.x + camScroll.x, y: v.y + camScroll.y, width: v.w, height: v.h, scale: v.s },
-    });
+    }), counter(v)]);
   };
 
   let cx = W / 2, cy = H / 2, drift = 1;
+  let mx = 0, my = 0;                              // where the pointer really is
+  const P = ms => ms * pace;
+  const moveTo = async (x, y, ms) => {
+    // One mouse.move step is one rendered frame, measured at 16.7ms (steps 18 took 300ms at any distance).
+    const t = cursor.speed ? Math.hypot(x - mx, y - my) / cursor.speed * 1000 : ms;
+    await page.mouse.move(x, y, { steps: Math.max(1, Math.round(P(t) / 16.7)) });
+    mx = x; my = y;
+  };
   const hold = async ms => {
     const end = Date.now() + ms;
     // Drift inside the camera box: a cursor moving outside the zoomed region repaints nothing
     // visible, the screencast stops emitting, and the mp4 froze on the pre-zoom frame for 2.4s.
     const b = cam || { x: 0, y: 0, w: W, h: H, s: 1 };
     const lo = b.x + b.w * 0.30, hi = b.x + b.w * 0.72, ymid = b.y + b.h * 0.55;
-    if (cx < lo || cx > hi || Math.abs(cy - ymid) > b.h * 0.3) { cx = (lo + hi) / 2; cy = ymid; await page.mouse.move(cx, cy, { steps: 12 }); }
+    if (cx < lo || cx > hi || Math.abs(cy - ymid) > b.h * 0.3) { cx = (lo + hi) / 2; cy = ymid; await moveTo(cx, cy, 200); }
     while (Date.now() < end) {
       cx += 1.6 / b.s * drift; if (cx > hi || cx < lo) drift = -drift;
       cy += 0.4 / b.s * drift;
-      await page.mouse.move(cx, cy);
+      await page.mouse.move(cx, cy); mx = cx; my = cy;
       await page.waitForTimeout(60);
     }
   };
 
   // Targets are resolved fresh every beat: nav bars change with context
-  // (LOCKER vanished from the nav after PULSE), so cached handles go stale.
+  // (one item vanished from the nav after another was clicked), so cached handles go stale.
   const rectOf = async (sel, beat) => {
     const el = page.locator(sel).first();
     if (!(await el.count())) throw new Error(`beat "${beat}": selector ${sel} matched nothing`);
@@ -174,8 +222,11 @@ export async function capture({ base, state, out, viewport = { width: 1280, heig
 
   // Ease the camera between two viewport boxes so the push-in reads as a move,
   // not a cut. Each step is its own override; the screencast repaints on each.
+  // Each move is logged as a `camera` event (start t0, end t1): compose plays it at 1x and
+  // lights a spotlight only once it has ended.
   const glide = async (to, ms) => {
     const from = cam || { x: 0, y: 0, w: W, h: H, s: 1 };
+    const t0 = now();
     const steps = Math.max(6, Math.round(ms / 45));
     for (let i = 1; i <= steps; i++) {
       const e = smoothstep(i / steps);
@@ -186,6 +237,7 @@ export async function capture({ base, state, out, viewport = { width: 1280, heig
       });
       await page.waitForTimeout(30);
     }
+    events.push({ t: t0, kind: 'camera', t0, t1: now(), cam: to.s === 1 ? null : to });
   };
   const boxFor = (r, s) => {
     const vw = W / s, vh = H / s;
@@ -202,13 +254,18 @@ export async function capture({ base, state, out, viewport = { width: 1280, heig
       const el = page.locator(step.click).first();
       if (!(await el.count())) throw new Error(`beat "${name}": selector ${step.click} matched nothing`);
       const r = await el.boundingBox();
-      if (r) { await page.mouse.move(r.x + r.width / 2, r.y + r.height / 2, { steps: 18 }); await page.waitForTimeout(220); }
+      if (r) { await moveTo(r.x + r.width / 2, r.y + r.height / 2, 300); await page.waitForTimeout(P(220)); }
       await el.click({ timeout: 8000 });
     }
     if (step.goto || step.click) {
       if (step.ready) await page.locator(step.ready).first().waitFor({ state: 'visible', timeout: step.readyCap ?? 15000 });
       else await quiet();
-      await page.waitForTimeout(step.settle ?? 400);
+      await page.waitForTimeout(P(step.settle ?? 400));
+    }
+    // A client-side redirect can destroy the page's context mid-call ("Execution context was
+    // destroyed"). The counter-scale is cosmetic: retry once after the next load, never fail the take.
+    if ((step.goto || step.click) && cam) {
+      await counter(cam).catch(() => page.waitForLoadState('load').then(() => counter(cam)).catch(() => {}));
     }
     if (step.expectPath) checkPath(step.expectPath, page.url(), name);
     // Start filming only once the first page is ready: starting before paint
@@ -216,40 +273,55 @@ export async function capture({ base, state, out, viewport = { width: 1280, heig
     if (!filming) {
       filming = true;
       // Park the cursor first, or frame 0 shows it at the (0,0) mount position.
-      await page.mouse.move(cx, cy); await page.waitForTimeout(100);
+      await page.mouse.move(cx, cy); mx = cx; my = cy; await page.waitForTimeout(100);
       await cdp.send('Page.startScreencast', { format: 'jpeg', quality: 90, everyNthFrame: 1 });
     }
     if (step.scroll) { await page.evaluate(y => window.scrollBy({ top: y, behavior: 'smooth' }), step.scroll); await page.waitForTimeout(700); }
+    // Typed key by key so the viewer sees it being entered; fill() would paste it in one frame.
+    // Typing can fetch (search-as-you-type), so it waits like a click: ready, else network quiet, then settle.
+    if (step.type) {
+      const { into, text, cps = 12 } = step.type;
+      const el = page.locator(into).first();
+      if (!(await el.count())) throw new Error(`beat "${name}": selector ${into} matched nothing`);
+      const r = await el.boundingBox();
+      if (r) await moveTo(r.x + r.width / 2, r.y + r.height / 2, 300);
+      const typed = step.ready ? null : networkQuiet(page, { cap: step.readyCap });
+      await el.click({ timeout: 8000 });
+      await el.type(String(text), { delay: 1000 / cps });
+      if (step.ready) await page.locator(step.ready).first().waitFor({ state: 'visible', timeout: step.readyCap ?? 15000 });
+      else await typed();
+      await page.waitForTimeout(P(step.settle ?? 400));
+    }
     if (step.zoom) {
       const r = await rectOf(step.zoom.on, name);
       // Zooming while zoomed: the override may have moved the scroll since camScroll was read.
       if (cam) { const sc = await page.evaluate(() => ({ x: scrollX, y: scrollY })); r.x += sc.x - camScroll.x; r.y += sc.y - camScroll.y; }
-      await glide(boxFor(r, step.zoom.scale ?? 2), step.zoom.ms ?? 700);
+      await glide(boxFor(r, step.zoom.scale ?? 2), P(step.zoom.ms ?? 700));
     }
     // Clear the override at the end, or the page stays under a scale-1 emulation.
-    if (step.wide)   { await glide({ x: 0, y: 0, w: W, h: H, s: 1 }, step.wide === true ? 700 : step.wide); await setCam(null); }
+    if (step.wide)   { await glide({ x: 0, y: 0, w: W, h: H, s: 1 }, P(step.wide === true ? 700 : step.wide)); await setCam(null); }
     // A mark is the handoff to the compositor: what to point at, and when.
     if (step.mark)   events.push({ t: now(), kind: 'mark', label: step.mark.label, rect: await rectOf(step.mark.on, name), cam });
-    if (step.hold)   await hold(step.hold);
+    if (step.hold)   await hold(P(step.hold));
   }
 
-  await hold(500);
+  await hold(P(500));
   await cdp.send('Page.stopScreencast');
 
-  // List only frames >=1/60s apart so every duration is exact. Clamping each duration to 16ms
-  // instead ran the mp4 1.2s long over 50s (849 clamped frames) and put marks early.
+  // Resample to 30fps here: output frame k shows the last frame captured at or before k/30, and
+  // cfr/ holds one hard link per output frame for a plain image2 encode. An ffmpeg concat list
+  // with per-frame durations was version-dependent: ffmpeg 6.1 honoured the durations, 8.1
+  // ignored them and squeezed an 11.1s take into 8.9s, so every mark landed late.
   frames.forEach((f, i) => fs.writeFileSync(path.join(dir, `f${String(i).padStart(5, '0')}.jpg`), f.buf));
-  const keep = [];
-  frames.forEach((f, i) => { if (!keep.length || f.t - frames[keep.at(-1)].t >= 1 / 60 || i === frames.length - 1) keep.push(i); });
-  let list = '';
-  keep.forEach((i, k) => {
-    const next = keep[k + 1] !== undefined ? frames[keep[k + 1]].t : frames[i].t + 0.033;
-    list += `file 'f${String(i).padStart(5, '0')}.jpg'\nduration ${Math.max(0.001, next - frames[i].t).toFixed(4)}\n`;
-  });
-  if (keep.length) list += `file 'f${String(keep.at(-1)).padStart(5, '0')}.jpg'\n`;
-  fs.writeFileSync(path.join(dir, 'list.txt'), list);
+  const cfr = path.join(dir, 'cfr'); fs.mkdirSync(cfr);
+  const pad = (i) => `${String(i).padStart(5, '0')}.jpg`;
+  const n = frames.length ? Math.ceil((frames.at(-1).t - t0) * 30) + 1 : 0;
+  for (let k = 0, j = 0; k < n; k++) {
+    while (j + 1 < frames.length && frames[j + 1].t - t0 <= k / 30) j++;
+    fs.linkSync(path.join(dir, `f${pad(j)}`), path.join(cfr, pad(k)));
+  }
   const dur = frames.length ? frames.at(-1).t - t0 : 0;
   fs.writeFileSync(path.join(dir, 'events.json'), JSON.stringify({ chapter, viewport, dur, frames: frames.length, events }, null, 1));
-  return { frames: frames.length, dur, events: events.length, dir };
+  return { frames: frames.length, dur, events: events.filter(e => e.kind === 'mark').length, dir };
   } finally { await browser.close(); }
 }

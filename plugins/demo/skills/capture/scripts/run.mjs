@@ -11,7 +11,9 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 
 if (cfg.login) console.log(`session: ${await ensureState(cfg)}`);
 for (const ch of cfg.chapters.filter(c => !only.length || only.includes(c.name))) {
-  const r = await capture({ ...cfg, chapter: ch.name, beats: ch.beats });
+  // A chapter's `pace` and `cursor` override the file-level ones.
+  const r = await capture({ ...cfg, chapter: ch.name, beats: ch.beats,
+    pace: ch.pace ?? cfg.pace, cursor: { ...cfg.cursor, ...ch.cursor } });
   const mp4 = `${r.dir}.mp4`;
   execFileSync(path.join(here, 'encode.sh'), [r.dir, mp4], { stdio: 'inherit' });
   console.log(`${ch.name}: ${r.frames} frames, ${r.dur.toFixed(1)}s, ${r.events} marks -> ${mp4}`);
