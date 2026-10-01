@@ -57,13 +57,16 @@ function readme() {
     const frames = readdirSync(work).filter((f) => /^f\d+\.png$/.test(f)).sort().map((f) => join(work, f));
     const gif = join(out, 'demo.gif');
     let q = +(opt.quality ?? 90), w = width, tool;
-    for (;;) {                                         // step quality, then width, down until the GIF fits
+    // Step quality (gifski only: the ffmpeg palette has no quality knob), then width, down until
+    // the GIF fits.
+    for (;;) {
       tool = gifEncode(frames, work, gif, { fps, quality: q, width: w, srcWidth: width });
-      if (MB(gif) <= budget || (q <= 60 && w <= 640)) break;
-      if (q > 60) q -= 10; else w -= 160;
-      console.warn(`  GIF over ${budget} MB; trying quality ${q}, width ${w}`);
+      const qDone = tool !== 'gifski' || q <= 60;
+      if (MB(gif) <= budget || (qDone && w <= 640)) break;
+      if (!qDone) q -= 10; else w -= 160;
+      console.warn(`  GIF over ${budget} MB; trying ${tool === 'gifski' ? `quality ${q}, ` : ''}width ${w}`);
     }
-    if (MB(gif) > budget) throw new Error(`GIF is ${MB(gif)} MB, over the ${budget} MB budget even at quality ${q} and ${w}px; pass --from/--to for a shorter loop or a larger --budget`);
+    if (MB(gif) > budget) throw new Error(`GIF is ${MB(gif)} MB, over the ${budget} MB budget even at ${tool === 'gifski' ? `quality ${q} and ` : ''}${w}px; pass --from/--to for a shorter loop or a larger --budget`);
     // Animated WebP: ffmpeg's libwebp encoder when the build has one, else libwebp's own img2webp
     // (Homebrew's ffmpeg 9 ships without libwebp), else none, said once.
     let webp = join(out, 'demo.webp');
@@ -74,20 +77,20 @@ function readme() {
     } else { webp = null; console.warn(`warn: no WebP: ${FFMPEG()} has no libwebp encoder and img2webp is not installed (the webp package has it); the snippet offers the GIF only`); }
     const poster = join(out, 'poster.png');
     ff(['-ss', String(hero.settled), '-i', video, '-frames:v', '1', '-vf', `scale=${width}:-2:flags=lanczos`, '-update', '1', poster]);
-    const h = Math.round(width * 9 / 16 / 2) * 2;
+    const h = Math.round(w * 9 / 16 / 2) * 2; // the GIF's own size, after any budget step-down
     const alt = `${loop.title}: ${loop.spots.map((s) => s.label).join(', ')}`;
     const snippet = `<picture>
   <source media="(prefers-reduced-motion: reduce)" srcset="poster.png">
-${webp ? '  <source type="image/webp" srcset="demo.webp">\n' : ''}  <img src="demo.gif" width="${width}" height="${h}" alt="${esc(alt)}">
+${webp ? '  <source type="image/webp" srcset="demo.webp">\n' : ''}  <img src="demo.gif" width="${w}" height="${h}" alt="${esc(alt)}">
 </picture>
 `;
     writeFileSync(join(out, 'picture.html'), snippet);
     const bundle = { video, loop: { from: loop.a, to: loop.b, seconds: r3(loop.b - loop.a), chapter: loop.chapter ?? null,
       spots: loop.spots.map(({ label, lit, end }) => ({ label, lit, end })) }, poster: { at: hero.settled, label: hero.label },
-      settings: { width, fps, quality: q, gifWidth: w, budgetMB: budget, gif: tool }, sizesMB: { gif: MB(gif), webp: webp && MB(webp), poster: MB(poster) }, alt };
+      settings: { width, fps, quality: tool === 'gifski' ? q : null, gifWidth: w, budgetMB: budget, gif: tool }, sizesMB: { gif: MB(gif), webp: webp && MB(webp), poster: MB(poster) }, alt };
     writeFileSync(join(out, 'bundle.json'), JSON.stringify(bundle, null, 1));
     console.log(`loop ${loop.a}s to ${loop.b}s (${r3(loop.b - loop.a)}s, ${loop.spots.length} spotlights, ${frames.length} frames)`);
-    console.log(`demo.gif ${MB(gif)} MB (${tool}, quality ${q}, ${w}px)${webp ? `, demo.webp ${MB(webp)} MB` : ''}, poster.png ${MB(poster)} MB at ${hero.settled}s`);
+    console.log(`demo.gif ${MB(gif)} MB (${tool}${tool === 'gifski' ? `, quality ${q}` : ''}, ${w}px)${webp ? `, demo.webp ${MB(webp)} MB` : ''}, poster.png ${MB(poster)} MB at ${hero.settled}s`);
     console.log(`${out}/picture.html:\n${snippet}`);
   } finally { rmSync(work, { recursive: true, force: true }); }
 }
