@@ -33,9 +33,12 @@ names.forEach((n, i) => {
   const frames = m.frameCount(c, `${c.out}/out/seg/${n}.mp4`);
   const d = Math.round(seams[i].dur * c.fps);          // overlap in frames
   const start = acc - d; tl.push({ name: n, start: start / c.fps, dur: frames / c.fps, seam: seams[i].kind, seamDur: d / c.fps });
-  if (i) f += d ? `[a${i - 1}][${i}:v]xfade=transition=${seams[i].kind === "whip" ? "smoothleft" : "fade"}:duration=${d / c.fps}:offset=${start / c.fps}[a${i}];`
-                : `[a${i - 1}][${i}:v]concat=n=2:v=1:a=0[a${i}];`;
-  else f += `[0:v]null[a0];`;
+  // One timebase everywhere: concat outputs microseconds and an mp4 input carries its own, and
+  // xfade refuses to join two that differ (a 0s seam followed by a real one failed that way).
+  const tb = `settb=1/${c.fps}`;
+  if (i) f += d ? `[${i}:v]${tb}[s${i}];[a${i - 1}][s${i}]xfade=transition=${seams[i].kind === "whip" ? "smoothleft" : "fade"}:duration=${d / c.fps}:offset=${start / c.fps}[a${i}];`
+                : `[${i}:v]${tb}[s${i}];[a${i - 1}][s${i}]concat=n=2:v=1:a=0,${tb}[a${i}];`;
+  else f += `[0:v]${tb}[a0];`;
   acc = start + frames;
 });
 fs.writeFileSync(`${c.out}/work/timeline.json`, JSON.stringify({ fps: c.fps, total: acc / c.fps, segments: tl }, null, 1));
