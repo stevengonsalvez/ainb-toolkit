@@ -83,7 +83,7 @@ capture.mode
   `capture: { mode: 'screencast' }` to choose it outright.
 - **Websockets do not stall it** (measured: a page receiving a frame every 200ms of wall time
   filmed a 2s hold deterministically, and a real SPA holding a Supabase realtime websocket and a
-  Vite HMR socket filmed a home, click, lazy route, zoom chapter deterministically: 7.5s in 122s,
+  Vite HMR socket filmed a home, click, lazy route, zoom chapter deterministically: 7.5s in 164s,
   network still `pause`). Their messages arrive on the wall clock, which runs several times slower
   than page time here, so live pushes land sooner in the footage than they would for a real viewer.
 
@@ -172,10 +172,12 @@ Order: goto, click, wait (ready or network quiet), settle, expectPath, [filming 
 
 ## Motion
 
-Camera and pointer are springs, as in Cap (the open-source Screen Studio alternative), whose
-constants and behaviours `motion.mjs` reuses (cited per line there; no Cap code is copied, its
-rendering crates are AGPLv3). Under deterministic capture they are solved per frame, so a re-film
-of the same beats moves identically. Screencast mode keeps the older eased glide.
+Camera and pointer are springs, tuned to values observed in Cap's open-source renderer (the
+open-source Screen Studio alternative, commit 97c0a45; paths cited in `motion.mjs`). No Cap code was
+copied: Cap's renderer is AGPLv3 and this plugin is Apache-2.0, so `motion.mjs` integrates its own
+damped harmonic oscillator and reuses only the numeric constants and observable behaviours. Under
+deterministic capture the springs are solved per frame, so a re-film of the same beats moves
+identically. Screencast mode keeps the older eased glide.
 
 - **Camera**: scale and framing centre are three springs (stiffness 200, damping 40, mass 2.25;
   damping ratio 0.94, no visible overshoot). A new target keeps the current velocity, so a zoom
