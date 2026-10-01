@@ -21,10 +21,11 @@ for n in "${NAMES[@]}"; do
   if [ -d "$o" ] && [ "$o" -nt "$R/projects/$n/index.html" ]; then echo "$n: up to date"; continue; fi
   dur=$(node -e 'console.log(Math.ceil(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).total))' "$R/work/$n.plan.json")
   s=$(date +%s)
-  # Rendered aside and moved into place, so a killed render never leaves a half segment that looks done.
-  rm -rf "$o.part" "$o"
+  # Rendered aside and swapped in only on success: a killed or failed render leaves the previous
+  # good segment in place and never a half segment that looks done.
+  rm -rf "$o.part"
   ( cd "$R/projects/$n" && timeout $((120 + 10 * dur)) npx --yes hyperframes@0.8.40 render --format png-sequence --video-frame-format png --output "$o.part" > "$R/work/render-$n.log" 2>&1 ) \
     || { echo "$n: FAILED"; tail -20 "$R/work/render-$n.log"; exit 1; }
-  mv "$o.part" "$o"
+  rm -rf "$o"; mv "$o.part" "$o"
   echo "$n: ok $(( $(date +%s) - s ))s $(ls "$o" | wc -l | awk '{printf "%.3f", $1 / 30}')s"
 done
