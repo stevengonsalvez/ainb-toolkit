@@ -312,7 +312,8 @@ function segments(C) {
 
 export function mix(C) {
   const A = audioSettings(C), segs = segments(C), final = `${C.out}/out/${C.name}.mp4`;
-  const total = probe(C, final);
+  // The VIDEO stream's length: the file's own grows with an earlier mix's AAC padding.
+  const total = +execFileSync(C.ffprobe, ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=duration', '-of', 'csv=p=0', final]).toString().trim();
   const report = { file: final, duration: r3(total) };
   const caps = writeCaptions(C, segs, A);
   Object.assign(report, caps);
@@ -420,7 +421,7 @@ export function mix(C) {
   // Mux: the picture is copied, never re-encoded.
   const tmp = `${C.out}/out/.${C.name}.audio.mp4`;
   execFileSync(C.ffmpeg, ['-nostdin', '-loglevel', 'error', '-y', '-i', final, '-i', master, '-map', '0:v', '-map', '1:a',
-    '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart', tmp]);
+    '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-shortest', '-movflags', '+faststart', tmp]);
   renameSync(tmp, final);
 
   // Measure what a viewer gets: the AAC in the final file, decoded.
