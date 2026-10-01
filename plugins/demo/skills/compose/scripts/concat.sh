@@ -20,9 +20,19 @@ for n in "${NAMES[@]}"; do
   IN+=(-framerate "$FPS" -i "$R/out/seg/$n/frame_%06d.png")
 done
 OUT=$R/out/$NAME.mp4
-# The PNGs are RGB (sRGB), so there is no input matrix to guess: convert once to BT.709 limited
-# range. setparams writes the BT.709 tags: the -color_* output options alone left primaries and
-# transfer "unknown" (ffmpeg 8.1).
+# Guard for the #bg invariant (compose.mjs): hyperframes writes a frame as RGB when every pixel
+# is opaque and as RGBA only when some pixel is transparent (measured: 0 of 840 ferry frames
+# RGBA; 90 of 90 with #bg removed). The encode below drops alpha, so those pixels turn black.
+# Reading each PNG's colour-type byte costs a few ms for the whole film.
+T=$(node -e 'const fs = require("fs"); let n = 0;
+for (const d of process.argv.slice(1)) for (const f of fs.readdirSync(d)) if (/^frame_\d+\.png$/.test(f)) {
+  const b = Buffer.alloc(26), fd = fs.openSync(`${d}/${f}`, "r"); fs.readSync(fd, b, 0, 26, 0); fs.closeSync(fd);
+  if (b[25] === 4 || b[25] === 6) n++;                 // PNG colour types with an alpha channel
+} console.log(n)' "${NAMES[@]/#/$R/out/seg/}")
+[ "$T" = 0 ] || echo "warn: $T frames have transparent pixels; they render black. Every visible element must sit on an opaque layer (the #bg fill)." >&2
+# The PNGs are sRGB colour (RGB, or RGBA flattened to black above), so there is no input matrix
+# to guess: convert once to BT.709 limited range. setparams writes the BT.709 tags: the -color_*
+# output options alone left primaries and transfer "unknown" (ffmpeg 8.1).
 "$FFMPEG" -loglevel error -y "${IN[@]}" -an \
   -filter_complex "concat=n=${#NAMES[@]}:v=1:a=0,scale=out_color_matrix=bt709:out_range=tv,format=yuv420p,setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv" \
   -c:v libx264 -preset slow -crf 14 -tune animation -movflags +faststart "$OUT"

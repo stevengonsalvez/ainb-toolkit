@@ -84,7 +84,9 @@ ${faces}
 html, body { width: ${W}px; height: ${H}px; overflow: hidden; background: ${T.bg}; }
 #root { position: relative; width: 100%; height: 100%; overflow: hidden; background: ${T.bg};
   font-family: ${C.bodyStack}; color: ${T.text}; }
-/* A png-sequence render forces the root and body transparent (measured black without this), so the fill lives on this child. */
+/* A png-sequence render forces the root and body transparent, and concat.sh flattens any
+   transparent pixel to black (measured without this). Invariant: every visible element sits on
+   an opaque layer; this full-bleed fill is that layer for the root. concat.sh warns otherwise. */
 #bg { position: absolute; inset: 0; background: ${T.bg}; }
 .cam { position: absolute; left: 0; top: 0; }
 .foot { position: absolute; inset: 0; width: 100%; height: 100%; }

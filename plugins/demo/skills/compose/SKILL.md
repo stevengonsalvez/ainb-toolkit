@@ -260,9 +260,14 @@ encode (text crop inside each cut-out against the source screencast frame, RGB):
 - mp4 keeps HyperFrames' fast BeginFrame capture, but it captures mp4 pages as JPEG q95 and no
   flag turns that off. There is no non-alpha lossless output, and an alpha format (png-sequence,
   mov) falls back to the slower capture path, hence the extra render time.
-- An alpha render makes the composition root transparent: without the full-bleed `#bg` child
-  the background rendered black.
-- The PNGs are RGB, so `concat.sh` converts once to BT.709 limited range with explicit tags.
+- png-sequence is an alpha format: it makes the composition root and body transparent, and a
+  frame comes out RGBA wherever a pixel is transparent (RGB only when every pixel is opaque:
+  0 of 840 ferry frames had alpha, 90 of 90 did with the `#bg` fill removed). `concat.sh`
+  drops the alpha, so a transparent pixel becomes black. The invariant: every visible element of
+  a template sits on an opaque layer; the full-bleed `#bg` child is that layer for the root.
+  `concat.sh` counts frames with an alpha channel and warns if there are any.
+- The PNGs carry sRGB colour, so `concat.sh` has no input matrix to guess: it converts once to
+  BT.709 limited range with explicit tags.
 - The takes and retimed footage use a lossless H.264 profile that browsers cannot play;
   ffmpeg, this skill and the montage read them fine. Watch the final mp4.
 - `out/seg/` holds about 215 MB per minute at 720p30. It is scratch: delete it once the final
