@@ -32,12 +32,13 @@
     },
     {
       "name": "demo",
-      "description": "Film any running app as real product footage, then compose it into a styled walkthrough video",
+      "description": "Film any running app as real product footage, compose it into a styled walkthrough video, then export a README GIF and an interactive click-through",
       "source": "./plugins/demo",
       "category": "delivery",
       "tags": [
         "demo",
-        "video"
+        "video",
+        "gif"
       ],
       "skills": "skills/"
     }
