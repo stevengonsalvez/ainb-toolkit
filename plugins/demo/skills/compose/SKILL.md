@@ -216,16 +216,21 @@ music file ──▶ hyperframes beats ─▶ card padding, every cut on a beat 
   `duck` dB (default 11) under every narration line: down over 0.25s before a line, back up over
   0.6s after, lines closer than 1.35s share one duck. With `snap` (default) `hyperframes beats`
   finds the beats and each segment's leading card grows by under one beat, so every cut lands on
-  a beat to the frame. Measured on the ferry example with a 100 BPM bed: all four cuts within 4ms
-  of a detected beat, duck depth 11.00 dB.
+  a beat to the frame. Re-cutting one chapter moves every later start, so with a bed `compose.mjs`
+  also composes again each later segment whose start has moved, and `audio.mjs` fails when a cut
+  sits more than a frame off a beat (a segment rendered from a stale plan). Measured on the ferry
+  example with a 100 BPM bed: all four cuts within 4ms of a detected beat, duck depth 11.00 dB.
 - **Narration**, only when lines are configured: `narration` on a card (spoken over it; the card
   stays up until the line ends) and on a chapter (`intro` over the chapter card, `marks` one line
   per mark, `null` to skip one). `hyperframes tts` (Kokoro, local) speaks each line once and caches
   it under `work/audio/tts` by text, voice and model. Every narrated beat **holds until its line has
   finished**: where a line would outlast its spotlight or start before the previous one ends, the
-  footage freezes on the still mark pose (at the end of the previous hold, or just before the first
-  mark) for whole frames until it fits. The still-check keeps passing because the plan records each
-  hold's source span (`srcHold`) beside its output length.
+  footage freezes on a still frame for whole frames until it fits: at the end of the previous hold
+  (its spotlight stays up), or for the first mark where its spotlight starts to fade in, or, when a
+  hold reaches the end of the take, on its last frame. The plan records every freeze (`freezes`, in
+  composition seconds) and the still-check maps its stills through them to the source frame shown.
+  Changing a line or moving its `{@anchor}` re-times it; the cache is keyed by text, voice, model
+  and anchor.
 - **Anchors**: `{@name}` in a line marks the word right after it; the line is placed so that word
   starts exactly as the spotlight is fully lit (without one, the first word does). `hyperframes
   transcribe` alone is not precise enough for this: against stop-consonant bursts in 13 test lines
@@ -233,14 +238,15 @@ music file ──▶ hyperframes beats ─▶ card padding, every cut on a beat 
   words from the anchor on are spoken again on their own and that clip's first 0.15s is matched
   against the line's loudness envelope near the recogniser's guess: -8ms to +24ms on the same 13
   lines, inside one 30fps frame. On the finished narrated ferry cut, burst against the spotlight
-  being fully lit was -23ms to +8ms at all five anchors. A weak match (correlation under 0.8) falls back to the recogniser's
-  time and says so.
+  being fully lit was -23ms to +8ms at all five anchors. A weak match (correlation under 0.8)
+  falls back to the recogniser's time and says so.
 - **Loudness**: a mix with narration or music is mastered to `loudness.target` (-14 LUFS
   integrated) by measured gain plus a limiter 1 dB under `truePeak` (-1 dBTP), corrected once,
   then measured again on the AAC in the final file. `audio.mjs` exits 1, failing `concat.sh`, when
   that measurement is more than `tolerance` LU off or over the ceiling. Sound effects on their own
   are not normalised: lifting sparse ticks to -14 LUFS puts each one near full scale, so they keep
-  their own low level and only the ceiling is checked.
+  their own low level and only the ceiling is checked. A mix with nothing in it (every effect off,
+  no narration, no music) leaves the video silent and skips the gate.
 
   | ferry example, fresh clone, 60fps 2x takes, plain ffmpeg 8.1, measured on the final file | integrated | true peak |
   |---|---|---|
