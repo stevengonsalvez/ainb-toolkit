@@ -118,10 +118,10 @@ controls (`speed`, `pace`, `targetDuration`) instead: no re-shoot.
   faint dark outline so it reads on a white page; set it to the brand you are filming.
 - The pointer keeps its own size under a zoom and carries a soft drop shadow. The camera's
   metrics override zooms the overlay with the page (measured 1.5x bigger at scale 1.5), so
-  every camera pose also sets a `--cs` counter-scale on the pointer and ring. `npm run check`
-  measures the pointer's area under a 2x zoom at 1.00-1.29x its unzoomed area (5.14x with the
-  counter-scale removed). A navigation while zoomed drops the counter-scale until the next
-  camera move.
+  every camera pose also sets a counter-scale (`--__demo-cs`, on the pointer and ring only) and
+  re-applies it after a navigation, whose new page starts unscaled. `npm run check` measures the
+  pointer's area under a 2x zoom at 1.00-1.34x its unzoomed area (5.14x with the counter-scale
+  removed), and 1.31x after a click navigates while zoomed (5.10x without the re-apply).
 - `type.cps` sets typing speed per beat and is not scaled by `pace`.
 
 Merge rule: a chapter's `pace` replaces the file's; a chapter's `cursor` keys override the
