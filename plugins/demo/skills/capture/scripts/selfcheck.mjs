@@ -6,7 +6,7 @@ import http from 'http'; import fs from 'fs'; import os from 'os'; import path f
 import assert from 'assert/strict'; import { execFileSync } from 'child_process';
 import { chromium } from '@playwright/test';
 import { capture, checkPath, ensureState, overlay } from './capture.mjs';
-import { Camera, Cursor } from './motion.mjs';
+import { Camera, Cursor, spring1d, CAMERA, CURSOR, SNAPPY } from './motion.mjs';
 
 const BG = '#3a6ea5';                             // luma ~100: neither blank white nor splash black
 const nav = `<nav class="fixed bottom-0" style="position:fixed;bottom:0;left:0;right:0;height:64px;background:#222;display:flex;gap:40px;justify-content:center;align-items:center">
@@ -77,14 +77,35 @@ try {
   checkPath('/reports', 'http://x/reports?tab=2#top');
   assert.throws(() => checkPath('/reports', 'http://x/reports-archive'), /got \/reports-archive/);
 
-  // 2. Spring solver (motion.mjs), pure: a retarget mid-flight keeps the velocity (no kink), a zoom
-  //    from wide is pre-aimed (scales about its target, no pan), and a planned click lands.
+  // 2. Spring solver (motion.mjs), pure.
+  //    a. The integrator against the damped oscillator's own theory: for each profile, a unit step
+  //       peaks at t = pi / (w sqrt(1 - z^2)) with overshoot exp(-pi z / sqrt(1 - z^2)).
+  const springs = {};
+  for (const [nm, P] of Object.entries({ camera: CAMERA, cursor: CURSOR, snappy: SNAPPY })) {
+    const w = Math.sqrt(P.k / P.m), z = P.c / (2 * Math.sqrt(P.k * P.m)), wd = w * Math.sqrt(1 - z * z);
+    let e = -1, v = 0, peak = -Infinity, tp = 0;
+    for (let i = 1; i <= 3000; i++) { [e, v] = spring1d(e, v, 0.001, P.k, P.c, P.m); if (e > peak) { peak = e; tp = i / 1000; } }
+    // The damping ratio the overshoot implies, z = -ln(os) / sqrt(pi^2 + ln(os)^2), must be the
+    // profile's own within 0.005, and the peak must come within 2% of its time.
+    const L = Math.log(peak), zm = -L / Math.sqrt(Math.PI ** 2 + L * L), tw = Math.PI / wd;
+    springs[nm] = `z ${z.toFixed(4)} measured ${zm.toFixed(4)}, peak ${tp}s want ${tw.toFixed(3)}s`;
+    assert.ok(Math.abs(zm - z) < 0.005 && Math.abs(tp / tw - 1) < 0.02, `${nm} spring: ${springs[nm]}`);
+    // and it settles: within 0.1% after six time constants of the decay envelope
+    assert.ok(Math.abs(spring1d(-1, 0, 6 / (z * w) + 0.5, P.k, P.c, P.m)[0]) < 1e-3, `${nm} spring never settles`);
+  }
+  //    b. A zoom from wide is pre-aimed: the centre jumps to the (off-centre) target, so the zoom
+  //       scales about one fixed page point, which holds still on screen while the scale grows.
   const cam = new Camera(1280, 720), FI = 1 / 60;
-  cam.aim({ x: 320, y: 180, w: 640, h: 360, s: 2 });
-  assert.ok(cam.u.x === 0.5 && cam.u.v === 0, 'zoom from wide was not pre-aimed');
+  cam.aim({ x: 100, y: 60, w: 640, h: 360, s: 2 });
+  const fx = cam.u.x * 1280, fy = cam.v.x * 720;
+  assert.ok(Math.abs(cam.u.x - 100 / 640) < 1e-12 && Math.abs(cam.v.x - 60 / 360) < 1e-12 && cam.u.v === 0, `zoom from wide was not pre-aimed (u ${cam.u.x})`);
   const xs = [];
-  for (let i = 0; i < 12; i++) { cam.step(FI); xs.push(cam.box()); }
-  cam.aim({ x: 600, y: 300, w: 512, h: 288, s: 2.5 });      // retarget while still moving
+  for (let i = 0; i < 12; i++) {
+    cam.step(FI); const b = cam.box(); xs.push(b);
+    assert.ok(Math.hypot((fx - b.x) * b.s - fx, (fy - b.y) * b.s - fy) < 1e-6, `zoom from wide panned: fixed point moved at frame ${i}`);
+  }
+  //    c. A retarget mid-flight keeps the velocity (no kink).
+  cam.aim({ x: 600, y: 300, w: 512, h: 288, s: 2.5 });
   for (let i = 0; i < 12; i++) { cam.step(FI); xs.push(cam.box()); }
   // Velocity of the scale channel frame to frame: its largest jump across the retarget is no
   // bigger than its largest jump anywhere else (a velocity reset would spike it).
@@ -92,9 +113,17 @@ try {
   assert.ok(dv[10] <= Math.max(...dv.filter((_, i) => i !== 10)) * 1.5 + 1e-9, `scale velocity jumps at the retarget: ${dv.map(v => v.toExponential(1))}`);
   let settle = 0; while (!cam.settled() && settle < 600) { cam.step(FI); settle++; }
   assert.deepEqual(cam.box(), { x: 600, y: 300, w: 512, h: 288, s: 2.5 }, 'camera did not settle exactly on its target');
+  //    d. zoom.ms 0 is a cut, not a NaN camera that never settles.
+  const cut = new Camera(1280, 720); cut.aim({ x: 100, y: 60, w: 640, h: 360, s: 2 }, 0);
+  assert.ok(cut.settled() && cut.box().s === 2, `zoom.ms 0: ${JSON.stringify(cut.box())}`);
+  //    e. A planned click lands within half a pixel; the shake window is 100ms (t is seconds), and
+  //       a click is never dropped as shake.
   const cur = new Cursor(100, 100, 1280, 720), press = cur.click(0, 900, 500);
   for (let t = 0; t < press - 1e-9; t += FI) cur.step(t, Math.min(FI, press - t));
   assert.ok(Math.hypot(cur.x.x - 900, cur.y.x - 500) < 0.5 && press >= 0.5, `click planned at ${press}s lands ${JSON.stringify(cur.pos())}`);
+  const sh = new Cursor(0, 0, 1280, 720);
+  assert.deepEqual([sh.aim(0, 10, 10), sh.aim(0.05, 5, 5), sh.aim(0.3, 0, 0)], [true, false, true], 'shake window is not 100ms');
+  sh.aim(1, 10, 10); assert.ok(sh.click(1.05, 5, 5) > 1.05, 'a click reversing a tiny move was dropped as shake');
 
   // 3. Main take (deterministic, the default): zoom, marks, scoped click, wait out the splash.
   const r = await capture({ base, out, chapter: 'main', beats: [
@@ -168,6 +197,23 @@ try {
   assert.match(ev(fb).capture.fallback, /stalled.*eventsource request to .*\/stream/, `fallback cause ${ev(fb).capture.fallback}`);
   assert.equal(warned.filter(w => /re-filming it in screencast mode/.test(w)).length, 1, `fallback message: ${JSON.stringify(warned)}`);
   assert.equal(warned.filter(w => /page time running regardless of the network/.test(w)).length, 1, `auto message: ${JSON.stringify(warned)}`);
+
+  // 5b. A fallback while blur jobs are still averaging: they are killed and awaited before the
+  //     re-film wipes the directory. Before, a job finishing late threw ENOENT, uncaught, and took
+  //     node down (reproduced at a 12.5s timeout), or could write a stray PNG into the new take.
+  //     Two timeouts land the fallback at different points of a take that is blurred throughout.
+  const zz = [{ goto: '/plain' }];
+  for (let i = 0; i < 8; i++) zz.push({ zoom: { on: '#z', scale: 2.5, ms: 400 } }, { wide: 400 });
+  console.warn = () => {};
+  try {
+    for (const ms of [10000, 12500]) {
+      const mb = await capture({ base, out, chapter: 'midblur', capture: { timeoutMs: ms }, beats: zz });
+      await new Promise(r => setTimeout(r, 3000));          // room for a late job to misbehave
+      const left = fs.readdirSync(path.join(mb.dir, 'cfr')).filter(f => !f.endsWith('.jpg'));
+      assert.ok(mb.mode === 'screencast' && /hard timeout/.test(ev(mb).capture.fallback) && !left.length && !fs.existsSync(path.join(mb.dir, 'sub')),
+        `fallback at ${ms}ms mid-blur: mode ${mb.mode}, stray ${left.slice(0, 3)}`);
+    }
+  } finally { console.warn = warn; }
 
   // 6. Motion blur only where something moves: the camera is the only mover in this take (no
   //    clicks, no marks), so every blurred frame sits inside a camera move.
@@ -270,7 +316,7 @@ try {
   }
 
   const f2 = v => v.toFixed(2);
-  console.log(`selfcheck OK: springs (retarget keeps velocity, pre-aim, settles exact, click lands at ${press.toFixed(3)}s)`);
+  console.log(`selfcheck OK: springs ${JSON.stringify(springs)}; pre-aim holds the fixed point; retarget keeps velocity; settles exact; ms 0 cuts; click lands at ${press.toFixed(3)}s; shake 100ms`);
   console.log(`selfcheck OK: main ${r.frames} frames/${r.dur.toFixed(2)}s 2560x1440@60 mp4 ${n} frames luma head ${head} tail ${tail}; anim ${md5.length} frames 0 repeats; blur spans ${JSON.stringify(spans)} inside camera moves`);
   console.log(`selfcheck OK: lazy import stays deterministic; SSE runs on under auto, falls back to ${fb.mode} under pause, one message each; screencast hold ${h.frames} frames; scroll-zoom luma ${zl.det}/${zl.sc}; guard threw`);
   console.log(`selfcheck OK: cursor under 2x zoom det ${cs.det.map(f2)} sc ${cs.sc.map(f2)} (zoomed, after nav); ring per click ${JSON.stringify(ripple)}; type det ${f2(ty.det[0])}s sc ${f2(ty.sc[0])}s; pace ${f2(p1.dur)}s -> ${f2(p2.dur)}s; loggedInSel re-mints; sandbox errors ${sandboxErrs}`);
