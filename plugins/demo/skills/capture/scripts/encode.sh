@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
-# ABOUTME: Encode one chapter's frames (list.txt, variable frame durations) to a 30fps mp4.
+# ABOUTME: Encode one chapter's 30fps frame sequence (cfr/, written by capture.mjs) to an mp4.
 # Usage: encode.sh <chapter-dir> [out.mp4]
-# Uses only fps/scale/format and libx264, so any ffmpeg build works; drawtext is not needed here.
+# Uses only scale and libx264, so any ffmpeg build works; drawtext is not needed here.
+# Lossless (x264 -qp 0, the JPEGs' own 4:2:0 full-range pixels, no conversion): this is an
+# intermediate, and demo:compose's concat.sh makes the only lossy encode a viewer sees.
+# Browsers cannot play a lossless H.264 profile; ffmpeg, compose and the montage read it fine.
 set -euo pipefail
-dir=${1:?chapter dir}; out=${2:-$dir.mp4}
 # ffmpeg: $FFMPEG, else the distro build at /usr/bin, else PATH
 # (Homebrew on macOS, where /usr/bin is read-only).
 FFMPEG=${FFMPEG:-$([ -x /usr/bin/ffmpeg ] && echo /usr/bin/ffmpeg || command -v ffmpeg || true)}
 : "${FFMPEG:?ffmpeg not found: install it or set FFMPEG}"
-"$FFMPEG" -v error -y -f concat -safe 0 -i "$dir/list.txt" \
-  -vf "fps=30,scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p" \
-  -c:v libx264 -crf 18 -preset medium -movflags +faststart "$out"
+dir=${1:?chapter dir}; out=${2:-$dir.mp4}
+# '%' in the directory is doubled: ffmpeg reads the input as a %05d sequence pattern.
+"$FFMPEG" -v error -y -framerate 30 -i "${dir//%/%%}/cfr/%05d.jpg" \
+  -vf "scale=trunc(iw/2)*2:trunc(ih/2)*2" \
+  -c:v libx264 -qp 0 -preset veryfast -movflags +faststart "$out"
