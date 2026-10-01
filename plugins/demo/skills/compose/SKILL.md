@@ -175,7 +175,10 @@ fares table the final cut measures acutance 35.0 against 32.5 from a screencast 
 ringing around small caps is gone. An RGB take is written with libx264rgb, so no colour conversion
 happens before concat.sh's single encode. Rects and camera boxes stay in CSS px, whatever the density. At a constant whole-number speed it nudges each
 piece by under 1/60s so source frames never sit on a half frame, which otherwise made a 1x
-window duplicate then drop a frame.
+window duplicate then drop a frame. The spacing it keeps clear is the take's own: a 60fps take
+lands two source frames per output frame at 1x, and assuming 30 put one of each pair on the half
+(measured on ferry, a source-index marker per frame: 1 duplicate-and-drop pair per chapter inside
+1x windows, 0 once the take's fps is used).
 
 ## Style rules the generator holds to
 

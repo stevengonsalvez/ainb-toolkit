@@ -69,8 +69,9 @@ capture.mode
   dynamic `import()` of a module, even an instant one, so every code-split route. With
   `network: 'auto'` (the default) a frame that waits `unstickMs` (1.5s of wall time) is forced
   through with policy `advance`; a lazy route then costs 1.5s once and the take stays fully
-  deterministic. If the same request holds page time again at the next stall it is a stream: the
-  rest of the chapter runs under `advance` (page time moves on regardless of the network, so a
+  deterministic. Chrome does not say which request holds page time, so a stream is recognised by
+  behaviour: a request still in flight at two stalls, or stalls on three frames running (which
+  also catches a holder no request event shows). Then the rest of the chapter runs under `advance` (page time moves on regardless of the network, so a
   load shows for its wall time, roughly a tenth of its real length), the rig says so once, and
   `capture.network` / `capture.networkNote` in events.json record it. `network: 'pause'` never
   forces and falls back to screencast after `stallMs` instead; `'advance'` forces from the start.
@@ -163,7 +164,7 @@ A beat is an object; keys run in this fixed order within one beat:
 | `expectPath` | string path or RegExp | assert pathname; throws and fails the take. A string matches that path or anything below it: `/reports` accepts `/reports/7`, never `/reports-archive` |
 | `scroll` | px | smooth `scrollBy` |
 | `type` | `{into, text, cps=12}` | glide to the field, click it, type `text` key by key at `cps` characters per second (`type()`, never `fill()`, so the viewer sees it typed), then wait like a click: `ready`, else network quiet, then `settle` |
-| `zoom` | `{on, scale=2, ms=700}` | move the camera onto the element centre on a spring (see Motion); the beat goes on once it has settled |
+| `zoom` | `{on, scale=2, ms=700}` | move the camera onto the element centre on a spring (see Motion); the beat goes on once it has settled. `ms: 0` is a cut |
 | `wide` | `true` or ms | camera back to full frame, same spring |
 | `mark` | `{label, on}` | push an event into events.json (after zoom/wide) |
 | `hold` | ms | keep filming. Deterministic: the pointer parks just off the lower right corner of the mark made in this beat (inside the camera box) and stays still. Screencast: the pointer drifts, which keeps frames coming (fact 1) |
@@ -172,10 +173,13 @@ Order: goto, click, wait (ready or network quiet), settle, expectPath, [filming 
 
 ## Motion
 
-Camera and pointer are springs, tuned to values observed in Cap's open-source renderer (the
-open-source Screen Studio alternative, commit 97c0a45; paths cited in `motion.mjs`). No Cap code was
-copied: Cap's renderer is AGPLv3 and this plugin is Apache-2.0, so `motion.mjs` integrates its own
-damped harmonic oscillator and reuses only the numeric constants and observable behaviours. Under
+Camera and pointer are springs. Constants and observable behaviour are taken from Cap's published
+renderer (the open-source Screen Studio alternative, commit 97c0a45; paths cited in `motion.mjs`);
+the implementation is written independently. No Cap code was copied: Cap's renderer is AGPLv3 and
+this plugin is Apache-2.0, so `motion.mjs` integrates its own damped harmonic oscillator
+(`m x'' = -k (x - target) - c x'`, semi-implicit Euler in 0.25ms sub-steps), and `npm run check`
+checks it against the oscillator's theory: the damping ratio its overshoot implies matches each
+profile's within 0.005 (camera 0.943), and it peaks within 2% of the predicted time. Under
 deterministic capture the springs are solved per frame, so a re-film of the same beats moves
 identically. Screencast mode keeps the older eased glide.
 
