@@ -228,8 +228,9 @@ async function film({ base, state, out, viewport = { width: 1280, height: 720 },
           if (!(await el.count())) throw new Error(`beat "${name}": selector ${step.click} matched nothing`);
           const r = await el.boundingBox();
           if (r) await rec.glideTo(r.x + r.width / 2, r.y + r.height / 2, P(300), true);
-          // Sound cue for compose, as the press lands. Clicks before filming starts are not recorded.
-          if (rec.filming) events.push({ t: rec.now(), kind: 'click' });
+          // Sound cue for compose, as the press lands, with its target's rect and the camera box
+          // in force (as a mark has them). Clicks before filming starts are not recorded.
+          if (rec.filming) events.push({ t: rec.now(), kind: 'click', rect: await rectOf(step.click, name), cam: rec.cam });
           await el.click({ timeout: rec.T(8000) });
         }
         if (step.goto || step.click) {
@@ -251,11 +252,12 @@ async function film({ base, state, out, viewport = { width: 1280, height: 720 },
           const r = await el.boundingBox();
           if (r) await rec.glideTo(r.x + r.width / 2, r.y + r.height / 2, P(300), true);
           const typed = step.ready ? null : networkQuiet(page, { cap: step.readyCap }, clock);
-          events.push({ t: rec.now(), kind: 'click' });
+          const rect = await rectOf(into, name), cam = rec.cam;
+          events.push({ t: rec.now(), kind: 'click', rect, cam });
           await el.click({ timeout: rec.T(8000) });
           const t0 = rec.now();
           for (const ch of String(text)) { await page.keyboard.type(ch); await rec.sleep(1000 / cps); }
-          events.push({ t: t0, kind: 'type', dur: rec.now() - t0, chars: String(text).length });
+          events.push({ t: t0, kind: 'type', dur: rec.now() - t0, chars: String(text).length, rect, cam });
           if (step.ready) await ready(step.ready, step.readyCap ?? 15000, name);
           else await typed();
           await rec.sleep(P(step.settle ?? 400));

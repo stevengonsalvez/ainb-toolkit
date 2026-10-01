@@ -162,6 +162,11 @@ try {
   // A sound cue per click, timed inside the take.
   const clicks = e.events.filter(m => m.kind === 'click');
   assert.ok(clicks.length === 1 && clicks[0].t > moves[1].t1 && clicks[0].t <= e.dur, `click cues ${JSON.stringify(clicks)}`);
+  //    It carries its target's rect (CSS px, as a mark's) and the camera box (wide here): the
+  //    REPORTS link, inside the nav the first mark measured.
+  const nav = e.events.find(m => m.label === 'nav').rect, cr = clicks[0].rect;
+  assert.ok(cr && cr.w > 0 && cr.h > 0 && cr.x >= nav.x && cr.y >= nav.y && cr.x + cr.w <= nav.x + nav.w && cr.y + cr.h <= nav.y + nav.h && 'cam' in clicks[0] && clicks[0].cam === null,
+    `click rect ${JSON.stringify(clicks[0])} not inside the nav ${JSON.stringify(nav)}`);
   for (const m of moves) assert.ok(m.t1 - m.t0 >= 0.3, `camera event span ${m.t0}..${m.t1} too short for a 500ms spring`);
   assert.ok(moves[0].t1 <= z.t, 'zoom ended after the mark that follows it');
   assert.equal(z.cam.s, 2, 'zoom did not reach scale 2');
@@ -322,6 +327,9 @@ try {
     ty[m] = [t.dur, luma(last(t))];
     const cue = ev(t).events.find(x => x.kind === 'type');
     assert.ok(cue && cue.chars === 11 && cue.dur > 1.0, `${m}: type cue ${JSON.stringify(cue)}`);
+    //  The field is at margin 200px: the type cue and the click it starts with carry its rect.
+    const into = ev(t).events.find(x => x.kind === 'click');
+    for (const c of [cue, into]) assert.ok(c.rect && c.rect.x === 200 && c.rect.y === 200 && c.rect.w > 0 && c.rect.h > 0 && 'cam' in c, `${m}: ${c.kind} rect ${JSON.stringify(c)}`);
     assert.ok(ty[m][1] > 200, `${m}: typed text did not land (luma ${ty[m][1]})`);
     assert.ok(t.dur > 1.0 + 1.5, `${m}: type beat too fast for 11 chars at 10 cps (${t.dur.toFixed(2)}s)`);
     assert.ok(t.frames >= 30, `${m}: hidden-cursor take produced only ${t.frames} frames`);
