@@ -297,18 +297,19 @@ async function film({ base, state, out, viewport = { width: 1280, height: 720 },
 }
 
 // The camera's metrics override zooms the overlay with the page (measured 1.5x bigger at scale
-// 1.5), so each pose also sets the pointer's counter-scale, in the current document and in the
-// init script the next document reads at mount.
+// 1.5), so each pose sets the pointer's counter-scale and position in the current document (one
+// Runtime.evaluate), and the init script the next document reads at mount is re-registered only
+// when it matters: the counter-scale changed, or `register` (a navigation is under way).
 function poser(cdp) {
-  let id = null, last = '';
-  return async (pose, live = true) => {
-    const src = `window.__demoPose = ${JSON.stringify(pose)};`;
-    if (src === last) return;
-    last = src;
-    const prev = id;
-    id = (await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: src })).identifier;
-    if (prev) await cdp.send('Page.removeScriptToEvaluateOnNewDocument', { identifier: prev });
-    if (live) await cdp.send('Runtime.evaluate', { expression: `window.__demoSet?.(${pose.x}, ${pose.y}, ${pose.cs}, ${pose.rot || 0})` }).catch(() => {});
+  let id = null, cs = null;
+  return async (pose, register = false) => {
+    if (register || pose.cs !== cs) {
+      cs = pose.cs;
+      const prev = id;
+      id = (await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: `window.__demoPose = ${JSON.stringify(pose)};` })).identifier;
+      if (prev) await cdp.send('Page.removeScriptToEvaluateOnNewDocument', { identifier: prev });
+    }
+    await cdp.send('Runtime.evaluate', { expression: `window.__demoSet?.(${pose.x}, ${pose.y}, ${pose.cs}, ${pose.rot || 0})` }).catch(() => {});
   };
 }
 
@@ -450,7 +451,13 @@ async function deterministic({ W, H, cap, dir, state, overlayArgs }) {
   const pose = poser(cdp);
   // Requests in flight, for naming whatever holds virtual time when it stalls.
   const pending = new Map();
-  page.on('request', r => pending.set(r, Date.now()));
+  // A main-frame navigation under way: the pose init script follows the pointer until it commits,
+  // so the new document mounts the pointer where it is.
+  let navigating = false;
+  page.on('request', r => {
+    if (r.resourceType() !== 'websocket') pending.set(r, Date.now());
+    if (r.isNavigationRequest() && r.frame() === page.mainFrame()) navigating = true;
+  });
   for (const ev of ['requestfinished', 'requestfailed']) page.on(ev, r => pending.delete(r));
 
   const camera = new Camera(W, H), cursor = new Cursor(W / 2, H / 2, W, H);
@@ -464,14 +471,17 @@ async function deterministic({ W, H, cap, dir, state, overlayArgs }) {
   // latency out of the footage, but it never expires while a request stays open: an SSE stream,
   // and also a dynamic import() of a module (measured: a lazy-loaded route chunk held it for good,
   // even a 0ms one). network 'auto' (the default) then forces this frame through with policy
-  // 'advance', and when the same request still holds it at the next stall (a stream, not a
-  // one-off), films the rest of the chapter under 'advance': page time runs on regardless of the
+  // 'advance', and once the stalls look like a stream rather than a one-off (below), films the
+  // rest of the chapter under 'advance': page time runs on regardless of the
   // network, and a load shows for however long it takes in wall time, about a tenth of its real
   // length. 'pause' never forces: it falls back to screencast instead. 'advance' always forces.
-  let expiries = 0, net = cap.network === 'advance' ? 'advance' : 'pause', culprit = null;
+  // Which request holds page time is not reported, so a stream is recognised by its behaviour:
+  // a request still in flight at two stalls, or stalls on three frames running (which also
+  // covers a holder no request event shows, such as a worker's).
+  let expiries = 0, net = cap.network === 'advance' ? 'advance' : 'pause', lastStall = null, frame = 0, run = 0;
   cdp.on('Emulation.virtualTimeBudgetExpired', () => expiries++);
-  const oldest = () => ([...pending.entries()].sort((a, b) => a[1] - b[1])[0] || [])[0];
-  const describe = r => r ? `the ${r.resourceType()} request to ${r.url().slice(0, 120)} never finished` : 'no request was in flight';
+  const inFlight = () => [...pending.entries()].sort((a, b) => a[1] - b[1]).map(([r]) => r);
+  const describe = rs => rs.length ? `the ${rs[0].resourceType()} request to ${rs[0].url().slice(0, 120)}${rs.length > 1 ? ` (and ${rs.length - 1} more)` : ''} never finished` : 'no visible request was in flight';
   const budget = async (policy, dt, ms) => {
     const want = expiries + 1, t0 = Date.now();
     await cdp.send('Emulation.setVirtualTimePolicy', { policy, budget: dt });
@@ -480,17 +490,20 @@ async function deterministic({ W, H, cap, dir, state, overlayArgs }) {
   };
   const advance = async dt => {
     if (dt <= 0) return;
+    frame++;
     const policy = net === 'advance' ? 'advance' : 'pauseIfNetworkFetchesPending';
     if (!(await budget(policy, dt, policy === 'advance' || cap.network === 'pause' ? cap.stallMs : cap.unstickMs))) {
-      if (policy === 'advance') throw new Fallback(`page time stopped advancing for ${cap.stallMs / 1000}s even without waiting on the network (${describe(oldest())})`);
-      if (cap.network === 'pause') throw new Fallback(`virtual time stalled for ${cap.stallMs / 1000}s: ${describe(oldest())}, which holds page time still (long-lived streams such as SSE do this)`);
-      const r = oldest();
-      if (r && r === culprit) {
-        net = 'advance'; cap.netNote = `${describe(r)} and held page time at two stalls`;
+      if (policy === 'advance') throw new Fallback(`page time stopped advancing for ${cap.stallMs / 1000}s even without waiting on the network (${describe(inFlight())})`);
+      if (cap.network === 'pause') throw new Fallback(`virtual time stalled for ${cap.stallMs / 1000}s: ${describe(inFlight())}, which holds page time still (long-lived streams such as SSE do this)`);
+      const now = inFlight(), held = lastStall ? now.filter(r => lastStall.reqs.has(r)) : [];
+      run = lastStall && lastStall.frame === frame - 1 ? run + 1 : 1;
+      if (held.length || run >= 3) {
+        net = 'advance';
+        cap.netNote = held.length ? `${describe(held)} and held page time at two stalls` : `page time stalled on ${run} frames running (${describe(now)})`;
         console.warn(`chapter "${cap.chapter}": ${cap.netNote}; filming the rest of it with page time running regardless of the network (network latency no longer edited out)`);
       }
-      culprit = r;
-      if (!(await budget('advance', dt, cap.stallMs))) throw new Fallback(`page time stopped advancing for ${cap.stallMs / 1000}s (${describe(oldest())})`);
+      lastStall = { frame, reqs: new Set(now) };
+      if (!(await budget('advance', dt, cap.stallMs))) throw new Fallback(`page time stopped advancing for ${cap.stallMs / 1000}s (${describe(inFlight())})`);
     }
     vt += dt;
   };
@@ -515,7 +528,7 @@ async function deterministic({ W, H, cap, dir, state, overlayArgs }) {
     }
     const p = cursor.pos(), cs = 1 / b.s, rot = cursor.tiltAmt ? tilt(cursor.vx, cursor.tiltAmt) : 0;
     if (Math.abs(p.x - applied.x) > 0.01 || Math.abs(p.y - applied.y) > 0.01 || cs !== applied.cs || Math.abs(rot - applied.rot) > 0.01 || renav) {
-      await pose({ x: +p.x.toFixed(2), y: +p.y.toFixed(2), cs, rot: +rot.toFixed(2) });
+      await pose({ x: +p.x.toFixed(2), y: +p.y.toFixed(2), cs, rot: +rot.toFixed(2) }, navigating || renav);
       // Cap's renderer thins its cursor path to 60fps and drops moves under 1/1920 of the screen; here the
       // real pointer moves at most once per output frame, and only when it moved.
       if (mouse && (Math.hypot(p.x - applied.x, p.y - applied.y) > 0.5 || renav)) cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: p.x, y: p.y }).catch(() => {});
@@ -523,7 +536,9 @@ async function deterministic({ W, H, cap, dir, state, overlayArgs }) {
     }
   };
   let renav = false;
-  page.on('framenavigated', f => { if (f === page.mainFrame()) renav = true; });
+  // A new document: re-pose the pointer in it, and prime the pipeline again before filming (the
+  // first ~24 frames after a load repeat; frames of the page before it must not count).
+  page.on('framenavigated', f => { if (f === page.mainFrame()) { renav = true; navigating = false; primed = 0; } });
   const draw = async (to, grab) => {
     await advance(to - vt);
     ticks += to - (draw.last ?? to - FI); draw.last = to;
@@ -538,17 +553,30 @@ async function deterministic({ W, H, cap, dir, state, overlayArgs }) {
   const blurFrames = [];
   // ffmpeg averages each blurred frame in the background while capture goes on (tmix over its
   // N sub-frames; -update keeps the last output, the full average). Two at a time.
-  const queue = [], busy = [];
+  // A take that falls back is re-filmed into the same directory, so close() kills and awaits every
+  // job first; a job that ends after that is ignored rather than writing into the new take.
+  const queue = [], busy = [], kids = new Set();
+  let cancelled = false;
   const average = (sub, N, out) => queue.push([sub, N, out]) && drain();
   const drain = () => {
-    while (busy.length < 2 && queue.length) {
+    while (!cancelled && busy.length < 2 && queue.length) {
       const [sub, N, out] = queue.shift();
-      const job = new Promise((res, rej) => execFile(ffbin('ffmpeg'), ['-v', 'error', '-y', '-i', `${sub.replace(/%/g, '%%')}/%02d.png`,
-        '-vf', `tmix=frames=${N}`, '-update', '1', out], e => e ? rej(e) : (fs.rmSync(sub, { recursive: true }), res())));
+      let kid;
+      const job = new Promise((res, rej) => {
+        kid = execFile(ffbin('ffmpeg'), ['-v', 'error', '-y', '-i', `${sub.replace(/%/g, '%%')}/%02d.png`,
+          '-vf', `tmix=frames=${N}`, '-update', '1', out], e => {
+          kids.delete(kid);
+          if (cancelled) return res();
+          if (e) return rej(e);
+          fs.rmSync(sub, { recursive: true, force: true }); res();
+        });
+        kids.add(kid);
+      });
       busy.push(job); job.finally(() => { busy.splice(busy.indexOf(job), 1); drain(); }).catch(() => {});
     }
   };
   const averaged = async () => { while (queue.length || busy.length) await Promise.all(busy); };
+  const cancelBlur = async () => { cancelled = true; queue.length = 0; for (const k of kids) k.kill('SIGKILL'); await Promise.allSettled([...busy]); };
   const name = k => `${String(k).padStart(5, '0')}.png`;
   const pump = (async () => {
     while (pumping) {
@@ -648,7 +676,7 @@ async function deterministic({ W, H, cap, dir, state, overlayArgs }) {
       for (const k of blurFrames) { if (spans.length && spans.at(-1)[1] === k - 1) spans.at(-1)[1] = k; else spans.push([k, k]); }
       return { frames: n, dur: (n - 1) / fps, fps, dpr, blurSpans: spans };
     },
-    close: async () => { pumping = false; await pump.catch(() => {}); await browser.close(); },
+    close: async () => { pumping = false; await pump.catch(() => {}); await cancelBlur(); await browser.close(); },
   };
   return rec;
 }
