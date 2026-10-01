@@ -94,6 +94,9 @@ function readme() {
     } else { webp = null; console.warn(`warn: no WebP: ${FFMPEG()} has no libwebp encoder and img2webp is not installed (the webp package has it); the snippet offers the GIF only`); }
     const poster = join(out, 'poster.png');
     ff(['-ss', String(hero.settled), '-i', video, '-frames:v', '1', '-vf', `scale=${width}:-2:flags=lanczos`, '-update', '1', poster]);
+    for (const [f, what] of [[webp, 'WebP'], [poster, 'poster']]) {
+      if (f && MB(f) > budget) throw new Error(`the ${what} is ${MB(f)} MB, over the ${budget} MB budget; pass a smaller --width or a larger --budget`);
+    }
     // The GIF's own size from its header (after any budget step-down, in whatever aspect the
     // demo was composed): logical screen width and height, little-endian, at bytes 6 to 9.
     const head = readFileSync(gif).subarray(6, 10), gw = head.readUInt16LE(0), h = head.readUInt16LE(2);
