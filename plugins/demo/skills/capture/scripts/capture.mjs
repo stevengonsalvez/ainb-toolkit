@@ -513,9 +513,9 @@ async function deterministic({ W, H, cap, dir, state, overlayArgs }) {
     const b = cam.box(), p = cur.pos();
     return { b, x: (p.x - (b.s > 1 ? b.x : 0)) * b.s, y: (p.y - (b.s > 1 ? b.y : 0)) * b.s };
   };
-  // How far anything on screen moves over this frame's shutter, in output (device) px, and the
-  // direction of the largest move: camera (the frame corner that moves most) or pointer. Taken
-  // from the solver stepped ahead on copies, so it is the motion the samples will really span.
+  // How far anything on screen moves over this frame's shutter, in output (device) px: the camera
+  // (the frame corner that moves most) or the pointer, whichever is further. Taken from the
+  // solver stepped ahead on copies, so it is the motion the samples will really span.
   const shutterMotion = () => {
     const a = screen(), cam = camera.clone(), cur = cursor.clone(), dt = blur.shutter * FI / 1000;
     cam.step(dt); cur.step(st / 1000, dt);
