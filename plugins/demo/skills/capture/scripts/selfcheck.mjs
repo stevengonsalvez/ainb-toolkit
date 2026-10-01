@@ -82,6 +82,14 @@ try {
   const n = Number(execFileSync(process.env.FFPROBE || 'ffprobe', ['-v', 'error', '-count_frames', '-select_streams', 'v:0',
     '-show_entries', 'stream=nb_read_frames', '-of', 'csv=p=0', `${r.dir}.mp4`]).toString());
   assert.ok(Math.abs(n / 30 - r.dur) < 0.1, `mp4 holds ${n} frames (${(n / 30).toFixed(2)}s) for a ${r.dur.toFixed(2)}s take`);
+  // A '%' in the take's path: ffmpeg reads the cfr/ input as a %05d pattern, and an unescaped
+  // "100%/" failed with "Error opening input file" (exit 254). Same take, copied under one.
+  const pct = path.join(out, 'pct 100%', 'main');
+  fs.cpSync(r.dir, pct, { recursive: true });
+  execFileSync(path.join(import.meta.dirname, 'encode.sh'), [pct, `${pct}.mp4`]);
+  const np = Number(execFileSync(process.env.FFPROBE || 'ffprobe', ['-v', 'error', '-count_frames', '-select_streams', 'v:0',
+    '-show_entries', 'stream=nb_read_frames', '-of', 'csv=p=0', `${pct}.mp4`]).toString());
+  assert.equal(np, n, `encode under a '%' path gave ${np} frames, not ${n}`);
   const head = luma(frame(r.dir, 0)), tail = luma(frame(r.dir, r.frames - 1));
   assert.ok(head > 60 && head < 140, `first frame is blank/splash (luma ${head})`);
   assert.ok(tail > 60 && tail < 140, `last frame is still the splash (luma ${tail})`);
