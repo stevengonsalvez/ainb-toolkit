@@ -460,6 +460,11 @@ function chapter(an, sp) {
   const meta = { name, kind: 'chapter', total: r3(total), srcDur: r3(an.dur), cardDur: CARD, srcW: an.srcW, srcH: an.srcH,
     speed: sp, kept: an.kept.map((k) => k.map(r3)), cuts: r3(an.dur - rt.kept.reduce((a, [x, y]) => a + y - x, 0)),
     footDur, spots: report,
+    // narration freezes as [start, length] in composition seconds; check.mjs maps stills through them
+    freezes: [...new Set(fit.freezes.map((f) => f.t))].map((t) => {
+      const d = fit.freezes.filter((f) => f.t === t).reduce((a, f) => a + f.d, 0);
+      return [r3(toComp(t) - d), r3(d)];
+    }),
     // sound cues and narration for audio.mjs, in composition seconds
     // A move a narration freeze lands inside starts once the freeze ends, so its whoosh does too.
     cues: an.cues.filter((e) => an.kept.some(([a, b]) => e.t >= a && e.t < b)).map((e) => {
