@@ -75,6 +75,12 @@ capture.mode
   load shows for its wall time, roughly a tenth of its real length), the rig says so once, and
   `capture.network` / `capture.networkNote` in events.json record it. `network: 'pause'` never
   forces and falls back to screencast after `stallMs` instead; `'advance'` forces from the start.
+- **Why `auto` is the default.** Almost every modern SPA lazy-loads its routes, and under strict
+  `pause` each of those loads freezes page time for good: a real app's first deterministic take
+  fell back to screencast on its first route change. `auto` keeps those apps deterministic, edits
+  network latency out everywhere else, and only gives that up (saying so) when a stream really
+  holds page time. Use `pause` when the footage must never show a load at anything but its edited
+  length, and accept a screencast fallback on apps that need it.
 - **screencast**: the real-time path. It is used when deterministic capture cannot proceed: the
   browser has no beginFrame, page time stops even when forced, the chapter passes `timeoutMs` of
   wall time, frames come back at the wrong size, or `network: 'pause'` meets a request that never
