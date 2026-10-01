@@ -456,6 +456,9 @@ function chapter(an, sp) {
   const total = CARD + footDur;
   const seam = seamsOf(C, name);
   const idx = C.chapters.findIndex((c) => c.name === name) + 1;
+  // A film that ends on this chapter fades to the backdrop colour, as an end card would; that
+  // fade, or the seam into the next segment, is the tail no spotlight may reach into.
+  const last = segmentNames(C).at(-1) === name, tail = seam.out.dur || (last ? F(0.6) : 0);
 
   // frame position of a rect: (rect - cam) * cam.s  (see demo-capture handoff contract)
   for (const s of an.spots) {
@@ -466,11 +469,11 @@ function chapter(an, sp) {
   // Grouped in OUTPUT time, where the camera move is scheduled: travel speed shrinks the gaps,
   // and a source-time split left moves with no room (end before start).
   for (const s of an.spots) { s.ct = toComp(s.T); s.cf = toComp(s.from); }
-  // The tail seam throws the window out, so nothing may still be lit inside it.
-  const lastLit = total - seam.out.dur - F(0.1);
+  // The tail seam throws the window out, so nothing may still be lit, or fading out, inside it.
+  const lastLit = total - tail - F(0.3);
   for (const s of an.spots) {
     if (s.ct + s.hold <= lastLit) continue;
-    console.warn(`  warn ${name} m${s.i}: hold cut from ${r3(s.hold)}s to ${r3(lastLit - s.ct)}s so it ends before the ${seam.out.kind} into the next segment`);
+    console.warn(`  warn ${name} m${s.i}: hold cut from ${r3(s.hold)}s to ${r3(lastLit - s.ct)}s so it has faded before the ${last ? 'final fade' : `${seam.out.kind} into the next segment`}`);
     s.hold = Math.max(0.2, lastLit - s.ct);
   }
   const groups = [];
@@ -598,6 +601,7 @@ function chapter(an, sp) {
     }
   }
   lines.push(...seamLines(name, total));
+  if (last) lines.push(`tl.fromTo("#fade", { opacity: 0 }, { opacity: 1, duration: ${F(0.6)}, ease: "power1.in", immediateRender: false }, ${r3(total - F(0.6))});`);
 
   const win = `<div class="winwrap" id="${name}-ww"><div class="winshadow"></div><div class="win"><div class="screen">
 <div id="${name}-cam" class="cam" style="width:${an.srcW}px;height:${an.srcH}px">
@@ -613,7 +617,7 @@ ${labels}
   renderFootage(an, rt, `${d}/assets/footage/${name}.mp4`, Math.min(an.dpr, shown));
   const meta = { name, kind: 'chapter', total: r3(total), srcDur: r3(an.dur), cardDur: CARD, srcW: an.srcW, srcH: an.srcH,
     speed: sp, kept: an.kept.map((k) => k.map(r3)), cuts: r3(an.dur - rt.kept.reduce((a, [x, y]) => a + y - x, 0)),
-    footDur, settledFrom: r3(CARD + ent), tailFrom: r3(total - seam.out.dur), spots: report };
+    footDur, settledFrom: r3(CARD + ent), tailFrom: r3(total - tail), spots: report };
   writeFileSync(`${C.out}/work/${name}.plan.json`, JSON.stringify(meta, null, 1));
   return meta;
 }
