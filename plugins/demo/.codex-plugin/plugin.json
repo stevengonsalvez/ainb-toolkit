@@ -20,7 +20,7 @@
   ],
   "interface": {
     "displayName": "Demo",
-    "shortDescription": "Capture a product demo from a live app and compose it into a video",
+    "shortDescription": "Capture a product demo from a live app, compose it into a video, export a GIF or click-through",
     "category": "delivery",
     "capabilities": [
       "Instructions"
