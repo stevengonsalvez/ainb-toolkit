@@ -197,7 +197,8 @@ function anchorTime(C, l, words, dir) {
 // placed so its anchor word starts as the spotlight is fully lit. Where a line would start before
 // the previous one has finished, or would outlast its own hold, the footage freezes on a still
 // frame for whole frames until it fits: at the end of the previous hold (the previous spotlight
-// stays up), or, for the first mark, where its spotlight starts (the settled pose).
+// stays up), or, for the first mark, where its spotlight starts to fade in (the pose it lights on),
+// so the fade, the bell and the anchor word all come after the freeze, never before it.
 export function fitNarration(spots, clips, timeline, N, fps = 30) {
   const fz = [], placed = [];
   const frames = (d) => Math.ceil(d * fps - 1e-6) / fps;
@@ -210,7 +211,7 @@ export function fitNarration(spots, clips, timeline, N, fps = 30) {
     let toComp = timeline(fz), start = lit(toComp, s) - c.anchor;
     const need = prevEnd + N.gap - start;
     if (need > 0) {
-      fz.push({ t: i ? spots[i - 1].T + spots[i - 1].hold : Math.max(s.T, s.from ?? s.T), d: frames(need) });
+      fz.push({ t: i ? spots[i - 1].T + spots[i - 1].hold : s.from ?? s.T, d: frames(need) });
       toComp = timeline(fz); start = lit(toComp, s) - c.anchor;
     }
     const over = start + c.dur + N.tail - toComp(s.T + s.hold);
