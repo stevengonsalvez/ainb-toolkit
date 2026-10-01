@@ -7,6 +7,7 @@ import { readFileSync, writeFileSync, mkdirSync, copyFileSync, existsSync } from
 import { dirname, resolve, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadConfig, segmentNames, eventsPath, r3, esc } from './config.mjs';
+import { audioSettings, narrationClips, fitNarration, beatGrid } from './audio.mjs';
 
 const cfgPath = process.argv[2];
 if (!cfgPath) { console.error('usage: compose.mjs <config.json> [segment ...]'); process.exit(2); }
@@ -188,7 +189,8 @@ function analyze(cfg) {
   }
   const kept = keep(dur - 0.03, cuts);
   const vp = ev.viewport || { width: 1280, height: 720 };
-  return { cfg, name, mp4, dur, spots, kept, srcW: vp.width, srcH: vp.height, CARD: cfg.cardDur ?? C.chapterCardDur };
+  return { cfg, name, mp4, dur, spots, kept, srcW: vp.width, srcH: vp.height, CARD: cfg.cardDur ?? C.chapterCardDur,
+    cues: ev.events.filter((e) => e.kind !== 'mark') };
 }
 
 // ---------- speed ramp ----------
@@ -197,7 +199,7 @@ function analyze(cfg) {
 // runs linearly from k0 to k1, so a ramp is a smooth change of speed rather than a jump.
 // Proof windows (fadeLead before a mark through the end of its hold) play at 1x;
 // everything between them plays at speed.travel, with a ramp of rampMs of output time each side.
-function retime(an, sp) {
+function retime(an, sp, freezes = []) {
   const U = []; let acc = 0;
   for (const [a, b] of an.kept) { U.push(acc); acc += b - a; }
   const uEnd = acc;
@@ -238,8 +240,9 @@ function retime(an, sp) {
     cur = w1;
   }
   gap(cur, uEnd, true, false);
-  // Split at cut boundaries so each piece maps one kept range, then lay pieces end to end.
-  for (const b of U.slice(1)) {
+  // Split at cut boundaries so each piece maps one kept range, and at narration freezes, then
+  // lay pieces end to end.
+  for (const b of [...U.slice(1), ...freezes.map((f) => toU(f.t))]) {
     const i = pieces.findIndex((p) => p.u0 < b - 1e-6 && b < p.u1 - 1e-6);
     if (i < 0) continue;
     const p = pieces[i], kb = p.k0 + (p.k1 - p.k0) * (b - p.u0) / (p.u1 - p.u0);
@@ -268,6 +271,12 @@ function retime(an, sp) {
     }
     end = p.o0 + len * p.sc;
   }
+  // Narration freezes (audio.mjs fitNarration): whole frames of output inserted at a source point.
+  // Every piece from there on starts that much later, and the fps filter repeats the frame before
+  // the jump. Whole frames leave the frame phases above untouched.
+  let held = 0;
+  for (const p of pieces) { held = freezes.reduce((a, f) => a + (toU(f.t) <= p.u0 + 1e-9 ? f.d : 0), 0); p.o0 += held; }
+  nominal += held;
   const outOfU = (u) => {
     const p = pieces.find((q) => u < q.u1) ?? pieces.at(-1);
     const x = Math.min(u, p.u1) - p.u0;
@@ -310,11 +319,18 @@ function viewFor(an, fr) {
 
 // ---------- chapter ----------
 function chapter(an, sp) {
-  const { name, cfg, CARD } = an;
-  const rt = retime(an, sp);
-  const toComp = (t) => CARD + rt.toOut(t);
+  const { name, cfg } = an;
+  const fit = fitFor(an, sp);
+  const rt = retime(an, sp, fit.freezes);
+  // A held line keeps its spotlight up: holds become output time, the source span kept for check.mjs.
+  for (const s of an.spots) { s.srcHold = s.hold; s.hold = r3(rt.toOut(s.T + s.hold) - rt.toOut(s.T)); }
   const footDur = r3(rt.footDur);
+  const pad = padToBeat(name, an.CARD + footDur);
+  for (const p of fit.placed) if (p.slot !== 'intro') p.at += pad;
+  const CARD = r3(an.CARD + pad);
+  const toComp = (t) => CARD + rt.toOut(t);
   const total = CARD + footDur;
+  TOTALS[name] = total;
 
   const card = `<section id="${name}-card" class="card clip" data-start="0" data-duration="${CARD}" data-track-index="2">
   <div class="inner" id="${name}-inner">
@@ -368,7 +384,7 @@ function chapter(an, sp) {
     }
     const ct = s.ct;
     report.push({
-      i: s.i, label: s.label, srcT: r3(s.m.t), shift: s.shift || 0, compT: r3(ct), hold: r3(s.hold),
+      i: s.i, label: s.label, srcT: r3(s.m.t), shift: s.shift || 0, compT: r3(ct), hold: r3(s.hold), srcHold: r3(s.srcHold),
       place: pick[0], box: [x, y, w, h].map(Math.round),
       labBox: [pick[2].left, pick[2].top, lw, LH].map(Math.round), view: v,
     });
@@ -408,7 +424,14 @@ function chapter(an, sp) {
   renderFootage(an, rt, `${d}/assets/footage/${name}.mp4`);
   const meta = { name, kind: 'chapter', total: r3(total), srcDur: r3(an.dur), cardDur: CARD, srcW: an.srcW, srcH: an.srcH,
     speed: sp, kept: an.kept.map((k) => k.map(r3)), cuts: r3(an.dur - rt.kept.reduce((a, [x, y]) => a + y - x, 0)),
-    footDur, spots: report };
+    footDur, spots: report,
+    // sound cues and narration for audio.mjs, in composition seconds
+    // A move a narration freeze lands inside starts once the freeze ends, so its whoosh does too.
+    cues: an.cues.filter((e) => an.kept.some(([a, b]) => e.t >= a && e.t < b)).map((e) => {
+      const at = toComp(e.t) + fit.freezes.reduce((a, f) => a + (e.dur && f.t > e.t && f.t <= e.t + e.dur ? f.d : 0), 0);
+      return { kind: e.kind, at: r3(at), ...(e.dur != null && { dur: r3(toComp(e.t + e.dur) - at) }), ...(e.chars && { chars: e.chars }) };
+    }),
+    narration: fit.placed.map(({ slot, at, dur, file, text, anchor, words }) => ({ slot, at: r3(at), dur, file, text, anchor, words })) };
   writeFileSync(`${C.out}/work/${name}.plan.json`, JSON.stringify(meta, null, 1));
   return meta;
 }
@@ -418,6 +441,31 @@ mkdirSync(`${C.out}/work`, { recursive: true });
 const want = process.argv.slice(3);
 const names = want.length ? want : segmentNames(C);
 for (const n of names) if (!C.cards[n] && !C.chapters.some((c) => c.name === n)) throw new Error(`unknown segment "${n}"`);
+
+// Narration and the music's beat grid are settled before any picture is timed (audio.mjs).
+const A = audioSettings(C);
+const NAR = narrationClips(C);
+const GRID = beatGrid(C);
+const fitFor = (an, sp) => fitNarration(an.spots, NAR[an.name] || { marks: [] },
+  (fz) => { const r = retime(an, sp, fz); return (t) => an.CARD + r.toOut(t); }, A?.narration);
+// Segment lengths so far, this run's or an earlier run's plan, for where each segment starts.
+const TOTALS = Object.fromEntries(segmentNames(C).map((n) => {
+  const p = `${C.out}/work/${n}.plan.json`;
+  return [n, existsSync(p) ? JSON.parse(readFileSync(p, 'utf8')).total : null];
+}));
+// With a music bed, each segment's leading card grows by under one beat so the segment ends,
+// to the frame, on a beat: every cut lands on the music.
+function padToBeat(n, total) {
+  if (!GRID) return 0;
+  let start = 0;
+  for (const m of segmentNames(C)) {
+    if (m === n) break;
+    if (TOTALS[m] == null) { console.warn(`warn: ${n} not snapped to the beat: ${m} has no plan yet`); return 0; }
+    start += TOTALS[m];
+  }
+  const beat = GRID.find((b) => b >= start + total - 1e-3);
+  return beat == null ? 0 : Math.round(beat * 30) / 30 - start - total;
+}
 
 // A chapter's `speed` keys override the global ones; `travel` can be raised by targetDuration.
 const speedFor = (cfg, travel) => ({ ...C.speed, travel, ...(cfg.speed || {}) });
@@ -430,7 +478,7 @@ if (C.targetDuration) {
   const filmed = C.chapters.filter((c) => existsSync(`${C.takes}/${c.name}.mp4`));
   for (const c of C.chapters) if (!filmed.includes(c)) console.warn(`warn: targetDuration leaves out ${c.name}: no footage at ${C.takes}/${c.name}.mp4`);
   const length = (v) => Object.values(C.cards).reduce((a, c) => a + c.dur, 0)
-    + filmed.reduce((a, c) => { const an = analysis(c); return a + an.CARD + retime(an, speedFor(c, v)).footDur; }, 0);
+    + filmed.reduce((a, c) => { const an = analysis(c), sp = speedFor(c, v); return a + an.CARD + retime(an, sp, fitFor(an, sp).freezes).footDur; }, 0);
   // ponytail: bisection on travel alone; proof windows, cards and holds are never sped up to hit it.
   if (length(travel) > C.targetDuration) {
     let lo = travel, hi = Math.max(travel, 4);
@@ -444,12 +492,21 @@ if (C.targetDuration) {
 for (const n of names) {
   const card = C.cards[n];
   if (card) {
+    // a narrated card stays up until its line has finished
+    const clip = NAR[n]?.card, N = A?.narration;
+    if (clip) card.dur = r3(Math.max(card.dur, N.lead + clip.dur + N.tail + F(0.4)));
+    card.dur = r3(card.dur + padToBeat(n, card.dur));
+    TOTALS[n] = card.dur;
     project(n, cardDoc(n, card));
-    writeFileSync(`${C.out}/work/${n}.plan.json`, JSON.stringify({ name: n, kind: 'card', total: card.dur, spots: [] }, null, 1));
+    const narration = clip ? [{ slot: 'card', at: N.lead, dur: clip.dur, file: clip.file, text: clip.text, anchor: clip.anchor, words: clip.words }] : [];
+    writeFileSync(`${C.out}/work/${n}.plan.json`, JSON.stringify({ name: n, kind: 'card', total: card.dur, spots: [], narration }, null, 1));
     console.log(`${n}: card ${card.dur}s`);
     continue;
   }
   const cfg = C.chapters.find((c) => c.name === n);
   const m = chapter(analysis(cfg), speedFor(cfg, travel));
   console.log(`${n}: total ${m.total}s (src ${m.srcDur}, cut ${m.cuts}, travel ${m.speed.travel}x) spots ${m.spots.map((s) => `${s.place}${s.shift ? '+' + s.shift : ''}/${s.hold}`).join(' ')}`);
+  // where each narrated mark's anchor word starts against its spotlight being fully lit; 0 by construction
+  const lines = m.narration.filter((l) => typeof l.slot === 'number');
+  if (lines.length) console.log(`  anchors ${lines.map((l) => `m${l.slot} ${r3(l.at + l.anchor - m.spots.find((s) => s.i === l.slot).compT)}s`).join(', ')}`);
 }

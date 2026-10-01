@@ -22,3 +22,5 @@ DUR=$("$FFPROBE" -v error -show_entries format=duration -of csv=p=0 "$OUT")
 "$FFMPEG" -loglevel error -y -i "$OUT" -vf "fps=12/${DUR%.*},scale=320:-1,tile=4x3" -frames:v 1 "$R/out/$NAME-montage.png"
 echo "$OUT  ${DUR}s  $(du -h "$OUT" | cut -f1)"
 echo "$R/out/$NAME-montage.png"
+# Sound, captions and the loudness check (audio.mjs); exits non-zero when the mix misses its target.
+node "$D/audio.mjs" "$CFG"

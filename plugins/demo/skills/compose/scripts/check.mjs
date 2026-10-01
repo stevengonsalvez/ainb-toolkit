@@ -104,7 +104,8 @@ function checkChapter(name) {
     // inset past the 2px border and the glow so the border itself is not measured
     const box = [s.box[0] + 6, s.box[1] + 6, s.box[2] - 12, s.box[3] - 12];
     const at = [r3(s.compT + 0.5), r3(s.compT + s.hold - 0.05)];
-    const atSrc = [r3(s.srcT + (s.shift || 0) + 0.5), r3(s.srcT + (s.shift || 0) + s.hold - 0.05)];
+    // A narration hold freezes the footage, so the end of the hold maps to the end of its SOURCE span.
+    const atSrc = [r3(s.srcT + (s.shift || 0) + 0.5), r3(s.srcT + (s.shift || 0) + (s.srcHold ?? s.hold) - 0.05)];
     const why = [];
 
     const ren = at.map((t) => grayFrame(seg, t));

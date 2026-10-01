@@ -109,6 +109,7 @@ export function loadConfig(path) {
     accentEdge: hexToRgba(theme.accent, 0.55),
     scrim: raw.scrim || 'rgba(0,0,0,0.60)',
     chapters, cards,
+    audio: raw.audio ?? {}, configDir: dir,   // read by audio.mjs
   };
 }
 
