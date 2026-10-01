@@ -146,24 +146,26 @@ function interactive() {
   for (const [k, s] of S.entries()) {
     const png = `${C.takes}/${s.chapter}/cfr/${String(s.frame).padStart(5, '0')}.png`;
     // The lossless take at its own density, never the lossy final: from the PNG frame when the
-    // take keeps them, else decoded from the take's lossless mp4. Stored as WebP q90 (ffmpeg's
-    // libwebp, else cwebp) when available: 0.307 MB against 0.829 MB of PNG for the ferry steps.
+    // take keeps them, else decoded from the take's lossless mp4 (seeking half a frame early:
+    // -ss picks the first frame at or after it, and frame/fps rounds past frame k at 60 fps).
+    // Stored as WebP q90 when an encoder exists: 0.307 MB against 0.829 MB of PNG for the ferry steps.
     const raw = existsSync(png) ? png : join(out, `.step-${k}.png`);
-    if (raw !== png) ff(['-ss', String(r3(s.frame / s.fps)), '-i', `${C.takes}/${s.chapter}.mp4`, '-frames:v', '1', '-update', '1', raw]);
-    // The frame's real size, from its PNG header: the box is scaled onto it, so a take filmed at
-    // another density than its events claim still gets its hotspot in the right place.
-    const ihdr = readFileSync(raw).subarray(16, 24), W = ihdr.readUInt32BE(0), H = ihdr.readUInt32BE(4);
-    const fit = W / (s.vp.width * s.dpr);
-    const stem = join(out, `step-${String(k + 1).padStart(2, '0')}`);
-    let file = `${stem}.webp`;
-    if (hasEncoder('libwebp')) ff(['-i', raw, '-frames:v', '1', '-c:v', 'libwebp', '-lossless', '0', '-q:v', '90', '-update', '1', file]);
-    else if (which('cwebp')) execFileSync('cwebp', ['-quiet', '-q', '90', raw, '-o', file]);
-    else { file = `${stem}.png`; ff(['-i', raw, '-frames:v', '1', '-update', '1', file]); }
-    if (raw !== png) rmSync(raw);
-    const box = clipTo(onFrame(s.rect, s.cam, s.dpr * fit), W, H);
-    if (!box) throw new Error(`step ${k + 1} (${s.chapter} "${s.text}"): its target is entirely outside the frame`);
-    hot.push({ ...box, W, H });
-    imgs.push(file);
+    try {
+      if (raw !== png) ff(['-ss', String(Math.max(0, (s.frame - 0.5) / s.fps)), '-i', `${C.takes}/${s.chapter}.mp4`, '-frames:v', '1', '-update', '1', raw]);
+      // The frame's real size, from its PNG header: the box is scaled onto it, so a take filmed at
+      // another density than its events claim still gets its hotspot in the right place.
+      const ihdr = readFileSync(raw).subarray(16, 24), W = ihdr.readUInt32BE(0), H = ihdr.readUInt32BE(4);
+      const fit = W / (s.vp.width * s.dpr);
+      const box = clipTo(onFrame(s.rect, s.cam, s.dpr * fit), W, H);
+      if (!box) throw new Error(`step ${k + 1} (${s.chapter} "${s.text}"): its target is entirely outside the frame`);
+      const stem = join(out, `step-${String(k + 1).padStart(2, '0')}`);
+      let file = `${stem}.webp`;
+      if (webpBy === 'ffmpeg') ff(['-i', raw, '-frames:v', '1', '-c:v', 'libwebp', '-lossless', '0', '-q:v', '90', '-update', '1', file]);
+      else if (webpBy === 'cwebp') execFileSync('cwebp', ['-quiet', '-q', '90', raw, '-o', file]);
+      else { file = `${stem}.png`; ff(['-i', raw, '-frames:v', '1', '-update', '1', file]); }
+      hot.push({ ...box, W, H });
+      imgs.push(file);
+    } finally { if (raw !== png) rmSync(raw, { force: true }); }
   }
   const total = imgs.reduce((a, f) => a + statSync(f).size, 0) / 1e6;
   const inline = opt.inline === 'yes' || (opt.inline !== 'no' && total <= 12);

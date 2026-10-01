@@ -156,6 +156,23 @@ try {
   w(join(root, 'takes/one/events.json'), events([mark(8, 'Off screen', { x: 5000, y: 5000, w: 10, h: 10 })]));
   r = run('interactive', cfg, '--out', join(root, 'off'));
   ok(r.status !== 0 && /entirely outside the frame/.test(r.stderr), 'a hotspot outside its step image fails the export');
+
+  // 4. A step decoded from a 60 fps take is the marked frame, not the next: every frame has its
+  //    own grey level, and marks sit on frames 1, 4 and 7 (k / 60 rounds past frame k at 60 fps).
+  mkdirSync(join(root, 'lum/takes/lum'), { recursive: true });
+  ff(['-f', 'lavfi', '-i', "nullsrc=s=64x36:r=60:d=0.5,geq=lum='20+N*8':cb=128:cr=128", '-pix_fmt', 'yuv420p', '-c:v', 'mpeg4', '-q:v', '1', join(root, 'lum/takes/lum.mp4')]);
+  w(join(root, 'lum/lum.config.json'), { name: 'lum', takes: './takes', out: './compose', chapters: ['lum'] });
+  w(join(root, 'lum/compose/work/lum.plan.json'), { kind: 'chapter', total: 3, cardDur: 0.5, spots: [1, 4, 7].map((k, i) => spot(i, `frame ${k}`, 0.5 + i)) });
+  w(join(root, 'lum/takes/lum/events.json'), { viewport: { width: 32, height: 18 }, dpr: 2, fps: 60,
+    events: [1, 4, 7].map((k) => mark(k / 60, `frame ${k}`, { x: 0, y: 0, w: 10, h: 10 })) });
+  r = run('interactive', join(root, 'lum/lum.config.json'), '--inline', 'no');
+  const grey = (args) => { const b = execFileSync(FFMPEG(), ['-nostdin', '-loglevel', 'error', ...args, '-frames:v', '1', '-f', 'rawvideo', '-pix_fmt', 'gray', '-']); return b.reduce((a, v) => a + v, 0) / b.length; };
+  const ref = (k) => grey(['-i', join(root, 'lum/takes/lum.mp4'), '-vf', `select=eq(n\\,${k})`]);
+  const picked = r.status === 0 ? [1, 4, 7].map((k, i) => {
+    const got = grey(['-i', join(root, `lum/compose/export/interactive/step-0${i + 1}.webp`)]);
+    return [k - 1, k, k + 1].map((j) => [j, Math.abs(got - ref(j))]).sort((x, y) => x[1] - y[1])[0][0];
+  }) : [];
+  ok(String(picked) === '1,4,7', `60 fps steps show frames ${picked} (want 1,4,7)${r.status ? `: ${r.stderr.trim()}` : ''}`);
 } finally { rmSync(root, { recursive: true, force: true }); }
 
 console.log(fails ? `${fails} check(s) failed` : 'all checks passed');
