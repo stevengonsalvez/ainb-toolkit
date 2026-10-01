@@ -14,7 +14,7 @@
 //           -> DEFECT 2: a label never covers its own spotlight
 import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync, mkdirSync, rmSync, existsSync, readdirSync } from 'node:fs';
-import { loadConfig, segmentNames, r3, hexToRgb } from './config.mjs';
+import { loadConfig, segmentNames, r3, hexToRgb, grayFrames } from './config.mjs';
 
 const cfgPath = process.argv[2];
 if (!cfgPath) { console.error('usage: check.mjs <config.json> [chapter ...]'); process.exit(2); }
@@ -28,10 +28,9 @@ if (!drawtext) console.warn(`warn: ${C.ffmpeg} has no drawtext filter, so contac
 
 // One frame as luma: of a video at time t, or of an image when t is null.
 function grayFrame(file, t, w = W, h = H) {
-  const buf = execFileSync(C.ffmpeg, ['-nostdin', '-loglevel', 'error', ...(t == null ? [] : ['-ss', String(t)]), '-i', file,
-    '-frames:v', '1', '-vf', `scale=${w}:${h},format=gray`, '-f', 'rawvideo', '-'], { maxBuffer: 1 << 28 });
-  if (buf.length < w * h) throw new Error(`no frame at ${t}s of ${file}`);
-  return buf;
+  const f = grayFrames(C.ffmpeg, file, { t, w, h });
+  if (!f.n) throw new Error(`no frame at ${t}s of ${file}`);
+  return f.at(0);
 }
 // A rendered segment is a directory of PNGs, frame_000001.png at time 0, 30 per second.
 const segFrame = (seg, n, t) => `${seg}/frame_${String(Math.min(n, Math.round(t * 30) + 1)).padStart(6, '0')}.png`;

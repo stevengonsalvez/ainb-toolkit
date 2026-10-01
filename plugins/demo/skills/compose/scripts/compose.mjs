@@ -6,7 +6,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync, mkdirSync, copyFileSync, existsSync } from 'node:fs';
 import { dirname, resolve, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadConfig, segmentNames, eventsPath, r3, esc } from './config.mjs';
+import { loadConfig, segmentNames, eventsPath, r3, esc, grayFrames, mad } from './config.mjs';
 
 const cfgPath = process.argv[2];
 if (!cfgPath) { console.error('usage: compose.mjs <config.json> [segment ...]'); process.exit(2); }
@@ -38,25 +38,11 @@ function freezes(mp4) {
   return s.map((a, i) => [a, e[i] ?? 1e9]);
 }
 
-// Luma frames at 160x90, `len` seconds from `t`: every frame of the take, or `fps` per second.
-function grayFrames(mp4, t, len, fps) {
-  const fw = 160 * 90;
-  const buf = execFileSync(C.ffmpeg, ['-nostdin', '-loglevel', 'error', '-ss', String(t), '-i', mp4, '-t', String(len),
-    '-vf', `${fps ? `fps=${fps},` : ''}scale=160:90,format=gray`, '-f', 'rawvideo', '-'], { maxBuffer: 1 << 26 });
-  return { n: Math.floor(buf.length / fw), at: (k) => buf.subarray(k * fw, (k + 1) * fw) };
-}
-// mean absolute luma difference between two such frames
-function mad(a, b) {
-  let d = 0;
-  for (let p = 0; p < a.length; p++) d += Math.abs(a[p] - b[p]);
-  return d / a.length;
-}
-
 // DEFECT 1 guard: a hold must not run past a camera move. Returns the first time after t+0.3
 // where the frame differs from the t+0.3 pose (mean abs luma diff > 2 at 160x90). The scan
 // covers the longest hold allowed (pace can raise hold.max), so an unseen move cannot slip in.
 function stableUntil(mp4, t) {
-  const t0 = t + 0.3, f = grayFrames(mp4, t0, Math.max(2.6, C.hold.max + 0.4), 10);
+  const t0 = t + 0.3, f = grayFrames(C.ffmpeg, mp4, { t: t0, len: Math.max(2.6, C.hold.max + 0.4), fps: 10 });
   for (let k = 1; k < f.n; k++) if (mad(f.at(k), f.at(0)) > 2) return t0 + k / 10;
   return t0 + f.n / 10;
 }
@@ -68,7 +54,7 @@ function stableUntil(mp4, t) {
 // animated page used to delay every zoomed spotlight by ~0.4s. Those are capped and warned about.
 const SETTLE_CAP = 0.1;
 function settledAt(mp4, t1, name) {
-  const a = Math.max(0, t1 - 0.1), f = grayFrames(mp4, a, t1 + 2 * SETTLE_CAP - a);
+  const a = Math.max(0, t1 - 0.1), f = grayFrames(C.ffmpeg, mp4, { t: a, len: t1 + 2 * SETTLE_CAP - a });
   const tk = (k) => Math.ceil(a * 30) / 30 + k / 30;
   let settle = t1, late = false;
   for (let k = 1; k < f.n; k++) {

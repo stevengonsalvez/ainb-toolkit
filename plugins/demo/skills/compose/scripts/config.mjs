@@ -1,6 +1,7 @@
 // Config loading and defaults. Every app-specific value lives in the config file;
 // the defaults below are deliberately brand-neutral placeholders.
 import { readFileSync, existsSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { dirname, resolve, isAbsolute, basename } from 'node:path';
 
 export const r3 = (x) => Math.round(x * 1000) / 1000;
@@ -13,6 +14,23 @@ export function eventsPath(takes, name) {
   const nested = `${takes}/${name}/events.json`;
   if (existsSync(nested)) return nested;
   throw new Error(`${name}: no events.json (looked at ${flat} and ${nested})`);
+}
+
+// Luma frames of a video or image scaled to w x h: `len` seconds from `t` (every frame, or `fps`
+// per second), or the single frame at `t` (or of an image) when `len` is unset. The one ffmpeg
+// frame reader for compose.mjs and check.mjs; argv, never a shell string.
+export function grayFrames(ffmpeg, file, { t, len, fps, w = 160, h = 90 } = {}) {
+  const buf = execFileSync(ffmpeg, ['-nostdin', '-loglevel', 'error', ...(t == null ? [] : ['-ss', String(t)]), '-i', file,
+    ...(len == null ? ['-frames:v', '1'] : ['-t', String(len)]),
+    '-vf', `${fps ? `fps=${fps},` : ''}scale=${w}:${h},format=gray`, '-f', 'rawvideo', '-'], { maxBuffer: 1 << 28 });
+  const fw = w * h;
+  return { n: Math.floor(buf.length / fw), at: (k) => buf.subarray(k * fw, (k + 1) * fw) };
+}
+// mean absolute luma difference between two such frames
+export function mad(a, b) {
+  let d = 0;
+  for (let p = 0; p < a.length; p++) d += Math.abs(a[p] - b[p]);
+  return d / a.length;
 }
 
 const titleCase = (s) => s.replace(/[-_]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
