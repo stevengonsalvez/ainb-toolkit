@@ -38,20 +38,27 @@ function freezes(mp4) {
   return s.map((a, i) => [a, e[i] ?? 1e9]);
 }
 
+// Luma frames at 160x90, `len` seconds from `t`: every frame of the take, or `fps` per second.
+function grayFrames(mp4, t, len, fps) {
+  const fw = 160 * 90;
+  const buf = execFileSync(C.ffmpeg, ['-nostdin', '-loglevel', 'error', '-ss', String(t), '-i', mp4, '-t', String(len),
+    '-vf', `${fps ? `fps=${fps},` : ''}scale=160:90,format=gray`, '-f', 'rawvideo', '-'], { maxBuffer: 1 << 26 });
+  return { n: Math.floor(buf.length / fw), at: (k) => buf.subarray(k * fw, (k + 1) * fw) };
+}
+// mean absolute luma difference between two such frames
+function mad(a, b) {
+  let d = 0;
+  for (let p = 0; p < a.length; p++) d += Math.abs(a[p] - b[p]);
+  return d / a.length;
+}
+
 // DEFECT 1 guard: a hold must not run past a camera move. Returns the first time after t+0.3
 // where the frame differs from the t+0.3 pose (mean abs luma diff > 2 at 160x90). The scan
 // covers the longest hold allowed (pace can raise hold.max), so an unseen move cannot slip in.
 function stableUntil(mp4, t) {
-  const fw = 160 * 90, t0 = t + 0.3;
-  const buf = execFileSync(C.ffmpeg, ['-nostdin', '-loglevel', 'error', '-ss', String(t0), '-i', mp4, '-t', String(Math.max(2.6, C.hold.max + 0.4)),
-    '-vf', 'fps=10,scale=160:90,format=gray', '-f', 'rawvideo', '-'], { maxBuffer: 1 << 26 });
-  const n = Math.floor(buf.length / fw);
-  for (let k = 1; k < n; k++) {
-    let d = 0;
-    for (let p = 0; p < fw; p++) d += Math.abs(buf[k * fw + p] - buf[p]);
-    if (d / fw > 2) return t0 + k / 10;
-  }
-  return t0 + n / 10;
+  const t0 = t + 0.3, f = grayFrames(mp4, t0, Math.max(2.6, C.hold.max + 0.4), 10);
+  for (let k = 1; k < f.n; k++) if (mad(f.at(k), f.at(0)) > 2) return t0 + k / 10;
+  return t0 + f.n / 10;
 }
 
 // A camera move's last pose reaches the footage up to a few frames after capture logs its end
@@ -59,15 +66,9 @@ function stableUntil(mp4, t) {
 // time of the last frame near the logged end that still differs from the one before it
 // (mean abs luma diff > 0.5 at 160x90; the drifting cursor alone measures under 0.1).
 function settledAt(mp4, t1) {
-  const fw = 160 * 90, a = Math.max(0, t1 - 0.2);
-  const buf = execFileSync(C.ffmpeg, ['-nostdin', '-loglevel', 'error', '-ss', String(a), '-i', mp4, '-t', '0.6',
-    '-vf', 'scale=160:90,format=gray', '-f', 'rawvideo', '-'], { maxBuffer: 1 << 26 });
+  const a = Math.max(0, t1 - 0.2), f = grayFrames(mp4, a, 0.6);
   let last = -1;
-  for (let k = 1; k < Math.floor(buf.length / fw); k++) {
-    let d = 0;
-    for (let p = 0; p < fw; p++) d += Math.abs(buf[k * fw + p] - buf[(k - 1) * fw + p]);
-    if (d / fw > 0.5) last = k;
-  }
+  for (let k = 1; k < f.n; k++) if (mad(f.at(k), f.at(k - 1)) > 0.5) last = k;
   return last < 0 ? t1 : Math.max(t1, Math.ceil(a * 30) / 30 + last / 30);
 }
 
