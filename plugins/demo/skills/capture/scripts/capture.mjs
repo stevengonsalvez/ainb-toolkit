@@ -260,7 +260,11 @@ export async function capture({ base, state, out, viewport = { width: 1280, heig
       else await quiet();
       await page.waitForTimeout(P(step.settle ?? 400));
     }
-    if ((step.goto || step.click) && cam) await counter(cam);
+    // A client-side redirect can destroy the page's context mid-call ("Execution context was
+    // destroyed"). The counter-scale is cosmetic: retry once after the next load, never fail the take.
+    if ((step.goto || step.click) && cam) {
+      await counter(cam).catch(() => page.waitForLoadState('load').then(() => counter(cam)).catch(() => {}));
+    }
     if (step.expectPath) checkPath(step.expectPath, page.url(), name);
     // Start filming only once the first page is ready: starting before paint
     // put a white about:blank frame plus ~85 black splash frames at the head.
