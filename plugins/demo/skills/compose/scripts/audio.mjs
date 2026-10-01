@@ -373,7 +373,7 @@ export function mix(C) {
       while (k < win.length && win[k][1] < t) k++;
       let duck = 0;
       if (k < win.length && t >= win[k][0]) duck = Math.min(1, (t - win[k][0]) / ATT, (win[k][1] - t) / REL);
-      const fade = Math.min(1, t / M.fadeIn, (total - t) / M.fadeOut);
+      const fade = Math.min(1, M.fadeIn > 0 ? t / M.fadeIn : 1, M.fadeOut > 0 ? (total - t) / M.fadeOut : 1);
       const gn = lvl * dB(-M.duck * duck) * Math.max(0, fade) ** 2;
       mL[i] *= gn; mR[i] *= gn;
     }
