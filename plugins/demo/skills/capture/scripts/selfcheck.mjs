@@ -228,6 +228,7 @@ try {
   let mb;
   try {
     const filming = capture({ base, out, chapter: 'midblur', beats: zz });
+    filming.catch(() => {});                               // an early reject fails the assert below, not node
     for (let i = 0; i < 1200 && !fs.existsSync(path.join(marks, 'started')); i++) await new Promise(r => setTimeout(r, 100));
     assert.ok(fs.existsSync(path.join(marks, 'started')), 'no blur job started');
     for (const pid of execFileSync('pgrep', ['-P', String(process.pid), '-f', 'headless']).toString().trim().split('\n')) process.kill(+pid, 'SIGKILL');
