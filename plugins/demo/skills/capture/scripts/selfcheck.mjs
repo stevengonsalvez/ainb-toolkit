@@ -151,23 +151,22 @@ try {
 
   // 10. The cursor keeps its size under a zoom: white pixels (only the cursor is white on /plain)
   //     in a zoomed hold vs an unzoomed one. Measured 1.00-1.34 with the counter-scale, 5.14 without.
-  const cs = await capture({ base, out, chapter: 'counter', beats: [{ goto: '/plain', hold: 700 }, { zoom: { on: '#z', scale: 2, ms: 300 }, hold: 700 }] });
-  const csMove = JSON.parse(fs.readFileSync(path.join(cs.dir, 'events.json'), 'utf8')).events.find(e => e.kind === 'camera');
-  const white = k => Number(execFileSync(process.env.FFMPEG || 'ffmpeg', ['-v', 'error', '-i', path.join(cs.dir, 'cfr', `${String(k).padStart(5, '0')}.jpg`),
+  const white = (dir, k) => Number(execFileSync(process.env.FFMPEG || 'ffmpeg', ['-v', 'error', '-i', path.join(dir, 'cfr', `${String(k).padStart(5, '0')}.jpg`),
     '-vf', "format=gray,lutyuv=y='if(gt(val,200),255,0)',signalstats,metadata=print:key=lavfi.signalstats.YAVG:file=-", '-f', 'null', '-']).toString().match(/YAVG=([\d.]+)/)[1]);
-  const wide = white(Math.floor((csMove.t0 - 0.15) * 30)), zoomed = white(fs.readdirSync(path.join(cs.dir, 'cfr')).length - 1);
-  const csRatio = zoomed / wide;
-  assert.ok(wide > 0, 'no cursor in the unzoomed frame');
+  // cursor area in a take's last frame over its area just before the take's first camera move
+  const growth = t => {
+    const mv = JSON.parse(fs.readFileSync(path.join(t.dir, 'events.json'), 'utf8')).events.find(e => e.kind === 'camera');
+    const before = white(t.dir, Math.floor((mv.t0 - 0.15) * 30));
+    assert.ok(before > 0, `${t.dir}: no cursor before the zoom`);
+    return white(t.dir, fs.readdirSync(path.join(t.dir, 'cfr')).length - 1) / before;
+  };
+  const csRatio = growth(await capture({ base, out, chapter: 'counter', beats: [{ goto: '/plain', hold: 700 }, { zoom: { on: '#z', scale: 2, ms: 300 }, hold: 700 }] }));
   assert.ok(csRatio > 0.6 && csRatio < 1.6, `cursor ${csRatio.toFixed(2)}x its unzoomed size under a 2x zoom (want ~1)`);
 
   // 11. ...and still after a click navigates while zoomed: the new page's overlay starts unscaled.
-  //     Measured 1.31 with the re-apply after navigation, 5.10 without.
-  const nv = await capture({ base, out, chapter: 'counter-nav', beats: [{ goto: '/plain', hold: 700 },
-    { zoom: { on: '#z', scale: 2, ms: 300 } }, { name: 'go', click: '#go', expectPath: '/plain2', hold: 700 }] });
-  const nvMove = JSON.parse(fs.readFileSync(path.join(nv.dir, 'events.json'), 'utf8')).events.find(e => e.kind === 'camera');
-  const nvWhite = k => Number(execFileSync(process.env.FFMPEG || 'ffmpeg', ['-v', 'error', '-i', path.join(nv.dir, 'cfr', `${String(k).padStart(5, '0')}.jpg`),
-    '-vf', "format=gray,lutyuv=y='if(gt(val,200),255,0)',signalstats,metadata=print:key=lavfi.signalstats.YAVG:file=-", '-f', 'null', '-']).toString().match(/YAVG=([\d.]+)/)[1]);
-  const nvRatio = nvWhite(fs.readdirSync(path.join(nv.dir, 'cfr')).length - 1) / nvWhite(Math.floor((nvMove.t0 - 0.15) * 30));
+  //     Measured 1.02-1.31 with the re-apply after navigation, 5.10 without.
+  const nvRatio = growth(await capture({ base, out, chapter: 'counter-nav', beats: [{ goto: '/plain', hold: 700 },
+    { zoom: { on: '#z', scale: 2, ms: 300 } }, { name: 'go', click: '#go', expectPath: '/plain2', hold: 700 }] }));
   assert.ok(nvRatio > 0.6 && nvRatio < 1.6, `cursor ${nvRatio.toFixed(2)}x its unzoomed size after navigating while zoomed (want ~1)`);
 
   console.log(`selfcheck OK: cursor under 2x zoom ${csRatio.toFixed(2)}x its unzoomed size, ${nvRatio.toFixed(2)}x after navigating while zoomed; ring takes cursor.ring`);
