@@ -583,38 +583,50 @@ async function deterministic({ W, H, cap, dir, state, overlayArgs }) {
   };
 
   let tNext = FI, recording = false, n = 0, primed = 0, prevPng = null, waiters = [], pumping = true;
-  const blurFrames = [], stats = { maxSamples: 0, maxGap: 0, filled: 0 };
-  // ffmpeg averages each blurred frame in the background while capture goes on (tmix over its
-  // N sub-frames; -update keeps the last output, the full average). Two at a time.
+  const blurFrames = [], stats = { maxSamples: 0, maxGap: 0, filled: 0, peakTempMB: 0 };
+  // ffmpeg averages each blurred frame in the background while capture goes on, two at a time:
+  // tmix over its N sub-frames, then only the last of tmix's N outputs (the full average) goes
+  // on to the gap fill (filling all N and keeping the last cost 3x the time, identical output).
+  // Every job settles; a failure stops the take at once through `abort` (filming on at 40x
+  // real time after ffmpeg has failed wastes the wait), and its sub-frames are removed either way.
   // A take that falls back is re-filmed into the same directory, so close() kills and awaits every
   // job first; a job that ends after that is ignored rather than writing into the new take.
-  const queue = [], busy = [], kids = new Set(), jobErrors = [];
-  let cancelled = false;
-  const average = (sub, N, out, fill) => queue.push([sub, N, out, fill]) && drain();
+  const QMAX = 4, queue = [], busy = [], kids = new Set();
+  let cancelled = false, tempBytes = 0;
+  const abort = e => { if (failure || closing) return; failure = e; pumping = false; rejectFailed(e); for (const w of waiters) w.reject(e); };
+  let closing = false;
+  const average = item => { queue.push(item); drain(); };
   const drain = () => {
-    while (!cancelled && busy.length < 2 && queue.length) {
-      const [sub, N, out, fill] = queue.shift();
+    while (!cancelled && !failure && busy.length < 2 && queue.length) {
+      const { sub, N, out, fill, bytes } = queue.shift();
       let kid;
-      const job = new Promise((res, rej) => {
+      const job = new Promise(res => {
         kid = execFile(ffbin('ffmpeg'), ['-v', 'error', '-y', '-i', `${sub.replace(/%/g, '%%')}/%02d.png`,
-          '-filter_complex', `tmix=frames=${N}${fill}`, '-update', '1', out], e => {
+          '-filter_complex', `tmix=frames=${N},select=eq(n\\,${N - 1})${fill}`, '-update', '1', out], e => {
           kids.delete(kid);
-          if (cancelled) return res();
-          if (e) { jobErrors.push(`${out}: ${String(e.message).split('\n').slice(-2).join(' ')}`); return rej(e); }
-          fs.rmSync(sub, { recursive: true, force: true }); res();
+          let err = null;
+          if (!cancelled) {
+            if (e) err = new Error(`motion blur averaging failed for ${out}: ${String(e.message).split('\n').slice(-2).join(' ')}`);
+            else if (!fs.existsSync(out)) err = new Error(`motion blur averaging wrote no frame to ${out} (ffmpeg exited 0)`);
+          }
+          try { fs.rmSync(sub, { recursive: true, force: true }); } catch (r) { err ??= r; }
+          tempBytes -= bytes;
+          if (err && !cancelled) abort(err);
+          res();
         });
         kids.add(kid);
       });
-      busy.push(job); job.finally(() => { busy.splice(busy.indexOf(job), 1); drain(); }).catch(() => {});
+      busy.push(job); job.then(() => { busy.splice(busy.indexOf(job), 1); drain(); });
     }
   };
-  // A failed job has left `busy` by the time anything awaits it, so failures are collected and
-  // reported here; a silently missing frame used to cut the encoded take short at that frame.
   const averaged = async () => {
-    while (queue.length || busy.length) await Promise.allSettled(busy);
-    if (jobErrors.length) throw new Error(`motion blur averaging failed for ${jobErrors.length} frame(s): ${jobErrors[0]}`);
+    while (!failure && (queue.length || busy.length)) await Promise.all(busy);
+    if (failure) throw failure;
   };
-  const cancelBlur = async () => { cancelled = true; queue.length = 0; for (const k of kids) k.kill('SIGKILL'); await Promise.allSettled([...busy]); };
+  const cancelBlur = async () => {
+    cancelled = true; queue.length = 0; for (const k of kids) k.kill('SIGKILL'); await Promise.all([...busy]);
+    try { fs.rmSync(path.join(dir, 'sub'), { recursive: true, force: true }); } catch {}
+  };
   const name = k => `${String(k).padStart(5, '0')}.png`;
   const pump = (async () => {
     while (pumping) {
@@ -643,15 +655,23 @@ async function deterministic({ W, H, cap, dir, state, overlayArgs }) {
           const w = gapWarp(blur.shutter * FI / 1000 / N), camGap = Math.hypot(w.ox, w.oy) + Math.abs(w.k - 1) * W * dpr;
           const fillPx = Math.min(gap, camGap), fill = fillPx > 0.5 ? fillGraph(w, fillPx) : '';   // under 0.5px: nothing to fill
           stats.maxSamples = Math.max(stats.maxSamples, N); stats.maxGap = Math.max(stats.maxGap, +gap.toFixed(2)); if (fill) stats.filled++;
-          const sub = path.join(dir, 'sub', String(n));
+          // Backpressure: each waiting frame holds up to `max` full-size PNGs on disk, so rendering
+          // waits while QMAX frames are already queued for ffmpeg.
+          while (queue.length >= QMAX && !failure) await Promise.race(busy);
+          if (failure) break;
+          const sub = path.join(dir, 'sub', String(n)), put = (k, png) => {
+            fs.writeFileSync(path.join(sub, `${String(k).padStart(2, '0')}.png`), png);
+            tempBytes += png.length; stats.peakTempMB = Math.max(stats.peakTempMB, Math.round(tempBytes / 1e6));
+            return png.length;
+          };
           fs.mkdirSync(sub, { recursive: true });
-          fs.writeFileSync(path.join(sub, '00.png'), buf);
+          let bytes = put(0, buf);
           for (let k = 1; k < N; k++) {
             const tk = t + k * blur.shutter * FI / N;
             step(tk); await apply(false);
-            fs.writeFileSync(path.join(sub, `${String(k).padStart(2, '0')}.png`), await draw(tk, true));
+            bytes += put(k, await draw(tk, true));
           }
-          average(sub, N, path.join(dir, 'cfr', name(n)), fill);
+          average({ sub, N, out: path.join(dir, 'cfr', name(n)), fill, bytes });
           blurFrames.push(n); prevPng = null;
         } else if (prevPng && buf.equals(prevPng)) fs.linkSync(path.join(dir, 'cfr', name(n - 1)), path.join(dir, 'cfr', name(n)));
         else { fs.writeFileSync(path.join(dir, 'cfr', name(n)), buf); prevPng = buf; }
@@ -721,7 +741,7 @@ async function deterministic({ W, H, cap, dir, state, overlayArgs }) {
       for (const k of blurFrames) { if (spans.length && spans.at(-1)[1] === k - 1) spans.at(-1)[1] = k; else spans.push([k, k]); }
       return { frames: n, dur: (n - 1) / fps, fps, dpr, blurSpans: spans, blurStats: stats };
     },
-    close: async () => { pumping = false; await pump.catch(() => {}); await cancelBlur(); await browser.close(); },
+    close: async () => { closing = true; pumping = false; await pump.catch(() => {}); await cancelBlur(); await browser.close(); },
   };
   return rec;
 }
