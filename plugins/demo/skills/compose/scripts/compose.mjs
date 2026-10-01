@@ -54,9 +54,9 @@ function stableUntil(mp4, t) {
 // with room for a slow landing under load. Only changes after that window are the page itself
 // moving: they no longer delay the spotlight (an animated page used to, by ~0.4s) and are warned about.
 const SETTLE_WINDOW = 0.25;
-function settledAt(mp4, t1, name) {
+function settledAt(mp4, t1, name, fps) {
   const a = Math.max(0, t1 - 0.1), f = grayFrames(C.ffmpeg, mp4, { t: a, len: t1 + SETTLE_WINDOW + 0.15 - a });
-  const tk = (k) => Math.ceil(a * 30) / 30 + k / 30;   // the take is 30fps (demo:capture)
+  const tk = (k) => Math.ceil(a * fps) / fps + k / fps;   // the take's own rate (events.json fps)
   let settle = t1, moving = false;
   for (let k = 1; k < f.n; k++) {
     if (mad(f.at(k), f.at(k - 1)) <= 0.5) continue;
@@ -199,7 +199,7 @@ function analyze(cfg) {
   // the footage, whichever is later: a cut-out fading in over a moving frame points at nothing.
   for (const s of spots) {
     const mv = moves.filter(([a]) => a < s.T).at(-1);
-    s.from = mv && mv[1] > s.T - C.fadeLead - 0.3 ? Math.max(s.T - C.fadeLead, settledAt(mp4, mv[1], name)) : s.T - C.fadeLead;
+    s.from = mv && mv[1] > s.T - C.fadeLead - 0.3 ? Math.max(s.T - C.fadeLead, settledAt(mp4, mv[1], name, ev.fps ?? 30)) : s.T - C.fadeLead;
   }
 
   // cuts: dead-hold trims outside protected windows, plus configured cuts
@@ -303,8 +303,11 @@ function retime(an, sp) {
   return { pieces, footDur: nominal, toOut: (t) => outOfU(toU(t)), kept: an.kept, U };
 }
 
-// Write the re-timed footage: cuts dropped, pieces re-timed, resampled to C.fps. Lossless
-// (x264 -qp 0, no pixel-format change): concat.sh makes the one lossy encode.
+// Write the re-timed footage: cuts dropped, pieces re-timed, resampled to C.fps and scaled to the
+// take's CSS viewport (srcW x srcH), which is what the composition lays out. A deterministic take is
+// 2x its viewport at 60fps, so this is a lanczos downsample, a sharpness gain over filming at 1x
+// (supersampling). Lossless (x264 -qp 0, libx264rgb for an RGB take, so no colour conversion):
+// concat.sh makes the one lossy encode.
 function renderFootage(an, rt, out) {
   const f = (x) => x.toFixed(6);
   const sel = an.kept.map(([a, b]) => `between(t,${f(a)},${f(b)})`).join('+');
@@ -316,9 +319,10 @@ function renderFootage(an, rt, out) {
     const e = `${f(p.o0)}+${f(p.sc * p.k0)}*${x}+${f(p.sc * (p.k1 - p.k0) / (2 * (p.u1 - p.u0)))}*${x}*${x}`;
     o = i === rt.pieces.length - 1 ? e : `if(lt(ld(0),${f(p.u1)}),${e},${o})`;
   }
+  const pix = execFileSync(C.ffprobe, ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=pix_fmt', '-of', 'csv=p=0', an.mp4]).toString().trim();
   execFileSync(C.ffmpeg, ['-nostdin', '-loglevel', 'error', '-y', '-i', an.mp4,
-    '-vf', `select='${sel}',setpts='(st(0,${u});${o})/TB',fps=${C.fps},tpad=stop_mode=clone:stop_duration=0.2`,
-    '-an', '-c:v', 'libx264', '-qp', '0', '-preset', 'veryfast', out]);
+    '-vf', `select='${sel}',setpts='(st(0,${u});${o})/TB',fps=${C.fps},scale=${an.srcW}:${an.srcH}:flags=lanczos,tpad=stop_mode=clone:stop_duration=0.2`,
+    '-an', '-c:v', /^(gbr|rgb|bgr)/.test(pix) ? 'libx264rgb' : 'libx264', '-qp', '0', '-preset', 'veryfast', out]);
 }
 
 // ---------- output framing ----------
