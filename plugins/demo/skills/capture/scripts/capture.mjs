@@ -102,7 +102,7 @@ export async function ensureState({ base, state, login, probe = '/home' }) {
 
 // Init script: cursor, click ripple and localStorage seeding, run in every document.
 // Exported so the self-check can drive it on a bare page.
-export function overlay({ ls, hidden }) {
+export function overlay({ ls, hidden, ringColor }) {
   // e.g. consent keys: a consent banner otherwise covers the lower third of every frame.
   // Storage throws in sandboxed documents; skipping it there must not stop the cursor mounting.
   for (const [k, v] of Object.entries(ls)) try { localStorage.setItem(k, v); } catch {}
@@ -112,12 +112,15 @@ export function overlay({ ls, hidden }) {
     if (document.getElementById('__cur')) return;
     const d = document.createElement('div'); d.id = '__cur';
     // A hidden cursor still moves: its repaints are what keep the screencast emitting during a hold.
-    d.style.cssText = 'position:fixed;top:0;left:0;width:20px;height:26px;pointer-events:none;z-index:2147483647;transition:transform .05s linear;will-change:transform;background:no-repeat center/contain url("data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'20\' height=\'26\' viewBox=\'0 0 18 24\'%3E%3Cpath d=\'M2 2 L2 18 L6.5 13.8 L9.2 20 L11.8 19 L9.1 13 L14.5 13 Z\' fill=\'white\' stroke=\'black\' stroke-width=\'1.4\' stroke-linejoin=\'round\'/%3E%3C/svg%3E")' + (hidden ? ';opacity:0.004' : '');
+    // `scale: var(--cs)` is the camera's counter-scale (set by setCam), so the pointer keeps its size
+    // under a zoom; it composes with `translate`, the pointer position, about the arrow's tip.
+    d.style.cssText = 'position:fixed;top:0;left:0;width:20px;height:26px;pointer-events:none;z-index:2147483647;transition:translate .05s linear;will-change:translate;transform-origin:0 0;scale:var(--cs,1);filter:drop-shadow(0 1px 2px rgba(0,0,0,.45));background:no-repeat center/contain url("data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'20\' height=\'26\' viewBox=\'0 0 18 24\'%3E%3Cpath d=\'M2 2 L2 18 L6.5 13.8 L9.2 20 L11.8 19 L9.1 13 L14.5 13 Z\' fill=\'white\' stroke=\'black\' stroke-width=\'1.4\' stroke-linejoin=\'round\'/%3E%3C/svg%3E")' + (hidden ? ';opacity:0.004' : '');
     document.body.appendChild(d);
     const ring = document.createElement('div'); ring.id = '__ring';
-    ring.style.cssText = 'position:fixed;top:0;left:0;width:52px;height:52px;border-radius:50%;border:2px solid #1ABC9C;pointer-events:none;z-index:2147483646;opacity:0';
+    // A thin dark outline keeps the default white ring visible on a white page.
+    ring.style.cssText = `position:fixed;top:0;left:0;width:52px;height:52px;border-radius:50%;border:2px solid ${ringColor};box-shadow:0 0 0 1px rgba(0,0,0,.25);scale:var(--cs,1);pointer-events:none;z-index:2147483646;opacity:0`;
     document.body.appendChild(ring);
-    addEventListener('mousemove', e => { d.style.transform = `translate(${e.clientX}px,${e.clientY}px)`; }, { passive: true });
+    addEventListener('mousemove', e => { d.style.translate = `${e.clientX}px ${e.clientY}px`; }, { passive: true });
     if (hidden) return;
     // Click ripple, so a viewer can see WHERE the click landed. Reset every property it animates,
     // or the second click starts already at scale(1.7) and never visibly expands.
@@ -133,6 +136,7 @@ export function overlay({ ls, hidden }) {
 
 // pace multiplies every filmed duration (zoom/wide ms, hold, settle, cursor glides); 2 = twice as slow.
 // cursor.speed is px/s; unset keeps the fixed 300ms click glide and 200ms re-centre glide.
+// cursor.ring is the click ring's CSS colour: neutral white unless the beats file sets one.
 export async function capture({ base, state, out, viewport = { width: 1280, height: 720 }, beats, chapter,
   localStorage: ls = {}, pace = 1, cursor = {} }) {
   const { width: W, height: H } = viewport;
@@ -145,7 +149,7 @@ export async function capture({ base, state, out, viewport = { width: 1280, heig
   const ctx = await browser.newContext({ viewport, deviceScaleFactor: 1, storageState: state });
   const page = await ctx.newPage();
 
-  await page.addInitScript(overlay, { ls, hidden: !!cursor.hidden });
+  await page.addInitScript(overlay, { ls, hidden: !!cursor.hidden, ringColor: cursor.ring || '#FFFFFF' });
 
   const cdp = await ctx.newCDPSession(page);
   const frames = []; const events = [];
@@ -163,14 +167,18 @@ export async function capture({ base, state, out, viewport = { width: 1280, heig
   // after a 520px scroll, y=0 filmed the blank page top. Add the scroll, read once while unzoomed
   // (an active override moves scrollX/Y itself, so re-reading mid-glide compounds).
   let camScroll = { x: 0, y: 0 };
+  // The override zooms the overlay with the page (measured 1.5x bigger at scale 1.5), so each pose
+  // also sets the cursor's counter-scale, sent alongside the override rather than after it.
+  // ponytail: a navigation while zoomed drops it until the next camera move; set it on load if that bites.
+  const counter = v => cdp.send('Runtime.evaluate', { expression: `document.documentElement.style.setProperty('--cs', '${v ? 1 / v.s : 1}')` });
   const setCam = async v => {
     const prev = cam; cam = v;
-    if (!v) { await cdp.send('Emulation.clearDeviceMetricsOverride'); return; }
+    if (!v) { await Promise.all([cdp.send('Emulation.clearDeviceMetricsOverride'), counter(v)]); return; }
     if (!prev) camScroll = await page.evaluate(() => ({ x: scrollX, y: scrollY }));
-    await cdp.send('Emulation.setDeviceMetricsOverride', {
+    await Promise.all([cdp.send('Emulation.setDeviceMetricsOverride', {
       width: W, height: H, deviceScaleFactor: 1, mobile: false,
       viewport: { x: v.x + camScroll.x, y: v.y + camScroll.y, width: v.w, height: v.h, scale: v.s },
-    });
+    }), counter(v)]);
   };
 
   let cx = W / 2, cy = H / 2, drift = 1;

@@ -16,6 +16,8 @@ const pages = {
   // Tall page with a white block (bigger than the 2x camera box) far below the fold: zooming on it after a scroll must film it.
   '/tall': `<body style="margin:0;background:${BG};height:3000px"><div id="w" style="position:absolute;top:2000px;left:290px;width:700px;height:400px;background:#fff"></div></body>`,
   '/news': `<body style="background:${BG}">news</body>`,
+  // Plain page with an invisible zoom target: the only white pixels in a frame are the cursor's.
+  '/plain': `<body style="margin:0;background:${BG};height:100vh"><div id="z" style="position:absolute;left:440px;top:260px;width:400px;height:200px"></div></body>`,
   '/frame': `<body style="margin:0;background:${BG};height:100vh"><iframe src="/news" width="400" height="200"></iframe></body>`,
   // Turns white once the input holds exactly the typed text: the last frame proves the type beat.
   '/type': `<body style="margin:0;background:${BG};height:100vh"><input id="q" style="margin:200px;font-size:30px" oninput="if (this.value === 'ferry times') document.body.style.background = '#fff'"></body>`,
@@ -101,7 +103,7 @@ try {
   let ripple, sandboxErrs;
   try {
     const page = await browser.newPage();
-    await page.addInitScript(overlay, { ls: { k: 'v' }, hidden: false });
+    await page.addInitScript(overlay, { ls: { k: 'v' }, hidden: false, ringColor: '#ff0000' });
     await page.goto(`${base}/frame`); await page.frames()[1].waitForLoadState();
     const cursors = (await Promise.all(page.frames().map(f => f.locator('#__cur').count()))).reduce((a, b) => a + b);
     assert.equal(cursors, 1, `expected 1 cursor across ${page.frames().length} frames, got ${cursors}`);
@@ -117,6 +119,7 @@ try {
       const r = document.getElementById('__ring'); window.__log.push([r.style.transform, r.style.cssText.length]); }); });
     for (const x of [300, 500, 700]) { await page.mouse.click(x, 300); await page.waitForTimeout(700); }
     ripple = await page.evaluate(() => window.__log);
+    assert.equal(await page.evaluate(() => getComputedStyle(document.getElementById('__ring')).borderTopColor), 'rgb(255, 0, 0)', 'click ring ignores cursor.ring');
     assert.deepEqual(ripple.map(r => r[0]), ['scale(1)', 'scale(1)', 'scale(1)'], `ripple start transforms ${JSON.stringify(ripple)}`);
     assert.equal(new Set(ripple.map(r => r[1])).size, 1, `ripple cssText grows per click ${JSON.stringify(ripple)}`);
   } finally { await browser.close(); }
@@ -144,6 +147,18 @@ try {
   assert.equal(await ensureState({ base, state, login: { ...login, loggedInSel: '#me' } }), 'minted');
   assert.equal(await ensureState({ base, state, login: { ...login, loggedInSel: '#me' } }), 'reused');
 
+  // 10. The cursor keeps its size under a zoom: white pixels (only the cursor is white on /plain)
+  //     in a zoomed hold vs an unzoomed one. Measured 1.00-1.29 with the counter-scale, 5.14 without.
+  const cs = await capture({ base, out, chapter: 'counter', beats: [{ goto: '/plain', hold: 700 }, { zoom: { on: '#z', scale: 2, ms: 300 }, hold: 700 }] });
+  const csMove = JSON.parse(fs.readFileSync(path.join(cs.dir, 'events.json'), 'utf8')).events.find(e => e.kind === 'camera');
+  const white = k => Number(execFileSync(process.env.FFMPEG || 'ffmpeg', ['-v', 'error', '-i', path.join(cs.dir, 'cfr', `${String(k).padStart(5, '0')}.jpg`),
+    '-vf', "format=gray,lutyuv=y='if(gt(val,200),255,0)',signalstats,metadata=print:key=lavfi.signalstats.YAVG:file=-", '-f', 'null', '-']).toString().match(/YAVG=([\d.]+)/)[1]);
+  const wide = white(Math.floor((csMove.t0 - 0.15) * 30)), zoomed = white(fs.readdirSync(path.join(cs.dir, 'cfr')).length - 1);
+  const csRatio = zoomed / wide;
+  assert.ok(wide > 0, 'no cursor in the unzoomed frame');
+  assert.ok(csRatio > 0.6 && csRatio < 1.6, `cursor ${csRatio.toFixed(2)}x its unzoomed size under a 2x zoom (want ~1)`);
+
+  console.log(`selfcheck OK: cursor under 2x zoom ${csRatio.toFixed(2)}x its unzoomed size; ring takes cursor.ring`);
   console.log(`selfcheck OK: cursors 1 with iframe; sandbox errors ${sandboxErrs}; ripple ${JSON.stringify(ripple)}; type ${ty.dur.toFixed(2)}s luma ${tl}; pace ${p1.dur.toFixed(2)}s -> ${p2.dur.toFixed(2)}s; loggedInSel re-mints`);
   console.log(`selfcheck OK: main ${r.frames} frames/${r.dur.toFixed(1)}s mp4 ${n} frames luma head ${head} tail ${tail}; hold ${h.frames} frames; scroll-zoom luma ${zl}; guard threw`);
 } finally {
