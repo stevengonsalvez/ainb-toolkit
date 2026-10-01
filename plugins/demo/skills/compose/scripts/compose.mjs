@@ -523,6 +523,9 @@ function chapter(an, sp) {
   // GLIDE: when the next mark lights sooner (pace > 1, or a spotlight waiting for the camera),
   // this hold ends early to make room, and its label leaves as the glide starts. If that would
   // leave the hold under HOLD_MIN, too short for the still-check's two stills, it does not glide.
+  // A glide stands in for the next spotlight's fade-in: it arrives when that fade-in would have
+  // finished, so the next mark is fully lit at the same moment either way (and a narration anchor
+  // placed on that moment still lands on it).
   // Each run of glides is one spotlight element, so one run's fade-out never touches the next.
   const GLIDE = F(0.35), HOLD_MIN = 0.7, same = (a, b) => JSON.stringify(a.view) === JSON.stringify(b.view);
   let run = 0;
@@ -531,7 +534,7 @@ function chapter(an, sp) {
     s.run = run;
     s.glide = false;
     if (!n || !(SP.glide > 0) || !same(s, n) || n.cf - (s.ct + s.hold) > SP.glide) { run++; continue; }
-    const start = Math.min(s.ct + s.hold, n.cf - GLIDE);
+    const start = Math.min(s.ct + s.hold, n.cf + F(0.25) - GLIDE);
     // nor while this mark's narration line is still being spoken
     const said = Math.max(-Infinity, ...fit.placed.filter((p) => p.slot === s.i).map((p) => p.at + p.dur));
     if (start - s.ct < HOLD_MIN || start < said) { run++; continue; }
@@ -562,7 +565,7 @@ function chapter(an, sp) {
     s.box = [x, y, w, h].map(r3); s.dir = pick[0];
     report.push({
       i: s.i, label: s.label, srcT: r3(s.m.t), shift: s.shift || 0, compT: r3(s.ct), litFrom: r3(s.cf),
-      fadeIn: s.glided ? 0 : F(0.25), glided: !!s.glided, hold: r3(s.hold), srcHold: r3(s.srcHold),
+      fadeIn: F(0.25), glided: !!s.glided, hold: r3(s.hold), srcHold: r3(s.srcHold),
       place: pick[0], box: [x, y, w, h].map(Math.round),
       labBox: [pick[2].left, pick[2].top, lw, LH].map(Math.round), view: v,
     });
@@ -615,8 +618,8 @@ function chapter(an, sp) {
   for (const [k, s] of an.spots.entries()) {
     const end = r3(s.ct + s.hold), sl = q(`sl${s.run}`);
     if (s.glided) {
-      const p = an.spots[k - 1], pe = p.ct + p.hold, d = Math.max(1 / C.fps, s.cf - pe);
-      lines.push(`tl.fromTo(${sl}, { ${vars(p.box)} }, { ${vars(s.box)}, duration: ${r3(d)}, ease: "power3.inOut", immediateRender: false }, ${r3(s.cf - d)});`);
+      const p = an.spots[k - 1], pe = p.ct + p.hold, arrive = s.cf + F(0.25), d = Math.max(1 / C.fps, arrive - pe);
+      lines.push(`tl.fromTo(${sl}, { ${vars(p.box)} }, { ${vars(s.box)}, duration: ${r3(d)}, ease: "power3.inOut", immediateRender: false }, ${r3(arrive - d)});`);
     } else {
       lines.push(`tl.set(${sl}, { visibility: "visible" }, ${r3(s.cf)});`);
       lines.push(`tl.fromTo(${sl}, { opacity: 0 }, { opacity: 1, duration: ${F(0.25)}, ease: "power1.out", immediateRender: false }, ${r3(s.cf)});`);
