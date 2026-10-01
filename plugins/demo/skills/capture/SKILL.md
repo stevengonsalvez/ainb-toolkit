@@ -56,7 +56,7 @@ export default {
   localStorage: { someConsentKey: 'true' },    // optional, set before every document
   login: { email: 'demo@example.test', password: '…' },  // OMIT for an app with no login
   pace: 1,                                     // optional filming pace, see below
-  cursor: { speed: 1200, hidden: false },      // optional, see below
+  cursor: { speed: 1200, hidden: false, ring: '#FFFFFF' },  // optional, see below
   chapters: [{ name: 'home-to-detail', pace: 1.3, cursor: { hidden: true },  // per-chapter overrides
                beats: [ /* ... */ ] }],
 };
@@ -114,6 +114,16 @@ controls (`speed`, `pace`, `targetDuration`) instead: no re-shoot.
   is still there at near-zero opacity and still drifts, because that drift is what keeps the
   screencast emitting during a hold (fact 1). Measured: a hidden-cursor take still produced
   frames through a 1.5s hold.
+- `cursor.ring` (CSS colour, default `#FFFFFF`): the click ring. Neutral by default, with a
+  faint dark outline so it reads on a white page; set it to the brand you are filming.
+- The pointer keeps its own size under a zoom and carries a soft drop shadow. The camera's
+  metrics override zooms the overlay with the page (measured 1.5x bigger at scale 1.5), so
+  every camera pose also sets a counter-scale (`--__demo-cs`, on the pointer and ring only) and
+  re-applies it after a navigation, whose new page starts unscaled. `npm run check` measures the
+  pointer's area under a 2x zoom at 1.00-1.34x its unzoomed area (5.14x with the counter-scale
+  removed), and 1.02-1.31x after a click navigates while zoomed (5.10x without the re-apply).
+  The re-apply never fails a take: a client-side redirect that destroys the page's context gets
+  one retry after the next load.
 - `type.cps` sets typing speed per beat and is not scaled by `pace`.
 
 Merge rule: a chapter's `pace` replaces the file's; a chapter's `cursor` keys override the
@@ -134,7 +144,7 @@ file's `cursor` keys one by one.
 5. **Nav bars are context-dependent.** Measured on one app: after clicking one nav item, another item was gone from the nav. Targets are resolved fresh per beat; never cache handles across beats.
 6. **`addInitScript` overlays survive SPA route changes** (cursor verified present after three client-side navigations).
 7. **Login: never hand-write a token into storageState.** It fails silently and films the login page. `mintState` drives the real form and throws unless the final pathname has left `loginPath`. Quirks it already handles, each found on a real app: an `#email` field that is `input[type=text]` rather than `type=email`, a cookie modal covering the submit button (dismissed via `dismissSel` first), and controlled React inputs that need `type()` rather than `fill()`.
-8. **ffmpeg is `$FFMPEG` (and `$FFPROBE`), else the one on PATH.** Capture only encodes and tiles, which any build does. Some PATH builds (a measured Homebrew one) lack drawtext; demo:compose's still-check then writes its contact tiles without captions and still gives its verdict. Point `FFMPEG` at a full build such as the distro's `/usr/bin/ffmpeg` for captions.
+8. **ffmpeg is resolved, not hardcoded.** `$FFMPEG`/`$FFPROBE` win, then the distro build at `/usr/bin`, then PATH (Homebrew on macOS, where `/usr/bin` is read-only). Capture needs only `signalstats`, `scale` and libx264, which every common build has; it does not use drawtext. Some builds (Homebrew's default) lack drawtext; demo:compose's still-check then writes its contact tiles without captions and still gives its verdict.
 9. **Browsers live in `$PLAYWRIGHT_BROWSERS_PATH` when set** (see Run).
 10. **The overlay mounts in the top frame only.** Init scripts run in every frame; before this, a page with an iframe filmed a second cursor inside it. Seeding `localStorage` is skipped where storage throws (sandboxed documents) instead of aborting the cursor.
 
@@ -156,6 +166,8 @@ One per chapter, written next to the frames at `<out>/<chapter>/events.json`; `<
   "events": [
     { "t": 2.205, "kind": "mark", "label": "bottom nav",
       "rect": { "x": 0, "y": 655, "w": 1265, "h": 65 },
+      "cam":  { "x": 312.5, "y": 360, "w": 640, "h": 360, "s": 2 } },
+    { "t": 1.29, "kind": "camera", "t0": 1.29, "t1": 1.884,
       "cam":  { "x": 312.5, "y": 360, "w": 640, "h": 360, "s": 2 } }
   ]
 }
@@ -164,7 +176,13 @@ One per chapter, written next to the frames at `<out>/<chapter>/events.json`; `<
 - `dur`: seconds, first to last captured frame. The mp4 has `ceil(dur * 30) + 1` frames: capture.mjs resamples to 30fps itself (frame k shows the last frame captured at or before k/30) and writes `cfr/` as hard links, which `encode.sh` encodes as a plain image sequence. It used to hand ffmpeg a concat list of per-frame durations instead; measured on a 4.4s take with zoom glides, that ran 0.17s short on ffmpeg 6.1 and 0.73s short on ffmpeg 8.1 (an 11.1s ferry take came out 8.9s long), putting marks late by growing amounts. `npm run check` now asserts the mp4 length matches the take.
 - `frames`: captured JPEG count (variable rate; the mp4 is resampled to 30fps).
 - `t`: seconds from the first frame, which is mp4 time 0. Taken from the wall clock: the last delivered frame lagged the screen by ~1s late in a 50s take.
-- `kind`: `"mark"` carries `label`, `rect` and `cam` as above. Sound cues for demo:compose carry only `t` (and `dur`, `chars`): `"click"` (as the press lands, from a `click` beat or the click a `type` beat starts with), `"type"` (`t` first key, `dur` seconds of typing, `chars` count), `"zoom"` and `"wide"` (`t` glide start, `dur` its length). Clicks before filming starts are not recorded. A consumer that reads only marks filters on `kind`; older takes simply have no cues.
+- `kind`: `"mark"`, `"camera"`, `"click"` or `"type"`. A `camera` event is one zoom or wide glide: `t0` and `t1` its
+  wall-clock start and end, `cam` the box it ends on (`null` for a wide). demo:compose plays
+  every camera move at 1x and fades a spotlight in only once the move into it has settled.
+  The last pose reaches the footage 1-2 frames after `t1`. `click` (as the press lands, from a
+  `click` beat or the click a `type` beat starts with; none before filming starts) and `type`
+  (`t` first key, `dur` seconds of typing, `chars` count) are sound cues for demo:compose.
+  Fields below describe a `mark`.
 - `rect`: element box in page CSS px (layout viewport, `getBoundingClientRect`); unaffected by the camera.
 - `cam`: camera at that moment. `null` = full frame. Otherwise `{x, y, w, h}` visible region in CSS px and `s` scale.
 - Frame position of a rect: `screenX = (rect.x - cam.x) * cam.s`, `screenY = (rect.y - cam.y) * cam.s`, size `* cam.s`. With `cam: null` it is `rect` as-is. (Checked on the sample: `(655 - 360) * 2 = 590`, where the nav's top edge sits in the zoomed frame.)
@@ -218,6 +236,10 @@ Takes land in `<copy>/takes/`, where the compose config expects them.
 
 - `scripts/capture.mjs`: `capture()`, `mintState()`, `ensureState()`, `checkPath()`. Edit here to change camera, cursor, waits.
 - `scripts/run.mjs`: runs chapters from a beats file, encodes each.
-- `scripts/encode.sh`: `cfr/` (the 30fps frame sequence) to H.264 mp4.
+- `scripts/encode.sh`: `cfr/` (the 30fps frame sequence) to a lossless H.264 mp4 (x264 `-qp 0`,
+  the JPEGs' own 4:2:0 full-range pixels, measured bit-exact: PSNR inf). It is an intermediate:
+  demo:compose makes the only lossy encode. About 4x the size of the old crf18 take (4.5 MB for
+  an 11s chapter); browsers cannot play the lossless profile, ffmpeg and the montage can.
 - `scripts/montage.sh`: contact sheet for grading a take.
-- `scripts/selfcheck.mjs`: local throwaway server; asserts path guard (including a sibling path such as `/reports-archive`), zoom framing, events.json schema, non-blank head, non-splash tail, hold frame count, bare-text mis-click failing, one cursor on a page with an iframe, the cursor mounting where storage throws, every click ripple starting at scale 1, a `type` beat typing key by key with a hidden cursor still emitting frames, `pace: 2` lengthening a hold, and `loggedInSel` re-minting a dead session.
+- `scripts/selfcheck.mjs`: local throwaway server; asserts path guard (including a sibling path such as `/reports-archive`), zoom framing, events.json schema, non-blank head, non-splash tail, hold frame count, bare-text mis-click failing, one cursor on a page with an iframe, the cursor mounting where storage throws, every click ripple starting at scale 1, a `type` beat typing key by key with a hidden cursor still emitting frames, `pace: 2` lengthening a hold, `loggedInSel` re-minting a dead session, a `camera` event per
+zoom and wide, the pointer keeping its size under a 2x zoom, and the click ring taking `cursor.ring`.

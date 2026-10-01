@@ -478,6 +478,22 @@ claude-plugins:
     has_skills: true  # ships skills/illustration and skills/popa
     requires:
       - "an image backend that accepts reference images (nano-banana-pro / Gemini 3 Pro Image, or image_gen) — the mascot cannot be produced from text alone"
+  - name: agy
+    marketplace: keli-wen/agy-staff
+    marketplace_id: agy-staff
+    version: "0.7.3"
+    install: |
+      claude plugin marketplace add keli-wen/agy-staff
+      claude plugin install agy@agy-staff
+    purpose: "Delegate work to the Antigravity CLI (agy, fast Gemini): staffer, researcher, reviewer, implementer and ask personas, plus background jobs"
+    # Skills are generic (ask, reviewer, lead, jobs...). Keep them namespaced as
+    # agy:<skill> inside the plugin; a flat copy into ~/.claude/skills would put
+    # bare "reviewer"/"ask" in the global namespace competing with other skills.
+    flatten-skills: false
+    requires:
+      - "agy (Antigravity CLI) on PATH; the skills shell out to it"
+      - "node, for the plugin's companion/agy-companion.mjs"
+
   - name: dev-browser
     marketplace: sawyerhood/dev-browser
     marketplace_id: sawyerhood-dev-browser
@@ -1012,12 +1028,34 @@ security-skills:
 # CODEX SKILLS (from developers.openai.com/codex/skills)
 # =============================================================================
 # Installed via $skill-installer in Codex. Stored in $CODEX_HOME/skills/
-codex-skills: []
+codex-skills:
+  - name: agy-staff
+    install: |
+      codex plugin marketplace add https://github.com/keli-wen/agy-staff || true
+      codex plugin add agy@agy-staff || true
+    purpose: "Codex half of the agy plugin (see claude-plugins: agy)"
+    requires:
+      - "codex-cli >= 0.148; 0.141 rejects this marketplace (plugin declared at the repo root, path '.')"
   # Example entry:
   # - name: linear
   #   source: ".experimental"
   #   install: "Use $skill-installer in Codex"
   #   purpose: "Linear issue management"
+  - name: cc-sendbird
+    install: |
+      codex plugin marketplace add sendbird/codex-marketplace || true
+      codex plugin add cc@sendbird || true
+    purpose: "Codex only. Claude Code from inside Codex: read-only review, adversarial review, and tracked rescue tasks run through the local claude CLI"
+    license: "Apache-2.0 (Sendbird; adapted from openai/codex-plugin-cc, the reverse of the codex Claude plugin)"
+    requires:
+      - "claude CLI installed and authenticated"
+      - "node"
+      - "codex-cli >= 0.148 (installed and verified on 0.148, 0.151, 0.154, 0.159)"
+    notes: >-
+      Ships Codex hooks: a SessionStart/SessionEnd bridge, an unread-result
+      check on UserPromptSubmit, and a Stop review gate that is off by default
+      (stopReviewGate false per workspace until $cc:setup enables it), so it
+      does not change how Codex ends a turn unless opted in.
 
 # =============================================================================
 # COPILOT SKILLS (GitHub Copilot CLI skills)

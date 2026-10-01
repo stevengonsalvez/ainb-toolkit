@@ -29,6 +29,17 @@
         "automation"
       ],
       "skills": "skills/"
+    },
+    {
+      "name": "demo",
+      "description": "Film any running app as real product footage, then compose it into a styled walkthrough video",
+      "source": "./plugins/demo",
+      "category": "delivery",
+      "tags": [
+        "demo",
+        "video"
+      ],
+      "skills": "skills/"
     }
   ]
 }

@@ -47,7 +47,7 @@ export function cues(C, segs, A) {
     return { kind: 'narration', cues: out };
   }
   for (const s of segs) for (const sp of s.plan.spots || []) {
-    out.push({ start: s.start + sp.compT - C.fadeLead, end: s.start + sp.compT + sp.hold, text: sp.label });
+    out.push({ start: s.start + (sp.litFrom ?? sp.compT - C.fadeLead), end: s.start + sp.compT + sp.hold, text: sp.label });
   }
   return { kind: 'labels', cues: out };
 }
@@ -72,9 +72,10 @@ export function burnCaptions(C, segs, A, final) {
   mkdirSync(`${d}/assets/fonts`, { recursive: true });
   for (const f of ['hyperframes.json', 'package.json', 'gsap.min.js']) copyFileSync(`${SKILL}/assets/template/${f}`, `${d}/${f}`);
   for (const f of C.fontFiles) copyFileSync(f, `${d}/assets/fonts/${basename(f)}`);
-  // A keyframe every second: HyperFrames seeks the video per frame and freezes on a sparse GOP.
-  execFileSync(C.ffmpeg, ['-nostdin', '-loglevel', 'error', '-y', '-i', final, '-an', '-c:v', 'libx264', '-crf', '12', '-preset', 'veryfast',
-    '-g', '30', '-keyint_min', '30', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', `${d}/assets/final.mp4`]);
+  // A keyframe every second (HyperFrames warns that a sparse GOP freezes frames), lossless so the
+  // burned cut stays one encode away from the final.
+  execFileSync(C.ffmpeg, ['-nostdin', '-loglevel', 'error', '-y', '-i', final, '-an', '-c:v', 'libx264', '-qp', '0', '-preset', 'veryfast',
+    '-g', String(C.fps), '-keyint_min', String(C.fps), `${d}/assets/final.mp4`]);
   writeFileSync(`${d}/meta.json`, JSON.stringify({ id: 'captions', name: 'captions', createdAt: new Date(0).toISOString() }, null, 1));
   const lines = [];
   const body = cs.map((c, i) => {
@@ -97,6 +98,8 @@ ${C.fontFaces.join('\n')}
 * { margin: 0; padding: 0; box-sizing: border-box; }
 html, body { width: ${W}px; height: ${H}px; overflow: hidden; background: #000; }
 #root { position: relative; width: 100%; height: 100%; overflow: hidden; background: #000; }
+/* png-sequence renders the root transparent: an opaque full-bleed layer, as in compose.mjs */
+#bg { position: absolute; inset: 0; background: #000; }
 .foot { position: absolute; inset: 0; width: 100%; height: 100%; }
 .cap { position: absolute; left: 50%; bottom: ${C.layout.safeMargin}px; transform: translateX(-50%); opacity: 0;
   max-width: ${W - 2 * C.layout.safeMargin}px; padding: 10px 20px; border-radius: 10px; background: rgba(0,0,0,0.72);
@@ -106,6 +109,7 @@ html, body { width: ${W}px; height: ${H}px; overflow: hidden; background: #000; 
 </head>
 <body>
 <div id="root" data-composition-id="captions" data-start="0" data-duration="${total}" data-width="${W}" data-height="${H}">
+<div id="bg"></div>
 <video id="final" class="foot clip" src="assets/final.mp4" data-start="0" data-duration="${total}" data-media-start="0" data-track-index="0" muted playsinline></video>
 ${body}
 </div>
@@ -117,11 +121,15 @@ window.__timelines["captions"] = tl;
 </body>
 </html>
 `);
-  const silent = `${d}/burned.mp4`, out = `${C.out}/out/${C.name}-captions.mp4`;
-  const log = `${C.out}/work/render-captions.log`;
-  const r = spawnSync('timeout', ['590', 'npx', '--yes', 'hyperframes@0.8.40', 'render', '--quality', 'looks', '--output', silent], { cwd: d, encoding: 'utf8', maxBuffer: 1 << 28 });
+  // Rendered as PNG frames and encoded once, the same way concat.sh encodes the final; the audio is
+  // copied from the final.
+  const frames = `${d}/frames`, out = `${C.out}/out/${C.name}-captions.mp4`, log = `${C.out}/work/render-captions.log`;
+  const r = spawnSync('npx', ['--yes', 'hyperframes@0.8.40', 'render', '--fps', String(C.fps), '--format', 'png-sequence', '--video-frame-format', 'png', '--output', frames],
+    { cwd: d, encoding: 'utf8', maxBuffer: 1 << 28, timeout: (120 + 10 * Math.ceil(total)) * 1000 });
   writeFileSync(log, `${r.stdout}\n${r.stderr}`);
-  if (r.status !== 0) throw new Error(`caption burn render failed, see ${log}`);
-  execFileSync(C.ffmpeg, ['-nostdin', '-loglevel', 'error', '-y', '-i', silent, '-i', final, '-map', '0:v', '-map', '1:a?', '-c', 'copy', '-movflags', '+faststart', out]);
+  if (r.status !== 0) throw new Error(`caption burn render failed${r.error ? ` (${r.error.code})` : ''}, see ${log}`);
+  execFileSync(C.ffmpeg, ['-nostdin', '-loglevel', 'error', '-y', '-framerate', String(C.fps), '-i', `${frames.replace(/%/g, '%%')}/frame_%06d.png`, '-i', final,
+    '-map', '0:v', '-map', '1:a?', '-vf', 'scale=out_color_matrix=bt709:out_range=tv,format=yuv420p,setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv',
+    '-c:v', 'libx264', '-preset', 'slow', '-crf', '14', '-tune', 'animation', '-c:a', 'copy', '-movflags', '+faststart', out]);
   return `${out} (${cs.length} ${kind} cues)`;
 }

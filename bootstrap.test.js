@@ -869,3 +869,59 @@ describe('setup-external.sh npx install list', () => {
         }
     });
 });
+
+describe('Third-party plugin skill flattening (flatten-skills)', () => {
+    const tempDir = path.join(__dirname, 'tmp-flatten-skills-test');
+    const yaml = require('js-yaml');
+
+    beforeEach(() => {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+        fs.mkdirSync(tempDir, { recursive: true });
+    });
+
+    afterEach(() => {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    });
+
+    const setupScript = (tool, subdir) => {
+        const home = path.join(tempDir, tool);
+        fs.mkdirSync(home, { recursive: true });
+        execSync(`node bootstrap.js --tool=${tool} --homeDir=${home}`,
+            { cwd: __dirname, stdio: 'pipe', env: { ...process.env } });
+        return fs.readFileSync(path.join(home, subdir, 'setup-external.sh'), 'utf8');
+    };
+
+    const plugins = () => yaml.load(fs.readFileSync(
+        path.join(__dirname, 'external-dependencies.yaml'), 'utf8'))['claude-plugins'];
+
+    it('installs an opted-out plugin but never copies its skills flat', () => {
+        const optedOut = plugins().filter(p => p['flatten-skills'] === false);
+        expect(optedOut.length).toBeGreaterThan(0);
+        const script = setupScript('claude-code-4.5', '.claude');
+        for (const p of optedOut) {
+            const id = p.marketplace_id || `${p.name}-marketplace`;
+            expect(script).toContain(`claude plugin install ${p.name}@${id}`);
+            expect(script).not.toContain(`plugins/cache/${id}/${p.name}"/*/skills/*/`);
+        }
+    });
+
+    it('still flattens third-party plugins that did not opt out', () => {
+        const flattened = plugins().filter(p => !p['own-plugin'] && p['flatten-skills'] !== false);
+        const script = setupScript('claude-code-4.5', '.claude');
+        for (const p of flattened) {
+            const id = p.marketplace_id || `${p.name}-marketplace`;
+            expect(script).toContain(`plugins/cache/${id}/${p.name}"/*/skills/*/`);
+        }
+    });
+
+    it('emits codex-skills install lines into the codex setup script', () => {
+        const codexSkills = yaml.load(fs.readFileSync(
+            path.join(__dirname, 'external-dependencies.yaml'), 'utf8'))['codex-skills'] || [];
+        const script = setupScript('codex', '.codex');
+        for (const s of codexSkills.filter(e => e.install)) {
+            for (const line of s.install.trim().split('\n')) {
+                expect(script).toContain(line.trim());
+            }
+        }
+    });
+});

@@ -16,6 +16,10 @@ const pages = {
   // Tall page with a white block (bigger than the 2x camera box) far below the fold: zooming on it after a scroll must film it.
   '/tall': `<body style="margin:0;background:${BG};height:3000px"><div id="w" style="position:absolute;top:2000px;left:290px;width:700px;height:400px;background:#fff"></div></body>`,
   '/news': `<body style="background:${BG}">news</body>`,
+  // Plain page with an invisible zoom target: the only white pixels in a frame are the cursor's.
+  // #go fills the zoom target, so a click on it navigates while the camera is zoomed.
+  '/plain': `<body style="margin:0;background:${BG};height:100vh"><div id="z" style="position:absolute;left:440px;top:260px;width:400px;height:200px"><a id="go" href="/plain2" style="position:absolute;inset:0"></a></div></body>`,
+  '/plain2': `<body style="margin:0;background:${BG};height:100vh"></body>`,
   '/frame': `<body style="margin:0;background:${BG};height:100vh"><iframe src="/news" width="400" height="200"></iframe></body>`,
   // Turns white once the input holds exactly the typed text: the last frame proves the type beat.
   '/type': `<body style="margin:0;background:${BG};height:100vh"><input id="q" style="margin:200px;font-size:30px" oninput="if (this.value === 'ferry times') document.body.style.background = '#fff'"></body>`,
@@ -38,7 +42,10 @@ const server = http.createServer((req, res) => {
 }).listen(0);
 const base = `http://127.0.0.1:${server.address().port}`;
 const out = fs.mkdtempSync(path.join(os.tmpdir(), 'demo-capture-check-'));
-const luma = jpg => Number(execFileSync(process.env.FFMPEG || 'ffmpeg', ['-v', 'error', '-i', jpg, '-vf',
+// $FFMPEG/$FFPROBE, else the distro build at /usr/bin, else PATH (Homebrew on macOS, where /usr/bin is read-only).
+const ffbin = name => process.env[name.toUpperCase()] || (fs.existsSync(`/usr/bin/${name}`) ? `/usr/bin/${name}` : name);
+const FFMPEG = ffbin('ffmpeg'), FFPROBE = ffbin('ffprobe');
+const luma = jpg => Number(execFileSync(FFMPEG, ['-v', 'error', '-i', jpg, '-vf',
   'signalstats,metadata=print:key=lavfi.signalstats.YAVG:file=-', '-f', 'null', '-']).toString().match(/YAVG=([\d.]+)/)[1]);
 const frame = (dir, i) => path.join(dir, `f${String(i).padStart(5, '0')}.jpg`);
 
@@ -63,18 +70,34 @@ try {
   for (const k of ['chapter', 'viewport', 'dur', 'frames', 'events']) assert.ok(k in ev, `events.json missing ${k}`);
   assert.equal(ev.frames, r.frames);
   for (const e of ev.events.filter(e => e.kind === 'mark')) for (const k of ['t', 'kind', 'label', 'rect', 'cam']) assert.ok(k in e, `event missing ${k}`);
-  // Sound cues for demo:compose: one zoom, one wide, one click, each timed inside the take.
-  assert.deepEqual(ev.events.filter(e => e.kind !== 'mark').map(e => e.kind), ['zoom', 'wide', 'click']);
-  for (const e of ev.events) assert.ok(e.t >= 0 && e.t <= ev.dur && (e.dur ?? 0) >= 0, `${e.kind} event out of range`);
+  // Sound cue for demo:compose: the scoped click, timed inside the take.
+  const clicks = ev.events.filter(e => e.kind === 'click');
+  assert.equal(clicks.length, 1, `expected 1 click event, got ${clicks.length}`);
+  assert.ok(clicks[0].t >= 0 && clicks[0].t <= ev.dur, `click event at ${clicks[0].t} outside the ${ev.dur}s take`);
   const z = ev.events.find(e => e.label === 'zoomed');
+  for (const e of ev.events.filter(e => e.kind === 'mark')) for (const k of ['t', 'kind', 'label', 'rect', 'cam']) assert.ok(k in e, `event missing ${k}`);
+  // Every camera glide (zoom and wide, 500ms each: 11 steps of at least 30ms) is logged with its span,
+  // so compose can play it at 1x.
+  const moves = ev.events.filter(e => e.kind === 'camera');
+  assert.equal(moves.length, 2, `expected 2 camera events, got ${moves.length}`);
+  for (const m of moves) assert.ok(m.t1 - m.t0 >= 0.3, `camera event span ${m.t0}..${m.t1} shorter than its 11 steps of 30ms`);
+  assert.ok(moves[0].t1 <= z.t, 'zoom ended after the mark that follows it');
   assert.equal(z.cam.s, 2, 'zoom did not reach scale 2');
   assert.ok(z.cam.y + z.cam.h >= z.rect.y + z.rect.h, 'zoom box does not frame the nav');
   // The mp4 must run as long as the take. Zoom glides deliver frames faster than 30fps; an
   // encoder that mishandles those squeezes the timeline and puts every mark late.
   execFileSync(path.join(import.meta.dirname, 'encode.sh'), [r.dir, `${r.dir}.mp4`]);
-  const n = Number(execFileSync(process.env.FFPROBE || 'ffprobe', ['-v', 'error', '-count_frames', '-select_streams', 'v:0',
+  const n = Number(execFileSync(FFPROBE, ['-v', 'error', '-count_frames', '-select_streams', 'v:0',
     '-show_entries', 'stream=nb_read_frames', '-of', 'csv=p=0', `${r.dir}.mp4`]).toString());
   assert.ok(Math.abs(n / 30 - r.dur) < 0.1, `mp4 holds ${n} frames (${(n / 30).toFixed(2)}s) for a ${r.dur.toFixed(2)}s take`);
+  // A '%' in the take's path: ffmpeg reads the cfr/ input as a %05d pattern, and an unescaped
+  // "100%/" failed with "Error opening input file" (exit 254). Same take, copied under one.
+  const pct = path.join(out, 'pct 100%', 'main');
+  fs.cpSync(r.dir, pct, { recursive: true });
+  execFileSync(path.join(import.meta.dirname, 'encode.sh'), [pct, `${pct}.mp4`]);
+  const np = Number(execFileSync(FFPROBE, ['-v', 'error', '-count_frames', '-select_streams', 'v:0',
+    '-show_entries', 'stream=nb_read_frames', '-of', 'csv=p=0', `${pct}.mp4`]).toString());
+  assert.equal(np, n, `encode under a '%' path gave ${np} frames, not ${n}`);
   const head = luma(frame(r.dir, 0)), tail = luma(frame(r.dir, r.frames - 1));
   assert.ok(head > 60 && head < 140, `first frame is blank/splash (luma ${head})`);
   assert.ok(tail > 60 && tail < 140, `last frame is still the splash (luma ${tail})`);
@@ -98,7 +121,7 @@ try {
   let ripple, sandboxErrs;
   try {
     const page = await browser.newPage();
-    await page.addInitScript(overlay, { ls: { k: 'v' }, hidden: false });
+    await page.addInitScript(overlay, { ls: { k: 'v' }, hidden: false, ringColor: '#ff0000' });
     await page.goto(`${base}/frame`); await page.frames()[1].waitForLoadState();
     const cursors = (await Promise.all(page.frames().map(f => f.locator('#__cur').count()))).reduce((a, b) => a + b);
     assert.equal(cursors, 1, `expected 1 cursor across ${page.frames().length} frames, got ${cursors}`);
@@ -114,6 +137,7 @@ try {
       const r = document.getElementById('__ring'); window.__log.push([r.style.transform, r.style.cssText.length]); }); });
     for (const x of [300, 500, 700]) { await page.mouse.click(x, 300); await page.waitForTimeout(700); }
     ripple = await page.evaluate(() => window.__log);
+    assert.equal(await page.evaluate(() => getComputedStyle(document.getElementById('__ring')).borderTopColor), 'rgb(255, 0, 0)', 'click ring ignores cursor.ring');
     assert.deepEqual(ripple.map(r => r[0]), ['scale(1)', 'scale(1)', 'scale(1)'], `ripple start transforms ${JSON.stringify(ripple)}`);
     assert.equal(new Set(ripple.map(r => r[1])).size, 1, `ripple cssText grows per click ${JSON.stringify(ripple)}`);
   } finally { await browser.close(); }
@@ -143,6 +167,27 @@ try {
   assert.equal(await ensureState({ base, state, login: { ...login, loggedInSel: '#me' } }), 'minted');
   assert.equal(await ensureState({ base, state, login: { ...login, loggedInSel: '#me' } }), 'reused');
 
+  // 10. The cursor keeps its size under a zoom: white pixels (only the cursor is white on /plain)
+  //     in a zoomed hold vs an unzoomed one. Measured 1.00-1.34 with the counter-scale, 5.14 without.
+  const white = (dir, k) => Number(execFileSync(FFMPEG, ['-v', 'error', '-i', path.join(dir, 'cfr', `${String(k).padStart(5, '0')}.jpg`),
+    '-vf', "format=gray,lutyuv=y='if(gt(val,200),255,0)',signalstats,metadata=print:key=lavfi.signalstats.YAVG:file=-", '-f', 'null', '-']).toString().match(/YAVG=([\d.]+)/)[1]);
+  // cursor area in a take's last frame over its area just before the take's first camera move
+  const growth = t => {
+    const mv = JSON.parse(fs.readFileSync(path.join(t.dir, 'events.json'), 'utf8')).events.find(e => e.kind === 'camera');
+    const before = white(t.dir, Math.floor((mv.t0 - 0.15) * 30));
+    assert.ok(before > 0, `${t.dir}: no cursor before the zoom`);
+    return white(t.dir, fs.readdirSync(path.join(t.dir, 'cfr')).length - 1) / before;
+  };
+  const csRatio = growth(await capture({ base, out, chapter: 'counter', beats: [{ goto: '/plain', hold: 700 }, { zoom: { on: '#z', scale: 2, ms: 300 }, hold: 700 }] }));
+  assert.ok(csRatio > 0.6 && csRatio < 1.6, `cursor ${csRatio.toFixed(2)}x its unzoomed size under a 2x zoom (want ~1)`);
+
+  // 11. ...and still after a click navigates while zoomed: the new page's overlay starts unscaled.
+  //     Measured 1.02-1.31 with the re-apply after navigation, 5.10 without.
+  const nvRatio = growth(await capture({ base, out, chapter: 'counter-nav', beats: [{ goto: '/plain', hold: 700 },
+    { zoom: { on: '#z', scale: 2, ms: 300 } }, { name: 'go', click: '#go', expectPath: '/plain2', hold: 700 }] }));
+  assert.ok(nvRatio > 0.6 && nvRatio < 1.6, `cursor ${nvRatio.toFixed(2)}x its unzoomed size after navigating while zoomed (want ~1)`);
+
+  console.log(`selfcheck OK: cursor under 2x zoom ${csRatio.toFixed(2)}x its unzoomed size, ${nvRatio.toFixed(2)}x after navigating while zoomed; ring takes cursor.ring`);
   console.log(`selfcheck OK: cursors 1 with iframe; sandbox errors ${sandboxErrs}; ripple ${JSON.stringify(ripple)}; type ${ty.dur.toFixed(2)}s luma ${tl}; pace ${p1.dur.toFixed(2)}s -> ${p2.dur.toFixed(2)}s; loggedInSel re-mints`);
   console.log(`selfcheck OK: main ${r.frames} frames/${r.dur.toFixed(1)}s mp4 ${n} frames luma head ${head} tail ${tail}; hold ${h.frames} frames; scroll-zoom luma ${zl}; guard threw`);
 } finally {

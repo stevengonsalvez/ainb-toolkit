@@ -12,7 +12,7 @@
 // synthesised here rather than shipped as files: no asset to licence, and the same on every
 // ffmpeg build.
 import { execFileSync, spawnSync } from 'node:child_process';
-import { readFileSync, writeFileSync, mkdirSync, existsSync, copyFileSync, statSync, renameSync, rmSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, copyFileSync, statSync, renameSync, rmSync, readdirSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { resolve, isAbsolute, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -21,7 +21,6 @@ import { writeCaptions, burnCaptions } from './captions.mjs';
 
 const SR = 48000;
 const HF = ['--yes', 'hyperframes@0.8.40'];
-const FPS = 30;
 const dB = (x) => 10 ** (x / 20);
 
 // Defaults for the `audio` block. `audio: false` turns the sound layer off (captions still get written).
@@ -192,27 +191,30 @@ function anchorTime(C, l, words, dir) {
 
 // Fit one chapter's narration to its picture. `timeline(freezes)` re-times the chapter with
 // those freezes ({ t: source seconds, d: output seconds }) and returns source t -> composition t.
-// Each mark's line is placed so its anchor word starts as the spotlight is fully lit. Where a
-// line would start before the previous one has finished, or would outlast its own hold, the
-// footage freezes on a still frame for whole frames until it fits: at the end of the previous
-// hold (the previous spotlight stays up), or just before the first mark.
-export function fitNarration(spots, clips, timeline, N) {
+// A spot is { T, hold, from, fade }: its spotlight fades in from source time `from` over `fade`
+// output seconds, so it is fully lit at the later of T and that fade's end. Each mark's line is
+// placed so its anchor word starts as the spotlight is fully lit. Where a line would start before
+// the previous one has finished, or would outlast its own hold, the footage freezes on a still
+// frame for whole frames until it fits: at the end of the previous hold (the previous spotlight
+// stays up), or, for the first mark, where its spotlight starts (the settled pose).
+export function fitNarration(spots, clips, timeline, N, fps = 30) {
   const fz = [], placed = [];
-  const frames = (d) => Math.ceil(d * FPS - 1e-6) / FPS;
+  const frames = (d) => Math.ceil(d * fps - 1e-6) / fps;
+  const lit = (toComp, s) => Math.max(toComp(s.T), s.from == null ? -Infinity : toComp(s.from) + s.fade);
   let prevEnd = 0;
   if (clips.intro) { placed.push({ slot: 'intro', at: N.lead, ...clips.intro }); prevEnd = N.lead + clips.intro.dur; }
   for (const [i, s] of spots.entries()) {
     const c = clips.marks?.[i];
     if (!c) continue;
-    let toComp = timeline(fz), start = toComp(s.T) - c.anchor;
+    let toComp = timeline(fz), start = lit(toComp, s) - c.anchor;
     const need = prevEnd + N.gap - start;
     if (need > 0) {
-      fz.push({ t: i ? spots[i - 1].T + spots[i - 1].hold : s.T, d: frames(need) });
-      toComp = timeline(fz); start = toComp(s.T) - c.anchor;
+      fz.push({ t: i ? spots[i - 1].T + spots[i - 1].hold : Math.max(s.T, s.from ?? s.T), d: frames(need) });
+      toComp = timeline(fz); start = lit(toComp, s) - c.anchor;
     }
     const over = start + c.dur + N.tail - toComp(s.T + s.hold);
     if (over > 0) fz.push({ t: s.T + s.hold, d: frames(over) });
-    placed.push({ slot: i, at: start, ...c });
+    placed.push({ slot: i, at: start, lit: lit(toComp, s), ...c });
     prevEnd = start + c.dur;
   }
   return { freezes: fz, placed };
@@ -290,12 +292,17 @@ export function loudness(C, file) {
   return { I: num(/I:\s+(-?[\d.]+|-inf) LUFS/), TP: num(/Peak:\s+(-?[\d.]+|-inf) dBFS/) };
 }
 
+// When a spot is fully lit: its fade-in starts at litFrom (after the camera settles) or fadeLead
+// before compT, whichever is later.
+export const litAt = (sp) => Math.max(sp.compT, sp.litFrom == null ? -Infinity : sp.litFrom + sp.fadeIn);
+
+// Each rendered segment is a directory of PNG frames at C.fps (render.sh); its length is its frame count.
 function segments(C) {
   let t = 0;
   return segmentNames(C).map((n) => {
-    const f = `${C.out}/out/seg/${n}.mp4`, p = `${C.out}/work/${n}.plan.json`;
-    if (!existsSync(f) || !existsSync(p)) throw new Error(`${n}: no rendered segment or plan; run compose.mjs and render.sh first`);
-    const s = { name: n, start: t, dur: probe(C, f), plan: JSON.parse(readFileSync(p, 'utf8')) };
+    const d = `${C.out}/out/seg/${n}`, p = `${C.out}/work/${n}.plan.json`;
+    if (!existsSync(d) || !existsSync(p)) throw new Error(`${n}: no rendered segment or plan; run compose.mjs and render.sh first`);
+    const s = { name: n, start: t, dur: readdirSync(d).filter((f) => /^frame_\d+\.png$/.test(f)).length / C.fps, plan: JSON.parse(readFileSync(p, 'utf8')) };
     t += s.dur;
     return s;
   });
@@ -324,9 +331,9 @@ export function mix(C) {
           // one soft key every 2 or 3 characters, pitch varied +-5% so repeats do not sound looped
           for (let k = 0; k < c.chars; k += 2 + Math.floor(R() * 2)) { tick(sfx, at + c.dur * k / c.chars, g('key'), 2600 * (0.95 + 0.1 * R()), 0.03); counts.key++; }
         }
-        if ((c.kind === 'zoom' || c.kind === 'wide') && A.sfx.zoom) { whoosh(sfx, at, Math.max(0.25, c.dur), g('whoosh')); counts.whoosh++; }
+        if (c.kind === 'camera' && A.sfx.zoom) { whoosh(sfx, at, Math.max(0.25, c.dur), g('whoosh')); counts.whoosh++; }
       }
-      if (A.sfx.mark) for (const sp of s.plan.spots || []) { ping(sfx, s.start + sp.compT, g('ping')); counts.ping++; }
+      if (A.sfx.mark) for (const sp of s.plan.spots || []) { ping(sfx, s.start + litAt(sp), g('ping')); counts.ping++; }
     }
   }
 
@@ -421,7 +428,7 @@ export function mix(C) {
     const ins = rows.flatMap(([f]) => ['-i', f ? `${work}/${f}` : final]);
     const fc = rows.map(([, col], i) => `[${i}:a]aformat=channel_layouts=mono,showwavespic=s=1600x110:scale=sqrt:colors=${col}[w${i}]`).join(';')
       + `;${rows.map((_, i) => `[w${i}]`).join('')}vstack=inputs=${rows.length}[st];color=c=0x15171C:s=1600x${110 * rows.length}[bg];[bg][st]overlay`;
-    execFileSync(C.ffmpeg, ['-nostdin', '-loglevel', 'error', '-y', ...ins, '-filter_complex', fc, '-frames:v', '1', `${C.out}/out/${C.name}-audio.png`]);
+    execFileSync(C.ffmpeg, ['-nostdin', '-loglevel', 'error', '-y', ...ins, '-filter_complex', fc, '-frames:v', '1', '-update', '1', `${C.out}/out/${C.name}-audio.png`]);
   }
 
   if (A.captions.burn) report.burned = burnCaptions(C, segs, A, final);

@@ -29,6 +29,16 @@ for (let i = 1; i < placed.length; i++) assert.ok(placed[i].at >= placed[i - 1].
 for (const p of placed.filter((x) => typeof x.slot === 'number')) assert.ok(toComp(spots[p.slot].T + spots[p.slot].hold) >= p.at + p.dur + N.tail - 1e-9, `m${p.slot} hold ends before its line`);
 for (const f of freezes) assert.ok(Math.abs(f.d * 30 - Math.round(f.d * 30)) < 1e-6, `freeze ${f.d}s is not whole frames`);
 
+// 3b. A spotlight that waits for the camera (from > T - fade) is fully lit at from + fade; the
+//     anchor follows it, and a first-mark freeze goes where the spotlight starts.
+{
+  const sp = [{ T: 1.0, hold: 1.5, from: 1.2, fade: 0.25 }];
+  const r = fitNarration(sp, { intro: { dur: 3.0 }, marks: [{ dur: 1.0, anchor: 0.3 }] }, timeline, N);
+  const tc = timeline(r.freezes), p = r.placed.find((x) => x.slot === 0);
+  assert.ok(Math.abs(p.at + p.anchor - (tc(1.2) + 0.25)) < 1e-9, 'anchor is not on the settled spotlight');
+  assert.equal(r.freezes[0].t, 1.2);
+}
+
 // 4. locateAnchor finds where a tail clip starts inside a line. Synthetic speech: tone syllables in
 //    different bands with a little noise; the tail is the same syllables generated again with fresh
 //    noise and a 10% longer first syllable, so it matches the envelope, never the samples.

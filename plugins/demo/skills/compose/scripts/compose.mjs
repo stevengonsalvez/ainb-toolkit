@@ -6,7 +6,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync, mkdirSync, copyFileSync, existsSync } from 'node:fs';
 import { dirname, resolve, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadConfig, segmentNames, eventsPath, r3, esc } from './config.mjs';
+import { loadConfig, segmentNames, eventsPath, r3, esc, grayFrames, mad } from './config.mjs';
 import { audioSettings, narrationClips, fitNarration, beatGrid } from './audio.mjs';
 
 const cfgPath = process.argv[2];
@@ -43,16 +43,28 @@ function freezes(mp4) {
 // where the frame differs from the t+0.3 pose (mean abs luma diff > 2 at 160x90). The scan
 // covers the longest hold allowed (pace can raise hold.max), so an unseen move cannot slip in.
 function stableUntil(mp4, t) {
-  const fw = 160 * 90, t0 = t + 0.3;
-  const buf = execFileSync(C.ffmpeg, ['-nostdin', '-loglevel', 'error', '-ss', String(t0), '-i', mp4, '-t', String(Math.max(2.6, C.hold.max + 0.4)),
-    '-vf', 'fps=10,scale=160:90,format=gray', '-f', 'rawvideo', '-'], { maxBuffer: 1 << 26 });
-  const n = Math.floor(buf.length / fw);
-  for (let k = 1; k < n; k++) {
-    let d = 0;
-    for (let p = 0; p < fw; p++) d += Math.abs(buf[k * fw + p] - buf[p]);
-    if (d / fw > 2) return t0 + k / 10;
+  const t0 = t + 0.3, f = grayFrames(C.ffmpeg, mp4, { t: t0, len: Math.max(2.6, C.hold.max + 0.4), fps: 10 });
+  for (let k = 1; k < f.n; k++) if (mad(f.at(k), f.at(0)) > 2) return t0 + k / 10;
+  return t0 + f.n / 10;
+}
+
+// When the camera move capture logged as ending at t1 has really landed in the footage. t1 is
+// logged after the last pose plus a 30ms wait, and that pose reaches the footage 16-63ms later
+// (measured), so every frame-to-frame change (mean abs luma diff > 0.5 at 160x90; the drifting
+// cursor alone measures under 0.1) up to SETTLE_WINDOW after t1 counts as the camera landing,
+// with room for a slow landing under load. Only changes after that window are the page itself
+// moving: they no longer delay the spotlight (an animated page used to, by ~0.4s) and are warned about.
+const SETTLE_WINDOW = 0.25;
+function settledAt(mp4, t1, name) {
+  const a = Math.max(0, t1 - 0.1), f = grayFrames(C.ffmpeg, mp4, { t: a, len: t1 + SETTLE_WINDOW + 0.15 - a });
+  const tk = (k) => Math.ceil(a * 30) / 30 + k / 30;   // the take is 30fps (demo:capture)
+  let settle = t1, moving = false;
+  for (let k = 1; k < f.n; k++) {
+    if (mad(f.at(k), f.at(k - 1)) <= 0.5) continue;
+    if (tk(k) <= t1 + SETTLE_WINDOW) settle = Math.max(settle, tk(k)); else moving = true;
   }
-  return t0 + n / 10;
+  if (moving) console.warn(`  warn ${name}: the frame keeps changing more than ${SETTLE_WINDOW}s after the camera move that ended at ${r3(t1)}s. That is the page moving, not the camera; the spotlight starts at ${r3(settle)}s regardless`);
+  return settle;
 }
 
 // subtract intervals `cuts` from [0,dur] -> kept ranges
@@ -73,6 +85,10 @@ ${faces}
 html, body { width: ${W}px; height: ${H}px; overflow: hidden; background: ${T.bg}; }
 #root { position: relative; width: 100%; height: 100%; overflow: hidden; background: ${T.bg};
   font-family: ${C.bodyStack}; color: ${T.text}; }
+/* A png-sequence render forces the root and body transparent, and concat.sh flattens any
+   transparent pixel to black (measured without this). Invariant: every visible element sits on
+   an opaque layer; this full-bleed fill is that layer for the root. concat.sh warns otherwise. */
+#bg { position: absolute; inset: 0; background: ${T.bg}; }
 .cam { position: absolute; left: 0; top: 0; }
 .foot { position: absolute; inset: 0; width: 100%; height: 100%; }
 .card { position: absolute; inset: 0; background: ${T.bg}; display: flex; flex-direction: column;
@@ -105,6 +121,7 @@ function doc(id, dur, body, script) {
 </head>
 <body>
 <div id="root" data-composition-id="${id}" data-start="0" data-duration="${r3(dur)}" data-width="${W}" data-height="${H}">
+<div id="bg"></div>
 ${body}
 <div id="fade"></div>
 </div>
@@ -177,6 +194,14 @@ function analyze(cfg) {
       a.hold = Math.min(a.hold, b.T - a.T - 0.25);
     }
   }
+  // camera moves (zoom and wide glides), logged by demo:capture; older takes have none
+  const moves = ev.events.filter((e) => e.kind === 'camera').map((e) => [e.t0, e.t1]);
+  // A spotlight fades in fadeLead before its mark, or once the camera move into it has settled in
+  // the footage, whichever is later: a cut-out fading in over a moving frame points at nothing.
+  for (const s of spots) {
+    const mv = moves.filter(([a]) => a < s.T).at(-1);
+    s.from = mv && mv[1] > s.T - C.fadeLead - 0.3 ? Math.max(s.T - C.fadeLead, settledAt(mp4, mv[1], name)) : s.T - C.fadeLead;
+  }
 
   // cuts: dead-hold trims outside protected windows, plus configured cuts
   const prot = spots.map((s) => [s.T - 0.6, s.T + s.hold + 0.6]);
@@ -189,16 +214,17 @@ function analyze(cfg) {
   }
   const kept = keep(dur - 0.03, cuts);
   const vp = ev.viewport || { width: 1280, height: 720 };
-  return { cfg, name, mp4, dur, spots, kept, srcW: vp.width, srcH: vp.height, CARD: cfg.cardDur ?? C.chapterCardDur,
-    cues: ev.events.filter((e) => e.kind !== 'mark') };
+  return { cfg, name, mp4, dur, spots, moves, kept, srcW: vp.width, srcH: vp.height, CARD: cfg.cardDur ?? C.chapterCardDur,
+    cues: ev.events.filter((e) => ['click', 'type', 'camera'].includes(e.kind)).map((e) => (e.kind === 'camera' ? { ...e, dur: e.t1 - e.t0 } : e)) };
 }
 
 // ---------- speed ramp ----------
 // Footage time is re-mapped in two steps: source t -> kept time u (cuts removed) -> output time.
 // Output time is built from pieces over u, each with a slowness k = output s per source s that
 // runs linearly from k0 to k1, so a ramp is a smooth change of speed rather than a jump.
-// Proof windows (fadeLead before a mark through the end of its hold) play at 1x;
-// everything between them plays at speed.travel, with a ramp of rampMs of output time each side.
+// Proof windows (fadeLead before a mark through the end of its hold) and every camera move play
+// at 1x, so a zoom keeps its designed easing; everything between them plays at speed.travel,
+// with a ramp of rampMs of output time each side.
 function retime(an, sp, freezes = []) {
   const U = []; let acc = 0;
   for (const [a, b] of an.kept) { U.push(acc); acc += b - a; }
@@ -208,10 +234,11 @@ function retime(an, sp, freezes = []) {
     return uEnd;
   };
   const kp = 1, kt = 1 / sp.travel;
-  // proof windows in u, merged when they touch
+  // 1x windows in u (proof windows and camera moves), merged when they touch
   const win = [];
-  for (const s of an.spots) {
-    const w = [Math.max(0, toU(s.T - C.fadeLead)), Math.min(uEnd, toU(s.T + s.hold))];
+  const spans = [...an.spots.map((s) => [s.T - C.fadeLead, s.T + s.hold]), ...an.moves]
+    .map(([a, b]) => [Math.max(0, toU(a)), Math.min(uEnd, toU(b))]).filter(([a, b]) => b > a).sort((x, y) => x[0] - y[0]);
+  for (const w of spans) {
     if (win.length && w[0] <= win.at(-1)[1]) win.at(-1)[1] = Math.max(win.at(-1)[1], w[1]); else win.push(w);
   }
   const pieces = [];
@@ -262,10 +289,10 @@ function retime(an, sp, freezes = []) {
     const v = 1 / p.k0;
     if (p.k0 === p.k1 && Math.abs(v - Math.round(v)) < 1e-9) {
       const q = Math.round(v), i = U.findLastIndex((x) => x <= p.u0 + 1e-9);
-      const base = 30 * (start + p.k0 * (U[i] - an.kept[i][0] - p.u0));
+      const base = C.fps * (start + p.k0 * (U[i] - an.kept[i][0] - p.u0));
       const want = (1 / (2 * q) + 0.5) % (1 / q), have = ((base % (1 / q)) + 1 / q) % (1 / q);
       let d = want - have; if (d > 0.5 / q) d -= 1 / q; if (d < -0.5 / q) d += 1 / q;
-      p.o0 = Math.max(0, start + d / 30); p.sc = 1;
+      p.o0 = Math.max(0, start + d / C.fps); p.sc = 1;
     } else {
       p.o0 = end; p.sc = len > 0 ? Math.max(0, (nominal - end) / len) : 1;
     }
@@ -285,7 +312,8 @@ function retime(an, sp, freezes = []) {
   return { pieces, footDur: nominal, toOut: (t) => outOfU(toU(t)), kept: an.kept, U };
 }
 
-// Write the re-timed footage: cuts dropped, pieces re-timed, resampled to 30fps.
+// Write the re-timed footage: cuts dropped, pieces re-timed, resampled to C.fps. Lossless
+// (x264 -qp 0, no pixel-format change): concat.sh makes the one lossy encode.
 function renderFootage(an, rt, out) {
   const f = (x) => x.toFixed(6);
   const sel = an.kept.map(([a, b]) => `between(t,${f(a)},${f(b)})`).join('+');
@@ -298,8 +326,8 @@ function renderFootage(an, rt, out) {
     o = i === rt.pieces.length - 1 ? e : `if(lt(ld(0),${f(p.u1)}),${e},${o})`;
   }
   execFileSync(C.ffmpeg, ['-nostdin', '-loglevel', 'error', '-y', '-i', an.mp4,
-    '-vf', `select='${sel}',setpts='(st(0,${u});${o})/TB',fps=30,tpad=stop_mode=clone:stop_duration=0.2,format=yuv420p`,
-    '-an', '-c:v', 'libx264', '-crf', '14', '-preset', 'veryfast', out]);
+    '-vf', `select='${sel}',setpts='(st(0,${u});${o})/TB',fps=${C.fps},tpad=stop_mode=clone:stop_duration=0.2`,
+    '-an', '-c:v', 'libx264', '-qp', '0', '-preset', 'veryfast', out]);
 }
 
 // ---------- output framing ----------
@@ -326,7 +354,7 @@ function chapter(an, sp) {
   for (const s of an.spots) { s.srcHold = s.hold; s.hold = r3(rt.toOut(s.T + s.hold) - rt.toOut(s.T)); }
   const footDur = r3(rt.footDur);
   const pad = padToBeat(name, an.CARD + footDur);
-  for (const p of fit.placed) if (p.slot !== 'intro') p.at += pad;
+  for (const p of fit.placed) if (p.slot !== 'intro') { p.at += pad; p.lit += pad; }
   const CARD = r3(an.CARD + pad);
   const toComp = (t) => CARD + rt.toOut(t);
   const total = CARD + footDur;
@@ -348,11 +376,11 @@ function chapter(an, sp) {
   // Spots whose windows overlap share one view (their union), so no spotlight moves while lit.
   // Grouped in OUTPUT time, where the camera move is scheduled: travel speed shrinks the gaps,
   // and a source-time split left moves with no room (end before start).
-  for (const s of an.spots) s.ct = toComp(s.T);
+  for (const s of an.spots) { s.ct = toComp(s.T); s.cf = toComp(s.from); }
   const groups = [];
   for (const s of an.spots) {
     const g = groups.at(-1), prev = g?.at(-1);
-    if (prev && s.ct - C.fadeLead < prev.ct + prev.hold + F(0.3) + 0.1) g.push(s); else groups.push([s]);
+    if (prev && s.cf < prev.ct + prev.hold + F(0.3) + 0.1) g.push(s); else groups.push([s]);
   }
   for (const g of groups) {
     const x0 = Math.min(...g.map((s) => s.fr.x)), y0 = Math.min(...g.map((s) => s.fr.y));
@@ -384,7 +412,7 @@ function chapter(an, sp) {
     }
     const ct = s.ct;
     report.push({
-      i: s.i, label: s.label, srcT: r3(s.m.t), shift: s.shift || 0, compT: r3(ct), hold: r3(s.hold), srcHold: r3(s.srcHold),
+      i: s.i, label: s.label, srcT: r3(s.m.t), shift: s.shift || 0, compT: r3(ct), litFrom: r3(s.cf), fadeIn: F(0.25), hold: r3(s.hold), srcHold: r3(s.srcHold),
       place: pick[0], box: [x, y, w, h].map(Math.round),
       labBox: [pick[2].left, pick[2].top, lw, LH].map(Math.round), view: v,
     });
@@ -406,14 +434,14 @@ function chapter(an, sp) {
   for (let i = 1; i < groups.length; i++) {
     const a = groups[i - 1].at(-1), b = groups[i][0];
     if (JSON.stringify(a.view) === JSON.stringify(b.view)) continue;
-    const t0 = a.ct + a.hold + F(0.3), t1 = b.ct - C.fadeLead;
+    const t0 = a.ct + a.hold + F(0.3), t1 = b.cf;
     lines.push(`tl.to("${cam}", { ${V(b.view)}, duration: ${r3(Math.max(0.05, t1 - t0))}, ease: "power2.inOut" }, ${r3(Math.min(t0, t1 - 0.05))});`);
   }
   for (const s of an.spots) {
     const dy = { 'below-cropped': -8, below: -8, above: 8, right: 0, left: 0 }[s.dir] ?? 0;
     const dx = { right: -8, left: 8 }[s.dir] || 0;
-    lines.push(`tl.fromTo("#${name}-s${s.i}", { opacity: 0 }, { opacity: 1, duration: ${F(0.25)}, ease: "power1.out" }, ${r3(s.ct - C.fadeLead)});`);
-    lines.push(`tl.fromTo("#${name}-l${s.i}", { opacity: 0, x: ${dx}, y: ${dy} }, { opacity: 1, x: 0, y: 0, duration: ${F(0.3)}, ease: "power2.out" }, ${r3(s.ct - F(0.1))});`);
+    lines.push(`tl.fromTo("#${name}-s${s.i}", { opacity: 0 }, { opacity: 1, duration: ${F(0.25)}, ease: "power1.out" }, ${r3(s.cf)});`);
+    lines.push(`tl.fromTo("#${name}-l${s.i}", { opacity: 0, x: ${dx}, y: ${dy} }, { opacity: 1, x: 0, y: 0, duration: ${F(0.3)}, ease: "power2.out" }, ${r3(Math.max(s.cf, s.ct - F(0.1)))});`);
     lines.push(`tl.to(["#${name}-s${s.i}", "#${name}-l${s.i}"], { opacity: 0, duration: ${F(0.3)}, ease: "power1.in" }, ${r3(s.ct + s.hold)});`);
   }
 
@@ -431,7 +459,7 @@ function chapter(an, sp) {
       const at = toComp(e.t) + fit.freezes.reduce((a, f) => a + (e.dur && f.t > e.t && f.t <= e.t + e.dur ? f.d : 0), 0);
       return { kind: e.kind, at: r3(at), ...(e.dur != null && { dur: r3(toComp(e.t + e.dur) - at) }), ...(e.chars && { chars: e.chars }) };
     }),
-    narration: fit.placed.map(({ slot, at, dur, file, text, anchor, words }) => ({ slot, at: r3(at), dur, file, text, anchor, words })) };
+    narration: fit.placed.map(({ slot, at, lit, dur, file, text, anchor, words }) => ({ slot, at: r3(at), ...(lit != null && { lit: r3(lit) }), dur, file, text, anchor, words })) };
   writeFileSync(`${C.out}/work/${name}.plan.json`, JSON.stringify(meta, null, 1));
   return meta;
 }
@@ -446,8 +474,8 @@ for (const n of names) if (!C.cards[n] && !C.chapters.some((c) => c.name === n))
 const A = audioSettings(C);
 const NAR = narrationClips(C);
 const GRID = beatGrid(C);
-const fitFor = (an, sp) => fitNarration(an.spots, NAR[an.name] || { marks: [] },
-  (fz) => { const r = retime(an, sp, fz); return (t) => an.CARD + r.toOut(t); }, A?.narration);
+const fitFor = (an, sp) => fitNarration(an.spots.map((s) => ({ T: s.T, hold: s.hold, from: s.from, fade: F(0.25) })), NAR[an.name] || { marks: [] },
+  (fz) => { const r = retime(an, sp, fz); return (t) => an.CARD + r.toOut(t); }, A?.narration, C.fps);
 // Segment lengths so far, this run's or an earlier run's plan, for where each segment starts.
 const TOTALS = Object.fromEntries(segmentNames(C).map((n) => {
   const p = `${C.out}/work/${n}.plan.json`;
@@ -508,5 +536,5 @@ for (const n of names) {
   console.log(`${n}: total ${m.total}s (src ${m.srcDur}, cut ${m.cuts}, travel ${m.speed.travel}x) spots ${m.spots.map((s) => `${s.place}${s.shift ? '+' + s.shift : ''}/${s.hold}`).join(' ')}`);
   // where each narrated mark's anchor word starts against its spotlight being fully lit; 0 by construction
   const lines = m.narration.filter((l) => typeof l.slot === 'number');
-  if (lines.length) console.log(`  anchors ${lines.map((l) => `m${l.slot} ${r3(l.at + l.anchor - m.spots.find((s) => s.i === l.slot).compT)}s`).join(', ')}`);
+  if (lines.length) console.log(`  anchors ${lines.map((l) => { const s = m.spots.find((q) => q.i === l.slot); return `m${l.slot} ${r3(l.at + l.anchor - Math.max(s.compT, s.litFrom + s.fadeIn))}s`; }).join(', ')}`);
 }
