@@ -57,11 +57,13 @@ for (const f of fs.readdirSync(d)) if (/^frame_\d+\.png$/.test(f)) {
   if (b[25] === 4 || b[25] === 6) n++;                 // PNG colour types with an alpha channel
 } console.log(n)' "$o.part")
   [ "$T" = 0 ] || echo "warn: $n: $T frames have transparent pixels; they render black. Every visible element must sit on an opaque layer (the #bg fill)." >&2
-  # Packed bit-exact into lossless RGB H.264 (verified: PSNR inf against the PNGs), which is 9x
-  # smaller than the PNGs at 1440p60 (fares: 1011 MB of PNG, 115 MB packed, 12s to pack).
+  # Packed bit-exact into lossless RGB H.264 (verified: PSNR inf against the PNGs), 7x smaller
+  # than the PNGs at 1440p60 (fares: 1011 MB of PNG, 141 MB packed). A keyframe every 30 frames
+  # keeps each still-check seek short: x264's default 250 decoded up to 4s of lossless 1440p60
+  # per still (ferry check 45.7s, now 29.1s) for 20% more disk.
   # '%' in the path is doubled: ffmpeg reads the input as a %06d sequence pattern.
   "$FFMPEG" -nostdin -loglevel error -y -framerate "$FPS" -i "${o//%/%%}.part/frame_%06d.png" \
-    -c:v libx264rgb -qp 0 -preset veryfast -pix_fmt rgb24 "$o.part.mp4" \
+    -c:v libx264rgb -qp 0 -preset veryfast -g 30 -pix_fmt rgb24 "$o.part.mp4" \
     || { echo "$n: FAILED to pack"; exit 1; }
   rm -rf "$o.part" "$o"; mv "$o.part.mp4" "$o.mp4"
   echo "$n: ok $(( $(date +%s) - s ))s $(awk -v g="$got" -v f="$FPS" 'BEGIN { printf "%.3f", g / f }')s"
