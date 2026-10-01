@@ -56,15 +56,19 @@ export const cutSpots = ([a, b], spots) => spots.filter((s) => s.lit < b && s.en
 // The README loop: a stretch of one chapter that contains whole spotlights only (it starts and
 // ends between them, inside the chapter's footage, never mid-fade), as long as min..max seconds.
 // It leads in `lead` before the first spotlight so the camera move into it is in the loop, and
-// tails `tail` after the last. Scored by how many spotlights it holds, how close it runs to the
-// middle of the range, and `seam(a, b)`, how alike its first and last frames are (0 = identical),
-// so the loop jumps as little as possible when it restarts.
-export function pickLoop(chapters, { min = 8, max = 12, lead = 1.2, tail = 0.6, seam = () => 0 } = {}) {
+// tails `tail` after the last. Compose crossfades close spotlights (one fades out as the next
+// fades in), so a span whose first spotlight lights before the previous one has gone, or whose
+// last is still lit when the next lights, cuts one: it is skipped. Scored by how many
+// spotlights it holds, how close it runs to the middle of the range, `seam(a, b)`, how alike its
+// first and last frames are (0 = identical), and `motion(a, b)`, how much the frame moves at
+// either end (a loop that stops mid zoom-out jumps on restart however alike the frames are).
+export function pickLoop(chapters, { min = 8, max = 12, lead = 1.2, tail = 0.6, seam = () => 0, motion = () => 0 } = {}) {
   const cands = [];
   for (const ch of chapters) {
     const S = ch.spots;
     for (let i = 0; i < S.length; i++) for (let j = i; j < S.length; j++) {
       const lo = i ? S[i - 1].end : ch.a0, hi = j + 1 < S.length ? S[j + 1].lit : ch.a1;
+      if (lo > S[i].lit + 1e-6 || hi < S[j].end - 1e-6) continue;   // crossfaded with a neighbour
       let a = Math.max(lo, S[i].lit - lead), b = Math.min(hi, S[j].end + tail);
       // Growing to min only moves a down (not below lo) and b up (not past hi), so the span keeps
       // its spotlights whole and its neighbours out; selfcheck.mjs holds that over random plans.
@@ -76,12 +80,26 @@ export function pickLoop(chapters, { min = 8, max = 12, lead = 1.2, tail = 0.6, 
   }
   if (!cands.length) return null;
   const mid = (min + max) / 2;
-  for (const c of cands) c.score = (c.short ? -100 : 0) + 10 * c.spots.length - Math.abs(c.b - c.a - mid) - 0.2 * seam(c.a, c.b);
-  return cands.sort((x, y) => y.score - x.score)[0];
+  for (const c of cands) {
+    c.seam = seam(c.a, c.b); c.motion = motion(c.a, c.b);
+    c.score = (c.short ? -100 : 0) + 10 * c.spots.length - Math.abs(c.b - c.a - mid) - 0.2 * c.seam - 0.5 * c.motion;
+  }
+  const best = cands.sort((x, y) => y.score - x.score)[0];
+  const cut = cutSpots([best.a, best.b], chapters.find((c) => c.name === best.chapter).spots);
+  if (cut.length) throw new Error(`loop picker: ${best.a}s to ${best.b}s cuts "${cut[0].label}" (a bug: please report it)`);
+  return best;
 }
 
 // Mean absolute luma difference between the frames at a and b of a video (0..255).
-export const seamOf = (video) => (a, b) => mad(grayFrames(FFMPEG(), video, { t: a }).at(0), grayFrames(FFMPEG(), video, { t: Math.max(0, b - 0.04) }).at(0));
+const frames = new Map();                            // seam and motion read the same end frames
+const frameAt = (video, t) => {
+  const k = `${video}@${r3(Math.max(0, t))}`;
+  if (!frames.has(k)) frames.set(k, grayFrames(FFMPEG(), video, { t: Math.max(0, t) }).at(0));
+  return frames.get(k);
+};
+export const seamOf = (video) => (a, b) => mad(frameAt(video, a), frameAt(video, b - 0.04));
+// How much the picture moves over the first and the last 1/15 s of a loop: the sum of the two.
+export const motionOf = (video) => (a, b) => mad(frameAt(video, a), frameAt(video, a + 1 / 15)) + mad(frameAt(video, b - 0.04 - 1 / 15), frameAt(video, b - 0.04));
 
 // A mark's or event's rect (page CSS px) on the take's frame, in frame (device) px: through the
 // camera box when zoomed, times the take's pixel density.

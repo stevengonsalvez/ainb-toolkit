@@ -10,7 +10,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { loadConfig, timeline, pickLoop, cutSpots, seamOf, onFrame, clipTo, shortLabel, steps, lint, FFMPEG, hasEncoder, which, r3 } from './lib.mjs';
+import { loadConfig, timeline, pickLoop, cutSpots, seamOf, motionOf, onFrame, clipTo, shortLabel, steps, lint, FFMPEG, hasEncoder, which, r3 } from './lib.mjs';
 
 const [cmd, cfgPath, ...rest] = process.argv.slice(2);
 if (!['readme', 'interactive'].includes(cmd) || !cfgPath) {
@@ -45,7 +45,7 @@ function readme() {
     if (cut.length) throw new Error(`--from ${a} --to ${b} cuts the spotlight "${cut[0].label}" (lit ${cut[0].lit}s to ${cut[0].end}s): start before it lights or end after it fades`);
     loop = { a, b, spots: all.filter((s) => s.lit >= a && s.end <= b), title: tl.chapters.find((c) => c.a0 <= a && b <= c.a1 + 1)?.title ?? C.name };
   } else {
-    loop = pickLoop(tl.chapters, { seam: seamOf(video) });
+    loop = pickLoop(tl.chapters, { seam: seamOf(video), motion: motionOf(video) });
     if (!loop) throw new Error('no chapter has a spotlight to loop; pass --from and --to');
     if (loop.short) console.warn(`warn: no 8-12s stretch holds whole spotlights; the loop runs ${r3(loop.b - loop.a)}s`);
   }

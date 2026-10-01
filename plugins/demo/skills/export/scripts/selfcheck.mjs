@@ -15,22 +15,29 @@ let seed = 7;
 const rnd = () => ((seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648);
 
 // 1. The loop never cuts a spotlight, stays in its chapter's footage and within 12 s. Times are
-// whole milliseconds, as timeline() gives them.
+// whole milliseconds, as timeline() gives them. About a third of neighbours crossfade (the next
+// lights up to 0.3 s before the last has faded), as compose does with close marks.
 {
+  const pick = (ch) => { try { return pickLoop([ch], { seam: () => rnd() * 30, motion: () => rnd() * 10 }); } catch { return 'threw'; } };
   let bad = 0, picked = 0;
   for (let n = 0; n < 3000; n++) {
     const a0 = r3(rnd() * 3), spots = []; let t = r3(a0 + 0.5 + rnd() * 2);
     for (let k = 0, m = 1 + Math.floor(rnd() * 5); k < m; k++) {
       const lit = t, end = r3(lit + 1 + rnd() * 2.5);
-      spots.push({ label: `s${k}`, lit, end }); t = r3(end + rnd() * 4);
+      spots.push({ label: `s${k}`, lit, end }); t = r3(end + rnd() * 4 - (rnd() < 0.35 ? 1.3 : 0));
+      if (t < lit + 0.5) t = r3(lit + 0.5);
     }
-    const ch = { name: 'c', title: 'C', a0, a1: r3(t + rnd() * 2), spots };
-    const L = pickLoop([ch], { seam: () => rnd() * 30 });
+    const ch = { name: 'c', title: 'C', a0, a1: r3(Math.max(t, spots.at(-1).end) + rnd() * 2), spots };
+    const L = pick(ch);
     if (!L) continue;
     picked++;
-    if (cutSpots([L.a, L.b], spots).length || L.a < ch.a0 - 1e-6 || L.b > ch.a1 + 1e-6 || L.b - L.a > 12 + 1e-6) bad++;
+    if (L === 'threw' || cutSpots([L.a, L.b], spots).length || L.a < ch.a0 - 1e-6 || L.b > ch.a1 + 1e-6 || L.b - L.a > 12 + 1e-6) bad++;
   }
-  ok(picked > 2000 && bad === 0, `loop picker: ${picked} random chapters, ${bad} loops cut a spotlight or left the footage`);
+  ok(picked > 1500 && bad === 0, `loop picker: ${picked} random chapters, some crossfading, ${bad} loops cut a spotlight or left the footage`);
+  // Seven spotlights 1.75 s apart, each held 1.6 s and fading 0.3 s: every neighbour overlaps.
+  const xf = Array.from({ length: 7 }, (_, k) => ({ label: `m${k}`, lit: r3(4 + 1.75 * k), end: r3(4 + 1.75 * k + 1.9) }));
+  const L7 = pick({ name: 'c', title: 'C', a0: 2, a1: 20, spots: xf });
+  ok(L7 !== 'threw' && (!L7 || !cutSpots([L7.a, L7.b], xf).length), `seven crossfading spotlights: ${L7 && L7 !== 'threw' ? `${L7.a}s to ${L7.b}s` : L7 || 'no loop'}, none cut`);
   const s = [{ label: 'x', lit: 5, end: 7 }];
   ok(cutSpots([6, 10], s).length === 1 && cutSpots([4, 6.5], s).length === 1 && !cutSpots([4, 8], s).length && !cutSpots([7, 9], s).length,
     'cutSpots flags a range that starts or ends inside a spotlight, passes one that holds it or misses it');
