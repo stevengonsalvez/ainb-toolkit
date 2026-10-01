@@ -175,11 +175,12 @@ export function locateAnchor(full, tail, guess) {
 function anchorTime(C, l, words, dir) {
   const full = decode(C, ['-i', l.file], 1);
   if (!l.anchor) return r3(onsetOf(full));
-  const cache = `${dir}/${l.key}.anchor.json`;
+  // The spoken line (l.key) does not change when the anchor moves to another word; its timing does.
+  const k = `${dir}/${l.key}.a${l.anchor}`, cache = `${k}.json`;
   if (existsSync(cache)) return JSON.parse(readFileSync(cache, 'utf8')).at;
-  const N = audioSettings(C).narration, tail = `${dir}/${l.key}.tail.wav`;
-  writeFileSync(`${dir}/${l.key}.tail.txt`, l.words.slice(l.anchor).join(' '));
-  hf(['tts', '--text-file', `${dir}/${l.key}.tail.txt`, '-o', tail, '-v', N.voice, '-s', String(N.speed), '--json'], dir);
+  const N = audioSettings(C).narration, tail = `${k}.tail.wav`;
+  writeFileSync(`${k}.tail.txt`, l.words.slice(l.anchor).join(' '));
+  hf(['tts', '--text-file', `${k}.tail.txt`, '-o', tail, '-v', N.voice, '-s', String(N.speed), '--json'], dir);
   const guess = words[l.anchor].start, best = locateAnchor(full, decode(C, ['-i', tail], 1), guess);
   // ponytail: a weak match keeps the recogniser's guess and says so; 0.8 sits well under the 13 measured (0.93 to 0.99)
   const res = best.r >= 0.8 ? { at: r3(best.at), r: r3(best.r), heard: guess } : { at: guess, r: r3(best.r), heard: guess, fallback: true };
