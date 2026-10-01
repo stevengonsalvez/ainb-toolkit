@@ -74,12 +74,13 @@ function readme() {
     const gif = join(out, 'demo.gif');
     let q = opt.quality ?? 90, w = width, tool;
     // Step quality (gifski only: the ffmpeg palette has no quality knob), then width, down until
-    // the GIF fits.
+    // the GIF fits; never below 640 px (or the width asked for, when that is smaller).
+    const floor = Math.min(640, width);
     for (;;) {
       tool = gifEncode(frames, work, gif, { fps, quality: q, width: w, srcWidth: width });
       const qDone = tool !== 'gifski' || q <= 60;
-      if (MB(gif) <= budget || (qDone && w <= 640)) break;
-      if (!qDone) q -= 10; else w -= 160;
+      if (MB(gif) <= budget || (qDone && w <= floor)) break;
+      if (!qDone) q = Math.max(60, q - 10); else w = Math.max(floor, w - 160);
       console.warn(`  GIF over ${budget} MB; trying ${tool === 'gifski' ? `quality ${q}, ` : ''}width ${w}`);
     }
     if (MB(gif) > budget) throw new Error(`GIF is ${MB(gif)} MB, over the ${budget} MB budget even at ${tool === 'gifski' ? `quality ${q} and ` : ''}${w}px; pass --from/--to for a shorter loop or a larger --budget`);

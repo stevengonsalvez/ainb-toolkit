@@ -112,6 +112,8 @@ try {
   ok(String(z.gif) === '320,320' && String(z.snippet) === String(z.gif), `square snippet size ${z.snippet} matches the GIF ${z.gif}${r.status ? `: ${r.stderr.trim()}` : ''}`);
   r = run('readme', cfg, '--width', '320', '--budget', '0.001', '--out', join(root, 'over'));
   ok(r.status !== 0 && /over the 0.001 MB budget/.test(r.stderr), 'a GIF over its budget fails the export');
+  r = run('readme', cfg, '--width', '700', '--budget', '0.001', '--out', join(root, 'floor'));
+  ok(r.status !== 0 && /\b640px/.test(r.stderr), `stepping width down stops at 640 px: ${r.stderr.trim().split('\n').at(-1)}`);
   r = run('readme', cfg, '--from', '5', '--to', '9', '--out', join(root, 'cut'));
   ok(r.status !== 0 && /cuts the spotlight/.test(r.stderr), '--from/--to that cut a spotlight fail the export');
   r = run('readme', cfg, '--from', '0', '--to', '2', '--out', join(root, 'nospot'));
