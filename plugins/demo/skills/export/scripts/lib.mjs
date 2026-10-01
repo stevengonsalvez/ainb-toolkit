@@ -27,8 +27,9 @@ export const which = (bin) => { try { return execFileSync('sh', ['-c', 'command 
 // The composed demo as one timeline, in composition seconds from the start of the final mp4.
 // Segment starts come from each plan (newer compose writes `start`), else from summing the
 // totals in render order. Each spotlight is lit from `lit` (it fades in there) to `end` (its
-// fade-out has finished); a chapter's footage runs from after its card and fade-in to before its
-// closing fade.
+// fade-out has finished), and `settled` once both the cut-out and its label are fully in (the
+// label starts at compT - 0.1 pace, or at lit if later, and takes 0.3 pace: compose.mjs's
+// timings). A chapter's footage runs from after its card and fade-in to before its closing fade.
 export function timeline(C) {
   const segs = []; let at = 0;
   for (const name of segmentNames(C)) {
@@ -39,12 +40,13 @@ export function timeline(C) {
     at = start + plan.total;
     if (plan.kind !== 'chapter') { segs.push({ name, kind: plan.kind, start, total: plan.total }); continue; }
     const fade = 0.35 * C.pace, out = 0.3 * C.pace;
-    const spots = plan.spots.map((s) => ({
-      i: s.i, label: s.label, hold: s.hold,
-      lit: r3(start + (s.litFrom ?? s.compT - C.fadeLead)), at: r3(start + s.compT),
-      settled: r3(start + Math.min(s.compT + s.hold - 0.1, Math.max(s.compT + 0.5, (s.litFrom ?? s.compT) + (s.fadeIn ?? 0.25) + 0.1))),
-      end: r3(start + s.compT + s.hold + out),
-    }));
+    const spots = plan.spots.map((s) => {
+      const lit = s.litFrom ?? s.compT - C.fadeLead;
+      const labIn = Math.max(lit, s.compT - 0.1 * C.pace) + 0.3 * C.pace, cutIn = lit + (s.fadeIn ?? 0.25 * C.pace);
+      return { i: s.i, label: s.label, hold: s.hold, lit: r3(start + lit), at: r3(start + s.compT),
+        settled: r3(start + Math.min(s.compT + s.hold - 0.05, Math.max(labIn, cutIn) + 0.1)),
+        end: r3(start + s.compT + s.hold + out) };
+    });
     segs.push({ name, kind: 'chapter', start, total: plan.total, title: C.chapters.find((c) => c.name === name)?.title ?? name,
       a0: r3(start + plan.cardDur + fade), a1: r3(start + plan.total - fade), spots, narration: plan.narration || [] });
   }

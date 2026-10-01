@@ -7,7 +7,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { pickLoop, cutSpots, onFrame, clipTo, shortLabel, lint, FFMPEG, SKILL, r3 } from './lib.mjs';
+import { pickLoop, cutSpots, onFrame, clipTo, shortLabel, lint, FFMPEG, SKILL, r3, loadConfig, timeline } from './lib.mjs';
 
 let fails = 0;
 const ok = (cond, what) => { console.log(`${cond ? 'ok  ' : 'FAIL'} ${what}`); if (!cond) fails++; };
@@ -127,6 +127,11 @@ try {
   w(join(root, 'noff.config.json'), { ...JSON.parse(readFileSync(cfg, 'utf8')), ffmpeg: '/nonexistent/ffmpeg' });
   r = run('readme', join(root, 'noff.config.json'));
   ok(r.status === 1 && /ffmpeg not found \(tried \/nonexistent\/ffmpeg\)/.test(r.stderr), `a missing ffmpeg is named: ${r.stderr.trim()}`);
+  // The poster waits for the label too: it starts at compT - 0.1 pace (or lit) and takes 0.3
+  // pace. At pace 3 that is 0.9 s, well past the old fixed compT + 0.5 s.
+  w(join(root, 'pace3.config.json'), { ...JSON.parse(readFileSync(cfg, 'utf8')), pace: 3 });
+  const p3 = timeline(loadConfig(join(root, 'pace3.config.json'))).chapters[0].spots;
+  ok(p3.every((sp) => sp.settled >= Math.max(sp.lit, sp.at - 0.3) + 0.9 - 1e-6 && sp.settled < sp.end), `at pace 3 the poster frame has the label fully in: ${p3.map((sp) => `${sp.at} -> ${sp.settled}`).join(', ')}`);
 
   r = run('interactive', cfg, '--inline', 'no');
   ok(r.status === 0, `interactive exits 0${r.status ? `: ${r.stderr.trim()}` : ''}`);
