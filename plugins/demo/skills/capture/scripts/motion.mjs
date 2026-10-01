@@ -2,54 +2,43 @@
 // steps it once per filmed frame (deterministic capture) and reads poses from it, so a take
 // re-filmed from the same beats moves identically.
 //
-// Behaviour and constants follow Cap (https://github.com/CapSoftware/Cap, commit 97c0a45), whose
-// camera and cursor are the best open reference for this look. Cap's rendering crates are AGPLv3
-// and this plugin is Apache-2.0, so NO Cap code is copied here: the spring is the textbook
-// closed-form damped harmonic oscillator, and only the published constants and behaviours
-// (facts, cited per line) are reused.
-//   camera spring 200/40/2.25 ........ crates/project/src/configuration.rs (ScreenMovementSpring::default)
-//   pre-aim while unzoomed (1.0005) .. crates/rendering/src/zoom_spring.rs (CENTER_PREAIM_MAX_AMOUNT)
-//   travel-space centre, hold framing on zoom-out, amount >= 1 with velocity killed: zoom_spring.rs
-//   cursor springs 470/3/70 and 530/1/40, 500ms click snap, 175ms stiffen, shake 0.015/100ms,
+// The look follows Cap (https://github.com/CapSoftware/Cap), the open-source Screen Studio
+// alternative. Its renderer is AGPLv3 and this plugin is Apache-2.0, so no Cap code is copied,
+// translated or mirrored here: the springs are a plain damped harmonic oscillator integrated below,
+// and only numeric constants and observable behaviours are reused, cited as values observed in
+// Cap's open-source renderer (path at commit 97c0a45):
+//   camera spring 200/40/2.25 ........ crates/project/src/configuration.rs
+//   pre-aim while unzoomed (1.0005), framing centre in travel space, hold framing on zoom-out,
+//   scale kept >= 1 ................... crates/rendering/src/zoom_spring.rs
+//   cursor springs 470/70/3 and 530/40/1, 500ms click snap, 175ms stiffen, shake 0.015/100ms,
 //   60fps thinning, 1/1920 min move .. crates/rendering/src/cursor_interpolation.rs
 //   click shrink 0.8 over 130ms ...... crates/rendering/src/layers/cursor.rs
-//   tilt up to 20 deg ................ crates/rendering/src/lib.rs, shaders/cursor.wgsl
-//
-// Cap steps its springs every 8ms and lerps between the cached steps. Targets here only change
-// between frames, so evaluating the closed form at each frame (or sub-frame) time is the exact
-// value those 8ms steps approximate, with no lerp error.
+//   tilt up to 20 deg ................ crates/rendering/src/lib.rs
 
-// Closed-form damped oscillator: displacement d and velocity v from rest point after t seconds,
-// for stiffness k, damping c, mass m. Standard result (e.g. any vibrations text).
+// Damped harmonic oscillator m x'' = -k x - c x' (x: displacement from the target), stepped with
+// semi-implicit Euler in sub-steps of at most 0.25ms. The stiffest profile here (530/40/1) has a
+// natural period of 270ms, over a thousand sub-steps, so it is stable and its curve matches the
+// exact solution far below a pixel. Returns [displacement, velocity] after t seconds.
+const SUB = 0.00025;
 export function spring1d(d, v, t, k, c, m) {
-  const w = Math.sqrt(k / m), z = c / (2 * Math.sqrt(k * m));
-  if (Math.abs(z - 1) < 1e-3) {                       // critically damped
-    const e = Math.exp(-w * t), b = v + d * w;
-    return [e * (d + b * t), e * (b - w * (d + b * t))];
-  }
-  if (z < 1) {                                        // under-damped
-    const wd = w * Math.sqrt(1 - z * z), e = Math.exp(-z * w * t), C = Math.cos(wd * t), S = Math.sin(wd * t);
-    const b = (v + d * z * w) / wd;
-    return [e * (d * C + b * S), e * ((b * wd - d * z * w) * C - (d * wd + b * z * w) * S)];
-  }
-  const r = Math.sqrt(z * z - 1), s1 = -w * (z - r), s2 = -w * (z + r);   // over-damped
-  const c1 = (v - d * s2) / (s1 - s2), c2 = d - c1, e1 = Math.exp(s1 * t), e2 = Math.exp(s2 * t);
-  return [c1 * e1 + c2 * e2, c1 * s1 * e1 + c2 * s2 * e2];
+  const n = Math.max(1, Math.ceil(t / SUB)), h = t / n;
+  for (let i = 0; i < n; i++) { v += (-k * d - c * v) / m * h; d += v * h; }
+  return [d, v];
 }
 
 // A spring profile slowed by `ts` (2 = every motion takes twice as long): k/ts^2 and c/ts keep
 // the damping ratio, so the curve keeps its shape and only its duration scales.
 export const scaled = ({ k, c, m }, ts) => ({ k: k / (ts * ts), c: c / ts, m });
 
-export const CAMERA = { k: 200, c: 40, m: 2.25 };     // Cap ScreenMovementSpring::default
-export const CURSOR = { k: 470, c: 70, m: 3 };        // Cap "Mellow", the default cursor preset
-export const SNAPPY = { k: 530, c: 40, m: 1 };        // Cap click profile, 175ms before a press
+export const CAMERA = { k: 200, c: 40, m: 2.25 };     // camera, observed in Cap
+export const CURSOR = { k: 470, c: 70, m: 3 };        // cursor default, observed in Cap
+export const SNAPPY = { k: 530, c: 40, m: 1 };        // cursor just before a press, observed in Cap
 // zoom.ms 700 (the beat default) plays Cap's camera spring as is; other values scale it.
 export const CAMERA_REF_MS = 700;
-export const CLICK_LEAD_MS = 500, STIFFEN_MS = 175;   // Cap CLICK_LOOKAHEAD_TARGET_MS / CLICK_SPRING_WINDOW_MS
-export const SHAKE = 0.015, SHAKE_MS = 100;           // Cap SHAKE_THRESHOLD_UV / SHAKE_DETECTION_WINDOW_MS
-export const MIN_MOVE = 1 / 1920;                     // Cap DECIMATE_MIN_DIST_UV
-const PREAIM = 1.0005;                                // Cap CENTER_PREAIM_MAX_AMOUNT
+export const CLICK_LEAD_MS = 500, STIFFEN_MS = 175;   // observed in Cap
+export const SHAKE = 0.015, SHAKE_MS = 100;           // observed in Cap
+export const MIN_MOVE = 1 / 1920;                     // observed in Cap
+const PREAIM = 1.0005;                                // observed in Cap
 
 // One channel: position, velocity and the target it chases. Retargeting keeps velocity.
 class Channel {

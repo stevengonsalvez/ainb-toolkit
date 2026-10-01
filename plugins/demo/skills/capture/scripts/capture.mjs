@@ -516,7 +516,7 @@ async function deterministic({ W, H, cap, dir, state, overlayArgs }) {
     const p = cursor.pos(), cs = 1 / b.s, rot = cursor.tiltAmt ? tilt(cursor.vx, cursor.tiltAmt) : 0;
     if (Math.abs(p.x - applied.x) > 0.01 || Math.abs(p.y - applied.y) > 0.01 || cs !== applied.cs || Math.abs(rot - applied.rot) > 0.01 || renav) {
       await pose({ x: +p.x.toFixed(2), y: +p.y.toFixed(2), cs, rot: +rot.toFixed(2) });
-      // Cap thins its cursor path to 60fps and drops moves under 1/1920 of the screen; here the
+      // Cap's renderer thins its cursor path to 60fps and drops moves under 1/1920 of the screen; here the
       // real pointer moves at most once per output frame, and only when it moved.
       if (mouse && (Math.hypot(p.x - applied.x, p.y - applied.y) > 0.5 || renav)) cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: p.x, y: p.y }).catch(() => {});
       applied = { ...applied, x: p.x, y: p.y, cs, rot }; renav = false;
