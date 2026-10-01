@@ -24,6 +24,24 @@ claude plugin install demo@ainb-toolkit
 
 `brag` installs alongside it as a declared dependency, from its own repository.
 
+Other harnesses:
+
+```bash
+# Codex
+codex plugin marketplace add stevengonsalvez/ainb-toolkit
+codex plugin add demo@ainb-toolkit
+
+# Copilot CLI
+copilot plugin marketplace add stevengonsalvez/ainb-toolkit
+copilot plugin install demo@ainb-toolkit
+
+# Antigravity (local path install, from a checkout of this repo)
+agy plugin install ./plugins/demo
+```
+
+None of these resolve plugin dependencies, so `demo:brag` needs brag installed by hand there.
+The commands per harness are in `skills/brag/SKILL.md`.
+
 `demo:capture` drives Playwright, so install its dependencies once, inside the skill
 directory, following the setup section of its SKILL.md. Browsers and `node_modules` are not
 committed to this repository.
