@@ -12,14 +12,25 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { loadConfig, timeline, pickLoop, cutSpots, seamOf, motionOf, onFrame, clipTo, shortLabel, steps, lint, FFMPEG, hasEncoder, which, r3 } from './lib.mjs';
 
+// Each command's options: a number range (`int` for whole numbers), a list of choices, or text.
+const OPTS = {
+  readme: { width: { n: [160, 4096], int: true }, fps: { n: [1, 50] }, quality: { n: [1, 100], int: true }, budget: { n: [0.001, 1000] },
+    from: { n: [0, 1e6] }, to: { n: [0, 1e6] }, out: {} },
+  interactive: { payoff: {}, inline: { one: ['auto', 'yes', 'no'] }, out: {} },
+};
+const usage = (why) => {
+  console.error(`${why ? `${why}\n` : ''}usage: export.mjs readme|interactive <compose-config.json> [options] (see SKILL.md)`); process.exit(2);
+};
 const [cmd, cfgPath, ...rest] = process.argv.slice(2);
-if (!['readme', 'interactive'].includes(cmd) || !cfgPath) {
-  console.error('usage: export.mjs readme|interactive <compose-config.json> [options] (see SKILL.md)'); process.exit(2);
-}
+if (!OPTS[cmd] || !cfgPath) usage();
 const opt = {};
-for (let i = 0; i < rest.length; i++) {
-  if (!rest[i].startsWith('--')) { console.error(`unexpected argument ${rest[i]}`); process.exit(2); }
-  opt[rest[i].slice(2)] = rest[i + 1]; i++;
+for (let i = 0; i < rest.length; i += 2) {
+  const k = rest[i].replace(/^--/, ''), v = rest[i + 1], o = OPTS[cmd][k];
+  if (!rest[i].startsWith('--') || !o) usage(`unknown option ${rest[i]} for ${cmd} (takes ${Object.keys(OPTS[cmd]).map((x) => `--${x}`).join(', ')})`);
+  if (v === undefined) usage(`--${k} needs a value`);
+  if (o.n && !(v.trim() !== '' && +v >= o.n[0] && +v <= o.n[1] && (!o.int || Number.isInteger(+v)))) usage(`--${k} ${v}: give a ${o.int ? 'whole ' : ''}number from ${o.n[0]} to ${o.n[1]}`);
+  if (o.one && !o.one.includes(v)) usage(`--${k} ${v}: one of ${o.one.join(', ')}`);
+  opt[k] = o.n ? +v : v;
 }
 const C = loadConfig(cfgPath);
 const tl = timeline(C);
@@ -29,18 +40,19 @@ const ff = (args) => execFileSync(FFMPEG(), ['-nostdin', '-loglevel', 'error', '
 const pct = (p) => p.replace(/%/g, '%%');           // ffmpeg reads an image2 path as a pattern
 const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
-if (cmd === 'readme') readme(); else interactive();
+try { if (cmd === 'readme') readme(); else interactive(); }
+catch (e) { console.error(`error: ${e.message}`); process.exit(1); }
 
 function readme() {
   if (!existsSync(video)) throw new Error(`no final video at ${video}; run demo:compose's concat.sh first`);
-  const width = +(opt.width ?? 960), fps = +(opt.fps ?? 15), budget = +(opt.budget ?? 5);
+  const width = opt.width ?? 960, fps = opt.fps ?? 15, budget = opt.budget ?? 5;
   const out = opt.out ?? `${C.out}/export/readme`;
   mkdirSync(out, { recursive: true });
   const all = tl.chapters.flatMap((c) => c.spots);
   let loop;
   if (opt.from != null || opt.to != null) {
-    const a = +opt.from, b = +opt.to;
-    if (!(b > a)) throw new Error('--from and --to: give both, with --to after --from');
+    const a = opt.from, b = opt.to;
+    if (a == null || b == null || !(b > a)) throw new Error('--from and --to: give both, with --to after --from');
     const cut = cutSpots([a, b], all);
     if (cut.length) throw new Error(`--from ${a} --to ${b} cuts the spotlight "${cut[0].label}" (lit ${cut[0].lit}s to ${cut[0].end}s): start before it lights or end after it fades`);
     loop = { a, b, spots: all.filter((s) => s.lit >= a && s.end <= b), title: tl.chapters.find((c) => c.a0 <= a && b <= c.a1 + 1)?.title ?? C.name };
@@ -57,7 +69,7 @@ function readme() {
     ff(['-ss', String(loop.a), '-t', String(r3(loop.b - loop.a)), '-i', video, '-vf', `fps=${fps},scale=${width}:-2:flags=lanczos`, `${pct(work)}/f%04d.png`]);
     const frames = readdirSync(work).filter((f) => /^f\d+\.png$/.test(f)).sort().map((f) => join(work, f));
     const gif = join(out, 'demo.gif');
-    let q = +(opt.quality ?? 90), w = width, tool;
+    let q = opt.quality ?? 90, w = width, tool;
     // Step quality (gifski only: the ffmpeg palette has no quality knob), then width, down until
     // the GIF fits.
     for (;;) {

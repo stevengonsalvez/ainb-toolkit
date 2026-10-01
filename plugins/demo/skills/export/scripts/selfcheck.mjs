@@ -116,6 +116,11 @@ try {
   ok(r.status !== 0 && /cuts the spotlight/.test(r.stderr), '--from/--to that cut a spotlight fail the export');
   r = run('readme', cfg, '--from', '0', '--to', '2', '--out', join(root, 'nospot'));
   ok(r.status === 1 && /holds no whole spotlight/.test(r.stderr) && !existsSync(join(root, 'nospot/demo.gif')), `--from/--to holding no spotlight fail before encoding: ${r.stderr.trim()}`);
+  for (const [args, what] of [[['readme', cfg, '--form', '5'], 'a misspelt option'], [['readme', cfg, '--width', 'abc'], 'a width that is not a number'],
+    [['readme', cfg, '--width'], 'an option with no value'], [['interactive', cfg, '--inline', 'maybe'], 'an --inline that is not auto, yes or no']]) {
+    r = run(...args);
+    ok(r.status === 2 && /usage:/.test(r.stderr), `${what} is refused (exit ${r.status}: ${r.stderr.split('\n')[0]})`);
+  }
 
   r = run('interactive', cfg, '--inline', 'no');
   ok(r.status === 0, `interactive exits 0${r.status ? `: ${r.stderr.trim()}` : ''}`);
