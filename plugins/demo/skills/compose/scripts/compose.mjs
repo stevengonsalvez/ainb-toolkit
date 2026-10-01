@@ -236,19 +236,24 @@ function cardDoc(id, c, kind) {
   s.push(`tl.fromTo(${q('ghost')}, { x: ${W * 0.03}, opacity: 0 }, { x: ${-W * 0.03}, opacity: 0.055, duration: ${r3(dur)}, ease: "sine.out" }, 0);`);
   s.push(`tl.fromTo(${q('hair')}, { scaleX: 0 }, { scaleX: 1, duration: ${F(1.1)}, ease: "power2.inOut" }, ${F(0.1)});`);
   s.push(`tl.fromTo(${q('kbar')}, { scaleX: 0 }, { scaleX: 1, duration: ${F(0.5)}, ease: "power3.out" }, ${F(0.2)});`);
+  // Filter tweens leave blur(0px), a costly layer, so filters are cleared once the last of them
+  // has ended. Staggered word tweens end late on long titles: count the stagger in.
+  const n = String(c.title).split(/\s+/).filter(Boolean).length;
+  let clear = 0;
+  const at = (t0, d, st = 0) => { clear = Math.max(clear, t0 + d + st * (n - 1)); return t0; };
   if (kind === 'title') {
-    s.push(`tl.fromTo(${q('kick')}, { opacity: 0, x: -18, filter: "blur(6px)" }, { opacity: 1, x: 0, filter: "blur(0px)", duration: ${F(0.9)}, ease: "expo.out" }, ${F(0.2)});`);
-    s.push(`tl.fromTo("#${id}-ttl .w", { yPercent: 105, filter: "blur(10px)" }, { yPercent: 0, filter: "blur(0px)", duration: ${F(0.8)}, ease: "expo.out", stagger: ${F(0.07)} }, ${F(0.3)});`);
+    s.push(`tl.fromTo(${q('kick')}, { opacity: 0, x: -18, filter: "blur(6px)" }, { opacity: 1, x: 0, filter: "blur(0px)", duration: ${F(0.9)}, ease: "expo.out" }, ${at(F(0.2), F(0.9))});`);
+    s.push(`tl.fromTo("#${id}-ttl .w", { yPercent: 105, filter: "blur(10px)" }, { yPercent: 0, filter: "blur(0px)", duration: ${F(0.8)}, ease: "expo.out", stagger: ${F(0.07)} }, ${at(F(0.3), F(0.8), F(0.07))});`);
   } else if (kind === 'switch') {
     s.push(`tl.fromTo(${q('kick')}, { opacity: 0, x: 40 }, { opacity: 1, x: 0, duration: ${F(0.5)}, ease: "power3.out" }, ${F(0.15)});`);
-    s.push(`tl.fromTo("#${id}-ttl .w", { opacity: 0, x: 70, filter: "blur(12px)" }, { opacity: 1, x: 0, filter: "blur(0px)", duration: ${F(0.6)}, ease: "power4.out", stagger: ${F(0.05)} }, ${F(0.22)});`);
+    s.push(`tl.fromTo("#${id}-ttl .w", { opacity: 0, x: 70, filter: "blur(12px)" }, { opacity: 1, x: 0, filter: "blur(0px)", duration: ${F(0.6)}, ease: "power4.out", stagger: ${F(0.05)} }, ${at(F(0.22), F(0.6), F(0.05))});`);
   } else {
     s.push(`tl.fromTo(${q('kick')}, { opacity: 0 }, { opacity: 1, duration: ${F(0.6)}, ease: "sine.out" }, ${F(0.2)});`);
-    s.push(`tl.fromTo(${q('ttl')}, { opacity: 0, scale: 1.06, filter: "blur(14px)", transformOrigin: "0% 50%" }, { opacity: 1, scale: 1, filter: "blur(0px)", duration: ${F(1.0)}, ease: "power2.out" }, ${F(0.25)});`);
+    s.push(`tl.fromTo(${q('ttl')}, { opacity: 0, scale: 1.06, filter: "blur(14px)", transformOrigin: "0% 50%" }, { opacity: 1, scale: 1, filter: "blur(0px)", duration: ${F(1.0)}, ease: "power2.out" }, ${at(F(0.25), F(1.0))});`);
   }
   s.push(`tl.fromTo(${q('rule')}, { scaleX: 0 }, { scaleX: 1, duration: ${F(0.55)}, ease: "power2.out" }, ${F(0.55)});`);
-  s.push(`tl.fromTo(${q('sub')}, { opacity: 0, y: 10, filter: "blur(6px)" }, { opacity: 1, y: 0, filter: "blur(0px)", duration: ${F(0.6)}, ease: "power2.out" }, ${F(0.7)});`);
-  s.push(`tl.set(["#${id}-ttl", "#${id}-ttl .w", ${q('sub')}, ${q('kick')}], { filter: "none" }, ${F(1.4)});`);
+  s.push(`tl.fromTo(${q('sub')}, { opacity: 0, y: 10, filter: "blur(6px)" }, { opacity: 1, y: 0, filter: "blur(0px)", duration: ${F(0.6)}, ease: "power2.out" }, ${at(F(0.7), F(0.6))});`);
+  s.push(`tl.set(["#${id}-ttl", "#${id}-ttl .w", ${q('sub')}, ${q('kick')}], { filter: "none" }, ${r3(clear)});`);
   s.push(...seamLines(id, dur));
   // the film's last frame resolves to the backdrop colour: the one exit the house rules allow
   if (last) s.push(`tl.fromTo("#fade", { opacity: 0 }, { opacity: 1, duration: ${F(0.6)}, ease: "power1.in", immediateRender: false }, ${r3(dur - F(0.6))});`);
