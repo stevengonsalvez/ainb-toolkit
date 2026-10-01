@@ -98,6 +98,18 @@ try {
     ok(bundle.sizesMB.gif <= bundle.settings.budgetMB, `GIF ${bundle.sizesMB.gif} MB within its ${bundle.settings.budgetMB} MB budget`);
     ok(/prefers-reduced-motion: reduce\)" srcset="poster.png"/.test(readFileSync(join(root, 'compose/export/readme/picture.html'), 'utf8')), 'snippet sends reduced-motion viewers the poster');
   }
+  // The snippet states the GIF's real size, read back from the GIF; a square demo stays square.
+  const sized = (dir) => {
+    const g = readFileSync(join(dir, 'demo.gif')).subarray(6, 10), m = readFileSync(join(dir, 'picture.html'), 'utf8').match(/width="(\d+)" height="(\d+)"/);
+    return { gif: [g.readUInt16LE(0), g.readUInt16LE(2)], snippet: m && [+m[1], +m[2]] };
+  };
+  let z = sized(join(root, 'compose/export/readme'));
+  ok(String(z.gif) === '320,180' && String(z.snippet) === String(z.gif), `16:9 snippet size ${z.snippet} matches the GIF ${z.gif}`);
+  ff(['-f', 'lavfi', '-i', 'testsrc2=size=360x360:rate=30:duration=15', '-pix_fmt', 'yuv420p', join(root, 'compose/out/square.mp4')]);
+  w(join(root, 'square.config.json'), { ...JSON.parse(readFileSync(cfg, 'utf8')), name: 'square', format: 'square' });
+  r = run('readme', join(root, 'square.config.json'), '--width', '320', '--out', join(root, 'sq'));
+  z = r.status === 0 ? sized(join(root, 'sq')) : {};
+  ok(String(z.gif) === '320,320' && String(z.snippet) === String(z.gif), `square snippet size ${z.snippet} matches the GIF ${z.gif}${r.status ? `: ${r.stderr.trim()}` : ''}`);
   r = run('readme', cfg, '--width', '320', '--budget', '0.001', '--out', join(root, 'over'));
   ok(r.status !== 0 && /over the 0.001 MB budget/.test(r.stderr), 'a GIF over its budget fails the export');
   r = run('readme', cfg, '--from', '5', '--to', '9', '--out', join(root, 'cut'));
