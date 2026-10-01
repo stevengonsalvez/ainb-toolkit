@@ -121,7 +121,9 @@ controls (`speed`, `pace`, `targetDuration`) instead: no re-shoot.
   every camera pose also sets a counter-scale (`--__demo-cs`, on the pointer and ring only) and
   re-applies it after a navigation, whose new page starts unscaled. `npm run check` measures the
   pointer's area under a 2x zoom at 1.00-1.34x its unzoomed area (5.14x with the counter-scale
-  removed), and 1.31x after a click navigates while zoomed (5.10x without the re-apply).
+  removed), and 1.02-1.31x after a click navigates while zoomed (5.10x without the re-apply).
+  The re-apply never fails a take: a client-side redirect that destroys the page's context gets
+  one retry after the next load.
 - `type.cps` sets typing speed per beat and is not scaled by `pace`.
 
 Merge rule: a chapter's `pace` replaces the file's; a chapter's `cursor` keys override the
