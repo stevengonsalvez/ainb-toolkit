@@ -232,12 +232,18 @@ try {
     for (let i = 0; i < 1200 && !fs.existsSync(path.join(marks, 'started')); i++) await new Promise(r => setTimeout(r, 100));
     assert.ok(fs.existsSync(path.join(marks, 'started')), 'no blur job started');
     for (const pid of execFileSync('pgrep', ['-P', String(process.pid), '-f', 'headless']).toString().trim().split('\n')) process.kill(+pid, 'SIGKILL');
-    mb = await filming;
+    // The browser's death itself must end the take (the disconnect handler), re-film included,
+    // well inside 30 s: without it the frame loop hangs on a dead CDP call until the hard timeout.
+    let late;
+    mb = await Promise.race([filming, new Promise((_, rej) => { late = setTimeout(() => rej(new Error('the take did not end within 30 s of the browser dying')), 30000); })]);
+    clearTimeout(late);
     await new Promise(r => setTimeout(r, 2000));            // room for a late job to misbehave
   } finally { console.warn = warn; if (ffPrev === undefined) delete process.env.FFMPEG; else process.env.FFMPEG = ffPrev; }
   const left = fs.readdirSync(path.join(mb.dir, 'cfr')).filter(f => !f.endsWith('.jpg'));
   assert.ok(mb.mode === 'screencast' && !fs.existsSync(path.join(marks, 'finished')) && !left.length && !fs.existsSync(path.join(mb.dir, 'sub')),
     `fallback with a blur job in flight: mode ${mb.mode} (${ev(mb).capture.fallback}), job finished ${fs.existsSync(path.join(marks, 'finished'))}, stray ${left.slice(0, 3)}`);
+  //    And it fell back for that reason, not a generic failure.
+  assert.match(ev(mb).capture.fallback, /browser exited mid-take/, `fallback cause ${ev(mb).capture.fallback}`);
 
   // 6. Motion blur only where something moves: the camera is the only mover in this take (no
   //    clicks, no marks), so every blurred frame sits inside a camera move.
