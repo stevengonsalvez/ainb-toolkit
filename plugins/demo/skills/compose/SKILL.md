@@ -36,7 +36,9 @@ bash "$S/scripts/concat.sh"  my.config.json             # final silent mp4 + con
 
 Every command takes optional segment names to limit the work (`compose.mjs cfg.json consent`).
 `render.sh` skips a segment whose frame directory is newer than its `index.html`, so a killed
-run resumes; a segment is rendered aside and moved into place only once complete.
+run resumes. A segment is rendered aside and swapped in only once it succeeds, so a failed
+re-render keeps the previous one, and it must hold its planned length times the frame rate
+(30fps, passed to HyperFrames as `--fps`) or render.sh fails it.
 Renders run one at a time in the foreground under a timeout of 120s plus 10s per second of
 segment: a harness that kills long background tasks for low memory will otherwise take the
 whole batch out.
@@ -164,7 +166,7 @@ The ferry app is quick, so travel is a small share of it; the saving grows with 
 navigation time.
 
 How it works: `compose.mjs` writes each chapter's footage already cut and re-timed (one ffmpeg
-pass: `select` for the kept ranges, `setpts` with the piecewise speed curve, `fps=30`, written
+pass: `select` for the kept ranges, `setpts` with the piecewise speed curve, `fps=30` (the output rate), written
 lossless), so the HyperFrames project holds one plain `<video>`. At a constant whole-number speed it nudges each
 piece by under 1/60s so source frames never sit on a half frame, which otherwise made a 1x
 window duplicate then drop a frame.
@@ -178,9 +180,11 @@ Measured on a 5:36 ten-chapter demo, 47 marks. Change them in config, not in cod
   settled in the footage if that is later, holds 1.5 to 2.5s, fades out. Fading in 250ms before
   `t` regardless put 51% of each ferry zoom's motion under the fading-in cut-out; now 0.7%, the
   frame that completes the move. Settled means the camera event's end (from demo:capture), then
-  the last frame-to-frame change up to 0.1s after it: the final pose lands 16-63ms late.
-  Changes past that are the page itself animating; they do not delay the spotlight (they used
-  to, by ~0.4s on a board with a blinking badge) and compose warns about them. `plan.json`
+  every frame-to-frame change up to 0.25s after it, which is the camera landing (the logged end
+  trails the last pose by a 30ms wait, and the pose reaches the footage 16-63ms later; the
+  window leaves room for a slow landing under load). Changes past 0.25s are the page itself
+  moving: they do not delay the spotlight (they used to, by ~0.4s on a board with a blinking
+  badge; now 0.18-0.22s, bounded by the window) and compose warns about them. `plan.json`
   records when each spotlight starts as `litFrom` and its fade as `fadeIn`.
 - **Labels**: at most 6 words, sentence case, placed clear of the cut-out inside a 64px safe
   margin. Over-long labels warn rather than fail. Rewrite the capture's label candidates for
@@ -206,10 +210,11 @@ Both were found by looking at stills, not by reading code. Do not "simplify" the
 
 ## The still-check is the gate, not an extra
 
-`check.mjs` renders two stills per mark, at `compT + 0.5` (or `litFrom + fadeIn + 0.1` if
-later, so a spotlight that waited for the camera is not read mid-fade) and at the end of the
-hold, and runs
-four tests against the rendered segment and the untouched source frame. It prints one line per
+`check.mjs` renders two stills per mark. Still A is at `compT + 0.5`, or `litFrom + fadeIn +
+0.1` if later, so a spotlight that waited for the camera is not read mid-fade, and always at
+least 0.1s before still B, which is 0.05s before the fade-out. A hold too short for that window
+misses as "lit too briefly to check" instead of a false scrim or drift reading (measured: hold
+0.4s on the ferry board). It runs four tests against the rendered segment and the untouched source frame. It prints one line per
 mark and exits 1 if any mark misses.
 
 | test      | what it measures                                            | what it catches                      |
