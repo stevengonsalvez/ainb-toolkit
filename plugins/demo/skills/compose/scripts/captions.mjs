@@ -16,7 +16,9 @@ const stamp = (t) => {
   const p = (x, n = 2) => String(x).padStart(n, '0');
   return `${p(Math.floor(ms / 3600000))}:${p(Math.floor(ms / 60000) % 60)}:${p(Math.floor(ms / 1000) % 60)}.${p(ms % 1000, 3)}`;
 };
-const vtt = (cues) => `WEBVTT\n\n${cues.map((c, i) => `${i + 1}\n${stamp(c.start)} --> ${stamp(c.end)}\n${c.text}\n`).join('\n')}`;
+// Cue text is not raw: '&' and '<' are markup in WebVTT, and '-->' would end the cue's timing line.
+const cueText = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n+/g, ' ');
+export const vtt = (cues) => `WEBVTT\n\n${cues.map((c, i) => `${i + 1}\n${stamp(c.start)} --> ${stamp(c.end)}\n${cueText(c.text)}\n`).join('\n')}`;
 
 // Word-timed cues from the narration, or label cues when nothing is narrated.
 export function cues(C, segs, A) {
