@@ -152,11 +152,12 @@ function checkChapter(name) {
       lit: r3(Math.min(...litR)), dim: r3(Math.max(...dimR)), sd: r3(sd), drift: r3(drift),
       ok: !why.length, why: why.join('; ') });
 
-    // contact tiles for eyeballing alongside the numbers, named 000.png, 001.png, ... in mark order
+    // contact tiles for eyeballing alongside the numbers, named 000.png, 001.png, ... in mark order,
+    // cropped to the screen like the readings, so a tile shows exactly the boxes the numbers measured
     for (const [k, t] of at.entries()) {
       const cap = drawtext ? `,drawtext=text='m${s.i} ${'ab'[k]} t=${t}':x=6:y=6:fontsize=18:fontcolor=cyan:box=1:boxcolor=black` : '';
       execFileSync(C.ffmpeg, ['-nostdin', '-loglevel', 'error', '-y', '-ss', String(segFrame(nSeg, t)), '-i', seg, '-frames:v', '1',
-        '-vf', `scale=${W / 2}:${H / 2}${cap}`, '-update', '1', `${stillDir}/${String(2 * rows.length - 2 + k).padStart(3, '0')}.png`]);
+        '-vf', `crop=${SCREEN[2]}:${SCREEN[3]}:${SCREEN[0]}:${SCREEN[1]},scale=${W / 2}:${H / 2}${cap}`, '-update', '1', `${stillDir}/${String(2 * rows.length - 2 + k).padStart(3, '0')}.png`]);
     }
   }
   // An image2 sequence, not -pattern_type glob, which some builds do not support.
