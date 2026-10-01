@@ -97,7 +97,7 @@ function checkChapter(name) {
   if (plan.kind === 'card') return [];
   const seg = `${C.out}/out/seg/${name}`;
   if (!existsSync(seg)) throw new Error(`${name}: no rendered segment at ${seg}, run render.sh first`);
-  const nSeg = readdirSync(seg).length;
+  const nSeg = readdirSync(seg).filter((f) => /^frame_\d+\.png$/.test(f)).length;
   const src = `${C.takes}/${name}.mp4`;
   const stillDir = `${C.out}/work/stills/${name}`;
   rmSync(stillDir, { recursive: true, force: true }); mkdirSync(stillDir, { recursive: true });
