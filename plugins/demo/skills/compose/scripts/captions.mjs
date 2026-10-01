@@ -4,11 +4,12 @@
 //   out/<name>.chapters.vtt  one cue per segment, titled from the config
 //   out/<name>-captions.mp4  only with audio.captions.burn: the same video with the captions
 //                            burned in, the spoken word highlighted, rendered through HyperFrames
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { writeFileSync, mkdirSync, copyFileSync, rmSync } from 'node:fs';
 import { dirname, resolve, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { r3, esc } from './config.mjs';
+import { renderToMp4 } from './hfrender.mjs';
 
 const SKILL = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const stamp = (t) => {
@@ -123,15 +124,12 @@ window.__timelines["captions"] = tl;
 </body>
 </html>
 `);
-  // Rendered as PNG frames and encoded once, the same way concat.sh encodes the final; the audio is
-  // copied from the final.
-  const frames = `${d}/frames`, out = `${C.out}/out/${C.name}-captions.mp4`, log = `${C.out}/work/render-captions.log`;
-  const r = spawnSync('npx', ['--yes', 'hyperframes@0.8.40', 'render', '--fps', String(C.fps), '--format', 'png-sequence', '--video-frame-format', 'png', '--output', frames],
-    { cwd: d, encoding: 'utf8', maxBuffer: 1 << 28, timeout: (120 + 10 * Math.ceil(total)) * 1000 });
-  writeFileSync(log, `${r.stdout}\n${r.stderr}`);
-  if (r.status !== 0) throw new Error(`caption burn render failed${r.error ? ` (${r.error.code})` : ''}, see ${log}`);
-  execFileSync(C.ffmpeg, ['-nostdin', '-loglevel', 'error', '-y', '-framerate', String(C.fps), '-i', `${frames.replace(/%/g, '%%')}/frame_%06d.png`, '-i', final,
+  // Rendered as PNG frames, packed losslessly (in chunks if the disk is short, hfrender.mjs) and
+  // encoded once, the same way concat.sh encodes the final; the audio is copied from the final.
+  const out = `${C.out}/out/${C.name}-captions.mp4`, log = `${C.out}/work/render-captions.log`, burn = `${d}/burn.mp4`;
+  renderToMp4(C, d, burn, log);
+  execFileSync(C.ffmpeg, ['-nostdin', '-loglevel', 'error', '-y', '-i', burn, '-i', final,
     '-map', '0:v', '-map', '1:a?', '-vf', 'scale=out_color_matrix=bt709:out_range=tv,format=yuv420p,setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv',
-    '-c:v', 'libx264', '-preset', 'slow', '-crf', '14', '-tune', 'animation', '-c:a', 'copy', '-movflags', '+faststart', out]);
+    '-c:v', 'libx264', '-preset', 'slow', '-crf', String(C.crf), '-tune', 'animation', '-c:a', 'copy', '-movflags', '+faststart', out]);
   return `${out} (${cs.length} ${kind} cues)`;
 }
