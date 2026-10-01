@@ -133,8 +133,10 @@ export function steps(C, tl) {
     for (const e of [...ev.events].sort((x, y) => x.t - y.t)) {
       if (e.kind === 'camera') { cam = e.cam; continue; }
       if (e.kind === 'mark') {
+        // narration, else compose's label for this spotlight (config `labels` override the
+        // capture's), else the capture's own
         out.push({ chapter: ch.name, title: ch.title, kind: 'mark', t: e.t, frame: Math.round(e.t * fps), rect: e.rect, cam: e.cam, dpr, fps, vp,
-          text: said(mark) || e.label, mark: mark++ });
+          text: said(mark) || ch.spots.find((s) => s.i === mark)?.label || e.label, mark: mark++ });
       } else if (e.kind === 'click' || e.kind === 'type') {
         if (!e.rect) { skipped++; continue; }
         out.push({ chapter: ch.name, title: ch.title, kind: e.kind, t: e.t, frame: Math.max(0, Math.round(e.t * fps) - 1), rect: e.rect, cam, dpr, fps, vp,

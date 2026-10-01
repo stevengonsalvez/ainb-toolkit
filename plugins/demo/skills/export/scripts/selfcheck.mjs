@@ -78,11 +78,11 @@ try {
   ff(['-f', 'lavfi', '-i', 'testsrc2=size=1280x720:rate=30:duration=12', '-pix_fmt', 'yuv420p', join(root, 'takes/one.mp4')]);
   const mark = (t, label, rect, cam = null) => ({ t, kind: 'mark', label, rect, cam });
   const events = (extra = []) => ({ viewport: { width: 640, height: 360 }, dpr: 2, fps: 30, events: [
-    mark(3, 'First proof', { x: 20, y: 30, w: 200, h: 80 }),
+    mark(3, 'capture label one', { x: 20, y: 30, w: 200, h: 80 }),
     { t: 4, kind: 'click', rect: { x: 600, y: 300, w: 80, h: 100 }, label: 'Open it' },
     { t: 5, kind: 'click' },
     { t: 6, kind: 'camera', cam: { x: 320, y: 180, s: 2 } },
-    mark(6.5, 'Second proof', { x: 400, y: 200, w: 100, h: 50 }, { x: 320, y: 180, s: 2 }), ...extra] });
+    mark(6.5, 'capture label two', { x: 400, y: 200, w: 100, h: 50 }, { x: 320, y: 180, s: 2 }), ...extra] });
   w(join(root, 'takes/one/events.json'), events());
 
   const run = (...args) => spawnSync(process.execPath, [join(SKILL, 'scripts/export.mjs'), ...args], { cwd: root, encoding: 'utf8' });
@@ -122,6 +122,7 @@ try {
   if (r.status === 0) {
     const out = join(root, 'compose/export/interactive'), st = JSON.parse(readFileSync(join(out, 'steps.json'), 'utf8'));
     ok(st.steps.length === 3 && /no target rect/.test(r.stderr), `3 steps (2 marks, 1 click with a rect); the click without one is skipped and said`);
+    ok(st.steps[0].label === 'First proof' && st.steps[2].label === 'Second proof', `step labels are compose's spotlight labels, not the capture's: ${st.steps.map((x) => x.label)}`);
     let bad = 0;
     for (const s of st.steps) {
       const { W, H } = s.box;
