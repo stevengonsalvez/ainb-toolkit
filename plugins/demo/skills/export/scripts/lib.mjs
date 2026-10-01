@@ -82,3 +82,56 @@ export function pickLoop(chapters, { min = 8, max = 12, lead = 1.2, tail = 0.6, 
 
 // Mean absolute luma difference between the frames at a and b of a video (0..255).
 export const seamOf = (video) => (a, b) => mad(grayFrames(FFMPEG(), video, { t: a }).at(0), grayFrames(FFMPEG(), video, { t: Math.max(0, b - 0.04) }).at(0));
+
+// A mark's or event's rect (page CSS px) on the take's frame, in frame (device) px: through the
+// camera box when zoomed, times the take's pixel density.
+export function onFrame(rect, cam, dpr) {
+  const c = cam || { x: 0, y: 0, s: 1 };
+  return { x: (rect.x - c.x) * c.s * dpr, y: (rect.y - c.y) * c.s * dpr, w: rect.w * c.s * dpr, h: rect.h * c.s * dpr };
+}
+// The part of a box inside a W x H frame, or null when none of it is.
+export function clipTo(b, W, H) {
+  const x0 = Math.max(0, b.x), y0 = Math.max(0, b.y), x1 = Math.min(W, b.x + b.w), y1 = Math.min(H, b.y + b.h);
+  return x1 - x0 >= 1 && y1 - y0 >= 1 ? { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } : null;
+}
+// Hotspot copy: under 60 characters (Arcade: over 60 cuts completion 12%), cut at a word.
+export function shortLabel(s, max = 59) {
+  s = String(s).replace(/\s+/g, ' ').trim();
+  if (s.length <= max) return s;
+  const cut = s.slice(0, max - 1), sp = cut.lastIndexOf(' ');
+  return `${(sp > max * 0.6 ? cut.slice(0, sp) : cut).replace(/[\s,.;:]+$/, '')}…`;
+}
+
+// Interactive steps, in demo order: every mark (it has a rect and a label), plus every click or
+// type cue that carries a `rect` (demo:capture's cues do not yet; those are counted and skipped).
+// Each step points at the take frame that first shows it and the camera box in force there.
+export function steps(C, tl) {
+  const out = []; let skipped = 0;
+  for (const ch of tl.chapters) {
+    const ev = JSON.parse(readFileSync(eventsPath(C.takes, ch.name), 'utf8'));
+    const dpr = ev.dpr ?? 1, fps = ev.fps ?? 30, vp = ev.viewport || { width: 1280, height: 720 };
+    let cam = null, mark = 0;
+    const said = (i) => ch.narration.find((l) => l.slot === i)?.text;
+    for (const e of [...ev.events].sort((x, y) => x.t - y.t)) {
+      if (e.kind === 'camera') { cam = e.cam; continue; }
+      if (e.kind === 'mark') {
+        out.push({ chapter: ch.name, title: ch.title, kind: 'mark', t: e.t, frame: Math.round(e.t * fps), rect: e.rect, cam: e.cam, dpr, fps, vp,
+          text: said(mark) || e.label, mark: mark++ });
+      } else if (e.kind === 'click' || e.kind === 'type') {
+        if (!e.rect) { skipped++; continue; }
+        out.push({ chapter: ch.name, title: ch.title, kind: e.kind, t: e.t, frame: Math.max(0, Math.round(e.t * fps) - 1), rect: e.rect, cam, dpr, fps, vp,
+          text: e.label || (e.kind === 'type' ? 'Type here' : 'Click here') });
+      }
+    }
+  }
+  return { steps: out, skipped };
+}
+
+// Arcade's benchmarks: 9-12 steps finish most often; past step 7 viewers drop off, so the payoff
+// should land by then.
+export function lint(stepList, payoffIndex) {
+  const warn = [];
+  if (stepList.length < 9 || stepList.length > 12) warn.push(`${stepList.length} steps; 9 to 12 finish most often`);
+  if (payoffIndex >= 7) warn.push(`the payoff is step ${payoffIndex + 1}; past step 7 most viewers have left`);
+  return warn;
+}
