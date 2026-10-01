@@ -462,7 +462,7 @@ function chapter(an, sp) {
 </div>`;
   const d = project(name, doc(name, total, `${vid}\n${card}\n${overlays}`, lines.join('\n')));
   renderFootage(an, rt, `${d}/assets/footage/${name}.mp4`);
-  const meta = { name, kind: 'chapter', total: r3(total), srcDur: r3(an.dur), cardDur: CARD, srcW: an.srcW, srcH: an.srcH,
+  const meta = { name, kind: 'chapter', start: startOf(name), total: r3(total), srcDur: r3(an.dur), cardDur: CARD, srcW: an.srcW, srcH: an.srcH,
     speed: sp, kept: an.kept.map((k) => k.map(r3)), cuts: r3(an.dur - rt.kept.reduce((a, [x, y]) => a + y - x, 0)),
     footDur, spots: report,
     // narration freezes as [start, length] in composition seconds; check.mjs maps stills through them
@@ -493,24 +493,31 @@ const NAR = narrationClips(C);
 const GRID = beatGrid(C);
 const fitFor = (an, sp) => fitNarration(an.spots.map((s) => ({ T: s.T, hold: s.hold, from: s.from, fade: F(0.25) })), NAR[an.name] || { marks: [] },
   (fz) => { const r = retime(an, sp, fz); return (t) => an.CARD + r.toOut(t); }, A?.narration, C.fps);
-// Segment lengths so far, this run's or an earlier run's plan, for where each segment starts.
-const TOTALS = Object.fromEntries(segmentNames(C).map((n) => {
+// Segment lengths and starts so far, this run's or an earlier run's plan, for where each segment starts.
+const PLANS = Object.fromEntries(segmentNames(C).map((n) => {
   const p = `${C.out}/work/${n}.plan.json`;
-  return [n, existsSync(p) ? JSON.parse(readFileSync(p, 'utf8')).total : null];
+  return [n, existsSync(p) ? JSON.parse(readFileSync(p, 'utf8')) : null];
 }));
+const TOTALS = Object.fromEntries(segmentNames(C).map((n) => [n, PLANS[n]?.total ?? null]));
+const startOf = (n) => {
+  let start = 0;
+  for (const m of segmentNames(C)) { if (m === n) return start; if (TOTALS[m] == null) return null; start += TOTALS[m]; }
+  return null;
+};
 // With a music bed, each segment's leading card grows by under one beat so the segment ends,
 // to the frame, on a beat: every cut lands on the music.
+const padAt = (start, total) => (GRID ? Math.round(GRID.after(start + total - 1e-3) * C.fps) / C.fps - start - total : 0);
 function padToBeat(n, total) {
   if (!GRID) return 0;
-  let start = 0;
-  for (const m of segmentNames(C)) {
-    if (m === n) break;
-    if (TOTALS[m] == null) { console.warn(`warn: ${n} not snapped to the beat: ${m} has no plan yet`); return 0; }
-    start += TOTALS[m];
-  }
-  const beat = GRID.find((b) => b >= start + total - 1e-3);
-  return beat == null ? 0 : Math.round(beat * 30) / 30 - start - total;
+  const start = startOf(n);
+  if (start == null) { console.warn(`warn: ${n} not snapped to the beat: an earlier segment has no plan yet`); return 0; }
+  return padAt(start, total);
 }
+// A card's length before any beat padding: a narrated card stays up until its line has finished.
+const cardDur = (n) => {
+  const c = C.cards[n], clip = NAR[n]?.card, N = A?.narration;
+  return clip ? r3(Math.max(c.dur, N.lead + clip.dur + N.tail + F(0.4))) : c.dur;
+};
 
 // A chapter's `speed` keys override the global ones; `travel` can be raised by targetDuration.
 const speedFor = (cfg, travel) => ({ ...C.speed, travel, ...(cfg.speed || {}) });
@@ -534,17 +541,23 @@ if (C.targetDuration) {
   console.log(`targetDuration ${C.targetDuration}s: speed.travel ${travel}x (cap 4x), planned ${r3(length(travel))}s`);
 }
 
-for (const n of names) {
+// With a music bed every segment's start decides its pad, so a segment whose start has moved since
+// its plan (an earlier one was re-cut) is composed again even when not named: its cut stays on a beat.
+const order = GRID ? segmentNames(C) : names;
+for (const n of order) {
+  const start = startOf(n);
+  if (GRID && !names.includes(n)) {
+    if (PLANS[n] && start != null && Math.abs((PLANS[n].start ?? -1) - start) < 1e-3) continue;
+    console.log(`${n}: composed again, it now starts at ${start == null ? '?' : r3(start)}s and its cut must stay on a beat`);
+  }
   const card = C.cards[n];
   if (card) {
-    // a narrated card stays up until its line has finished
-    const clip = NAR[n]?.card, N = A?.narration;
-    if (clip) card.dur = r3(Math.max(card.dur, N.lead + clip.dur + N.tail + F(0.4)));
-    card.dur = r3(card.dur + padToBeat(n, card.dur));
+    const clip = NAR[n]?.card, N = A?.narration, base = cardDur(n);
+    card.dur = r3(base + padToBeat(n, base));
     TOTALS[n] = card.dur;
     project(n, cardDoc(n, card));
     const narration = clip ? [{ slot: 'card', at: N.lead, dur: clip.dur, file: clip.file, text: clip.text, anchor: clip.anchor, words: clip.words }] : [];
-    writeFileSync(`${C.out}/work/${n}.plan.json`, JSON.stringify({ name: n, kind: 'card', total: card.dur, spots: [], narration }, null, 1));
+    writeFileSync(`${C.out}/work/${n}.plan.json`, JSON.stringify({ name: n, kind: 'card', start, total: card.dur, spots: [], narration }, null, 1));
     console.log(`${n}: card ${card.dur}s`);
     continue;
   }

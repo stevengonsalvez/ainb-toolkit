@@ -239,9 +239,14 @@ export function beatGrid(C) {
 </div><script>window.__timelines = {};</script></body></html>\n`);
     hf(['beats', dir, '--json'], dir);
   }
-  // The bed loops to the video's length (mix), so the grid repeats with it.
-  const beats = JSON.parse(readFileSync(json, 'utf8')).beats.map((b) => b.time), len = probe(C, A.music.file);
-  return Array.from({ length: 20 }, (_, k) => beats.map((b) => b + k * len - A.music.start)).flat().filter((t) => t > 0);
+  // The bed loops (mix), so the grid repeats with it: beat b of pass k sits at video time
+  // k * len + b - start, for any length of video.
+  const beats = JSON.parse(readFileSync(json, 'utf8')).beats.map((b) => b.time), len = probe(C, A.music.file), off = A.music.start;
+  const near = (t) => { const k = Math.floor((t + off) / len); return [k - 1, k, k + 1].flatMap((q) => beats.map((b) => q * len + b - off)).filter((v) => v > 0); };
+  return {
+    after: (t) => Math.min(...near(t).filter((v) => v >= t)),
+    nearest: (t) => near(t).reduce((a, v) => (Math.abs(v - t) < Math.abs(a - t) ? v : a), Infinity),
+  };
 }
 
 // ---------- sound effects ----------
@@ -357,9 +362,10 @@ export function mix(C) {
   let mL = null, mR = null;
   if (A.music) {
     const M = A.music;
-    const pcm = decode(C, ['-stream_loop', '-1', '-ss', String(M.start), '-i', M.file, '-t', String(total)], 2);
+    // looped from the file's own start, so every pass begins where the beat grid says it does
+    const pcm = decode(C, ['-stream_loop', '-1', '-i', M.file, '-t', String(M.start + total)], 2), o = Math.round(M.start * SR);
     mL = new Float32Array(n); mR = new Float32Array(n);
-    for (let i = 0; i < n && 2 * i + 1 < pcm.length; i++) { mL[i] = pcm[2 * i]; mR[i] = pcm[2 * i + 1]; }
+    for (let i = 0; i < n && 2 * (o + i) + 1 < pcm.length; i++) { mL[i] = pcm[2 * (o + i)]; mR[i] = pcm[2 * (o + i) + 1]; }
     writeWav(C, `${work}/music-raw.wav`, [mL, mR]);
     const lvl = dB(M.level - loudness(C, `${work}/music-raw.wav`).I);
     // duck windows: ramp down 0.25s before a line, back up over 0.6s after; close lines merge
@@ -430,8 +436,10 @@ export function mix(C) {
   report.music = A.music ? basename(A.music.file) : null;
   // how far each cut sits from the nearest beat, in ms (cards are padded so it should be ~0)
   const grid = beatGrid(C);
-  if (grid) report.cutsToBeats = segs.slice(1).concat({ start: total }).map((s) => Math.round(1000 * Math.min(...grid.map((b) => Math.abs(b - s.start)))));
+  if (grid) report.cutsToBeats = segs.slice(1).concat({ start: total }).map((s) => Math.round(1000 * Math.abs(grid.nearest(s.start) - s.start)));
   const fails = [];
+  // A cut more than a frame off the beat means a segment was rendered from a stale plan.
+  if (grid && report.cutsToBeats.some((ms) => ms > 1000 / C.fps)) fails.push(`cuts off the beat by ${report.cutsToBeats.join(', ')} ms: re-run compose.mjs and render.sh`);
   if (programme && !(Math.abs(got.I - T.target) <= T.tolerance)) fails.push(`loudness ${got.I} LUFS, target ${T.target} +-${T.tolerance}`);
   if (!(got.TP <= T.truePeak)) fails.push(`true peak ${got.TP} dBTP over ${T.truePeak}`);
   report.ok = !fails.length;
