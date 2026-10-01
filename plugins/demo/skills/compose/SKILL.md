@@ -167,8 +167,13 @@ The ferry app is quick, so travel is a small share of it; the saving grows with 
 navigation time.
 
 How it works: `compose.mjs` writes each chapter's footage already cut and re-timed (one ffmpeg
-pass: `select` for the kept ranges, `setpts` with the piecewise speed curve, `fps=30` (the output rate), written
-lossless), so the HyperFrames project holds one plain `<video>`. At a constant whole-number speed it nudges each
+pass: `select` for the kept ranges, `setpts` with the piecewise speed curve, `fps=30` (the output rate), a
+lanczos scale to the take's CSS viewport, written lossless), so the HyperFrames project holds one plain `<video>`.
+A deterministic take (demo:capture's default: 2560x1440 at 60fps, `dpr` and `fps` in its events.json) is
+downsampled here to the composition's 1280x720 at 30fps. That supersampling is itself a gain: on the ferry
+fares table the final cut measures acutance 35.0 against 32.5 from a screencast take, and the JPEG
+ringing around small caps is gone. An RGB take is written with libx264rgb, so no colour conversion
+happens before concat.sh's single encode. Rects and camera boxes stay in CSS px, whatever the density. At a constant whole-number speed it nudges each
 piece by under 1/60s so source frames never sit on a half frame, which otherwise made a 1x
 window duplicate then drop a frame.
 
@@ -181,8 +186,9 @@ Measured on a 5:36 ten-chapter demo, 47 marks. Change them in config, not in cod
   settled in the footage if that is later, holds 1.5 to 2.5s, fades out. Fading in 250ms before
   `t` regardless put 51% of each ferry zoom's motion under the fading-in cut-out; now 0.7%, the
   frame that completes the move. Settled means the camera event's end (from demo:capture), then
-  every frame-to-frame change up to 0.25s after it, which is the camera landing (the logged end
-  trails the last pose by a 30ms wait, and the pose reaches the footage 16-63ms later; the
+  every frame-to-frame change up to 0.25s after it, which is the camera landing (from a
+  screencast take the logged end trails the last pose by a 30ms wait, and the pose reaches the
+  footage 16-63ms later; a deterministic take logs the exact frame the spring settled on; the
   window leaves room for a slow landing under load). Changes past 0.25s are the page itself
   moving: they do not delay the spotlight (they used to, by ~0.4s on a board with a blinking
   badge; now 0.18-0.22s, bounded by the window) and compose warns about them. `plan.json`
