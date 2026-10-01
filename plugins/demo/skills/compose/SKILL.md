@@ -243,7 +243,7 @@ average of 12 to 20 from other renders (so wall times are upper bounds):
 | `quality: "draft"`, 720p30 framed | 203s | 7.1s | 65 MB | 4.3 MB | 5/5 |
 
 `out/seg/` sizes above were packed with x264's default keyframe interval; render.sh now packs with a
-keyframe every 30 frames, about 20% more (the fresh-clone default run: see the PR). So a 5-minute
+keyframe every 30 frames, about 20% more (the default ferry run: 435 MB). So a 5-minute
 film takes about 2.5 hours at the master on this host, under load, and about 35
 minutes as a draft: iterate in draft, render the master once. A bare 1440p60 window
 probe (no blur, grain or tilt) captured at 12.2s per second with 4 workers and 41s with the
@@ -412,7 +412,13 @@ encode (text crop inside each cut-out against the source screencast frame, RGB):
   x264's default of 250 the ferry check took 45.7s, now 29.1s, for 20% more disk (fares 115 MB at
   250). So `out/seg/` holds well under 1 GB per minute at the master, where PNGs would have been
   6.6 GB. It is scratch: delete it once the final mp4 is good.
-  A render needs room for one segment's PNGs while it runs (about 110 MB per second of segment).
+  **Free disk while rendering** is set by HyperFrames, not by the PNGs: before capturing it
+  refuses unless free space on the `out` filesystem is at least the raw RGBA size of the
+  segment's frames over 0.9 (width x height x 4 bytes per frame). At the 1440p60 master that is
+  about 1 GB per second of the longest segment (the ferry's 13.3s chapter needs 13.1 GB free; a
+  34s chapter would need 33 GB), at draft about 0.12 GB. The PNGs it actually writes are about
+  a tenth of that. Short of disk, render that segment as a draft, split the chapter in
+  demo:capture, or free space; `--low-memory-mode` does not lift the check.
 
 At 720p the gap to the ceiling was crf 14; what remains below the ceiling is the 4:2:0 conversion and
 the full-to-limited range change, which any BT.709 4:2:0 delivery pays.
