@@ -130,14 +130,19 @@ export function loadConfig(path) {
   }
 
   // cut "beats": one still per mark, held for its narration line plus beats.pad, jump cuts, silent
-  // cards of beats.cardHold (chapters[].beats orders the marks). "continuous" is the footage.
+  // cards of beats.cardHold, slide and split beats (chapters[].beats). "continuous" is the footage.
   const cut = raw.cut ?? 'continuous';
   if (!['continuous', 'beats'].includes(cut)) throw new Error(`config: cut must be "continuous" or "beats", not "${cut}"`);
   const beats = { pad: 0.6, lead: 0, cardHold: 2.5, hold: 3, fade: 0, min: 3, max: 6, lineMax: 7, ...(raw.beats || {}) };
   for (const k of Object.keys(beats)) if (!['pad', 'lead', 'cardHold', 'hold', 'fade', 'min', 'max', 'lineMax'].includes(k)) throw new Error(`config: beats.${k} is not a setting`);
   if (!(Number.isInteger(beats.fade) && beats.fade >= 0 && beats.fade <= 4)) throw new Error('config: beats.fade is a micro-fade in whole frames, 0 (hard cut) to 4');
+  const SLIDES = ['title', 'tiles', 'devices', 'pricing', 'steps', 'end'];
   for (const ch of chapters) for (const [i, b] of (ch.beats || []).entries()) {
-    if (b.mark == null) throw new Error(`config: ${ch.name} beat ${i} needs a mark (its index or id)`);
+    const kinds = ['mark', 'slide', 'split'].filter((k) => b[k] != null);
+    if (kinds.length !== 1) throw new Error(`config: ${ch.name} beat ${i} needs exactly one of mark, slide or split`);
+    if (b.slide != null && !SLIDES.includes(b.slide)) throw new Error(`config: ${ch.name} beat ${i}: slide "${b.slide}" is not one of ${SLIDES.join(', ')}`);
+    if (b.split != null && !(Array.isArray(b.split) && b.split.length === 2)) throw new Error(`config: ${ch.name} beat ${i}: split takes two earlier beats, e.g. ["2.3", "2.4"]`);
+    for (const k of ['phone', 'tablet', 'web']) if (b[k] != null) { b[k] = abs(b[k]); if (!existsSync(b[k])) throw new Error(`config: ${ch.name} beat ${i}: ${k} image not found: ${b[k]}`); }
   }
   if (cut !== 'beats' && chapters.some((c) => c.beats)) throw new Error('config: chapters[].beats needs "cut": "beats"');
 
@@ -178,7 +183,7 @@ export function loadConfig(path) {
     deadHold: raw.deadHold ?? 2.0,           // freezes longer than this get trimmed
     hold: Object.fromEntries(Object.entries({ min: 1.5, max: 2.2, ...(raw.hold || {}) }).map(([k, v]) => [k, v * pace])),
     layout: { safeMargin: 64, labelHeight: 48, labelGap: 14, maxLabelWords: 6, ...(raw.layout || {}) },
-    check: { litRatio: 0.80, dimRatio: 0.62, contentSd: 8, driftMax: 12, alignMax: 7, glideStep: 0.2, calloutMin: 12, ...(raw.check || {}) },
+    check: { litRatio: 0.80, dimRatio: 0.62, contentSd: 8, driftMax: 12, alignMax: 7, glideStep: 0.2, ...(raw.check || {}) },
     theme, displayStack, bodyStack, fontFaces: faces, fontFiles: [...files],
     accentGlow: hexToRgba(theme.accent, 0.40),
     accentEdge: hexToRgba(theme.accent, 0.55),

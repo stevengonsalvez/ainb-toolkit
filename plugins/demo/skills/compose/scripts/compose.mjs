@@ -4,7 +4,7 @@
 // Everything app-specific comes from the config. Nothing here knows what app was filmed.
 import { execFileSync, spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync, mkdirSync, copyFileSync, existsSync } from 'node:fs';
-import { dirname, resolve, basename } from 'node:path';
+import { dirname, resolve, basename, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadConfig, segmentNames, seams, seamsOf, screenRect, VERTICAL, eventsPath, r3, esc, grayFrames, mad, hexToRgba } from './config.mjs';
 import { audioSettings, narrationClips, fitNarration, beatGrid } from './audio.mjs';
@@ -175,10 +175,39 @@ ${VERT ? `/* vertical: the headline band above the window and the caption band b
 .cue { position: absolute; left: 50%; bottom: 0; transform: translateX(-50%); opacity: 0; width: max-content; max-width: 100%; overflow-wrap: anywhere;
   padding: 14px 26px; border-radius: 18px; background: color-mix(in oklab, ${T.text} 88%, transparent);
   font-family: ${C.bodyStack}; font-weight: 600; font-size: 40px; line-height: 1.25; color: #FFFFFF; text-align: center; text-wrap: balance; }
-` : ''}${C.cut === 'beats' ? `/* beat mode: one section per beat */
+` : ''}${C.cut === 'beats' ? `/* beat mode: one section per beat; slides share the cards' type and the theme's surfaces */
 .beat { position: absolute; inset: 0; }
 .bin { position: absolute; inset: 0; }
 .foot.still { object-fit: fill; }
+.slide { position: absolute; inset: 0; padding: ${SAFE}px ${Math.round(SAFE * 1.75)}px; display: flex; flex-direction: column; justify-content: center; }
+.slab { position: absolute; left: ${Math.round(SAFE * 1.75)}px; top: ${SAFE}px; white-space: nowrap; background: ${T.surface}; border: 1px solid ${C.accentEdge};
+  border-left: 5px solid ${T.accent}; border-radius: 10px; padding: 11px 18px 11px 14px; font-family: ${C.displayStack}; font-weight: 600;
+  font-size: 22px; line-height: 24px; color: ${T.text}; box-shadow: 0 1px 2px rgba(0,0,0,0.20), 0 10px 28px rgba(0,0,0,0.30); }
+.stitle { font-family: ${C.displayStack}; font-weight: 700; font-size: 46px; line-height: 1.08; letter-spacing: -0.02em; color: ${T.text}; max-width: ${Math.round(W * 0.8)}px; text-wrap: balance; }
+.note { position: absolute; left: ${Math.round(SAFE * 1.75)}px; bottom: ${SAFE}px; font-family: ${C.bodyStack}; font-weight: 600; font-size: 16px;
+  letter-spacing: 0.14em; text-transform: uppercase; color: ${T.muted}; border: 1px solid ${ink(0.22)}; border-radius: 999px; padding: 8px 16px; }
+.row { display: flex; gap: 22px; margin-top: 34px; width: 100%; }
+.tile { flex: 1; min-width: 0; background: ${T.surface}; border-radius: 18px; padding: 28px 26px; border-top: 4px solid ${T.accent};
+  box-shadow: 0 1px 2px ${ink(0.10)}, 0 14px 34px ${ink(0.12)}; }
+.tile .n { font-family: ${C.bodyStack}; font-weight: 600; font-size: 15px; letter-spacing: 0.16em; color: ${T.muted}; }
+.tile .t { font-family: ${C.displayStack}; font-weight: 700; font-size: 34px; line-height: 1.1; color: ${T.text}; margin-top: 14px; overflow-wrap: anywhere; }
+.tile .p { font-family: ${C.displayStack}; font-weight: 700; font-size: 44px; color: ${T.accent}; margin-top: 10px; }
+.tile ul { list-style: none; margin-top: 16px; font-size: 19px; line-height: 1.45; color: ${T.muted}; }
+.tile.hi { background: ${T.text}; border-top-color: ${T.highlight}; }
+.tile.hi .t, .tile.hi .p { color: ${T.bg}; } .tile.hi ul, .tile.hi .n { color: ${tint(T.bg, 0.75)}; }
+.steps { display: flex; margin-top: 46px; width: 100%; position: relative; }
+.steps .line { position: absolute; left: 30px; right: 30px; top: 29px; height: 3px; background: ${tint(T.accent, 0.35)}; transform-origin: 0 50%; }
+.step { flex: 1; position: relative; padding-right: 26px; }
+.step .dot { width: 60px; height: 60px; border-radius: 50%; background: ${T.accent}; color: ${T.surface}; display: flex; align-items: center; justify-content: center;
+  font-family: ${C.displayStack}; font-weight: 700; font-size: 26px; }
+.step .t { font-family: ${C.displayStack}; font-weight: 600; font-size: 26px; line-height: 1.2; color: ${T.text}; margin-top: 22px; }
+.dev { position: absolute; background: #0E0F12; box-shadow: 0 2px 4px ${ink(0.18)}, 0 24px 60px ${ink(0.28)}; overflow: hidden; }
+.dev img { position: absolute; left: 0; top: 0; width: 100%; height: 100%; object-fit: cover; object-position: 50% 0; }
+.dev.web { border-radius: 14px; padding-top: 30px; } .dev.web img { top: 30px; height: calc(100% - 30px); }
+.dev.web .bar { position: absolute; left: 0; right: 0; top: 0; height: 30px; background: ${T.surface}; }
+.dev.web .bar i { position: absolute; top: 10px; width: 10px; height: 10px; border-radius: 50%; background: ${ink(0.22)}; }
+.dev.tablet { border-radius: 26px; border: 12px solid #0E0F12; } .dev.phone { border-radius: 30px; border: 9px solid #0E0F12; }
+.url { font-family: ${C.displayStack}; font-weight: 700; font-size: 40px; color: ${T.accent}; margin-top: 26px; }
 ` : ''}`;
 
 // A segment renders ceil(duration * fps) frames (measured: 3.067s rendered 93 frames, not 92), so a
@@ -901,7 +930,8 @@ ${labels}
 // frame with its spotlight and label, held for its narration line plus beats.pad (beats.hold
 // without a line), and beats meet in jump cuts: nothing on screen travels or is sped up. The
 // lines are spoken and measured before any of this (narrationClips), and the timeline is built
-// to them. A chapter card holds beats.cardHold, silent. chapters[].beats orders the marks.
+// to them. A chapter card holds beats.cardHold, silent. Slides (no app screen) and splits (two
+// earlier beats side by side) come from chapters[].beats.
 const wholeFrames = (d) => Math.ceil(d * C.fps - 1e-6) / C.fps;
 function beatItems(cfg, an) {
   const spots = an?.spots || [];
@@ -911,6 +941,10 @@ function beatItems(cfg, an) {
     b.spot = typeof b.mark === 'number' ? spots[b.mark] : spots.find((s) => s.m.id === b.mark);
     if (!b.spot) throw new Error(`${cfg.name} beat ${b.i}: no mark ${JSON.stringify(b.mark)} in the take (marks: ${spots.map((s) => s.m.id ?? s.i).join(', ')}); name a mark by its id or its index`);
   }
+  for (const b of items) if (b.split) {
+    b.parts = b.split.map((ref) => items.find((x) => x.id === String(ref) && x.i < b.i && x.spot));
+    if (b.parts.some((x) => !x)) throw new Error(`${cfg.name} beat ${b.i}: split ${JSON.stringify(b.split)} must name two earlier filmed beats`);
+  }
   return items;
 }
 // The settled frame of a mark, scaled once (lanczos) to the size it is shown at.
@@ -918,9 +952,31 @@ function stillPng(an, k, out, scale) {
   execFileSync(C.ffmpeg, ['-nostdin', '-loglevel', 'error', '-y', '-ss', String(Math.max(0, (k - 0.25) / an.fps)), '-i', an.mp4, '-frames:v', '1',
     '-vf', `scale=${Math.round(an.srcW * scale)}:${Math.round(an.srcH * scale)}:flags=lanczos`, out]);
 }
-// A filmed beat's window: its still, spotlight and label, at the screen's own layout. A beat's
-// spotlight inherits its section's visibility rather than setting its own: a child set visible
-// stays drawn after the framework hides the section, and earlier beats' scrims stacked up.
+function slideHtml(b, id) {
+  const items = (xs) => xs.map(esc);
+  const callout = b.label ? `<div class="slab" id="${id}-c">${esc(b.label)}</div>` : '';
+  const head = b.title ? `<div class="stitle" id="${id}-h">${esc(b.title)}</div>` : '';
+  if (b.slide === 'title' || b.slide === 'end') {
+    return `<div class="cbox" id="${id}-box">
+  ${b.kicker ? `<div class="kicker"><span class="kbar"></span><span>${esc(b.kicker)}</span></div>` : ''}
+  <div class="ttl" id="${id}-h">${words(b.title || '', 'wm')}</div>
+  ${b.url ? `<div class="url" id="${id}-u">${esc(b.url)}</div>` : '<div class="rule"></div>'}
+  ${b.sub ? `<div class="sub">${esc(b.sub)}</div>` : ''}
+</div>${b.note ? `<div class="note" id="${id}-n">${esc(b.note)}</div>` : ''}${callout}`;
+  }
+  if (b.slide === 'tiles') return `<div class="slide">${head}<div class="row">${items(b.tiles || []).map((t, k) => `<div class="tile" id="${id}-t${k}"><div class="n">${String(k + 1).padStart(2, '0')}</div><div class="t">${t}</div></div>`).join('')}</div></div>${callout}`;
+  if (b.slide === 'pricing') return `<div class="slide">${head}<div class="row">${(b.tiers || []).map((p, k) => `<div class="tile${p.highlight ? ' hi' : ''}" id="${id}-t${k}"><div class="t">${esc(p.name)}</div><div class="p">${esc(p.price ?? '')}</div><ul>${items(p.points || []).map((x) => `<li>${x}</li>`).join('')}</ul></div>`).join('')}</div></div>${callout}`;
+  if (b.slide === 'steps') return `<div class="slide">${head}<div class="steps"><div class="line" id="${id}-ln"></div>${items(b.steps || []).map((t, k) => `<div class="step" id="${id}-t${k}"><div class="dot">${k + 1}</div><div class="t">${t}</div></div>`).join('')}</div></div>${callout}`;
+  // devices: a browser window, a tablet and a phone, each showing its given still
+  const dev = { web: [W * 0.11, H * 0.22, W * 0.56, W * 0.56 * 0.66], tablet: [W * 0.6, H * 0.3, W * 0.25, W * 0.25 * 1.3], phone: [W * 0.5, H * 0.43, W * 0.14, W * 0.14 * 2.05] };
+  return `${head ? `<div class="slide" style="justify-content:flex-start">${head}</div>` : ''}${Object.entries(dev).filter(([k]) => b[k]).map(([k, [x, y, w, h]], n) =>
+    `<div class="dev ${k}" id="${id}-t${n}" style="left:${r3(x)}px;top:${r3(y)}px;width:${r3(w)}px;height:${r3(h)}px">${k === 'web' ? '<div class="bar"><i style="left:12px"></i><i style="left:28px"></i><i style="left:44px"></i></div>' : ''}<img src="assets/slides/${id}-${k}${extname(b[k])}"></div>`).join('')}${callout}`;
+}
+// A filmed beat's window: its still, spotlight and label, at the screen's own layout. A split's
+// half-size pane drops the scrim's backdrop blur: under the pane's zoom Chrome filled the blur to
+// the unscaled screen's bounds (looked at). A beat's spotlight inherits its section's visibility
+// rather than setting its own: a child set visible stays drawn after the framework hides the
+// section, and two earlier beats' scrims darkened the split behind it (looked at).
 function beatWindow(id, b, an, style = '', zoom = null, labelOutside = false) {
   const s = b.spot, v = b.view;
   const win = zoom ? `<div class="win" style="clip-path:${squircle(SCW * zoom, SCH * zoom, R * zoom * 2)}">` : '<div class="win">';
@@ -976,7 +1032,7 @@ function beatChapter(cfg) {
     const id = `${name}-b${b.i}`, extra = b.i < items.length - 1 && fadeF ? fadeF : 0;
     let inner = '';
     // spotlight and label come in once the window is in (the first beat after a card) or at the cut
-    const lit = r3(b.start + (hasCard && b.i === items.findIndex((x) => x.spot) && b.spot ? ENT : 0));
+    const lit = r3(b.start + (hasCard && b.i === items.findIndex((x) => x.spot || x.parts) && (b.spot || b.parts) ? ENT : 0));
     const light = (sid, box, lab, dir) => {
       lines.push(`tl.fromTo("#${sid}-sl", { opacity: 0 }, { opacity: 1, duration: ${F(0.25)}, ease: "power1.out", immediateRender: false }, ${lit});`);
       const dx = box[2] * 0.06 + 6, dy = box[3] * 0.06 + 6, ib = [box[0] - dx, box[1] - dy, box[2] + 2 * dx, box[3] + 2 * dy].map(r3), vv = (x) => `"--x": "${x[0]}px", "--y": "${x[1]}px", "--w": "${x[2]}px", "--h": "${x[3]}px"`;
@@ -993,6 +1049,20 @@ function beatChapter(cfg) {
       report.push({ i: b.i, id: b.id, label: b.label, still: true, srcT: r3(b.spot.T), seek: r3((k - 0.4) / an.fps), frame: k,
         compT: lit, litFrom: lit, fadeIn: F(0.25), glided: false, ...(SP.sweep && { sweepTo: r3(lit + F(0.9)) }),
         hold: r3((b.i === items.length - 1 ? total - tail : b.end) - lit), srcHold: 0, place: b.dir, box: b.box.map(Math.round), labBox: b.labBox, view: b.view });
+    } else if (b.parts) {
+      // two earlier beats side by side, each callout under its window
+      const gap = 36, hw = (W - 2 * SAFE - gap) / 2, z = hw / SCW, hh = SCH * z, top = (H - hh - C.layout.labelHeight - 18) / 2;
+      b.parts.forEach((p, k) => {
+        const sid = `${id}-p${k}`, left = SAFE + k * (hw + gap);
+        inner += beatWindow(sid, p, an, ` style="left:${r3(left)}px;top:${r3(top)}px;width:${r3(hw)}px;height:${r3(hh)}px"`, z, true);
+        inner += `<div class="lab" id="${sid}-l" style="left:${r3(left)}px;top:${r3(top + hh + 18)}px">${esc(p.label)}</div>`;
+        light(sid, p.box, `#${sid}-l`, 'below');
+      });
+    } else {
+      inner = slideHtml(b, id);
+      // the slide's parts rise in, in order, from the cut
+      lines.push(`tl.fromTo("#${id} .slab, #${id} .stitle, #${id} .tile, #${id} .step, #${id} .dev, #${id} .cbox > *, #${id} .note", { opacity: 0, y: 18 }, { opacity: 1, y: 0, duration: ${F(0.5)}, ease: "power3.out", stagger: ${F(0.08)}, immediateRender: false }, ${r3(b.start + F(0.05))});`);
+      if (b.slide === 'steps') lines.push(`tl.fromTo("#${id}-ln", { scaleX: 0 }, { scaleX: 1, duration: ${F(0.9)}, ease: "power2.inOut", immediateRender: false }, ${r3(b.start + F(0.2))});`);
     }
     html.push(`<section id="${id}" class="beat clip" data-start="${fdur(b.start)}" data-duration="${fdur(b.dur + extra)}" data-track-index="1"><div class="bin" id="${id}-in">${inner}</div></section>`);
     if (fadeF && b.i > 0) lines.push(`tl.fromTo("#${id}-in", { opacity: 0 }, { opacity: 1, duration: ${r3(fadeF)}, ease: "none", immediateRender: false }, ${b.start});`);
@@ -1003,16 +1073,20 @@ function beatChapter(cfg) {
   if (last) lines.push(`tl.fromTo("#fade", { opacity: 0 }, { opacity: 1, duration: ${F(0.6)}, ease: "power1.in", immediateRender: false }, ${r3(total - F(0.6))});`);
   const cap = captionLayer(name, { narration: placed, spots: report });
   const d = project(name, doc(name, total, [...html, cap.html].filter(Boolean).join('\n'), [...lines, ...cap.lines].join('\n')));
-  // assets: each filmed beat's still at the size it is shown
-  mkdirSync(`${d}/assets/stills`, { recursive: true });
-    const still = (p, file) => stillPng(an, Math.round(p.spot.T * an.fps), `${d}/assets/stills/${file}.png`, Math.min(an.dpr, Z * WS * Math.max(1, p.view.s)));
+  // assets: each filmed beat's still at the size it is shown, and the slides' images
+  mkdirSync(`${d}/assets/stills`, { recursive: true }); mkdirSync(`${d}/assets/slides`, { recursive: true });
+  // one file per window that shows it (a split reuses two beats' stills): the same image twice in
+  // one project is a duplicate-media lint warning
+  const still = (p, file) => stillPng(an, Math.round(p.spot.T * an.fps), `${d}/assets/stills/${file}.png`, Math.min(an.dpr, Z * WS * Math.max(1, p.view.s)));
   for (const b of items) {
     if (b.spot) still(b, `${name}-b${b.i}`);
+    for (const [k, p] of (b.parts || []).entries()) still(p, `${name}-b${b.i}-p${k}`);
   }
-  const firstWin = items.find((x) => x.spot);
+  for (const b of items) for (const k of ['phone', 'tablet', 'web']) if (b[k]) copyFileSync(b[k], `${d}/assets/slides/${name}-b${b.i}-${k}${extname(b[k])}`);
+  const firstWin = items.find((x) => x.spot || x.parts);
   const meta = { name, kind: 'chapter', mode: 'beats', start: startOf(name), total, cardDur: CARD, srcW: an?.srcW, srcH: an?.srcH,
     settledFrom: firstWin && hasCard ? r3(firstWin.start + ENT) : 0, tailFrom: r3(total - tail), spots: report,
-    beats: items.map((b) => ({ i: b.i, id: b.id, kind: 'mark', start: b.start, end: b.end,
+    beats: items.map((b) => ({ i: b.i, id: b.id, kind: b.spot ? 'mark' : b.parts ? 'split' : `slide:${b.slide}`, start: b.start, end: b.end,
       cut: r3(b.i === items.length - 1 ? total - tail : b.end), ...(clips[b.i] && { line: { at: r3(b.start + b.lead), end: r3(b.start + b.lead + clips[b.i].dur) } }) })),
     pad: BT.pad, freezes: [], cues: [], narration: placed };
   writeFileSync(`${C.out}/work/${name}.plan.json`, JSON.stringify(meta, null, 1));
