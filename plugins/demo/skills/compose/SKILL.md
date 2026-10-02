@@ -110,7 +110,7 @@ Only `takes` and `chapters` are required. Everything below shows the default whe
   ],
   "speed":  { "travel": 2, "rampMs": 250 },
   "cut": "continuous",                // or "beats": one still per mark, held for its line; see Beat-paced cut
-  "beats":  { "pad": 0.6, "lead": 0, "cardHold": 2.5, "hold": 3, "fade": 0, "min": 3, "max": 6, "lineMax": 7 },
+  "beats":  { "pad": 0.6, "lead": 0, "cardHold": 2.5, "hold": 3, "fade": 0, "floor": 0, "min": 3, "max": 6, "lineMax": 7 },
   "clips": false,                     // each chapter also as its own mp4 (default true with "cut": "beats")
   "pace": 1,
   "targetDuration": 45,               // optional, seconds, whole video
@@ -265,9 +265,11 @@ chapter card (cardHold, silent) ─▶ beat ─▶ beat ─▶ ... ─▶ seam i
   starting `beats.lead` (0) after the cut; a beat with no line holds `beats.hold` (3s). A line's
   `{@anchor}` does nothing here: the spotlight is up from the cut and the line starts at `lead`. Nothing is sped up and nothing travels on screen: beats meet in hard cuts, or
   a `beats.fade` micro-fade of 1 to 4 frames. The first filmed beat after a chapter card brings
-  the window in (tilted, eased flat over 0.6s) and lights after it. Compose warns when a beat
-  falls outside `beats.min`-`beats.max` (3-6s) and when a line runs over `beats.lineMax` (7s):
-  split it. The last beat holds through the seam into the next segment, so its pad stays clear
+  the window in (tilted, eased flat over 0.6s) and lights after it. `beats.floor` (0, off) is the
+  shortest any beat holds, with a line or without, a slide or a split: a short line's pad grows
+  to fill it (a first beat with no card counts the seam into it, as `min` and `max` do). Compose
+  warns when a beat falls outside `beats.min`-`beats.max` (3-6s) and when a line runs over
+  `beats.lineMax` (7s): split it. The last beat holds through the seam into the next segment, so its pad stays clear
   of the transition; with a music bed the card takes the beat pad, or with no card the last beat.
   The whole chapter is laid out in whole frames and each beat written as a clip that starts on
   its first frame and ends a microsecond before the next one's (`clipSpans`): rounding the start

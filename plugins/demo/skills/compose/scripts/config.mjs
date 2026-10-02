@@ -133,11 +133,12 @@ export function loadConfig(path) {
   // cards of beats.cardHold, slide and split beats (chapters[].beats). "continuous" is the footage.
   const cut = raw.cut ?? 'continuous';
   if (!['continuous', 'beats'].includes(cut)) throw new Error(`config: cut must be "continuous" or "beats", not "${cut}"`);
-  const beats = { pad: 0.6, lead: 0, cardHold: 2.5, hold: 3, fade: 0, min: 3, max: 6, lineMax: 7, ...(raw.beats || {}) };
+  const beats = { pad: 0.6, lead: 0, cardHold: 2.5, hold: 3, fade: 0, floor: 0, min: 3, max: 6, lineMax: 7, ...(raw.beats || {}) };
   for (const [k, v] of Object.entries(beats)) {
-    if (!['pad', 'lead', 'cardHold', 'hold', 'fade', 'min', 'max', 'lineMax'].includes(k)) throw new Error(`config: beats.${k} is not a setting`);
+    if (!['pad', 'lead', 'cardHold', 'hold', 'fade', 'floor', 'min', 'max', 'lineMax'].includes(k)) throw new Error(`config: beats.${k} is not a setting`);
     if (!(typeof v === 'number' && Number.isFinite(v) && v >= 0)) throw new Error(`config: beats.${k} must be a number of seconds >= 0`);
   }
+  if (beats.floor > beats.max) throw new Error(`config: beats.floor (${beats.floor}s) is over beats.max (${beats.max}s): every beat would hold too long`);
   if (!(Number.isInteger(beats.fade) && beats.fade <= 4)) throw new Error('config: beats.fade is a micro-fade in whole frames, 0 (hard cut) to 4');
   const SLIDES = { title: ['title'], end: ['title'], tiles: ['tiles'], pricing: ['tiers'], steps: ['steps'], devices: [] };
   const strs = (x) => Array.isArray(x) && x.length && x.every((v) => typeof v === 'string');

@@ -1033,7 +1033,7 @@ function beatChapter(cfg) {
   for (const b of items) {
     const c = clips[b.i];
     b.lead = BT.lead + (!hasCard && b.i === 0 ? seam.in.dur : 0);
-    b.frames = upFrames(c ? b.lead + c.dur + BT.pad : b.lead + BT.hold);
+    b.frames = Math.max(upFrames(c ? b.lead + c.dur + BT.pad : b.lead + BT.hold), upFrames(BT.floor));
     if (c && c.dur > BT.lineMax) console.warn(`  warn ${name} beat ${b.id}: line runs ${r3(c.dur)}s, over ${BT.lineMax}s: split it`);
     if (b.frames / C.fps < BT.min || b.frames / C.fps > BT.max) console.warn(`  warn ${name} beat ${b.id}: holds ${r3(b.frames / C.fps)}s, outside ${BT.min}-${BT.max}s`);
   }
