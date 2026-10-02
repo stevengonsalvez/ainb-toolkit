@@ -505,11 +505,12 @@ function renderFootage(an, rt, out, scale) {
 // Footage keeps its own aspect. When the output aspect differs (square), each proof window gets a
 // view {s, x, y}: footage scaled by s and placed at x, y, chosen so the spotlit rect fits with room
 // for its label. The view is still inside a window, so spotlights stay put; it eases between windows.
-// Vertical zooms past the cover scale onto a small target, as far as the take's own pixels go
-// (a 2x take at 2 screen px per CSS px), so a button reads at phone size without upscaling.
+// Vertical zooms past the cover scale onto a small target, as far as the take's own pixels go at
+// the master (a 2x take: 2 design px per CSS px, at 1080x1920 one canvas px each), so a button
+// reads at phone size. The limit is in design px, so a draft frames exactly as the master does.
 function viewFor(an, fr) {
   const sMin = Math.min(SCW / an.srcW, SCH / an.srcH), cover = Math.max(SCW / an.srcW, SCH / an.srcH);
-  const sMax = VERT ? Math.max(cover, an.dpr / (Z * WS)) : cover;
+  const sMax = VERT ? Math.max(cover, an.dpr / WS) : cover;
   if (sMax - sMin < 1e-6) return { s: sMin, x: 0, y: 0 };
   const LH = C.layout.labelHeight, GAP = C.layout.labelGap;
   const s = Math.max(sMin, Math.min(sMax, (SCW - 2 * SAFE) / fr.w, (SCH - 2 * SAFE - LH - GAP) / fr.h));
