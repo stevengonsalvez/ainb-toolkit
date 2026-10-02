@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * agysw.js: Antigravity CLI Multi-Account Switcher & Auto-Rotator
+ * agytoggle.js: Antigravity CLI Multi-Account Switcher & Auto-Rotator
  * Cross-platform support: writes active token to Antigravity CLI token file and system keyring.
  */
 
@@ -22,12 +22,13 @@ const LEGACY_ACCOUNTS_PATHS = [
 ];
 
 // Active token file read by agy CLI on Linux/macOS
-const TOKEN_PATH = process.env.AGYSW_TOKEN_PATH
+const TOKEN_PATH = process.env.AGYTOGGLE_TOKEN_PATH
+  || process.env.AGYSW_TOKEN_PATH
   || join(os.homedir(), '.gemini', 'antigravity-cli', 'antigravity-oauth-token');
 
 async function resolveAccountsPath() {
-  if (process.env.AGYSW_ACCOUNTS_PATH) {
-    return process.env.AGYSW_ACCOUNTS_PATH;
+  if (process.env.AGYTOGGLE_ACCOUNTS_PATH || process.env.AGYSW_ACCOUNTS_PATH) {
+    return process.env.AGYTOGGLE_ACCOUNTS_PATH || process.env.AGYSW_ACCOUNTS_PATH;
   }
   try {
     await fs.access(PRIMARY_ACCOUNTS_PATH);
@@ -67,7 +68,7 @@ async function readAccountsStorage() {
     };
   } catch (err) {
     if (err.code !== 'ENOENT') {
-      console.error(`[agysw] Warning: Error reading accounts database (${path}): ${err.message}`);
+      console.error(`[agytoggle] Warning: Error reading accounts database (${path}): ${err.message}`);
     }
     return { accounts: [], activeIndex: 0, activeIndexByFamily: {}, rotateStrategy: 'round-robin' };
   }
@@ -79,7 +80,7 @@ async function writeAccountsStorage(storage) {
     await fs.mkdir(dirname(path), { recursive: true });
     await fs.writeFile(path, JSON.stringify(storage, null, 2), { mode: 0o600 });
   } catch (err) {
-    console.error(`[agysw] Error writing accounts database (${path}): ${err.message}`);
+    console.error(`[agytoggle] Error writing accounts database (${path}): ${err.message}`);
   }
 }
 
@@ -117,7 +118,7 @@ async function writeCredentials(payloadObj) {
     await fs.mkdir(dirname(TOKEN_PATH), { recursive: true });
     await fs.writeFile(TOKEN_PATH, payloadStr, { mode: 0o600 });
   } catch (err) {
-    console.error(`[agysw] Warning: Could not write token file (${TOKEN_PATH}): ${err.message}`);
+    console.error(`[agytoggle] Warning: Could not write token file (${TOKEN_PATH}): ${err.message}`);
   }
 
   // 2. Secondary write: System keyring (macOS Keychain or Linux Secret Service if available)
@@ -129,7 +130,7 @@ async function writeCredentials(payloadObj) {
       try {
         execSync(`security add-generic-password -a "antigravity" -s "gemini" -w "${base64Payload}" -U`);
       } catch (err) {
-        console.error(`[agysw] Warning: macOS Keychain write failed: ${err.message}`);
+        console.error(`[agytoggle] Warning: macOS Keychain write failed: ${err.message}`);
       }
     }
   } else if (platform === 'linux') {
@@ -137,7 +138,7 @@ async function writeCredentials(payloadObj) {
       try {
         execSync(`echo -n "${base64Payload}" | secret-tool store --label="gemini" service gemini username antigravity`);
       } catch (err) {
-        console.error(`[agysw] Warning: Linux Secret Service write failed: ${err.message}`);
+        console.error(`[agytoggle] Warning: Linux Secret Service write failed: ${err.message}`);
       }
     }
   }
@@ -217,20 +218,20 @@ async function main() {
 
   if (!command || command === 'help' || command === '--help') {
     console.log(`
-Antigravity CLI Multi-Account Switcher (agysw)
+Antigravity CLI Multi-Account Switcher (agytoggle)
 Usage:
-  agysw list                                - List all profiles with status
-  agysw current                             - Show active account
-  agysw switch <index|email>                - Switch to specific account
-  agysw rotate                              - Rotate using current strategy (default: round-robin)
-  agysw rotate --strategy=<s>               - Rotate with specific strategy (one-time)
-  agysw rotate --force                      - Force advance even if only one healthy account
-  agysw strategy [round-robin|random|sticky|least-used]
-                                            - View or set default rotation strategy
-  agysw cooldown [hours=4]                  - Mark current exhausted, rotate to next
-  agysw import                              - Import current active agy CLI session into pool
-  agysw add <email> <refreshToken>          - Add account with refresh token to pool
-  agysw remove <index|email>                - Remove account from pool
+  agytoggle list                                - List all profiles with status
+  agytoggle current                             - Show active account
+  agytoggle switch <index|email>                - Switch to specific account
+  agytoggle rotate                              - Rotate using current strategy (default: round-robin)
+  agytoggle rotate --strategy=<s>               - Rotate with specific strategy (one-time)
+  agytoggle rotate --force                      - Force advance even if only one healthy account
+  agytoggle strategy [round-robin|random|sticky|least-used]
+                                                - View or set default rotation strategy
+  agytoggle cooldown [hours=4]                  - Mark current exhausted, rotate to next
+  agytoggle import                              - Import current active agy CLI session into pool
+  agytoggle add <email> <refreshToken>          - Add account with refresh token to pool
+  agytoggle remove <index|email>                - Remove account from pool
     `);
     process.exit(0);
   }
@@ -298,7 +299,7 @@ Usage:
     const email = args[1];
     const refreshToken = args[2];
     if (!email || !refreshToken) {
-      console.error("Usage: agysw add <email> <refreshToken>");
+      console.error("Usage: agytoggle add <email> <refreshToken>");
       process.exit(1);
     }
 
@@ -333,7 +334,7 @@ Usage:
   if (command === 'remove') {
     const target = args[1];
     if (!target) {
-      console.error("Usage: agysw remove <index|email>");
+      console.error("Usage: agytoggle remove <index|email>");
       process.exit(1);
     }
 
@@ -361,7 +362,7 @@ Usage:
 
   if (storage.accounts.length === 0) {
     console.log("No accounts found in your pool.");
-    console.log("Tip: Run 'agysw import' to import your active session, or 'agysw add <email> <token>'.");
+    console.log("Tip: Run 'agytoggle import' to import your active session, or 'agytoggle add <email> <token>'.");
     process.exit(1);
   }
 
@@ -380,7 +381,7 @@ Usage:
   if (command === 'switch') {
     const target = args[1];
     if (!target) {
-      console.error("Error: Please specify account index or email. Example: agysw switch 1");
+      console.error("Error: Please specify account index or email. Example: agytoggle switch 1");
       process.exit(1);
     }
 
@@ -465,7 +466,7 @@ Usage:
     }
     storage.rotateStrategy = newStrategy;
     await writeAccountsStorage(storage);
-    console.log(`[agysw] Rotate strategy set to: ${newStrategy}`);
+    console.log(`[agytoggle] Rotate strategy set to: ${newStrategy}`);
     process.exit(0);
   }
 
@@ -480,7 +481,7 @@ Usage:
     }
     currentAccount.cooldownUntil = cooldownUntil;
     await writeAccountsStorage(storage);
-    console.log(`[agysw] Marked ${currentAccount.email} on cooldown for ${hours}h (until ${new Date(cooldownUntil).toLocaleTimeString()}).`);
+    console.log(`[agytoggle] Marked ${currentAccount.email} on cooldown for ${hours}h (until ${new Date(cooldownUntil).toLocaleTimeString()}).`);
 
     const now = Date.now();
     const healthyIndices = storage.accounts
@@ -489,7 +490,7 @@ Usage:
       .map(({ i }) => i);
 
     if (healthyIndices.length === 0) {
-      console.error("[agysw] No healthy accounts remaining. All on cooldown.");
+      console.error("[agytoggle] No healthy accounts remaining. All on cooldown.");
       process.exit(1);
     }
 
@@ -511,11 +512,11 @@ Usage:
     process.exit(0);
   }
 
-  console.error(`Unknown command: ${command}. Run 'agysw help' for usage.`);
+  console.error(`Unknown command: ${command}. Run 'agytoggle help' for usage.`);
   process.exit(1);
 }
 
 main().catch(err => {
-  console.error(`[agysw fatal] ${err.message}`);
+  console.error(`[agytoggle fatal] ${err.message}`);
   process.exit(1);
 });
