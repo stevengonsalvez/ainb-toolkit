@@ -214,17 +214,22 @@ ${VERT ? `/* vertical: the headline band above the window and the caption band b
 // duration that is meant to be whole frames is written rounded DOWN to the millisecond.
 const fdur = (d) => (Math.abs(d * C.fps - Math.round(d * C.fps)) < 1e-6 ? Math.floor(d * 1000 + 1e-6) / 1000 : r3(d));
 
-// A tile's words wrap between words, never inside one: once the theme's font has loaded, a title
-// whose widest word is wider than its tile shrinks until that word fits ("Consistency" in four
-// tiles broke as "Consisten / cy" with overflow-wrap: anywhere). Measured, not guessed from the
-// letter count, since the width depends on the font.
+// A tile's words wrap between words, never inside one: once the theme's font has loaded, a row of
+// tiles whose widest word is wider than its tile is sized down until that word fits, every title
+// in the row alike ("Consistency" in four tiles broke as "Consisten / cy" with overflow-wrap:
+// anywhere). Measured, not guessed from the letter count, since the width depends on the font;
+// clientWidth, not getBoundingClientRect, so a zoomed stage does not skew it. HyperFrames waits on
+// document.fonts.ready before any capture, after this. No .to(/.from( calls in here: its lint
+// reads those after fonts.ready as a timeline built late.
 const TILE_FIT = `document.fonts.ready.then(() => {
   const ctx = document.createElement("canvas").getContext("2d");
-  for (const el of document.querySelectorAll(".tile .t")) {
-    const cs = getComputedStyle(el), px = parseFloat(cs.fontSize);
-    ctx.font = cs.fontWeight + " " + px + "px " + cs.fontFamily;
-    const widest = Math.max(...el.textContent.trim().split(/\\s+/).map((w) => ctx.measureText(w).width));
-    if (widest > el.clientWidth) el.style.fontSize = Math.floor(px * el.clientWidth / widest) + "px";
+  for (const row of document.querySelectorAll(".row")) {
+    const ts = [...row.querySelectorAll(".tile .t")], fit = ts.map((el) => {
+      const cs = getComputedStyle(el);
+      ctx.font = cs.fontWeight + " " + cs.fontSize + " " + cs.fontFamily;
+      return el.clientWidth / Math.max(...el.textContent.trim().split(/\\s+/).map((w) => ctx.measureText(w).width));
+    }), k = Math.min(1, ...fit);
+    if (k < 1) for (const el of ts) el.style.fontSize = Math.floor(parseFloat(getComputedStyle(el).fontSize) * k) + "px";
   }
 });`;
 function doc(id, dur, body, script) {
