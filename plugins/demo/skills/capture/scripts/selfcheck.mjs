@@ -32,6 +32,9 @@ const pages = {
   '/consent': `<body style="margin:0;background:${BG};height:100vh"><button id="go" style="margin:200px">go</button><div id="modal" style="position:fixed;inset:0;background:#000"></div><script>if (localStorage.getItem('consent') === 'yes') document.getElementById('modal').remove()</script></body>`,
   // Two navigations with a link of the same name, and a search field beside a text field.
   '/navs': `<body style="margin:0;background:${BG};height:100vh"><header><nav><a href="#h">Home</a></nav></header><input type="search" id="s" aria-label="Find"><input id="t" aria-label="Name"><footer><nav><a href="#f">Home</a></nav></footer></body>`,
+  // A second "Go" button appears once the pointer nears the first (mid-glide, after the target
+  // resolved; the pointer parks at the centre before that).
+  '/dup': `<body style="margin:0;background:${BG};height:100vh"><button style="margin:200px">Go</button><script>addEventListener('mousemove', e => { if (e.clientX > 50 && e.clientX < 450 && document.querySelectorAll('button').length < 2) document.body.insertAdjacentHTML('beforeend', '<button>Go</button>'); })</script></body>`,
   // Turns white once the input holds exactly the typed text: the last frame proves the type beat.
   '/type': `<body style="margin:0;background:${BG};height:100vh"><input id="q" style="margin:200px;font-size:30px" oninput="if (this.value === 'ferry times') document.body.style.background = '#fff'"></body>`,
   // A login form, and a home page that sends logged-out visitors to /welcome, not to /login.
@@ -433,6 +436,9 @@ try {
   assert.ok(hz.rect === null && hz.name === hc.name && tq < 20, `hiding chain field: type cue ${JSON.stringify(hz)}, take ${tq.toFixed(1)}s`);
   const ib = ev(await capture({ base, out, chapter: 'cue-imgbtn', capture: SC, cursor: { hidden: true }, beats: [{ goto: '/imgbtn' }, { click: '#b' }, { hold: 200 }] })).events.find(x => x.kind === 'click');
   assert.ok(ib.name === 'Save' && ib.role === 'button', `img-alt button cue ${JSON.stringify(ib)}`);
+  //  A second match appearing between resolving a target and clicking it is a miss naming the chain.
+  await assert.rejects(capture({ base, out, chapter: 'dup', capture: SC, beats: [{ goto: '/dup' }, { name: 'go', click: { role: 'button', name: 'Go' } }] }),
+    e => /beat "go": click target role=button\[name="Go"\] matched more than one visible element by the time it was clicked/.test(e.message) || assert.fail(`dup: ${e.message}`));
   //  A click while zoomed in screencast mode records its rect in the frame the camera box is in
   //  (CSS px from the scroll the zoom started at): #w at top 2000 after a 1700 scroll is at 300.
   const zc = ev(await capture({ base, out, chapter: 'zoom-click-sc', capture: SC, cursor: { hidden: true },

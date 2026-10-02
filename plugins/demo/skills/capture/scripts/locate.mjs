@@ -38,6 +38,7 @@ export function describe(t) {
   return t.in ? `${head} in ${describe(t.in)}` : head;
 }
 const chainOf = (t) => (Array.isArray(t) ? t : [t]);
+export const describeChain = (t) => chainOf(t).map(describe).join(' > ');
 
 // Resolve a target for one use in one beat. Waits up to `waitMs` on the caller's clock (the take
 // clock while filming) for the page to render it, then fails naming every entry tried, how many

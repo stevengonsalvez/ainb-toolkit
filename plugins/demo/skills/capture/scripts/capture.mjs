@@ -21,7 +21,7 @@ import fs from 'fs'; import path from 'path'; import { execFile } from 'child_pr
 // Browsers come from $PLAYWRIGHT_BROWSERS_PATH when set, else Playwright's own default.
 import { chromium } from '@playwright/test';
 import { Camera, Cursor, tilt, CAMERA_REF_MS, CLICK_LEAD_MS } from './motion.mjs';
-import { resolve, lintTarget, inventory, identify } from './locate.mjs';
+import { resolve, lintTarget, inventory, identify, describeChain, LocatorMiss } from './locate.mjs';
 
 const smoothstep = p => p * p * (3 - 2 * p);
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -225,6 +225,12 @@ async function film({ base, state, out, viewport = { width: 1280, height: 720 },
         const cut = c.slice(0, 38).join(''), sp = cut.lastIndexOf(' ');
         return { name: `${(sp > 22 ? cut.slice(0, sp) : cut).trimEnd()}…`, role };
       };
+      // A second element matching the target can appear between resolving it and acting on it (a
+      // re-render during the glide): Playwright then throws a strict-mode error; say it as a miss.
+      const act = (p, target, use, beat) => p.catch(e => {
+        if (/strict mode violation/.test(e.message)) throw new LocatorMiss(`beat "${beat}": ${use} target ${describeChain(target)} matched more than one visible element by the time it was ${use === 'type' ? 'typed into' : 'clicked'} (one appeared after it resolved); make it more specific`);
+        throw e;
+      });
       const boxFor = (r, s) => {
         const vw = W / s, vh = H / s;
         return { x: clamp(r.x + r.w / 2 - vw / 2, 0, Math.max(0, W - vw)),
@@ -244,12 +250,12 @@ async function film({ base, state, out, viewport = { width: 1280, height: 720 },
         if (step.goto) await page.goto(base + step.goto, { waitUntil: 'domcontentloaded', timeout: rec.T(30000) });
         if (step.click) {
           const el = await find(step.click, 'click', name), pin = await el.elementHandle();
-          const r = await el.boundingBox();
+          const r = await act(el.boundingBox(), step.click, 'click', name);
           if (r) await rec.glideTo(r.x + r.width / 2, r.y + r.height / 2, P(300), true);
           // Sound cue for compose, as the press lands, with its target's rect and the camera box
           // in force (as a mark has them). Clicks before filming starts are not recorded.
           if (rec.filming) { const t = rec.now(); events.push({ t, kind: 'click', rect: await boxOf(pin), ...await nameOf(el), cam: rec.cam }); }
-          await el.click({ timeout: rec.T(8000) });
+          await act(el.click({ timeout: rec.T(8000) }), step.click, 'click', name);
           await pin.dispose();
         }
         if (step.goto || step.click) {
@@ -267,12 +273,12 @@ async function film({ base, state, out, viewport = { width: 1280, height: 720 },
         if (step.type) {
           const { into, text, cps = 12 } = step.type;
           const el = await find(into, 'type', name), pin = await el.elementHandle(), named = await nameOf(el);
-          const r = await el.boundingBox();
+          const r = await act(el.boundingBox(), into, 'type', name);
           if (r) await rec.glideTo(r.x + r.width / 2, r.y + r.height / 2, P(300), true);
           const typed = step.ready ? null : networkQuiet(page, { cap: step.readyCap }, clock);
           const tc = rec.now(), cam = rec.cam;
           events.push({ t: tc, kind: 'click', rect: await boxOf(pin), ...named, cam });
-          await el.click({ timeout: rec.T(8000) });
+          await act(el.click({ timeout: rec.T(8000) }), into, 'type', name);
           const t0 = rec.now();
           for (const ch of String(text)) { await page.keyboard.type(ch); await rec.sleep(1000 / cps); }
           // measured after the typing: a field that widens on focus or input is pointed at as it ends up
