@@ -1061,9 +1061,13 @@ function beatChapter(cfg) {
       });
     } else {
       inner = slideHtml(b, id);
-      // the slide's parts rise in, in order, from the cut
-      lines.push(`tl.fromTo("#${id} .slab, #${id} .stitle, #${id} .tile, #${id} .step, #${id} .dev, #${id} .cbox > *, #${id} .note", { opacity: 0, y: 18 }, { opacity: 1, y: 0, duration: ${F(0.5)}, ease: "power3.out", stagger: ${F(0.08)}, immediateRender: false }, ${r3(b.start + F(0.05))});`);
-      if (b.slide === 'steps') lines.push(`tl.fromTo("#${id}-ln", { scaleX: 0 }, { scaleX: 1, duration: ${F(0.9)}, ease: "power2.inOut", immediateRender: false }, ${r3(b.start + F(0.2))});`);
+      // The slide's parts settle in, in order, from the cut. They start part-way in, set on the cut
+      // frame itself: from nothing, the cut frame showed only the backdrop (a blank frame at every
+      // slide), and unset, the later parts showed in full until their turn and then dropped out.
+      const parts = `"#${id} .slab, #${id} .stitle, #${id} .tile, #${id} .step, #${id} .dev, #${id} .cbox > *, #${id} .note"`, from = '{ opacity: 0.6, y: 12 }';
+      lines.push(`tl.set(${parts}, ${from}, ${b.start});`);
+      lines.push(`tl.fromTo(${parts}, ${from}, { opacity: 1, y: 0, duration: ${F(0.5)}, ease: "power3.out", stagger: ${F(0.08)}, immediateRender: false }, ${b.start});`);
+      if (b.slide === 'steps') lines.push(`tl.fromTo("#${id}-ln", { scaleX: 0.2 }, { scaleX: 1, duration: ${F(0.9)}, ease: "power2.inOut", immediateRender: false }, ${b.start});`);
     }
     const span = clipSpans([[b.f0, b.f1 + extraF]], C.fps)[0];
     html.push(`<section id="${id}" class="beat clip" data-start="${span.start}" data-duration="${span.duration}" data-track-index="1"><div class="bin" id="${id}-in">${inner}</div></section>`);
