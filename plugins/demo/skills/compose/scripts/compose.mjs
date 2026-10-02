@@ -610,6 +610,66 @@ function followCrop(an, groups, toComp, total) {
   return { lines: out, maxScale, jump };
 }
 
+// The window arrives tilted and eases flat; the transform is then reset to 2D identity so the
+// footage is never resampled through a 3D layer.
+function windowArrival(sel, at, ent) {
+  const tilt = FR ? FR.tilt : 0, ww = JSON.stringify(sel);
+  const from = tilt ? `{ opacity: 0, y: 36, scale: 0.94, rotationX: ${r3(tilt * 0.55)}, rotationY: ${-tilt}, transformPerspective: 1400, transformOrigin: "50% 60%" }` : '{ opacity: 0, scale: 1.03 }';
+  return [`tl.fromTo(${ww}, ${from}, { opacity: 1, y: 0, scale: 1, rotationX: 0, rotationY: 0, duration: ${ent}, ease: "power3.out" }, ${r3(at)});`,
+    `tl.set(${ww}, { transformPerspective: 0, rotationX: 0, rotationY: 0, y: 0, scale: 1 }, ${r3(at + ent)});`];
+}
+
+// ---------- spotlight and label layout ----------
+// the cut-out for a frame rect under view v: 8px of air, kept 6px inside the frame
+const boxOf = (fr, v) => {
+  const x = Math.max(6, fr.x * v.s + v.x - 8), y = Math.max(6, fr.y * v.s + v.y - 8);
+  return [x, y, Math.min(SCW - 6, fr.x * v.s + v.x + fr.w * v.s + 8) - x, Math.min(SCH - 6, fr.y * v.s + v.y + fr.h * v.s + 8) - y];
+};
+// The cut-out box and where its label goes. DEFECT 2 guard: a label must not cover its own
+// spotlight. Try each side outside the cut-out inside the safe margin; if nothing fits, crop the
+// cut-out instead of overlapping.
+function placeLabel(fr, view, label) {
+  const LH = C.layout.labelHeight, GAP = C.layout.labelGap;
+  let [x, y, w, h] = boxOf(fr, view);
+  const lw = label.length * 12.2 + 44;
+  const cands = [
+    ['below', SCH - SAFE - (y + h + GAP) >= LH, { left: Math.min(Math.max(x, SAFE), SCW - SAFE - lw), top: y + h + GAP }],
+    ['above', y - GAP - LH >= SAFE, { left: Math.min(Math.max(x, SAFE), SCW - SAFE - lw), top: y - GAP - LH }],
+    ['right', SCW - SAFE - (x + w + GAP) >= lw, { left: x + w + GAP, top: Math.min(Math.max(y, SAFE), SCH - SAFE - LH) }],
+    ['left', x - GAP - lw >= SAFE, { left: x - GAP - lw, top: Math.min(Math.max(y, SAFE), SCH - SAFE - LH) }],
+  ];
+  let pick = cands.find((k) => k[1]);
+  if (!pick) {
+    h = SCH - SAFE - LH - GAP - y;
+    pick = ['below-cropped', true, { left: Math.min(Math.max(x, SAFE), SCW - SAFE - lw), top: y + h + GAP }];
+  }
+  return { x, y, w, h, lw, pick };
+}
+
+// Chapter card: a ghost numeral behind, persona kicker, title words rising out of their line
+// masks. It leaves as the window arrives (the two overlap: the arrival is the card's exit).
+function chapterCard(name, cfg, CARD, cardEnd) {
+  const idx = C.chapters.findIndex((c) => c.name === name) + 1, q = (x) => `"#${name}-${x}"`;
+  const html = `<section id="${name}-card" class="card clip" data-start="0" data-duration="${cardEnd}" data-track-index="2">
+  <div class="ghost" id="${name}-ghost">${String(idx).padStart(2, '0')}</div>
+  <div class="cbox" id="${name}-box">
+    <div class="kicker" id="${name}-kick"><span class="kbar" id="${name}-kbar"></span><span>${esc(cfg.persona || C.defaultPersona || '')}</span></div>
+    <div class="ttl" id="${name}-ttl">${words(cfg.title, 'wm')}</div>
+    <div class="rule" id="${name}-rule"></div>
+  </div>
+</section>`;
+  const lines = [
+    `tl.fromTo(${q('ghost')}, { y: 60, opacity: 0 }, { y: 0, opacity: 0.055, duration: ${F(1.4)}, ease: "sine.out" }, 0);`,
+    `tl.fromTo(${q('kbar')}, { scaleX: 0 }, { scaleX: 1, duration: ${F(0.45)}, ease: "power3.out" }, ${F(0.12)});`,
+    `tl.fromTo(${q('kick')}, { opacity: 0, x: -24 }, { opacity: 1, x: 0, duration: ${F(0.5)}, ease: "power3.out" }, ${F(0.15)});`,
+    `tl.fromTo("#${name}-ttl .w", { yPercent: 108 }, { yPercent: 0, duration: ${F(0.7)}, ease: "power4.out", stagger: ${F(0.06)} }, ${F(0.22)});`,
+    `tl.fromTo(${q('rule')}, { scaleX: 0 }, { scaleX: 1, duration: ${F(0.5)}, ease: "power2.out" }, ${F(0.45)});`,
+    `tl.fromTo(${q('box')}, { opacity: 1, y: 0, filter: "blur(0px)" }, { opacity: 0, y: -28, filter: "blur(8px)", duration: ${r3(cardEnd - CARD + F(0.2))}, ease: "power2.in", immediateRender: false }, ${r3(CARD - F(0.2))});`,
+    `tl.fromTo(${q('ghost')}, { opacity: 0.055 }, { opacity: 0, duration: ${r3(cardEnd - CARD + F(0.2))}, ease: "power2.in", immediateRender: false }, ${r3(CARD - F(0.2))});`,
+  ];
+  return { html, lines };
+}
+
 // ---------- chapter ----------
 function chapter(an, sp) {
   const { name, cfg } = an;
@@ -633,7 +693,6 @@ function chapter(an, sp) {
     Array.from({ length: Math.round(footDur * C.fps) }, (_, n) => [n, shownFrame(CARD + n / C.fps), Math.round(fromComp(CARD + n / C.fps) * an.fps)])));
   TOTALS[name] = total;
   const seam = seamsOf(C, name);
-  const idx = C.chapters.findIndex((c) => c.name === name) + 1;
   // A film that ends on this chapter fades to the backdrop colour, as an end card would; that
   // fade, or the seam into the next segment, is the tail no spotlight may reach into.
   const last = segmentNames(C).at(-1) === name, tail = seam.out.dur || (last ? F(0.6) : 0);
@@ -689,35 +748,15 @@ function chapter(an, sp) {
     s.hold = start - s.ct; s.glide = true; n.glided = true;
   }
 
-  const LH = C.layout.labelHeight, GAP = C.layout.labelGap;
   const report = [];
-  // the cut-out for a frame rect under view v: 8px of air, kept 6px inside the frame
-  const boxOf = (fr, v) => {
-    const x = Math.max(6, fr.x * v.s + v.x - 8), y = Math.max(6, fr.y * v.s + v.y - 8);
-    return [x, y, Math.min(SCW - 6, fr.x * v.s + v.x + fr.w * v.s + 8) - x, Math.min(SCH - 6, fr.y * v.s + v.y + fr.h * v.s + 8) - y];
-  };
   const labels = an.spots.map((s) => {
-    let [x, y, w, h] = boxOf(s.fr, s.view);
-    const lw = s.label.length * 12.2 + 44;
-    // DEFECT 2 guard: a label must not cover its own spotlight. Try each side outside the
-    // cut-out inside the safe margin; if nothing fits, crop the cut-out instead of overlapping.
-    const cands = [
-      ['below', SCH - SAFE - (y + h + GAP) >= LH, { left: Math.min(Math.max(x, SAFE), SCW - SAFE - lw), top: y + h + GAP }],
-      ['above', y - GAP - LH >= SAFE, { left: Math.min(Math.max(x, SAFE), SCW - SAFE - lw), top: y - GAP - LH }],
-      ['right', SCW - SAFE - (x + w + GAP) >= lw, { left: x + w + GAP, top: Math.min(Math.max(y, SAFE), SCH - SAFE - LH) }],
-      ['left', x - GAP - lw >= SAFE, { left: x - GAP - lw, top: Math.min(Math.max(y, SAFE), SCH - SAFE - LH) }],
-    ];
-    let pick = cands.find((k) => k[1]);
-    if (!pick) {
-      h = SCH - SAFE - LH - GAP - y;
-      pick = ['below-cropped', true, { left: Math.min(Math.max(x, SAFE), SCW - SAFE - lw), top: y + h + GAP }];
-    }
+    const { x, y, w, h, lw, pick } = placeLabel(s.fr, s.view, s.label);
     s.box = [x, y, w, h].map(r3); s.dir = pick[0];
     report.push({
       i: s.i, label: s.label, srcT: r3(s.m.t), shift: s.shift || 0, compT: r3(s.ct), litFrom: r3(s.cf),
       fadeIn: F(0.25), glided: !!s.glided, ...(SP.sweep && !s.glided && { sweepTo: r3(s.cf + F(0.9)) }), hold: r3(s.hold), srcHold: r3(s.srcHold),
       place: pick[0], box: [x, y, w, h].map(Math.round),
-      labBox: [pick[2].left, pick[2].top, lw, LH].map(Math.round), view: s.view,
+      labBox: [pick[2].left, pick[2].top, lw, C.layout.labelHeight].map(Math.round), view: s.view,
     });
     // vertical with no narration: the burned caption IS the label, at a size a phone can read, so
     // the small one by the spotlight stays laid out (check.mjs measures it) but is not drawn
@@ -725,35 +764,12 @@ function chapter(an, sp) {
     return `<div id="${name}-l${s.i}" class="lab" style="left:${r3(pick[2].left)}px;top:${r3(pick[2].top)}px${dup}">${esc(s.label)}</div>`;
   }).join('\n');
 
-  // Chapter card: a ghost numeral behind, persona kicker, title words rising out of their line
-  // masks. It leaves as the window arrives (the two overlap: the arrival is the card's exit).
   const firstLit = Math.min(...an.spots.map((s) => s.cf));
   const ent = r3(Math.max(1 / C.fps, Math.min(F(0.9), firstLit - CARD - 0.1)));
   const cardEnd = r3(CARD + F(0.25));
-  const card = `<section id="${name}-card" class="card clip" data-start="0" data-duration="${cardEnd}" data-track-index="2">
-  <div class="ghost" id="${name}-ghost">${String(idx).padStart(2, '0')}</div>
-  <div class="cbox" id="${name}-box">
-    <div class="kicker" id="${name}-kick"><span class="kbar" id="${name}-kbar"></span><span>${esc(cfg.persona || C.defaultPersona || '')}</span></div>
-    <div class="ttl" id="${name}-ttl">${words(cfg.title, 'wm')}</div>
-    <div class="rule" id="${name}-rule"></div>
-  </div>
-</section>`;
-  const q = (x) => `"#${name}-${x}"`, ww = q('ww');
-  const lines = [
-    `tl.fromTo(${q('ghost')}, { y: 60, opacity: 0 }, { y: 0, opacity: 0.055, duration: ${F(1.4)}, ease: "sine.out" }, 0);`,
-    `tl.fromTo(${q('kbar')}, { scaleX: 0 }, { scaleX: 1, duration: ${F(0.45)}, ease: "power3.out" }, ${F(0.12)});`,
-    `tl.fromTo(${q('kick')}, { opacity: 0, x: -24 }, { opacity: 1, x: 0, duration: ${F(0.5)}, ease: "power3.out" }, ${F(0.15)});`,
-    `tl.fromTo("#${name}-ttl .w", { yPercent: 108 }, { yPercent: 0, duration: ${F(0.7)}, ease: "power4.out", stagger: ${F(0.06)} }, ${F(0.22)});`,
-    `tl.fromTo(${q('rule')}, { scaleX: 0 }, { scaleX: 1, duration: ${F(0.5)}, ease: "power2.out" }, ${F(0.45)});`,
-    `tl.fromTo(${q('box')}, { opacity: 1, y: 0, filter: "blur(0px)" }, { opacity: 0, y: -28, filter: "blur(8px)", duration: ${r3(cardEnd - CARD + F(0.2))}, ease: "power2.in", immediateRender: false }, ${r3(CARD - F(0.2))});`,
-    `tl.fromTo(${q('ghost')}, { opacity: 0.055 }, { opacity: 0, duration: ${r3(cardEnd - CARD + F(0.2))}, ease: "power2.in", immediateRender: false }, ${r3(CARD - F(0.2))});`,
-  ];
-  // The window arrives tilted and eases flat before the first spotlight lights; the transform is
-  // then reset to 2D identity so the footage is never resampled through a 3D layer.
-  const tilt = FR ? FR.tilt : 0;
-  const from = tilt ? `{ opacity: 0, y: 36, scale: 0.94, rotationX: ${r3(tilt * 0.55)}, rotationY: ${-tilt}, transformPerspective: 1400, transformOrigin: "50% 60%" }` : '{ opacity: 0, scale: 1.03 }';
-  lines.push(`tl.fromTo(${ww}, ${from}, { opacity: 1, y: 0, scale: 1, rotationX: 0, rotationY: 0, duration: ${ent}, ease: "power3.out" }, ${r3(CARD)});`);
-  lines.push(`tl.set(${ww}, { transformPerspective: 0, rotationX: 0, rotationY: 0, y: 0, scale: 1 }, ${r3(CARD + ent)});`);
+  const { html: card, lines } = chapterCard(name, cfg, CARD, cardEnd);
+  const q = (x) => `"#${name}-${x}"`;
+  lines.push(...windowArrival(`#${name}-ww`, CARD, ent));
   // Framing (square): one set at 0, then an eased move between consecutive groups while nothing is lit.
   const cam = `#${name}-cam`, V = (v) => `x: ${v.x}, y: ${v.y}, scale: ${v.s}`;
   lines.push(`tl.set("${cam}", { ${V(groups[0][0].view)}, transformOrigin: "0 0" }, 0);`);
