@@ -3,7 +3,7 @@
 // (no app, no login). Exits non-zero if the core capture logic breaks.
 // Usage: node selfcheck.mjs   (or `npm run check` from the skill dir)
 import http from 'http'; import fs from 'fs'; import os from 'os'; import path from 'path';
-import assert from 'assert/strict'; import { execFileSync } from 'child_process';
+import assert from 'assert/strict'; import { execFileSync, execFile, spawn } from 'child_process'; import { fileURLToPath } from 'url';
 import { chromium } from '@playwright/test';
 import { capture, checkPath, ensureState, overlay } from './capture.mjs';
 import { Camera, Cursor, spring1d, CAMERA, CURSOR, SNAPPY } from './motion.mjs';
@@ -305,6 +305,36 @@ try {
   await assert.rejects(capture({ base, out, chapter: 'chain-miss', capture: SC, beats: [{ goto: '/a' }, { name: 'nav', click: [{ role: 'link', name: 'REPORT' }, { testid: 'reports' }] }] }),
     e => /beat "nav": click .*Tried role=link\[name="REPORT"\] \(0 visible\), testid=reports \(0 visible\)\. Nearest on the page: .*link "REPORTS"/.test(e.message) || assert.fail(`miss message: ${e.message}`));
   assert.ok(!fs.existsSync(path.join(out, 'chain-miss', 'events.json')), 'a take that missed a target wrote events.json');
+  //     The dry run (run.mjs --dry-run) resolves every target with no frames: exit 0 on a good beats
+  //     file, 1 naming the beat on a broken one; and a plain run dry-runs first, so a broken file
+  //     films nothing. Async: a blocking spawn would stall this process's own server.
+  const node = args => new Promise(res => execFile(process.execPath, args, { encoding: 'utf8' }, (err, stdout, stderr) => res({ status: err ? err.code : 0, out: stdout + stderr })));
+  const runMjs = path.join(path.dirname(fileURLToPath(import.meta.url)), 'run.mjs');
+  const beatsFile = (name, chapters) => { const f = path.join(out, `${name}.beats.mjs`); fs.writeFileSync(f, `export default ${JSON.stringify({ base, out: path.join(out, name), chapters })};`); return f; };
+  const good = beatsFile('dry-good', [{ name: 'c', beats: [{ goto: '/a', ready: { role: 'navigation' } }, { name: 'nav', click: { role: 'link', name: 'REPORTS' }, expectPath: '/b' }] }]);
+  const broken = beatsFile('dry-broken', [{ name: 'c', beats: [{ goto: '/a' }, { name: 'gone', click: { role: 'button', name: 'Export' } }] }]);
+  let dr = await node([runMjs, good, '--dry-run']);
+  assert.ok(dr.status === 0 && /1 chapter\(s\), 2 target\(s\) resolved, 0 miss/.test(dr.out), `dry run on a good file: exit ${dr.status}\n${dr.out}`);
+  dr = await node([runMjs, broken, '--dry-run']);
+  assert.ok(dr.status === 1 && /MISS beat "gone": click/.test(dr.out), `dry run on a broken file: exit ${dr.status}\n${dr.out}`);
+  dr = await node([runMjs, broken]);
+  assert.ok(dr.status === 1 && !fs.existsSync(path.join(out, 'dry-broken')), `a broken file filmed: exit ${dr.status}\n${dr.out}`);
+  //     And on the ferry example beside this skill, when it is there: green, in seconds.
+  const ferry = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../compose/examples/ferry');
+  let ferryDry = 'skipped (no compose example beside this skill)';
+  if (fs.existsSync(path.join(ferry, 'beats.mjs'))) {
+    const free = await new Promise(res => { const t = http.createServer().listen(0, () => { const p = t.address().port; t.close(() => res(p)); }); });
+    const app = spawn(process.execPath, ['serve.mjs', String(free)], { cwd: ferry, stdio: ['ignore', 'pipe', 'inherit'] });
+    try {
+      const port = await new Promise((res, rej) => { app.stdout.on('data', d => { const m = String(d).match(/ferry on (\d+)/); if (m) res(m[1]); }); app.on('exit', () => rej(new Error('ferry app exited'))); });
+      const t0 = Date.now();
+      dr = await new Promise(res => execFile(process.execPath, [runMjs, 'beats.mjs', '--dry-run'], { cwd: ferry, encoding: 'utf8', env: { ...process.env, PORT: port } },
+        (err, stdout, stderr) => res({ status: err ? err.code : 0, out: stdout + stderr })));
+      ferryDry = `${((Date.now() - t0) / 1000).toFixed(1)}s`;
+      assert.ok(dr.status === 0 && / 0 miss/.test(dr.out), `ferry dry run: exit ${dr.status}\n${dr.out}`);
+    } finally { app.kill(); }
+  }
+
   // 10. Overlay: one cursor per page even with an iframe, mounts in a sandboxed document where
   //     storage throws, and every click restarts the feedback (one ring animation, from its start).
   const browser = await chromium.launch();
@@ -404,7 +434,7 @@ try {
   console.log(`selfcheck OK: springs ${JSON.stringify(springs)}; pre-aim holds the fixed point; retarget keeps velocity; settles exact; ms 0 cuts; click lands at ${press.toFixed(3)}s; shake 100ms`);
   console.log(`selfcheck OK: main ${r.frames} frames/${r.dur.toFixed(2)}s 2560x1440@60 mp4 ${n} frames luma head ${head} tail ${tail}; anim ${md5.length} frames 0 repeats; blur spans ${JSON.stringify(spans)} inside camera moves, up to ${bb.maxSamples} samples ${bb.maxGap}px apart, capped run filled ${capped.filled} frames`);
   console.log(`selfcheck OK: lazy import stays deterministic; SSE runs on under auto, falls back to ${fb.mode} under pause, one message each; screencast hold ${h.frames} frames; scroll-zoom luma ${zl.det}/${zl.sc}; guard threw`);
-  console.log(`selfcheck OK: locator chain falls through to entry 2 and is recorded; a miss names the chain and nearest candidates and films nothing`);
+  console.log(`selfcheck OK: locator chain falls through to entry 2 and is recorded; a miss names the chain and nearest candidates and films nothing; dry run 0/1; ferry dry run ${ferryDry}`);
   console.log(`selfcheck OK: cursor under 2x zoom det ${cs.det.map(f2)} sc ${cs.sc.map(f2)} (zoomed, after nav); ring per click ${JSON.stringify(ripple)}; type det ${f2(ty.det[0])}s sc ${f2(ty.sc[0])}s; pace ${f2(p1.dur)}s -> ${f2(p2.dur)}s; loggedInSel re-mints; sandbox errors ${sandboxErrs}`);
 } finally {
   server.close(); fs.rmSync(out, { recursive: true, force: true });

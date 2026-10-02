@@ -183,17 +183,17 @@ async function film({ base, state, out, viewport = { width: 1280, height: 720 },
   localStorage: ls = {}, pace = 1, cursor = {}, cap }) {
   const { width: W, height: H } = viewport;
   if (!beats[0]?.goto) throw new Error(`chapter "${chapter}": first beat must be a goto (filming starts once it has painted)`);
-  const dir = path.join(out, chapter);
-  fs.rmSync(dir, { recursive: true, force: true }); fs.mkdirSync(path.join(dir, 'cfr'), { recursive: true });
+  const dir = path.join(out, chapter), dry = cap.mode === 'dry';
+  if (!dry) { fs.rmSync(dir, { recursive: true, force: true }); fs.mkdirSync(path.join(dir, 'cfr'), { recursive: true }); }
   const det = cap.mode === 'deterministic';
   const P = ms => ms * pace;
   const overlayArgs = { ls, hidden: !!cursor.hidden, ringColor: cursor.ring || '#FFFFFF', follow: !det };
-  const rec = det ? await deterministic({ W, H, cap, dir, state, overlayArgs }) : await screencast({ W, H, dir, state, overlayArgs });
+  const rec = dry ? await dryRun({ W, H, state }) : det ? await deterministic({ W, H, cap, dir, state, overlayArgs }) : await screencast({ W, H, dir, state, overlayArgs });
   const { page } = rec;
   Object.assign(rec, { speed: cursor.speed || 0, pace }); rec.cursorTilt = cursor.tilt;
   // targets: which locator each beat's targets resolved to; lints: selectors where a role or test
-  // id would do (with capture.lint).
-  const events = [], targets = [], lints = [], lint = !!cap.lint;
+  // id would do (checked on a dry run); timing: wall ms per beat (the dry run's table).
+  const events = [], targets = [], lints = [], timing = [], lint = dry || !!cap.lint;
   try {
     const run = (async () => {
       // Targets are resolved fresh every beat: nav bars change with context
@@ -241,7 +241,7 @@ async function film({ base, state, out, viewport = { width: 1280, height: 720 },
       let lastMark = null;
 
       for (const [i, step] of beats.entries()) {
-        const name = step.name || `#${i}`;
+        const name = step.name || `#${i}`, beatT0 = Date.now();
         lastMark = null;
         let quiet = null;
         if (step.goto || step.click) quiet = step.ready ? null : networkQuiet(page, { cap: step.readyCap }, clock);
@@ -305,11 +305,13 @@ async function film({ base, state, out, viewport = { width: 1280, height: 720 },
           events.push({ t: rec.now(), kind: 'mark', label: step.mark.label, rect: lastMark, cam: rec.cam });
         }
         if (step.hold) await rec.hold(P(step.hold), lastMark);
+        timing.push({ beat: name, ms: Date.now() - beatT0 });
       }
       await rec.hold(P(500), null);
     })();
     run.catch(() => {});                       // a stall rejects `rec.failed` first; this one then dies with the browser
     await Promise.race([run, rec.failed]);
+    if (dry) return { dry: true, chapter, targets, lints, timing };
     const r = await rec.stop();
     const capInfo = { mode: cap.mode, ...(cap.fallback && { requested: 'deterministic', fallback: cap.fallback }),
       ...(det && { network: cap.netNote ? 'advance' : cap.network === 'advance' ? 'advance' : 'pause', ...(cap.netNote && { networkNote: cap.netNote }) }),
@@ -336,6 +338,27 @@ function poser(cdp) {
     }
     await cdp.send('Runtime.evaluate', { expression: `window.__demoSet?.(${pose.x}, ${pose.y}, ${pose.cs}, ${pose.rot || 0})` }).catch(() => {});
   };
+}
+
+// ---------- dry run: the beats at speed, no frames ----------
+// The same beat loop drives a plain page: every target and every `ready` resolves for real and
+// clicks and typing happen, so a broken target fails here, but nothing is filmed or posed and every
+// wait for show (hold, settle, glide, the gap between keys) is cut to at most 20ms.
+async function dryRun({ W, H, state }) {
+  const browser = await chromium.launch();
+  const ctx = await browser.newContext({ viewport: { width: W, height: H }, storageState: state });
+  const page = await ctx.newPage();
+  const rec = {
+    page, filming: false, cam: null, camScroll: { x: 0, y: 0 }, speed: 0, pace: 1,
+    failed: new Promise(() => {}),
+    T: ms => ms, ms: () => Date.now(), now: () => 0,
+    sleep: ms => page.waitForTimeout(Math.min(ms, 20)),
+    async start() { rec.filming = true; },
+    async glide(to) { rec.cam = to.s === 1 ? null : to; },
+    async glideTo() {}, async hold() {},
+    close: () => browser.close(),
+  };
+  return rec;
 }
 
 // ---------- screencast recorder (real time, the fallback) ----------
