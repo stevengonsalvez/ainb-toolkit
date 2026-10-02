@@ -3,7 +3,7 @@
 // Generates one standalone HyperFrames project per chapter, plus title / switch / end cards.
 // Everything app-specific comes from the config. Nothing here knows what app was filmed.
 import { execFileSync, spawnSync } from 'node:child_process';
-import { readFileSync, writeFileSync, mkdirSync, copyFileSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, copyFileSync, existsSync, rmSync } from 'node:fs';
 import { dirname, resolve, basename, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadConfig, segmentNames, seams, seamsOf, screenRect, VERTICAL, eventsPath, r3, esc, grayFrames, mad, hexToRgba, clipSpans, frameCount } from './config.mjs';
@@ -1009,7 +1009,7 @@ function beatChapter(cfg) {
   const { name } = cfg, N = A?.narration;
   const an = (cfg.beats ? cfg.beats.some((b) => b.mark != null || b.index != null) : true) ? analysis(cfg) : null;
   const items = beatItems(cfg, an), clips = NAR[name]?.marks || [];
-  if (NAR[name]?.intro) console.warn(`  warn ${name}: narration.intro is not spoken in beat mode (chapter cards are silent)`);
+  if (cfg.narration?.intro) console.warn(`  warn ${name}: narration.intro is not spoken in beat mode (chapter cards are silent)`);
   if (clips.length > items.length) console.warn(`  warn ${name}: ${clips.length} lines for ${items.length} beats; the extra lines are not spoken`);
   const seam = seamsOf(C, name), last = segmentNames(C).at(-1) === name, tail = seam.out.dur || (last ? F(0.6) : 0);
   // layout first: views, boxes and labels of the filmed beats
@@ -1075,6 +1075,7 @@ function beatChapter(cfg) {
       b.parts.forEach((p, k) => {
         const sid = `${id}-p${k}`, left = SAFE + k * (hw + gap);
         inner += beatWindow(sid, p, an, ` style="left:${r3(left)}px;top:${r3(top)}px;width:${r3(hw)}px;height:${r3(hh)}px"`, z, true);
+        if (lit > b.start) lines.push(...windowArrival(`#${sid}-ww`, b.start, ENT));
         inner += `<div class="lab" id="${sid}-l" style="left:${r3(left)}px;top:${r3(top + hh + 18)}px">${esc(p.label)}</div>`;
         light(sid, p.box, `#${sid}-l`, 'below');
       });
@@ -1099,7 +1100,8 @@ function beatChapter(cfg) {
   const cap = captionLayer(name, { narration: placed, spots: report });
   const d = project(name, doc(name, total, [...html, cap.html].filter(Boolean).join('\n'), [...lines, ...cap.lines].join('\n')));
   // assets: each filmed beat's still at the size it is shown, and the slides' images
-  mkdirSync(`${d}/assets/stills`, { recursive: true }); mkdirSync(`${d}/assets/slides`, { recursive: true });
+  // a reused project keeps no stills or slide images from an earlier beat list
+  for (const x of ['stills', 'slides']) { rmSync(`${d}/assets/${x}`, { recursive: true, force: true }); mkdirSync(`${d}/assets/${x}`, { recursive: true }); }
   // one file per window that shows it (a split reuses two beats' stills): the same image twice in
   // one project is a duplicate-media lint warning
   const still = (p, file) => stillPng(an, p.k ?? stillFrame(an, p.spot), `${d}/assets/stills/${file}.png`, Math.min(an.dpr, Z * WS * Math.max(1, p.view.s)));

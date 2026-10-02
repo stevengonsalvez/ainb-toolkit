@@ -212,11 +212,13 @@ function checkChapter(name) {
     }
   }
   // Beat mode: every beat holds its line to the cut plus the pad, and no line runs over its cut.
+  // The line's end is measured from the spoken file itself, not taken from the plan.
   for (const b of plan.beats || []) {
-    if (!b.line) continue;
-    const short = r3(b.cut - b.line.end - (plan.pad ?? 0));
-    if (b.line.end > b.cut + 1e-3) BEATS.push(`${name} beat ${b.id}: line ends ${r3(b.line.end)}s, after its cut at ${b.cut}s`);
-    else if (short < -0.5 / C.fps) BEATS.push(`${name} beat ${b.id}: held ${r3(b.cut - b.line.end)}s past its line, under the ${plan.pad}s pad`);
+    const l = (plan.narration || []).find((x) => x.slot === b.i);
+    if (!l) continue;
+    const end = r3(l.at + +execFileSync(C.ffprobe, ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', l.file]).toString().trim());
+    if (end > b.cut + 1e-3) BEATS.push(`${name} beat ${b.id}: line ends ${end}s, after its cut at ${b.cut}s`);
+    else if (b.cut - end - (plan.pad ?? 0) < -0.5 / C.fps) BEATS.push(`${name} beat ${b.id}: held ${r3(b.cut - end)}s past its line, under the ${plan.pad}s pad`);
   }
   // Every cut shows a beat on both its frames: the last of the one before and the first of the
   // next. A frame with only the backdrop on it has almost no edges (mean luma step between

@@ -179,7 +179,8 @@ export async function narrationClips(C, only = null) {
   for (const ch of C.chapters) {
     if (!ch.narration) continue;
     if (typeof ch.narration !== 'object') throw new Error(`${ch.name}: narration must be { "intro": "...", "marks": ["...", ...] }`);
-    if (ch.narration.intro) lines.push({ seg: ch.name, slot: 'intro', ...parseLine(ch.narration.intro) });
+    // a beat-paced cut's chapter cards are silent: its intro would be spoken (and billed) for nothing
+    if (ch.narration.intro && C.cut !== 'beats') lines.push({ seg: ch.name, slot: 'intro', ...parseLine(ch.narration.intro) });
     (ch.narration.marks || []).forEach((t, i) => t && lines.push({ seg: ch.name, slot: i, ...parseLine(t) }));
   }
   if (only) lines.splice(0, lines.length, ...lines.filter((l) => only.includes(l.seg)));
