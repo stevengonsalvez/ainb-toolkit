@@ -934,13 +934,21 @@ ${labels}
 // earlier beats side by side) come from chapters[].beats.
 const upFrames = (d) => Math.ceil(d * C.fps - 1e-6);   // seconds to whole frames, never shorter
 function beatItems(cfg, an) {
-  const spots = an?.spots || [];
-  const items = (cfg.beats || spots.map((s) => ({ mark: s.i }))).map((b, i) => ({ ...b, i, id: String(b.id ?? b.mark ?? `b${i}`) }));
+  const spots = an?.spots || [], ids = spots.map((s) => s.m.id).filter((x) => x != null);
+  const dup = ids.filter((x, i) => ids.indexOf(x) !== i);
+  if (dup.length) throw new Error(`${cfg.name}: the take has more than one mark with id ${[...new Set(dup)].join(', ')}`);
+  const known = `marks 0-${spots.length - 1} by index${ids.length ? `, ids ${ids.join(', ')}` : ', no ids'}`;
+  // A filmed beat names its mark by id ("mark": "4.2") or by index ({ "index": 2 }); a bare number
+  // is an index only in a take whose marks have no ids, where it cannot be mistaken for one.
+  const items = (cfg.beats || spots.map((s) => ({ index: s.i }))).map((b, i) => ({ ...b, i }));
   for (const b of items) {
-    if (b.mark == null) continue;
-    b.spot = typeof b.mark === 'number' ? spots[b.mark] : spots.find((s) => s.m.id === b.mark);
-    if (!b.spot) throw new Error(`${cfg.name} beat ${b.i}: no mark ${JSON.stringify(b.mark)} in the take (marks: ${spots.map((s) => s.m.id ?? s.i).join(', ')}); name a mark by its id or its index`);
+    if (b.mark == null && b.index == null) continue;
+    if (typeof b.mark === 'number' && ids.length) throw new Error(`${cfg.name} beat ${b.i}: "mark": ${b.mark} in a take whose marks have ids; name it by id, or by index with { "index": ${b.mark} } (${known})`);
+    const idx = b.index ?? (typeof b.mark === 'number' ? b.mark : null);
+    b.spot = idx != null ? spots[idx] : spots.find((s) => s.m.id === String(b.mark));
+    if (!b.spot) throw new Error(`${cfg.name} beat ${b.i}: no mark ${JSON.stringify(b.mark ?? b.index)} in the take (${known})`);
   }
+  for (const b of items) b.id = String(b.id ?? (b.spot ? b.spot.m.id ?? b.spot.i : `b${b.i}`));
   for (const b of items) if (b.split) {
     b.parts = b.split.map((ref) => items.find((x) => x.id === String(ref) && x.i < b.i && x.spot));
     if (b.parts.some((x) => !x)) throw new Error(`${cfg.name} beat ${b.i}: split ${JSON.stringify(b.split)} must name two earlier filmed beats`);
@@ -999,7 +1007,7 @@ ${labelOutside ? '' : `<div id="${id}-l" class="lab" style="left:${r3(b.lab.left
 }
 function beatChapter(cfg) {
   const { name } = cfg, N = A?.narration;
-  const an = (cfg.beats ? cfg.beats.some((b) => b.mark != null) : true) ? analysis(cfg) : null;
+  const an = (cfg.beats ? cfg.beats.some((b) => b.mark != null || b.index != null) : true) ? analysis(cfg) : null;
   const items = beatItems(cfg, an), clips = NAR[name]?.marks || [];
   if (NAR[name]?.intro) console.warn(`  warn ${name}: narration.intro is not spoken in beat mode (chapter cards are silent)`);
   if (clips.length > items.length) console.warn(`  warn ${name}: ${clips.length} lines for ${items.length} beats; the extra lines are not spoken`);

@@ -134,15 +134,31 @@ export function loadConfig(path) {
   const cut = raw.cut ?? 'continuous';
   if (!['continuous', 'beats'].includes(cut)) throw new Error(`config: cut must be "continuous" or "beats", not "${cut}"`);
   const beats = { pad: 0.6, lead: 0, cardHold: 2.5, hold: 3, fade: 0, min: 3, max: 6, lineMax: 7, ...(raw.beats || {}) };
-  for (const k of Object.keys(beats)) if (!['pad', 'lead', 'cardHold', 'hold', 'fade', 'min', 'max', 'lineMax'].includes(k)) throw new Error(`config: beats.${k} is not a setting`);
-  if (!(Number.isInteger(beats.fade) && beats.fade >= 0 && beats.fade <= 4)) throw new Error('config: beats.fade is a micro-fade in whole frames, 0 (hard cut) to 4');
-  const SLIDES = ['title', 'tiles', 'devices', 'pricing', 'steps', 'end'];
-  for (const ch of chapters) for (const [i, b] of (ch.beats || []).entries()) {
-    const kinds = ['mark', 'slide', 'split'].filter((k) => b[k] != null);
-    if (kinds.length !== 1) throw new Error(`config: ${ch.name} beat ${i} needs exactly one of mark, slide or split`);
-    if (b.slide != null && !SLIDES.includes(b.slide)) throw new Error(`config: ${ch.name} beat ${i}: slide "${b.slide}" is not one of ${SLIDES.join(', ')}`);
-    if (b.split != null && !(Array.isArray(b.split) && b.split.length === 2)) throw new Error(`config: ${ch.name} beat ${i}: split takes two earlier beats, e.g. ["2.3", "2.4"]`);
-    for (const k of ['phone', 'tablet', 'web']) if (b[k] != null) { b[k] = abs(b[k]); if (!existsSync(b[k])) throw new Error(`config: ${ch.name} beat ${i}: ${k} image not found: ${b[k]}`); }
+  for (const [k, v] of Object.entries(beats)) {
+    if (!['pad', 'lead', 'cardHold', 'hold', 'fade', 'min', 'max', 'lineMax'].includes(k)) throw new Error(`config: beats.${k} is not a setting`);
+    if (!(typeof v === 'number' && Number.isFinite(v) && v >= 0)) throw new Error(`config: beats.${k} must be a number of seconds >= 0`);
+  }
+  if (!(Number.isInteger(beats.fade) && beats.fade <= 4)) throw new Error('config: beats.fade is a micro-fade in whole frames, 0 (hard cut) to 4');
+  const SLIDES = { title: ['title'], end: ['title'], tiles: ['tiles'], pricing: ['tiers'], steps: ['steps'], devices: [] };
+  const strs = (x) => Array.isArray(x) && x.length && x.every((v) => typeof v === 'string');
+  for (const ch of chapters) {
+    if (ch.beats && !(Array.isArray(ch.beats) && ch.beats.length)) throw new Error(`config: ${ch.name}: beats must be a list of at least one beat`);
+    for (const [i, b] of (ch.beats || []).entries()) {
+      const at = `config: ${ch.name} beat ${i}`;
+      const kinds = ['mark', 'index', 'slide', 'split'].filter((k) => b[k] != null);
+      if (kinds.length !== 1) throw new Error(`${at} needs exactly one of mark, index, slide or split`);
+      if (b.index != null && !(Number.isInteger(b.index) && b.index >= 0)) throw new Error(`${at}: index must be a whole number >= 0`);
+      if (b.split != null && !(Array.isArray(b.split) && b.split.length === 2)) throw new Error(`${at}: split takes two earlier beats, e.g. ["2.3", "2.4"]`);
+      if (b.slide == null) continue;
+      if (!SLIDES[b.slide]) throw new Error(`${at}: slide "${b.slide}" is not one of ${Object.keys(SLIDES).join(', ')}`);
+      for (const k of SLIDES[b.slide]) if (b[k] == null) throw new Error(`${at}: a ${b.slide} slide needs ${k}`);
+      if (b.slide === 'tiles' && !strs(b.tiles)) throw new Error(`${at}: tiles is a list of words`);
+      if (b.slide === 'steps' && !strs(b.steps)) throw new Error(`${at}: steps is a list of words`);
+      if (b.slide === 'pricing' && !(Array.isArray(b.tiers) && b.tiers.length && b.tiers.every((t) => typeof t?.name === 'string' && (t.points == null || strs(t.points)))))
+        throw new Error(`${at}: tiers is a list of { name, price, points: [...], highlight }`);
+      if (b.slide === 'devices' && !['phone', 'tablet', 'web'].some((k) => b[k] != null)) throw new Error(`${at}: a devices slide needs at least one of web, tablet, phone`);
+      for (const k of ['phone', 'tablet', 'web']) if (b[k] != null) { b[k] = abs(b[k]); if (!existsSync(b[k])) throw new Error(`${at}: ${k} image not found: ${b[k]}`); }
+    }
   }
   if (cut !== 'beats' && chapters.some((c) => c.beats)) throw new Error('config: chapters[].beats needs "cut": "beats"');
 
