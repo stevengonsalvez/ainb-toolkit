@@ -328,7 +328,7 @@ One per chapter, written next to the frames at `<out>/<chapter>/events.json`; `<
       "cam":  { "x": 312.5, "y": 360, "w": 640, "h": 360, "s": 2 } },
     { "t": 1.29, "kind": "camera", "t0": 1.29, "t1": 1.884,
       "cam":  { "x": 312.5, "y": 360, "w": 640, "h": 360, "s": 2 } },
-    { "t": 3.4, "kind": "click",
+    { "t": 3.4, "kind": "click", "name": "Reports", "role": "link",
       "rect": { "x": 1012, "y": 668, "w": 96, "h": 40 }, "cam": null }
   ]
 }
@@ -343,8 +343,11 @@ One per chapter, written next to the frames at `<out>/<chapter>/events.json`; `<
 element (the field, for a type), and `cam`, the camera box in force, in the same CSS px as a
 mark's, so a consumer can point at what was clicked or typed into. A click's rect is taken as the
 press lands; a type cue's after the typing, so a field that widens as it fills is measured as it
-ends up. `rect` is `null` when the target has no box (display:none, zero size). Takes filmed
-before this have cues without either field: treat both as optional. A consumer that reads only marks filters on `kind`. A `camera` event is one zoom or wide glide: `t0` and `t1` its
+ends up. `rect` is `null` when the target has no box (display:none, zero size). They also carry `name`,
+the target's accessible name (aria-label, else its label or text, else placeholder or title;
+trimmed, cut at a word under 40 characters) and `role` (`link`, `button`, `textbox`, ... or the
+element's own `role`), each `null` when there is none. Takes filmed before these have cues
+without them: treat all four as optional. A consumer that reads only marks filters on `kind`. A `camera` event is one zoom or wide glide: `t0` and `t1` its
   start and end, `cam` the box it ends on (`null` for a wide). demo:compose plays
   every camera move at 1x and fades a spotlight in only once the move into it has settled.
   Deterministic: `t1` is the frame the spring settled on, exactly. Screencast: the last pose

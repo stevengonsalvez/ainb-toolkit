@@ -23,8 +23,8 @@ const pages = {
   '/plain2': `<body style="margin:0;background:${BG};height:100vh"></body>`,
   '/frame': `<body style="margin:0;background:${BG};height:100vh"><iframe src="/news" width="400" height="200"></iframe></body>`,
   // Fields for the type cue's rect: one widens as it fills, one hides once it holds "go".
-  '/grow': `<body style="margin:0;background:${BG};height:100vh"><input id="g" style="position:absolute;left:100px;top:100px;width:100px;box-sizing:border-box" oninput="this.style.width = (100 + this.value.length * 20) + 'px'"></body>`,
-  '/hide': `<body style="margin:0;background:${BG};height:100vh"><input id="h" style="position:absolute;left:100px;top:100px" oninput="if (this.value === 'go') this.style.display = 'none'"></body>`,
+  '/grow': `<body style="margin:0;background:${BG};height:100vh"><input id="g" placeholder="Search sailings" style="position:absolute;left:100px;top:100px;width:100px;box-sizing:border-box" oninput="this.style.width = (100 + this.value.length * 20) + 'px'"></body>`,
+  '/hide': `<body style="margin:0;background:${BG};height:100vh"><input id="h" placeholder="short" aria-label="Departure port for the outbound crossing you want" style="position:absolute;left:100px;top:100px" oninput="if (this.value === 'go') this.style.display = 'none'"></body>`,
   // Turns white once the input holds exactly the typed text: the last frame proves the type beat.
   '/type': `<body style="margin:0;background:${BG};height:100vh"><input id="q" style="margin:200px;font-size:30px" oninput="if (this.value === 'ferry times') document.body.style.background = '#fff'"></body>`,
   // A login form, and a home page that sends logged-out visitors to /welcome, not to /login.
@@ -170,6 +170,8 @@ try {
   const nav = e.events.find(m => m.label === 'nav').rect, cr = clicks[0].rect;
   assert.ok(cr && cr.w > 0 && cr.h > 0 && cr.x >= nav.x && cr.y >= nav.y && cr.x + cr.w <= nav.x + nav.w && cr.y + cr.h <= nav.y + nav.h && 'cam' in clicks[0] && clicks[0].cam === null,
     `click rect ${JSON.stringify(clicks[0])} not inside the nav ${JSON.stringify(nav)}`);
+  //    And its accessible name and role, so the walkthrough can say "Open REPORTS".
+  assert.ok(clicks[0].name === 'REPORTS' && clicks[0].role === 'link', `click name/role ${JSON.stringify(clicks[0])}`);
   for (const m of moves) assert.ok(m.t1 - m.t0 >= 0.3, `camera event span ${m.t0}..${m.t1} too short for a 500ms spring`);
   assert.ok(moves[0].t1 <= z.t, 'zoom ended after the mark that follows it');
   assert.equal(z.cam.s, 2, 'zoom did not reach scale 2');
@@ -344,6 +346,9 @@ try {
   const [gc, gt] = await cues('/grow', '#g', 'ferry'), [hc, ht] = await cues('/hide', '#h', 'go');
   assert.ok(gc.rect.w === 100 && gt.rect.w === 200, `widening field: click ${JSON.stringify(gc.rect)}, type ${JSON.stringify(gt.rect)}`);
   assert.ok(hc.rect && hc.rect.w > 0 && ht.rect === null, `hiding field: click ${JSON.stringify(hc.rect)}, type ${JSON.stringify(ht.rect)}`);
+  //  Names: a placeholder names a field with no label; aria-label wins over it, cut under 40.
+  assert.ok(gc.name === 'Search sailings' && gc.role === 'textbox' && gt.name === 'Search sailings', `placeholder name ${gc.name}/${gt.name}, role ${gc.role}`);
+  assert.ok(hc.name === 'Departure port for the outbound\u2026' && hc.name.length < 40, `aria-label name ${JSON.stringify(hc.name)}`);
   //  A click while zoomed in screencast mode records its rect in the frame the camera box is in
   //  (CSS px from the scroll the zoom started at): #w at top 2000 after a 1700 scroll is at 300.
   const zc = ev(await capture({ base, out, chapter: 'zoom-click-sc', capture: SC, cursor: { hidden: true },

@@ -200,11 +200,26 @@ async function film({ base, state, out, viewport = { width: 1280, height: 720 },
         if (!(await el.count())) throw new Error(`beat "${beat}": selector ${sel} matched nothing`);
         return el.evaluate(n => { const r = n.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; });
       };
-      // A click or type cue's target, in the same CSS px as a mark's rect, or null when it has no
-      // box (display:none, zero size): a consumer then has nothing to point at.
-      const cueRect = async sel => {
-        const r = await page.locator(sel).first().evaluate(n => { const b = n.getBoundingClientRect(); return { x: b.x, y: b.y, w: b.width, h: b.height }; }).catch(() => null);
-        return r && r.w > 0 && r.h > 0 ? r : null;
+      // A click or type cue's target: its rect, in the same CSS px as a mark's, or null when it has
+      // no box (display:none, zero size), so a consumer has nothing to point at; its accessible name
+      // (aria-label, else its label or text, else placeholder or title; under 40 characters) and its
+      // role, so a consumer can say "Open Fares" rather than "Click here". Either may be null.
+      const cueTarget = async sel => {
+        const t = await page.locator(sel).first().evaluate(n => {
+          const b = n.getBoundingClientRect(), clean = s => (s || '').replace(/\s+/g, ' ').trim();
+          const byId = id => clean(document.getElementById(id)?.textContent);
+          const field = /^(INPUT|TEXTAREA|SELECT)$/.test(n.tagName);
+          const name = [n.getAttribute('aria-label'), (n.getAttribute('aria-labelledby') || '').split(/\s+/).map(byId).join(' '),
+            n.labels?.[0]?.textContent, field ? '' : n.innerText, n.getAttribute('placeholder'), n.getAttribute('title'), n.getAttribute('alt')].map(clean).find(Boolean) || null;
+          const type = (n.getAttribute('type') || '').toLowerCase();
+          const role = n.getAttribute('role') || (n.tagName === 'A' && n.hasAttribute('href') ? 'link' : n.tagName === 'BUTTON' || ['button', 'submit', 'reset'].includes(type) ? 'button'
+            : ['checkbox', 'radio'].includes(type) ? type : n.tagName === 'SELECT' ? 'combobox' : field ? 'textbox' : null);
+          return { rect: { x: b.x, y: b.y, w: b.width, h: b.height }, name, role };
+        }).catch(() => null);
+        if (!t) return { rect: null, name: null, role: null };
+        if (!(t.rect.w > 0 && t.rect.h > 0)) t.rect = null;
+        if (t.name?.length > 39) { const cut = t.name.slice(0, 38), sp = cut.lastIndexOf(' '); t.name = `${(sp > 22 ? cut.slice(0, sp) : cut).trimEnd()}\u2026`; }
+        return t;
       };
       const boxFor = (r, s) => {
         const vw = W / s, vh = H / s;
@@ -236,7 +251,7 @@ async function film({ base, state, out, viewport = { width: 1280, height: 720 },
           if (r) await rec.glideTo(r.x + r.width / 2, r.y + r.height / 2, P(300), true);
           // Sound cue for compose, as the press lands, with its target's rect and the camera box
           // in force (as a mark has them). Clicks before filming starts are not recorded.
-          if (rec.filming) { const t = rec.now(); events.push({ t, kind: 'click', rect: await cueRect(step.click), cam: rec.cam }); }
+          if (rec.filming) { const t = rec.now(); events.push({ t, kind: 'click', ...await cueTarget(step.click), cam: rec.cam }); }
           await el.click({ timeout: rec.T(8000) });
         }
         if (step.goto || step.click) {
@@ -259,12 +274,12 @@ async function film({ base, state, out, viewport = { width: 1280, height: 720 },
           if (r) await rec.glideTo(r.x + r.width / 2, r.y + r.height / 2, P(300), true);
           const typed = step.ready ? null : networkQuiet(page, { cap: step.readyCap }, clock);
           const tc = rec.now(), cam = rec.cam;
-          events.push({ t: tc, kind: 'click', rect: await cueRect(into), cam });
+          events.push({ t: tc, kind: 'click', ...await cueTarget(into), cam });
           await el.click({ timeout: rec.T(8000) });
           const t0 = rec.now();
           for (const ch of String(text)) { await page.keyboard.type(ch); await rec.sleep(1000 / cps); }
           // measured after the typing: a field that widens on focus or input is pointed at as it ends up
-          events.push({ t: t0, kind: 'type', dur: rec.now() - t0, chars: String(text).length, rect: await cueRect(into), cam: rec.cam });
+          events.push({ t: t0, kind: 'type', dur: rec.now() - t0, chars: String(text).length, ...await cueTarget(into), cam: rec.cam });
           if (step.ready) await ready(step.ready, step.readyCap ?? 15000, name);
           else await typed();
           await rec.sleep(P(step.settle ?? 400));

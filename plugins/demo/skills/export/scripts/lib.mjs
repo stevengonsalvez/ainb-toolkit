@@ -130,6 +130,11 @@ export function shortLabel(s, max = 59) {
 // then the type cue: one step, at the click's frame and rect (the field before it widened or hid
 // while typing). Each step points at the take frame that first shows it and the camera box in
 // force there (the cue's own `cam` when it has one).
+// A cue's step label: its own label, else from the target's accessible name and role as
+// demo:capture recorded them ("Open Fares" for a link, "Type in Search", "Click Save"), else the
+// generic one takes filmed before names were recorded get.
+const cueLabel = (e) => e.label || (e.kind === 'type' ? (e.name ? `Type in ${e.name}` : 'Type here')
+  : e.name ? `${e.role === 'link' ? 'Open' : 'Click'} ${e.name}` : 'Click here');
 export function steps(C, tl) {
   const out = []; let skipped = 0, hidden = 0;
   for (const ch of tl.chapters) {
@@ -146,11 +151,11 @@ export function steps(C, tl) {
         out.push({ chapter: ch.name, title: ch.title, kind: 'mark', t: e.t, frame: Math.round(e.t * fps), rect: e.rect, cam: e.cam, dpr, fps, vp,
           text: said(mark) || ch.spots.find((s) => s.i === mark)?.label || e.label, mark: mark++ });
       } else if (e.kind === 'click' || e.kind === 'type') {
-        if (e.kind === 'type' && after && e.t - after.t < 1) { Object.assign(after, { kind: 'type', text: e.label || 'Type here' }); continue; }
+        if (e.kind === 'type' && after && e.t - after.t < 1) { Object.assign(after, { kind: 'type', text: cueLabel(e) }); continue; }
         if (e.rect === undefined) { skipped++; continue; }
         if (e.rect === null) { hidden++; continue; }
         out.push({ chapter: ch.name, title: ch.title, kind: e.kind, t: e.t, frame: Math.max(0, Math.round(e.t * fps) - 1), rect: e.rect,
-          cam: e.cam !== undefined ? e.cam : cam, dpr, fps, vp, text: e.label || (e.kind === 'type' ? 'Type here' : 'Click here') });
+          cam: e.cam !== undefined ? e.cam : cam, dpr, fps, vp, text: cueLabel(e) });
         if (e.kind === 'click') click = out.at(-1);
       }
     }
