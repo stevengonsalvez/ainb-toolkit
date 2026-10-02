@@ -3,13 +3,15 @@
 // The quality gate. For every mark it renders a still at compT+0.5 and at the end of the hold,
 // and reports hit or miss per mark. Exits 1 if any mark misses.
 //
-// Four tests per mark, each aimed at a failure this rig has actually produced:
+// Five tests per mark, each aimed at a failure this rig has actually produced:
 //   lit     the cut-out region is undimmed and the surrounding ring is dimmed
 //           -> the spotlight exists, is on screen at the rect, at the right composition time
 //   content the region under the cut-out carries UI detail, not flat background
 //           -> the cut-out landed on something, not on empty page
 //   stable  the region does not change between the two stills
 //           -> DEFECT 1: the hold does not run past a camera move
+//   aligned under the cut-out the render matches the source framed through the mark's view
+//           -> the crop or camera is where the spotlight was laid out for, not still moving
 //   label   the label box does not intersect the spotlight box
 //           -> DEFECT 2: a label never covers its own spotlight
 import { execFileSync } from 'node:child_process';
@@ -158,11 +160,18 @@ function checkChapter(name) {
     const drift = diff(raw[0], raw[1], box);
     if (!short && drift > K.driftMax) why.push(`drift ${r3(drift)}`);
 
+    // aligned: under the cut-out the render IS the source framed through the mark's view, so a
+    // crop or camera that has not reached that view while the spotlight is up (the vertical crop
+    // still sliding) shows other footage. lit and drift cannot see it: both ratios hold over a
+    // shifted page and drift reads the source. Mean luma difference, 0-255.
+    const align = Math.max(...[0, 1].map((k) => diff(ren[k], raw[k], box)));
+    if (!short && align > K.alignMax) why.push(`cut-out off its footage ${r3(align)}`);
+
     // label clear of its own spotlight
     if (overlaps(s.labBox, s.box)) why.push('label covers spotlight');
 
     rows.push({ name, i: s.i, label: s.label, compT: s.compT, hold: s.hold, place: s.place,
-      lit: r3(Math.min(...litR)), dim: r3(Math.max(...dimR)), sd: r3(sd), drift: r3(drift),
+      lit: r3(Math.min(...litR)), dim: r3(Math.max(...dimR)), sd: r3(sd), drift: r3(drift), align: r3(align),
       ok: !why.length, why: why.join('; ') });
 
     // contact tiles for eyeballing alongside the numbers, named 000.png, 001.png, ... in mark order,
@@ -184,9 +193,9 @@ function checkChapter(name) {
 const want = process.argv.slice(3);
 const names = want.length ? want : segmentNames(C).filter((n) => !C.cards[n]);
 const all = names.flatMap(checkChapter);
-console.log('chapter                  m  compT   hold  place          lit   dim   sd    drift  result');
+console.log('chapter                  m  compT   hold  place          lit   dim   sd    drift  align  result');
 for (const r of all) {
-  console.log(`${r.name.padEnd(24)} ${String(r.i).padEnd(2)} ${String(r.compT).padEnd(6)} ${String(r.hold).padEnd(5)} ${r.place.padEnd(14)} ${String(r.lit).padEnd(5)} ${String(r.dim).padEnd(5)} ${String(r.sd).padEnd(5)} ${String(r.drift).padEnd(6)} ${r.ok ? 'hit' : 'MISS ' + r.why}`);
+  console.log(`${r.name.padEnd(24)} ${String(r.i).padEnd(2)} ${String(r.compT).padEnd(6)} ${String(r.hold).padEnd(5)} ${r.place.padEnd(14)} ${String(r.lit).padEnd(5)} ${String(r.dim).padEnd(5)} ${String(r.sd).padEnd(5)} ${String(r.drift).padEnd(6)} ${String(r.align).padEnd(6)} ${r.ok ? 'hit' : 'MISS ' + r.why}`);
 }
 const miss = all.filter((r) => !r.ok);
 writeFileSync(`${C.out}/work/check.json`, JSON.stringify(all, null, 1));
