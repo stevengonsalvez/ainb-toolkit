@@ -16,7 +16,7 @@
 //           -> DEFECT 2: a label never covers its own spotlight
 import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync, mkdirSync, rmSync, existsSync, readdirSync } from 'node:fs';
-import { loadConfig, segmentNames, screenRect, frameCount, r3, hexToRgb, grayFrames } from './config.mjs';
+import { loadConfig, segmentNames, screenRect, frameCount, r3, hexToRgb, grayFrames, seamsOf } from './config.mjs';
 
 const cfgPath = process.argv[2];
 if (!cfgPath) { console.error('usage: check.mjs <config.json> [chapter ...]'); process.exit(2); }
@@ -223,10 +223,13 @@ function checkChapter(name) {
   // Every cut shows a beat on both its frames: the last of the one before and the first of the
   // next. A frame with only the backdrop on it has almost no edges (mean luma step between
   // neighbouring pixels at 320x180: blank cut frames read 0.54 to 0.61, the sparsest slide 1.2+).
+  // Frames inside the seam into this segment are mid-transition (blurred, pushed in, and in the
+  // film dissolved under the segment before), so a first beat starting there is not read.
+  const seamIn = seamsOf(C, name).in.dur;
   for (const b of plan.beats || []) {
     const f0 = Math.round(b.start * C.fps);
     for (const f of [f0 - 1, f0]) {
-      if (f < 0 || f >= nSeg || (b.i === 0 && f < f0)) continue;
+      if (f < 0 || f >= nSeg || (b.i === 0 && f < f0) || f < Math.round(seamIn * C.fps)) continue;
       const g = grayFrames(C.ffmpeg, seg, { t: segFrame(nSeg, f / C.fps), w: 320, h: 180 }).at(0);
       let e = 0;
       for (let y = 0; y < 180; y++) for (let x = 0; x < 320; x++) { const v = g[y * 320 + x]; if (x < 319) e += Math.abs(v - g[y * 320 + x + 1]); if (y < 179) e += Math.abs(v - g[(y + 1) * 320 + x]); }
