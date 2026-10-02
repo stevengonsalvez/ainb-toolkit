@@ -515,10 +515,20 @@ try {
     for (const v of cs[m]) assert.ok(v > 0.6 && v < 1.6, `${m}: cursor ${v.toFixed(2)}x its unzoomed size under a 2x zoom (want ~1): ${cs[m]}`);
   }
 
+  // 14. A mark's id lands on its event as written and is absent where the beat gave none; a
+  //     numeric or repeated id fails before anything is filmed.
+  const idMarks = ev(await capture({ base, out, chapter: 'markid', capture: SC, beats: [{ goto: '/a' },
+    { mark: { id: '4.10', label: 'named', on: 'h1' } }, { mark: { label: 'plain', on: 'h1' } }] })).events.filter(e => e.kind === 'mark');
+  assert.deepEqual(idMarks.map(m => m.id), ['4.10', undefined], `mark ids ${JSON.stringify(idMarks.map(m => m.id))}`);
+  await assert.rejects(capture({ base, out, chapter: 'markid-num', capture: SC, beats: [{ goto: '/a' }, { mark: { id: 4.1, label: 'x', on: 'h1' } }] }), /must be a non-empty string/);
+  await assert.rejects(capture({ base, out, chapter: 'markid-dup', capture: SC, beats: [{ goto: '/a' },
+    { mark: { id: '1', label: 'x', on: 'h1' } }, { mark: { id: '1', label: 'y', on: 'h1' } }] }), /used twice/);
+
   const f2 = v => v.toFixed(2);
   console.log(`selfcheck OK: springs ${JSON.stringify(springs)}; pre-aim holds the fixed point; retarget keeps velocity; settles exact; ms 0 cuts; click lands at ${press.toFixed(3)}s; shake 100ms`);
   console.log(`selfcheck OK: main ${r.frames} frames/${r.dur.toFixed(2)}s 2560x1440@60 mp4 ${n} frames luma head ${head} tail ${tail}; anim ${md5.length} frames 0 repeats; blur spans ${JSON.stringify(spans)} inside camera moves, up to ${bb.maxSamples} samples ${bb.maxGap}px apart, capped run filled ${capped.filled} frames`);
   console.log(`selfcheck OK: lazy import stays deterministic; SSE runs on under auto, falls back to ${fb.mode} under pause, one message each; screencast hold ${h.frames} frames; scroll-zoom luma ${zl.det}/${zl.sc}; guard threw`);
+  console.log(`selfcheck OK: mark id carried as written, absent when not given; numeric and repeated ids refused`);
   console.log(`selfcheck OK: locator chain falls through to entry 2 and is recorded; a miss names the chain and nearest candidates and films nothing; dry run 0/1; ferry dry run ${ferryDry}`);
   console.log(`selfcheck OK: cursor under 2x zoom det ${cs.det.map(f2)} sc ${cs.sc.map(f2)} (zoomed, after nav); ring per click ${JSON.stringify(ripple)}; type det ${f2(ty.det[0])}s sc ${f2(ty.sc[0])}s; pace ${f2(p1.dur)}s -> ${f2(p2.dur)}s; loggedInSel re-mints; sandbox errors ${sandboxErrs}`);
 } finally {

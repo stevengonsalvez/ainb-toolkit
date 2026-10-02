@@ -167,7 +167,21 @@ class Fallback extends Error {}
 // pace multiplies every filmed duration (zoom/wide ms, hold, settle, cursor glides); 2 = twice as slow.
 // cursor.speed is px/s; cursor.ring is the click ring's CSS colour; cursor.tilt tilts the pointer.
 // capture: { mode: 'deterministic' | 'screencast', dpr: 2, fps: 60, blur, network, unstickMs, stallMs, timeoutMs }.
+// A mark's id names it for compose, so it must be a string (4.10 as a number is 4.1) and unique in
+// its chapter. Checked before anything is filmed, dry runs included.
+function checkMarkIds(beats, chapter) {
+  const seen = new Set();
+  for (const b of beats || []) {
+    const id = b?.mark?.id;
+    if (id == null) continue;
+    if (typeof id !== 'string' || !id) throw new Error(`chapter "${chapter}", beat "${b.name ?? '?'}": mark id must be a non-empty string, got ${JSON.stringify(id)} (write '4.10', not 4.10)`);
+    if (seen.has(id)) throw new Error(`chapter "${chapter}": mark id "${id}" is used twice`);
+    seen.add(id);
+  }
+}
+
 export async function capture(opts) {
+  checkMarkIds(opts.beats, opts.chapter);
   const cap = { mode: 'deterministic', dpr: 2, fps: 60, blur: {}, network: 'auto', unstickMs: 1500, stallMs: 10000, timeoutMs: 600000,
     ...opts.capture, chapter: opts.chapter };
   if (cap.blur !== false) cap.blur = { samples: 4, max: 64, spacing: 1.5, shutter: 0.5, threshold: 2, ...cap.blur };
@@ -307,7 +321,7 @@ async function film({ base, state, out, viewport = { width: 1280, height: 720 },
         if (step.mark) {
           lastMark = await rectOf(await find(step.mark.on, 'mark', name));
           // `id` names the mark for compose (a beat-paced cut orders beats by it); kept as written.
-          events.push({ t: rec.now(), kind: 'mark', ...(step.mark.id != null && { id: String(step.mark.id) }),
+          events.push({ t: rec.now(), kind: 'mark', ...(step.mark.id != null && { id: step.mark.id }),
             label: step.mark.label, rect: lastMark, cam: rec.cam });
         }
         if (step.hold) await rec.hold(P(step.hold), lastMark);
