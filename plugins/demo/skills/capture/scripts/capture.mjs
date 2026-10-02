@@ -321,8 +321,10 @@ async function film({ base, state, out, viewport = { width: 1280, height: 720 },
     const capInfo = { mode: cap.mode, ...(cap.fallback && { requested: 'deterministic', fallback: cap.fallback }),
       ...(det && { network: cap.netNote ? 'advance' : cap.network === 'advance' ? 'advance' : 'pause', ...(cap.netNote && { networkNote: cap.netNote }) }),
       ...(det && { blur: cap.blur && { ...cap.blur, spans: r.blurSpans, ...r.blurStats } }) };
-    fs.writeFileSync(path.join(dir, 'events.json'), JSON.stringify({ chapter, viewport, dpr: r.dpr, fps: r.fps,
-      capture: capInfo, dur: r.dur, frames: r.frames, events, targets }, null, 1));
+    // poses go last, one [frame, x, y, s] per line: indented like the rest they cost one line per number
+    const body = JSON.stringify({ chapter, viewport, dpr: r.dpr, fps: r.fps, capture: capInfo, dur: r.dur, frames: r.frames, events, targets }, null, 1);
+    fs.writeFileSync(path.join(dir, 'events.json'), r.poses?.length
+      ? `${body.slice(0, -2)},\n "poses": [\n${r.poses.map((p) => `  ${JSON.stringify(p)}`).join(',\n')}\n ]\n}` : body);
     if (lints.length) for (const w of lints) console.warn(`  lint ${chapter}: ${w}`);
     return { frames: r.frames, dur: r.dur, events: events.filter(e => e.kind === 'mark').length, dir, mode: cap.mode, fps: r.fps, dpr: r.dpr };
   } catch (e) { e.targets = targets; throw e; }   // what resolved before it failed, for the dry run's count
@@ -649,6 +651,9 @@ async function deterministic({ W, H, cap, dir, state, overlayArgs }) {
 
   let tNext = FI, recording = false, n = 0, primed = 0, prevPng = null, waiters = [], pumping = true;
   const blurFrames = [], stats = { maxSamples: 0, maxGap: 0, filled: 0, peakTempMB: 0 };
+  // The camera's pose on each frame where it changed, [frame, x, y, s] in the same space as the
+  // camera events' boxes: compose moves its spotlight and crop with the content it films.
+  const poses = [];
   // ffmpeg averages each blurred frame in the background while capture goes on, two at a time:
   // tmix over its N sub-frames, then only the last of tmix's N outputs (the full average) goes
   // on to the gap fill (filling all N and keeping the last cost 3x the time, identical output).
@@ -707,6 +712,8 @@ async function deterministic({ W, H, cap, dir, state, overlayArgs }) {
       if (!recording) { await draw(t, false); primed++; }
       else {
         const sm = blur ? shutterMotion() : { d: 0 };
+        const pb = camera.box(), pose = [n, ...[pb.x, pb.y, pb.s].map((v) => +v.toFixed(4))];
+        if (!poses.length || pose.slice(1).some((v, i) => v !== poses.at(-1)[i + 1])) poses.push(pose);
         let buf = await draw(t, true);
         if (n === 0) {                                     // the size check, once: a 1x frame means DSF did not apply
           const w = buf.readUInt32BE(16), h = buf.readUInt32BE(20);
@@ -808,7 +815,7 @@ async function deterministic({ W, H, cap, dir, state, overlayArgs }) {
       if (gapAt !== undefined) throw new Error(`frame ${gapAt} of ${n} is missing from ${path.join(dir, 'cfr')}`);
       const spans = [];
       for (const k of blurFrames) { if (spans.length && spans.at(-1)[1] === k - 1) spans.at(-1)[1] = k; else spans.push([k, k]); }
-      return { frames: n, dur: (n - 1) / fps, fps, dpr, blurSpans: spans, blurStats: stats };
+      return { frames: n, dur: (n - 1) / fps, fps, dpr, blurSpans: spans, blurStats: stats, poses };
     },
     // The frame loop may be stuck in a call to a dead browser: wait for it a few seconds at most.
     close: async () => {

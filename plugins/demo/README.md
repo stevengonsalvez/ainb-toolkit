@@ -6,7 +6,7 @@ walkthrough video, then export it for places a video player does not reach. Four
 | Skill | Does |
 |---|---|
 | `demo:capture` | Drives a real browser through an app with Playwright and records it: real clicks, real navigation, sharp in-browser camera zooms. Emits per-chapter mp4 plus `events.json` (timed marks with element rects and the camera box). |
-| `demo:compose` | Turns that output plus a small config into the finished video: spotlight and short label at each mark, chapter cards, sound effects timed from the capture, optional music bed and narration whose words fire the spotlights, -14 LUFS mix, WebVTT captions and chapters. Renders with HyperFrames. |
+| `demo:compose` | Turns that output plus a small config into the finished video: spotlight and short label at each mark, chapter cards, sound effects timed from the capture, optional music bed and narration whose words fire the spotlights, -14 LUFS mix, WebVTT captions and chapters; landscape, square or a 9:16 vertical cut whose crop follows the action. Renders with HyperFrames. |
 | `demo:export` | Turns the finished demo into a README bundle (looping GIF, animated WebP, poster and a `<picture>` snippet that shows reduced-motion readers the poster) and a self-contained interactive click-through page, one step per mark, from the capture's lossless frames. |
 | `demo:brag` | Routes to the upstream [brag](https://github.com/latent-spaces/brag) skill for a launch video read from a repository rather than a running app. |
 

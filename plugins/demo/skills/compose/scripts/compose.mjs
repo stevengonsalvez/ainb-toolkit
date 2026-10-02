@@ -6,8 +6,9 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync, mkdirSync, copyFileSync, existsSync } from 'node:fs';
 import { dirname, resolve, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadConfig, segmentNames, seams, seamsOf, screenRect, eventsPath, r3, esc, grayFrames, mad, hexToRgba } from './config.mjs';
+import { loadConfig, segmentNames, seams, seamsOf, screenRect, VERTICAL, eventsPath, r3, esc, grayFrames, mad, hexToRgba } from './config.mjs';
 import { audioSettings, narrationClips, fitNarration, beatGrid } from './audio.mjs';
+import { cues as captionCues } from './captions.mjs';
 
 const cfgPath = process.argv[2];
 if (!cfgPath) { console.error('usage: compose.mjs <config.json> [segment ...]'); process.exit(2); }
@@ -88,7 +89,7 @@ function keep(dur, cuts) {
 // #bg backdrop and grain (shared by every segment, so a crossfade between two segments only moves
 // content), then #content: cards, and the framed window holding the footage, spotlight and labels.
 const T = C.theme, FR = C.frame, Z = C.zoom;
-const SR = screenRect(C), WS = SR.ws, PAD = SR.pad, PADY = SR.padY;
+const SR = screenRect(C), WS = SR.ws, PAD = SR.pad, PADY = SR.padY, SCW = SR.sw, SCH = SR.sh;   // the screen, see config.mjs
 const BACK = FR ?? { backdrop: 'glow', grain: 0.045 };
 const faces = C.fontFaces.join('\n');
 const tint = (hex, a) => hexToRgba(hex, a);
@@ -109,10 +110,10 @@ function squircle(w, h, r, k = 10) {
   }
   return `polygon(${pts.map(([x, y]) => `${r3(x)}px ${r3(y)}px`).join(', ')})`;
 }
-const WW = W * WS, WH = H * WS, R = FR ? FR.radius : 0, SH = FR ? FR.shadow : 0;
+const WW = SCW * WS, WH = SCH * WS, R = FR ? FR.radius : 0, SH = FR ? FR.shadow : 0;
 const ink = (a) => tint(T.text, a);
 const shadow = SH ? `0 0 0 1px ${ink(0.08 * SH)}, 0 1px 2px ${ink(0.16 * SH)}, 0 10px 24px ${ink(0.14 * SH)}, 0 36px 80px ${ink(0.22 * SH)}` : 'none';
-const SP = C.spotlight, FE = SP.feather;
+const SP = C.spotlight, FE = SP.feather, VS = VERTICAL.safe, VERT = C.format === 'vertical';
 const band = (dir, a, b) => `linear-gradient(${dir}, transparent calc(var(${a}) - ${FE}px), #000 var(${a}), #000 calc(var(${a}) + var(${b})), transparent calc(var(${a}) + var(${b}) + ${FE}px))`;
 const STYLE = `
 ${faces}
@@ -132,7 +133,7 @@ html, body { width: ${C.width}px; height: ${C.height}px; overflow: hidden; backg
 .win { position: absolute; inset: 0; ${R ? `clip-path: ${squircle(WW, WH, R)};` : ''} }
 /* zoom, not transform: scale(): under a scaled ancestor Chrome mirrors the spotlight's
    backdrop-filter at the unscaled bounds (whole words reflected at the edges, measured). */
-.screen { position: absolute; left: 0; top: 0; width: ${W}px; height: ${H}px; zoom: ${r3(WS)}; background: ${T.bg}; }
+.screen { position: absolute; left: 0; top: 0; width: ${SCW}px; height: ${SCH}px; zoom: ${r3(WS)}; background: ${T.bg}; }
 .cam { position: absolute; left: 0; top: 0; }
 .foot { position: absolute; inset: 0; width: 100%; height: 100%; }
 .sl { position: absolute; inset: 0; opacity: 0; visibility: hidden; pointer-events: none; --x: 0px; --y: 0px; --w: 0px; --h: 0px; }
@@ -149,7 +150,7 @@ html, body { width: ${C.width}px; height: ${C.height}px; overflow: hidden; backg
   box-shadow: 0 1px 2px rgba(0,0,0,0.20), 0 10px 28px rgba(0,0,0,0.30); }
 .card { position: absolute; inset: 0; }
 .ghost { position: absolute; right: -0.04em; bottom: -0.2em; font-family: ${C.displayStack}; font-weight: 700;
-  font-size: ${Math.round(H * 0.56)}px; line-height: 1; letter-spacing: -0.04em; white-space: nowrap; color: ${T.text}; opacity: 0.055; }
+  font-size: ${Math.round(Math.min(W, H) * 0.56)}px; line-height: 1; letter-spacing: -0.04em; white-space: nowrap; color: ${T.text}; opacity: 0.055; }
 .hair { position: absolute; left: ${SAFE}px; right: ${SAFE}px; height: 1px; background: ${ink(0.14)}; transform-origin: 0 50%; }
 .cbox { position: absolute; left: ${Math.round(SAFE * 1.75)}px; right: ${Math.round(SAFE * 1.75)}px; top: 0; bottom: 0;
   display: flex; flex-direction: column; justify-content: center; align-items: flex-start; }
@@ -164,7 +165,16 @@ html, body { width: ${C.width}px; height: ${C.height}px; overflow: hidden; backg
 .sub { font-weight: 500; font-size: 26px; line-height: 1.3; color: ${T.muted}; margin-top: 22px; max-width: ${Math.round(W * 0.6)}px; }
 .sub b { color: ${T.highlight}; font-weight: 600; }
 #fade { position: absolute; inset: 0; background: ${T.bg}; opacity: 0; pointer-events: none; }
-`;
+${VERT ? `/* vertical: the headline band above the window and the caption band below it, both inside the
+   platforms' safe zones (VERTICAL.safe: clear of their top bar, bottom captions UI and side rail) */
+.vhead { position: absolute; left: ${VS.left}px; right: ${VS.right}px; top: ${VS.top}px; opacity: 0; }
+.vtitle { font-family: ${C.displayStack}; font-weight: 700; font-size: 60px; line-height: 1.05; letter-spacing: -0.02em;
+  color: ${T.text}; margin-top: 16px; text-wrap: balance; overflow-wrap: anywhere; }
+.vcap { position: absolute; left: ${VS.left}px; right: ${VS.right}px; bottom: ${VS.bottom}px; height: 0; }
+.cue { position: absolute; left: 50%; bottom: 0; transform: translateX(-50%); opacity: 0; width: max-content; max-width: 100%; overflow-wrap: anywhere;
+  padding: 14px 26px; border-radius: 18px; background: color-mix(in oklab, ${T.text} 88%, transparent);
+  font-family: ${C.bodyStack}; font-weight: 600; font-size: 40px; line-height: 1.25; color: #FFFFFF; text-align: center; text-wrap: balance; }
+` : ''}`;
 
 // A segment renders ceil(duration * fps) frames (measured: 3.067s rendered 93 frames, not 92), so a
 // duration that is meant to be whole frames is written rounded DOWN to the millisecond.
@@ -222,10 +232,31 @@ function seamLines(name, total) {
 const words = (s, cls) => esc(s).split(/\s+/).filter(Boolean).map((w) => (cls === 'wm' ? `<span class="wm"><span class="w">${w}</span></span>` : `<span class="w">${w}</span>`)).join(' ');
 const ghostWord = (s) => String(s).split(/\s+/).sort((a, b) => b.length - a.length)[0] || '';
 
+// Vertical only: captions burned into the segment itself, in the caption band. The narration's
+// words, the spoken one picked out, or without narration each spotlight's label while it is lit
+// (captions.mjs groups them, the same cues as the .vtt).
+function captionLayer(id, plan) {
+  if (!VERT || A?.captions.burn === false) return { html: '', lines: [] };
+  const { cues: cs } = captionCues(C, [{ name: id, start: 0, plan }], A);
+  const lines = [], word = `color-mix(in oklab, ${T.highlight} 45%, white)`;
+  // the 160px band under the window holds two lines of about 40 characters; more rises over it
+  for (const c of cs) if (c.text.length > 80) console.warn(`  warn ${id}: caption "${c.text.slice(0, 40)}..." is ${c.text.length} characters; over about 80 it rises over the window`);
+  const html = cs.map((c, i) => {
+    const el = `#${id}-c${i}`;
+    lines.push(`tl.set("${el}", { opacity: 1 }, ${r3(c.start)});`, `tl.set("${el}", { opacity: 0 }, ${r3(c.end)});`);
+    if (!c.words) return `<div class="cue" id="${id}-c${i}">${esc(c.text)}</div>`;
+    c.words.forEach((w, k) => {
+      lines.push(`tl.set("${el}w${k}", { color: "${word}" }, ${r3(w.start)});`, `tl.set("${el}w${k}", { color: "#FFFFFF" }, ${r3(c.words[k + 1]?.start ?? c.end)});`);
+    });
+    return `<div class="cue" id="${id}-c${i}">${c.words.map((w, k) => `<span id="${id}-c${i}w${k}">${esc(w.text)}</span>`).join(' ')}</div>`;
+  }).join('\n');
+  return { html: `<div class="vcap">${html}</div>`, lines };
+}
+
 // Text card (title / switch / end). Edge-anchored type over the shared backdrop, an oversized
 // ghost word drifting behind it, a hairline; each kind enters differently (house motion rules:
 // no shared ease or direction across cards). The seam halves are the card's exits.
-function cardDoc(id, c, kind) {
+function cardDoc(id, c, kind, narration = []) {
   const dur = c.dur, last = segmentNames(C).at(-1) === id;
   const body = `<section id="${id}-card" class="card clip" data-start="0" data-duration="${fdur(dur)}">
   <div class="ghost" id="${id}-ghost">${esc(ghostWord(c.title))}</div>
@@ -262,7 +293,8 @@ function cardDoc(id, c, kind) {
   s.push(...seamLines(id, dur));
   // the film's last frame resolves to the backdrop colour: the one exit the house rules allow
   if (last) s.push(`tl.fromTo("#fade", { opacity: 0 }, { opacity: 1, duration: ${F(0.6)}, ease: "power1.in", immediateRender: false }, ${r3(dur - F(0.6))});`);
-  return doc(id, dur, body, s.join('\n'));
+  const cap = captionLayer(id, { narration, spots: [] });
+  return doc(id, dur, body + cap.html, [...s, ...cap.lines].join('\n'));
 }
 
 // ---------- chapter analysis (source time, independent of speed) ----------
@@ -328,8 +360,25 @@ function analyze(cfg) {
   const kept = keep(dur - 0.03, cuts);
   const vp = ev.viewport || { width: 1280, height: 720 };
   return { cfg, name, mp4, dur, spots, moves, kept, srcW: vp.width, srcH: vp.height, fps: ev.fps ?? 30, dpr: ev.dpr ?? 1, CARD: cfg.cardDur ?? C.chapterCardDur,
+    poses: ev.poses?.length ? ev.poses : null,
     cues: ev.events.filter((e) => ['click', 'type', 'camera'].includes(e.kind)).map((e) => (e.kind === 'camera' ? { ...e, dur: e.t1 - e.t0 } : e)) };
 }
+
+// ---------- the capture camera ----------
+// demo:capture logs the in-browser camera's pose on each frame it changed ([frame, x, y, s],
+// `poses` in events.json; takes filmed before that have none). poseAt is the pose on source frame
+// k, camAt on the source frame at time t (an event's own frame time), a page rect's frame rect
+// under it is (rect - cam) * s, and a camera at scale 1 is no camera, as in capture.
+const camAt = (an, t) => poseAt(an, Math.round(t * an.fps));
+function poseAt(an, k) {
+  const P = an.poses;
+  let lo = 0, hi = P.length - 1;
+  if (k < P[0][0]) return { x: 0, y: 0, s: 1 };
+  while (lo < hi) { const m = (lo + hi + 1) >> 1; if (P[m][0] <= k) lo = m; else hi = m - 1; }
+  const [, x, y, s] = P[lo];
+  return s > 1 + 1e-6 ? { x, y, s } : { x: 0, y: 0, s: 1 };
+}
+const onFrame = (r, c) => ({ x: (r.x - c.x) * c.s, y: (r.y - c.y) * c.s, w: r.w * c.s, h: r.h * c.s });
 
 // ---------- speed ramp ----------
 // Footage time is re-mapped in two steps: source t -> kept time u (cuts removed) -> output time.
@@ -459,15 +508,106 @@ function renderFootage(an, rt, out, scale) {
 // Footage keeps its own aspect. When the output aspect differs (square), each proof window gets a
 // view {s, x, y}: footage scaled by s and placed at x, y, chosen so the spotlit rect fits with room
 // for its label. The view is still inside a window, so spotlights stay put; it eases between windows.
+// Vertical zooms past the cover scale onto a small target, as far as the take's own pixels go at
+// the master (a 2x take: 2 design px per CSS px, at 1080x1920 one canvas px each), so a button
+// reads at phone size. The limit is in design px, so a draft frames exactly as the master does.
 function viewFor(an, fr) {
-  const sMin = Math.min(W / an.srcW, H / an.srcH), sMax = Math.max(W / an.srcW, H / an.srcH);
+  const sMin = Math.min(SCW / an.srcW, SCH / an.srcH), cover = Math.max(SCW / an.srcW, SCH / an.srcH);
+  const sMax = VERT ? Math.max(cover, an.dpr / WS) : cover;
   if (sMax - sMin < 1e-6) return { s: sMin, x: 0, y: 0 };
   const LH = C.layout.labelHeight, GAP = C.layout.labelGap;
-  const s = Math.max(sMin, Math.min(sMax, (W - 2 * SAFE) / fr.w, (H - 2 * SAFE - LH - GAP) / fr.h));
-  const fw = an.srcW * s, fh = an.srcH * s, cx = fr.x + fr.w / 2, cy = fr.y + fr.h / 2;
-  const x = fw <= W ? (W - fw) / 2 : Math.min(0, Math.max(W - fw, W / 2 - cx * s));
-  const y = fh <= H ? (H - fh) / 2 : Math.min(0, Math.max(H - fh, H / 2 - cy * s));
-  return { s: r3(s), x: r3(x), y: r3(y) };
+  const s = Math.max(sMin, Math.min(sMax, (SCW - 2 * SAFE) / fr.w, (SCH - 2 * SAFE - LH - GAP) / fr.h));
+  const cx = fr.x + fr.w / 2, cy = fr.y + fr.h / 2, v = clampView(an, { s, x: SCW / 2 - cx * s, y: SCH / 2 - cy * s });
+  return { s: r3(v.s), x: r3(v.x), y: r3(v.y) };
+}
+// A view kept on the footage: scale between contain and the zoom limit, and the footage covering
+// the screen wherever it is big enough to (centred where it is not), so no backdrop shows beside it.
+function clampView(an, { s, x, y }) {
+  const sMin = Math.min(SCW / an.srcW, SCH / an.srcH), cover = Math.max(SCW / an.srcW, SCH / an.srcH);
+  s = Math.min(Math.max(s, sMin), VERT ? Math.max(cover, an.dpr / WS) : cover);
+  const fw = an.srcW * s, fh = an.srcH * s;
+  return { s, x: fw <= SCW ? (SCW - fw) / 2 : Math.min(0, Math.max(SCW - fw, x)), y: fh <= SCH ? (SCH - fh) / 2 : Math.min(0, Math.max(SCH - fh, y)) };
+}
+
+// ---------- vertical: the crop follows the target ----------
+// The crop (the view of the footage in the vertical window) follows the current target box on a
+// critically damped spring, stepped once a frame (omega 9.43 rad/s, the natural frequency of
+// Cap's screen spring, cited as a constant): from rest it never overshoots, but a retarget while
+// it still moves can carry it past the new goal, so every frame is clamped onto the footage
+// (clampView) and no backdrop shows beside it. Targets: each
+// click and each typed field (its rect under the camera that filmed it), switched PREPAN before
+// the press so the crop is already there when the pointer glides in (it glides for 0.5s before
+// a press) and it never enters from off-frame; and each group of spotlights, switched PREPAN
+// before it lights. While a spotlight is up, from its first fade-in to the end of its last
+// fade-out, the crop is pinned to that group's view: the cut-out and the still-check both
+// assume a still frame. A spring that has not quite arrived when a pin starts is eased onto the
+// pin's view over the last BLEND before it (a few px on ferry), never cut. Views clamp to the
+// footage's edges (viewFor).
+const PREPAN = 0.8, OMEGA = 9.43, BLEND = 0.2;
+function followCrop(an, groups, toComp, total) {
+  const cam = `"#${an.name}-cam"`, targets = [], pins = [];
+  const presses = [];
+  for (const e of an.cues) if ((e.kind === 'click' || e.kind === 'type') && e.rect) {
+    const c = an.poses ? camAt(an, e.t) : (e.cam || { x: 0, y: 0, s: 1 });
+    presses.push({ tc: toComp(e.t), fr: onFrame(e.rect, c) });
+  }
+  // Presses closer than PREPAN share one view, of their union: a later press switching the crop
+  // early pulled it off the earlier one before it landed (open a menu, pick an option).
+  presses.sort((a, b) => a.tc - b.tc);
+  for (let i = 0; i < presses.length;) {
+    let j = i, x0 = presses[i].fr.x, y0 = presses[i].fr.y, x1 = x0 + presses[i].fr.w, y1 = y0 + presses[i].fr.h;
+    while (j + 1 < presses.length && presses[j + 1].tc - presses[j].tc < PREPAN) {
+      const r = presses[++j].fr;
+      x0 = Math.min(x0, r.x); y0 = Math.min(y0, r.y); x1 = Math.max(x1, r.x + r.w); y1 = Math.max(y1, r.y + r.h);
+    }
+    targets.push({ t: presses[i].tc - PREPAN, view: viewFor(an, { x: x0, y: y0, w: x1 - x0, h: y1 - y0 }) });
+    i = j + 1;
+  }
+  for (const g of groups) {
+    const a = g[0], z = g.at(-1);
+    targets.push({ t: a.cf - PREPAN, view: a.view });
+    pins.push({ from: a.cf, to: z.ct + z.hold + F(0.3), view: a.view });
+  }
+  targets.sort((a, b) => a.t - b.t);
+  // a pinned crop does not follow the pointer: say so when a press lands outside it
+  for (const p of presses) {
+    const pin = pins.find((q) => p.tc >= q.from && p.tc <= q.to), v = pin?.view;
+    const cx = v && (p.fr.x + p.fr.w / 2) * v.s + v.x, cy = v && (p.fr.y + p.fr.h / 2) * v.s + v.y;
+    if (v && (cx < 0 || cx > SCW || cy < 0 || cy > SCH)) console.warn(`  warn ${an.name}: a press at ${r3(p.tc)}s lands outside the crop, which is held on a spotlight then (end the hold before it)`);
+  }
+  const out = [], st = { ...targets[0].view }, vel = { x: 0, y: 0, s: 0 };
+  let last = null, jump = 0, maxScale = 0;
+  const trace = [];
+  const smooth = (x) => x * x * (3 - 2 * x);
+  const sub = 4, dt = 1 / C.fps / sub;
+  for (let f = 0; f <= Math.ceil(total * C.fps); f++) {
+    const t = f / C.fps, pin = pins.find((p) => t >= p.from - 1e-9 && t <= p.to + 1e-9);
+    if (pin) {
+      jump = Math.max(jump, Math.hypot(st.x - pin.view.x, st.y - pin.view.y));
+      Object.assign(st, pin.view); vel.x = vel.y = vel.s = 0;
+    } else {
+      // (shown below: the spring, eased onto the next pin's view as that pin nears)
+      const goal = (targets.filter((q) => q.t <= t).at(-1) ?? targets[0]).view;
+      for (let k = 0; k < sub; k++) for (const ch of ['x', 'y', 's']) {
+        vel[ch] += (OMEGA * OMEGA * (goal[ch] - st[ch]) - 2 * OMEGA * vel[ch]) * dt;
+        st[ch] += vel[ch] * dt;
+      }
+    }
+    const next = pin ? null : pins.find((p) => p.from > t && p.from - t < BLEND);
+    const w = next ? smooth(1 - (next.from - t) / BLEND) : 0, sh = (ch) => st[ch] + ((next ? next.view[ch] : 0) - st[ch]) * w;
+    const cv = clampView(an, { s: sh('s'), x: sh('x'), y: sh('y') });
+    maxScale = Math.max(maxScale, cv.s);
+    const v = { x: r3(cv.x), y: r3(cv.y), s: +cv.s.toFixed(5) };
+    if (process.env.COMPOSE_TRACE) trace.push([r3(t), v.x, v.y, v.s]);
+    if (last && Math.abs(v.x - last.x) < 0.05 && Math.abs(v.y - last.y) < 0.05 && Math.abs(v.s - last.s) < 1e-5) continue;
+    out.push(`tl.set(${cam}, { x: ${v.x}, y: ${v.y}, scale: ${v.s} }, ${f ? (t - 1e-4).toFixed(6) : 0});`);
+    last = v;
+  }
+  // how far the spring still was from a pin's view when the pin began: eased in over BLEND, but a
+  // large one is a fast slide just before the spotlight
+  if (trace.length) writeFileSync(`${C.out}/work/${an.name}-crop.json`, JSON.stringify({ frames: trace, presses }));
+  if (jump > 24) console.warn(`  warn ${an.name}: the crop's spring was still ${r3(jump)}px of footage short of a spotlight's view as it lit, eased in over ${BLEND}s (more time before the mark would help)`);
+  return { lines: out, maxScale, jump };
 }
 
 // ---------- chapter ----------
@@ -483,6 +623,14 @@ function chapter(an, sp) {
   // With a bed, total is whole frames ending on a beat; the chapter card takes up the difference.
   const total = an.CARD + footDur + pad, CARD = total - footDur;
   const toComp = (t) => CARD + rt.toOut(t);
+  // and back: the source time on screen at composition time t (the latest that has played by t)
+  const fromComp = (t) => { let lo = 0, hi = an.dur; for (let i = 0; i < 40; i++) { const m = (lo + hi) / 2; if (toComp(m) <= t) lo = m; else hi = m; } return lo; };
+  // The source frame on screen at composition time t. renderFootage's fps filter (round=near)
+  // gives each output frame the last source frame re-timed before the middle of the next output
+  // interval, so at 2x it is not the frame at fromComp(t) (measured on an index-coded take).
+  const shownFrame = (t) => Math.max(0, Math.ceil(fromComp(t + 0.5 / C.fps) * an.fps - 1e-6) - 1);
+  if (process.env.COMPOSE_TRACE) writeFileSync(`${C.out}/work/${name}-frames.json`, JSON.stringify(
+    Array.from({ length: Math.round(footDur * C.fps) }, (_, n) => [n, shownFrame(CARD + n / C.fps), Math.round(fromComp(CARD + n / C.fps) * an.fps)])));
   TOTALS[name] = total;
   const seam = seamsOf(C, name);
   const idx = C.chapters.findIndex((c) => c.name === name) + 1;
@@ -543,33 +691,38 @@ function chapter(an, sp) {
 
   const LH = C.layout.labelHeight, GAP = C.layout.labelGap;
   const report = [];
+  // the cut-out for a frame rect under view v: 8px of air, kept 6px inside the frame
+  const boxOf = (fr, v) => {
+    const x = Math.max(6, fr.x * v.s + v.x - 8), y = Math.max(6, fr.y * v.s + v.y - 8);
+    return [x, y, Math.min(SCW - 6, fr.x * v.s + v.x + fr.w * v.s + 8) - x, Math.min(SCH - 6, fr.y * v.s + v.y + fr.h * v.s + 8) - y];
+  };
   const labels = an.spots.map((s) => {
-    const fr = s.fr, v = s.view;
-    let x = fr.x * v.s + v.x - 8, y = fr.y * v.s + v.y - 8, w = fr.w * v.s + 16, h = fr.h * v.s + 16;
-    const x2 = Math.min(W - 6, x + w), y2 = Math.min(H - 6, y + h);
-    x = Math.max(6, x); y = Math.max(6, y); w = x2 - x; h = y2 - y;
+    let [x, y, w, h] = boxOf(s.fr, s.view);
     const lw = s.label.length * 12.2 + 44;
     // DEFECT 2 guard: a label must not cover its own spotlight. Try each side outside the
     // cut-out inside the safe margin; if nothing fits, crop the cut-out instead of overlapping.
     const cands = [
-      ['below', H - SAFE - (y + h + GAP) >= LH, { left: Math.min(Math.max(x, SAFE), W - SAFE - lw), top: y + h + GAP }],
-      ['above', y - GAP - LH >= SAFE, { left: Math.min(Math.max(x, SAFE), W - SAFE - lw), top: y - GAP - LH }],
-      ['right', W - SAFE - (x + w + GAP) >= lw, { left: x + w + GAP, top: Math.min(Math.max(y, SAFE), H - SAFE - LH) }],
-      ['left', x - GAP - lw >= SAFE, { left: x - GAP - lw, top: Math.min(Math.max(y, SAFE), H - SAFE - LH) }],
+      ['below', SCH - SAFE - (y + h + GAP) >= LH, { left: Math.min(Math.max(x, SAFE), SCW - SAFE - lw), top: y + h + GAP }],
+      ['above', y - GAP - LH >= SAFE, { left: Math.min(Math.max(x, SAFE), SCW - SAFE - lw), top: y - GAP - LH }],
+      ['right', SCW - SAFE - (x + w + GAP) >= lw, { left: x + w + GAP, top: Math.min(Math.max(y, SAFE), SCH - SAFE - LH) }],
+      ['left', x - GAP - lw >= SAFE, { left: x - GAP - lw, top: Math.min(Math.max(y, SAFE), SCH - SAFE - LH) }],
     ];
     let pick = cands.find((k) => k[1]);
     if (!pick) {
-      h = H - SAFE - LH - GAP - y;
-      pick = ['below-cropped', true, { left: Math.min(Math.max(x, SAFE), W - SAFE - lw), top: y + h + GAP }];
+      h = SCH - SAFE - LH - GAP - y;
+      pick = ['below-cropped', true, { left: Math.min(Math.max(x, SAFE), SCW - SAFE - lw), top: y + h + GAP }];
     }
     s.box = [x, y, w, h].map(r3); s.dir = pick[0];
     report.push({
       i: s.i, label: s.label, srcT: r3(s.m.t), shift: s.shift || 0, compT: r3(s.ct), litFrom: r3(s.cf),
-      fadeIn: F(0.25), glided: !!s.glided, hold: r3(s.hold), srcHold: r3(s.srcHold),
+      fadeIn: F(0.25), glided: !!s.glided, ...(SP.sweep && !s.glided && { sweepTo: r3(s.cf + F(0.9)) }), hold: r3(s.hold), srcHold: r3(s.srcHold),
       place: pick[0], box: [x, y, w, h].map(Math.round),
-      labBox: [pick[2].left, pick[2].top, lw, LH].map(Math.round), view: v,
+      labBox: [pick[2].left, pick[2].top, lw, LH].map(Math.round), view: s.view,
     });
-    return `<div id="${name}-l${s.i}" class="lab" style="left:${r3(pick[2].left)}px;top:${r3(pick[2].top)}px">${esc(s.label)}</div>`;
+    // vertical with no narration: the burned caption IS the label, at a size a phone can read, so
+    // the small one by the spotlight stays laid out (check.mjs measures it) but is not drawn
+    const dup = VERT && A?.captions.burn !== false && !fit.placed.length ? ';display:none' : '';
+    return `<div id="${name}-l${s.i}" class="lab" style="left:${r3(pick[2].left)}px;top:${r3(pick[2].top)}px${dup}">${esc(s.label)}</div>`;
   }).join('\n');
 
   // Chapter card: a ghost numeral behind, persona kicker, title words rising out of their line
@@ -604,7 +757,9 @@ function chapter(an, sp) {
   // Framing (square): one set at 0, then an eased move between consecutive groups while nothing is lit.
   const cam = `#${name}-cam`, V = (v) => `x: ${v.x}, y: ${v.y}, scale: ${v.s}`;
   lines.push(`tl.set("${cam}", { ${V(groups[0][0].view)}, transformOrigin: "0 0" }, 0);`);
-  for (let i = 1; i < groups.length; i++) {
+  let maxScale = Math.max(...an.spots.map((s) => s.view.s));
+  if (VERT) { const f = followCrop(an, groups, toComp, total); lines.push(...f.lines); maxScale = Math.max(maxScale, f.maxScale); }
+  else for (let i = 1; i < groups.length; i++) {
     const a = groups[i - 1].at(-1), b = groups[i][0];
     if (JSON.stringify(a.view) === JSON.stringify(b.view)) continue;
     const t0 = a.ct + a.hold + F(0.3), t1 = b.cf;
@@ -617,7 +772,50 @@ function chapter(an, sp) {
   const iris = (b) => { const dx = b[2] * 0.06 + 6, dy = b[3] * 0.06 + 6; return [b[0] - dx, b[1] - dy, b[2] + 2 * dx, b[3] + 2 * dy].map(r3); };
   for (const [k, s] of an.spots.entries()) {
     const end = r3(s.ct + s.hold), sl = q(`sl${s.run}`);
-    if (s.glided) {
+    if (s.glided && an.poses) {
+      // The glide travels with the content: the cut-out moves across the PAGE, from the last
+      // mark's rect to this one's, and each frame draws that page rect where the capture camera
+      // filmed it that frame (the per-frame poses in events.json), so a camera move carries the
+      // hole with the content under it. An eased tween in frame space slid over the content
+      // while the camera moved (measured in SKILL.md). Progress follows the camera spring: the
+      // length of the camera's path so far (centre distance plus log zoom, frame to frame) over
+      // the whole path's, so it never jumps, also when the camera ends where it started (a zoom
+      // out and back between two marks). The camera often rests mid-glide, zoomed out
+      // between two marks, and a hole tied to it alone stopped half way across two cards, so the
+      // old power3 ease of time is a floor. A small correction, shrinking to nothing at each end,
+      // keeps the two end boxes exactly the marks' own (a box can be cropped for a label).
+      const p = an.spots[k - 1], g0 = p.ct + p.hold, arrive = s.cf + F(0.25);
+      const camC = (t) => poseAt(an, shownFrame(t)), cA = camC(g0), cB = camC(arrive);
+      const centre = (c) => [c.x + an.srcW / c.s / 2, c.y + an.srcH / c.s / 2];
+      const dist = (a, b) => { const [ax, ay] = centre(a), [bx, by] = centre(b); return Math.hypot((ax - bx) / an.srcW, (ay - by) / an.srcH) + Math.abs(Math.log(a.s / b.s)); };
+      const lerp = (a, b, u) => ({ x: a.x + (b.x - a.x) * u, y: a.y + (b.y - a.y) * u, w: a.w + (b.w - a.w) * u, h: a.h + (b.h - a.h) * u });
+      const at = (u, c) => boxOf(onFrame(lerp(p.m.rect, s.m.rect, u), c), s.view);
+      const e0 = p.box.map((v, i) => v - at(0, cA)[i]), e1 = s.box.map((v, i) => v - at(1, cB)[i]);
+      const trace = [], f0 = Math.ceil(g0 * C.fps), f1 = Math.floor(arrive * C.fps), path = [0];
+      for (let f = f0 + 1; f <= f1; f++) path.push(path.at(-1) + dist(camC((f - 1) / C.fps), camC(f / C.fps)));
+      const L = path.at(-1);
+      let u = 0, step = 0;
+      const mid = Math.round((f0 + f1) / 2), probe = {};
+      for (let f = f0; f <= f1; f++) {
+        const t = f / C.fps, c = camC(t), along = L > 1e-9 ? path[f - f0] / L : 0;
+        const x = Math.min(1, Math.max(0, (t - g0) / Math.max(1e-6, arrive - g0)));
+        const eased = x < 0.5 ? 4 * x ** 3 : 1 - (-2 * x + 2) ** 3 / 2; // power3.inOut, as the tween was
+        step = Math.max(step, Math.max(u, eased, along) - u);
+        u = Math.max(u, eased, along);
+        const b = at(u, c).map((v, i) => r3(v + (1 - u) * e0[i] + u * e1[i]));
+        if (f === mid) Object.assign(probe, { t: r3(t), box: b.map(Math.round), src: r3((shownFrame(t) - 0.4) / an.fps) });
+        // COMPOSE_TRACE=1 writes, per glide frame, this hole and the page rect it rides, and what
+        // the old frame-space tween drew and the page rect at its progress, for SKILL.md's numbers
+        if (process.env.COMPOSE_TRACE) trace.push({ t: r3(t), u: r3(u), cam: r3(along), hole: b, content: at(u, c).map(r3), tween: p.box.map((v, i) => r3(v + (s.box[i] - v) * eased)), under: at(eased, c).map(r3) });
+        // set a hair before the frame's own time, so float error never lands it a frame late
+        lines.push(`tl.set(${sl}, { ${vars(b)} }, ${(t - 1e-4).toFixed(6)});`);
+      }
+      lines.push(`tl.set(${sl}, { ${vars(s.box)} }, ${r3(arrive)});`);
+      if (trace.length) writeFileSync(`${C.out}/work/${name}-glide-m${s.i}.json`, JSON.stringify(trace));
+      // for check.mjs: the largest share of the path covered in one frame, and the hole mid-glide
+      report.find((r) => r.i === s.i).glide = { step: r3(step), frames: f1 - f0 + 1, ...probe };
+    } else if (s.glided) {
+      // no camera poses in this take (filmed before they were logged): an eased tween
       const p = an.spots[k - 1], pe = p.ct + p.hold, arrive = s.cf + F(0.25), d = Math.max(1 / C.fps, arrive - pe);
       lines.push(`tl.fromTo(${sl}, { ${vars(p.box)} }, { ${vars(s.box)}, duration: ${r3(d)}, ease: "power3.inOut", immediateRender: false }, ${r3(arrive - d)});`);
     } else {
@@ -645,10 +843,18 @@ function chapter(an, sp) {
 ${[...new Set(an.spots.map((s) => s.run))].map((r) => `<div class="sl" id="${name}-sl${r}"><div class="scrim"></div><div class="ring"><div class="sweep" id="${name}-sw${r}"></div></div></div>`).join('\n')}
 ${labels}
 </div></div></div>`;
-  const d = project(name, doc(name, total, `${card}\n${win}`, lines.join('\n')));
+  // Vertical: the chapter title stays up in the headline band once the window is in, and the
+  // captions run in the caption band.
+  const narration = fit.placed.map(({ slot, at, lit, dur, file, text, anchor, words }) => ({ slot, at: r3(at), ...(lit != null && { lit: r3(lit) }), dur, file, text, anchor, words }));
+  const cap = captionLayer(name, { narration, spots: report });
+  // four 60px lines fit the 300px band above the window, about 100 characters at 900px wide
+  if (VERT && (cfg.title || '').length > 100) console.warn(`  warn ${name}: the chapter title is ${cfg.title.length} characters; over about 100 the vertical headline runs into the window`);
+  const head = VERT ? `<div class="vhead" id="${name}-vh"><div class="kicker"><span class="kbar"></span><span>${esc(cfg.persona || C.defaultPersona || '')}</span></div><div class="vtitle">${esc(cfg.title)}</div></div>` : '';
+  if (VERT) lines.push(`tl.fromTo("#${name}-vh", { opacity: 0, y: 24 }, { opacity: 1, y: 0, duration: ${F(0.6)}, ease: "power3.out" }, ${r3(CARD)});`);
+  const d = project(name, doc(name, total, [card, win, head, cap.html].filter(Boolean).join('\n'), [...lines, ...cap.lines].join('\n')));
   // Footage is written at the pixel size it is shown at (window scale, zoom, largest view), capped
   // at the take's own: a 2x take enters a 1440p master at native density, lanczos-scaled once.
-  const shown = Z * WS * Math.max(1, ...an.spots.map((s) => s.view.s));
+  const shown = Z * WS * Math.max(1, maxScale);
   renderFootage(an, rt, `${d}/assets/footage/${name}.mp4`, Math.min(an.dpr, shown));
   const meta = { name, kind: 'chapter', start: startOf(name), total: GRID ? total : r3(total), srcDur: r3(an.dur), cardDur: CARD, srcW: an.srcW, srcH: an.srcH,
     speed: sp, kept: an.kept.map((k) => k.map(r3)), cuts: r3(an.dur - rt.kept.reduce((a, [x, y]) => a + y - x, 0)),
@@ -664,7 +870,7 @@ ${labels}
       const at = toComp(e.t) + fit.freezes.reduce((a, f) => a + (e.dur && f.t > e.t && f.t <= e.t + e.dur ? f.d : 0), 0);
       return { kind: e.kind, at: r3(at), ...(e.dur != null && { dur: r3(toComp(e.t + e.dur) - at) }), ...(e.chars && { chars: e.chars }) };
     }),
-    narration: fit.placed.map(({ slot, at, lit, dur, file, text, anchor, words }) => ({ slot, at: r3(at), ...(lit != null && { lit: r3(lit) }), dur, file, text, anchor, words })) };
+    narration };
   writeFileSync(`${C.out}/work/${name}.plan.json`, JSON.stringify(meta, null, 1));
   return meta;
 }
@@ -765,8 +971,8 @@ for (const n of order) {
     const clip = NAR[n]?.card, N = A?.narration, base = cardDur(n);
     card.dur = GRID ? base + padToBeat(n, base) : r3(base);
     TOTALS[n] = card.dur;
-    project(n, cardDoc(n, card, n === 'title-card' ? 'title' : n === 'end-card' ? 'end' : 'switch'));
     const narration = clip ? [{ slot: 'card', at: N.lead, dur: clip.dur, file: clip.file, text: clip.text, anchor: clip.anchor, words: clip.words }] : [];
+    project(n, cardDoc(n, card, n === 'title-card' ? 'title' : n === 'end-card' ? 'end' : 'switch', narration));
     writeFileSync(`${C.out}/work/${n}.plan.json`, JSON.stringify({ name: n, kind: 'card', start, total: card.dur, spots: [], narration }, null, 1));
     console.log(`${n}: card ${r3(card.dur)}s`);
     continue;
