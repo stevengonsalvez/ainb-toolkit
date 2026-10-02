@@ -51,7 +51,9 @@ if (!flags.includes('--no-dry-run')) {
   }
   // Pacing, from the beats themselves (and the narration, when the beats file names its compose
   // config): warnings, never a failure.
-  for (const w of narrativeLint({ ...cfg, chapters }, composeFor(cfg, path.resolve(file)))) console.log(`narrative: ${w}`);
+  let compose = null;
+  try { compose = composeFor(cfg, path.resolve(file)); } catch (e) { console.log(`narrative: ${e.message}; narration not linted`); }
+  for (const w of narrativeLint({ ...cfg, chapters }, compose)) console.log(`narrative: ${w}`);
   console.log(`dry run: ${chapters.length} chapter(s), ${n} target(s) resolved, ${misses} miss(es), ${fails} other failure(s), ${((Date.now() - t0) / 1000).toFixed(1)}s`);
   if (misses || fails) process.exit(1);
   if (flags.includes('--dry-run')) process.exit(0);

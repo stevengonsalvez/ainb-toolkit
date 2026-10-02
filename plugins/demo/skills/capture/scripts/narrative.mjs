@@ -57,9 +57,10 @@ export function narrativeLint(cfg, compose = null) {
 }
 
 // The compose config a beats file names (`compose: './demo.config.json'`, relative to the beats
-// file), or null.
+// file), or null when it names none; throws, naming the path, when it is missing or not JSON.
 export function composeFor(cfg, beatsFile) {
   if (!cfg.compose) return null;
   const p = path.resolve(path.dirname(beatsFile), cfg.compose);
-  return fs.existsSync(p) ? JSON.parse(fs.readFileSync(p, 'utf8')) : null;
+  if (!fs.existsSync(p)) throw new Error(`compose: ${cfg.compose} (from the beats file) is not there: ${p}`);
+  try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch (e) { throw new Error(`compose: ${p} is not valid JSON (${e.message})`); }
 }

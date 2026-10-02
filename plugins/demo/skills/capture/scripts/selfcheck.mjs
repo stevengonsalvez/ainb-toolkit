@@ -7,7 +7,7 @@ import assert from 'assert/strict'; import { execFileSync, execFile, spawn } fro
 import { chromium } from '@playwright/test';
 import { capture, checkPath, ensureState, overlay } from './capture.mjs';
 import { Camera, Cursor, spring1d, CAMERA, CURSOR, SNAPPY } from './motion.mjs';
-import { narrativeLint } from './narrative.mjs';
+import { narrativeLint, composeFor } from './narrative.mjs';
 
 const BG = '#3a6ea5';                             // luma ~100: neither blank white nor splash black
 const nav = `<nav class="fixed bottom-0" style="position:fixed;bottom:0;left:0;right:0;height:64px;background:#222;display:flex;gap:40px;justify-content:center;align-items:center">
@@ -178,6 +178,10 @@ try {
   for (const re of [/slow: beat "#0" holds 2.5s with no mark/, /slow: first mark \("Late"\) at about 4.2s/, /slow: narration for "Late" runs 327 wpm over the 2.2s/])
     assert.ok(nl.some(w => re.test(w)), `narrative lint missed ${re}: ${JSON.stringify(nl)}`);
   assert.ok(!nl.some(w => /^tight:/.test(w)), `narrative lint flagged a tight chapter: ${JSON.stringify(nl)}`);
+  //     A compose config the beats file names but that is not there, or not JSON, is said, with its path.
+  assert.throws(() => composeFor({ compose: './nope.json' }, path.join(out, 'b.mjs')), /compose: \.\/nope\.json \(from the beats file\) is not there/);
+  fs.writeFileSync(path.join(out, 'bad.json'), '{ nope');
+  assert.throws(() => composeFor({ compose: './bad.json' }, path.join(out, 'b.mjs')), /bad\.json is not valid JSON/);
   assert.ok(narrativeLint({ chapters: Array.from({ length: 6 }, (_, i) => ({ ...tight, name: `c${i}` })) }).some(w => /^6 chapters/.test(w)), 'six chapters not flagged');
 
   // 3. Main take (deterministic, the default): zoom, marks, scoped click, wait out the splash.
