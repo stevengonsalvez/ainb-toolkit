@@ -1,0 +1,19 @@
+{
+  "name": "agysw",
+  "version": "1.0.0",
+  "description": "Multi-account session rotation and credential profile switcher for Google Antigravity CLI (agy)",
+  "main": "agysw.js",
+  "type": "module",
+  "bin": {
+    "agysw": "./agysw.js"
+  },
+  "scripts": {
+    "test": "node --test agysw.test.js"
+  },
+  "author": "Joel Manuel <joeljmanuel@gmail.com>",
+  "license": "MIT",
+  "dependencies": {},
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
