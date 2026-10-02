@@ -138,6 +138,7 @@ export function loadConfig(path) {
     if (!['pad', 'lead', 'cardHold', 'hold', 'fade', 'floor', 'min', 'max', 'lineMax'].includes(k)) throw new Error(`config: beats.${k} is not a setting`);
     if (!(typeof v === 'number' && Number.isFinite(v) && v >= 0)) throw new Error(`config: beats.${k} must be a number of seconds >= 0`);
   }
+  if (beats.floor > beats.max) throw new Error(`config: beats.floor (${beats.floor}s) is over beats.max (${beats.max}s): every beat would hold too long`);
   if (!(Number.isInteger(beats.fade) && beats.fade <= 4)) throw new Error('config: beats.fade is a micro-fade in whole frames, 0 (hard cut) to 4');
   const SLIDES = { title: ['title'], end: ['title'], tiles: ['tiles'], pricing: ['tiers'], steps: ['steps'], devices: [] };
   const strs = (x) => Array.isArray(x) && x.length && x.every((v) => typeof v === 'string');
