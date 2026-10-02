@@ -120,6 +120,13 @@ async function speak(N, text, out, dir) {
     await new Promise((res) => setTimeout(res, 1000 * 2 ** attempt));
   }
 }
+// Word times for a Deepgram clip from Deepgram's own recogniser (nova-3), as { text, start, end }.
+async function listen(file) {
+  const r = await fetch('https://api.deepgram.com/v1/listen?model=nova-3', { method: 'POST',
+    headers: { Authorization: `Token ${process.env.DEEPGRAM_API_KEY}`, 'Content-Type': 'audio/wav' }, body: readFileSync(file) });
+  if (!r.ok) throw new Error(`Deepgram listen ${r.status}: ${(await r.text()).slice(0, 300)}`);
+  return (await r.json()).results.channels[0].alternatives[0].words.map((w) => ({ text: w.word, start: w.start, end: w.end }));
+}
 // The file a line is spoken into. HyperFrames keys keep their old recipe (text, voice, speed and
 // the recogniser model), so existing caches stay valid; a Deepgram clip is keyed by what it is
 // made of only (text, voice, rate), sha256, so changing the recogniser never re-bills a line.
@@ -146,12 +153,13 @@ export async function narrationClips(C) {
   mkdirSync(dir, { recursive: true });
   for (const l of lines) { l.key = clipKey(N, l.text); l.file = `${dir}/${l.key}.wav`; }
   // before anything is spoken: a line not in the cache needs the key
-  if (N.tts === 'deepgram' && !process.env.DEEPGRAM_API_KEY && lines.some((l) => !existsSync(l.file)))
+  if (N.tts === 'deepgram' && !process.env.DEEPGRAM_API_KEY && lines.some((l) => !existsSync(l.file) || !existsSync(`${dir}/${l.key}.words.json`)))
     throw new Error('audio.narration.tts "deepgram" needs the DEEPGRAM_API_KEY environment variable (it is never read from the config)');
   for (const l of lines) if (!existsSync(l.file)) await speak(N, l.text, l.file, dir);
   for (const l of lines) {
     const words = `${dir}/${l.key}.words.json`;
     if (existsSync(words)) continue;
+    if (N.tts === 'deepgram') { writeFileSync(words, JSON.stringify(await listen(l.file))); continue; }
     // One clip per run: transcribing several clips laid end to end put words 0.3s out.
     const job = `${dir}/${l.key}`;
     mkdirSync(job, { recursive: true });
@@ -211,6 +219,11 @@ export function locateAnchor(full, tail, guess) {
 async function anchorTime(C, l, words, dir) {
   const full = decode(C, ['-i', l.file], 1);
   if (!l.anchor) return r3(onsetOf(full));
+  // Deepgram: its recogniser's own word start. The tail match above needs the tail spoken the way
+  // the line spoke it, and Aura-2 does not: on 14 anchors it matched below r 0.8 on 3 and locked
+  // onto the wrong word on 3 (up to 390ms out), where listen's starts sat on the word's audible
+  // onset within about 20ms on 13 (SKILL.md).
+  if (audioSettings(C).narration.tts === 'deepgram') return r3(words[l.anchor].start);
   // The spoken line (l.key) does not change when the anchor moves to another word; its timing does.
   const k = `${dir}/${l.key}.a${l.anchor}`, cache = `${k}.json`;
   if (existsSync(cache)) return JSON.parse(readFileSync(cache, 'utf8')).at;
