@@ -135,7 +135,8 @@ function checkChapter(name) {
     const need = (s.litFrom ?? s.compT) + (s.fadeIn ?? 0.25) + 0.1 - s.compT;
     const short = need > s.hold - 0.15, a = Math.min(Math.max(0.5, need), s.hold - 0.15);
     const at = [r3(s.compT + a), r3(s.compT + s.hold - 0.05)];
-    const atSrc = at.map((t) => r3(sourceAt(plan, s, t)));
+    // a beat's still is one source frame for its whole hold
+    const atSrc = s.still ? [s.seek, s.seek] : at.map((t) => r3(sourceAt(plan, s, t)));
     const why = [];
     if (short) why.push(`lit too briefly to check: fully lit at +${r3(need - 0.1)}s, fades out at +${r3(s.hold)}s`);
     // Never read a still inside a transition: the window is still arriving (tilt, entrance)
@@ -187,9 +188,19 @@ function checkChapter(name) {
 
     // label clear of its own spotlight
     if (overlaps(s.labBox, s.box)) why.push('label covers spotlight');
+    // A beat's callout is drawn: where it sits the render is not the dimmed source (mean luma
+    // difference against the source dimmed by this still's own scrim ratio).
+    let callout;
+    if (s.still) {
+      const lb = s.labBox, k = 1, d = dimR[k];
+      let n = 0, sum = 0;
+      for (let y = Math.max(0, lb[1]); y < Math.min(H, lb[1] + lb[3]); y++) for (let x = Math.max(0, lb[0]); x < Math.min(W, lb[0] + lb[2]); x++) { sum += Math.abs(ren[k][y * W + x] - raw[k][y * W + x] * d); n++; }
+      callout = r3(n ? sum / n : 0);
+      if (callout < K.calloutMin) why.push(`no callout drawn (${callout})`);
+    }
 
     rows.push({ name, i: s.i, label: s.label, compT: s.compT, hold: s.hold, place: s.place,
-      lit: r3(Math.min(...litR)), dim: r3(Math.max(...dimR)), sd: r3(sd), drift: r3(drift), align: r3(align), ...(glide && { glide }),
+      lit: r3(Math.min(...litR)), dim: r3(Math.max(...dimR)), sd: r3(sd), drift: r3(drift), align: r3(align), ...(glide && { glide }), ...(callout != null && { callout }),
       ok: !why.length, why: why.join('; ') });
 
     // contact tiles for eyeballing alongside the numbers, named 000.png, 001.png, ... in mark order,
@@ -200,6 +211,14 @@ function checkChapter(name) {
         '-vf', `crop=${SCREEN[2]}:${SCREEN[3]}:${SCREEN[0]}:${SCREEN[1]},scale=${W / 2}:${H / 2}${cap}`, '-update', '1', `${stillDir}/${String(2 * rows.length - 2 + k).padStart(3, '0')}.png`]);
     }
   }
+  // Beat mode: every beat holds its line to the cut plus the pad, and no line runs over its cut.
+  for (const b of plan.beats || []) {
+    if (!b.line) continue;
+    const short = r3(b.cut - b.line.end - (plan.pad ?? 0));
+    if (b.line.end > b.cut + 1e-3) BEATS.push(`${name} beat ${b.id}: line ends ${r3(b.line.end)}s, after its cut at ${b.cut}s`);
+    else if (short < -0.5 / C.fps) BEATS.push(`${name} beat ${b.id}: held ${r3(b.cut - b.line.end)}s past its line, under the ${plan.pad}s pad`);
+  }
+  BEATN += (plan.beats || []).length;
   // An image2 sequence, not -pattern_type glob, which some builds do not support.
   const tiles = readdirSync(stillDir).length;
   // '%' in the path is doubled: ffmpeg reads the input as a %03d sequence pattern.
@@ -208,6 +227,7 @@ function checkChapter(name) {
   return rows;
 }
 
+const BEATS = []; let BEATN = 0;
 const want = process.argv.slice(3);
 const names = want.length ? want : segmentNames(C).filter((n) => !C.cards[n]);
 const all = names.flatMap(checkChapter);
@@ -218,4 +238,5 @@ for (const r of all) {
 const miss = all.filter((r) => !r.ok);
 writeFileSync(`${C.out}/work/check.json`, JSON.stringify(all, null, 1));
 console.log(`\n${all.length - miss.length}/${all.length} marks hit. Sheets: ${C.out}/work/stills-<chapter>.png`);
-process.exit(miss.length ? 1 : 0);
+if (BEATN) console.log(`${BEATN - BEATS.length}/${BEATN} beats hold their lines to the cut${BEATS.length ? `:\n  ${BEATS.join('\n  ')}` : ''}`);
+process.exit(miss.length || BEATS.length ? 1 : 0);
