@@ -358,7 +358,7 @@ function analyze(cfg) {
   const kept = keep(dur - 0.03, cuts);
   const vp = ev.viewport || { width: 1280, height: 720 };
   return { cfg, name, mp4, dur, spots, moves, kept, srcW: vp.width, srcH: vp.height, fps: ev.fps ?? 30, dpr: ev.dpr ?? 1, CARD: cfg.cardDur ?? C.chapterCardDur,
-    poses: ev.poses || null,
+    poses: ev.poses?.length ? ev.poses : null,
     cues: ev.events.filter((e) => ['click', 'type', 'camera'].includes(e.kind)).map((e) => (e.kind === 'camera' ? { ...e, dur: e.t1 - e.t0 } : e)) };
 }
 
