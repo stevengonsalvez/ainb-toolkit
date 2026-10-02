@@ -567,6 +567,12 @@ function followCrop(an, groups, toComp, total) {
     pins.push({ from: a.cf, to: z.ct + z.hold + F(0.3), view: a.view });
   }
   targets.sort((a, b) => a.t - b.t);
+  // a pinned crop does not follow the pointer: say so when a press lands outside it
+  for (const p of presses) {
+    const pin = pins.find((q) => p.tc >= q.from && p.tc <= q.to), v = pin?.view;
+    const cx = v && (p.fr.x + p.fr.w / 2) * v.s + v.x, cy = v && (p.fr.y + p.fr.h / 2) * v.s + v.y;
+    if (v && (cx < 0 || cx > SCW || cy < 0 || cy > SCH)) console.warn(`  warn ${an.name}: a press at ${r3(p.tc)}s lands outside the crop, which is held on a spotlight then (end the hold before it)`);
+  }
   const out = [], st = { ...targets[0].view }, vel = { x: 0, y: 0, s: 0 };
   let last = null, jump = 0, maxScale = 0;
   const trace = [];
