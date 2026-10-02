@@ -398,7 +398,7 @@ try {
     const free = await new Promise(res => { const t = http.createServer().listen(0, () => { const p = t.address().port; t.close(() => res(p)); }); });
     const app = spawn(process.execPath, ['serve.mjs', String(free)], { cwd: ferry, stdio: ['ignore', 'pipe', 'inherit'] });
     try {
-      const port = await new Promise((res, rej) => { app.stdout.on('data', d => { const m = String(d).match(/ferry on (\d+)/); if (m) res(m[1]); }); app.on('exit', () => rej(new Error('ferry app exited'))); });
+      const port = await new Promise((res, rej) => { setTimeout(() => rej(new Error('ferry app did not start in 15s')), 15000).unref(); app.stdout.on('data', d => { const m = String(d).match(/ferry on (\d+)/); if (m) res(m[1]); }); app.on('exit', () => rej(new Error('ferry app exited'))); });
       const t0 = Date.now();
       dr = await new Promise(res => execFile(process.execPath, [runMjs, 'beats.mjs', '--dry-run'], { cwd: ferry, encoding: 'utf8', env: { ...process.env, PORT: port } },
         (err, stdout, stderr) => res({ status: err ? err.code : 0, out: stdout + stderr })));
