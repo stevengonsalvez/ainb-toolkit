@@ -68,19 +68,21 @@
       "persona": "Foot passenger · Mairi",
       "beats": [
         {
-          "mark": 0
+          "index": 0,
+          "id": "late"
         },
         {
-          "mark": 1
+          "index": 1,
+          "id": "space"
         },
         {
           "split": [
-            "0",
-            "1"
+            "late",
+            "space"
           ]
         },
         {
-          "mark": 2
+          "index": 2
         }
       ],
       "narration": {
