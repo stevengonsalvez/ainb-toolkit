@@ -67,7 +67,7 @@ export async function resolve(page, target, { use, beat, waitMs = 5000, now = Da
       throw new LocatorMiss(`beat "${beat}": ${use} target matched no single visible element after ${waitMs}ms. Tried ${tried.join(', ')}.`
         + (near.length ? ` Nearest on the page: ${near.join(', ')}.` : ''));
     }
-    await sleep(100);
+    await sleep(50);
   }
 }
 
