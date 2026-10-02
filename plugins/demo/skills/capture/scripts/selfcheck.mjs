@@ -344,6 +344,12 @@ try {
   const [gc, gt] = await cues('/grow', '#g', 'ferry'), [hc, ht] = await cues('/hide', '#h', 'go');
   assert.ok(gc.rect.w === 100 && gt.rect.w === 200, `widening field: click ${JSON.stringify(gc.rect)}, type ${JSON.stringify(gt.rect)}`);
   assert.ok(hc.rect && hc.rect.w > 0 && ht.rect === null, `hiding field: click ${JSON.stringify(hc.rect)}, type ${JSON.stringify(ht.rect)}`);
+  //  A click while zoomed in screencast mode records its rect in the frame the camera box is in
+  //  (CSS px from the scroll the zoom started at): #w at top 2000 after a 1700 scroll is at 300.
+  const zc = ev(await capture({ base, out, chapter: 'zoom-click-sc', capture: SC, cursor: { hidden: true },
+    beats: [{ goto: '/tall' }, { scroll: 1700 }, { zoom: { on: '#w', scale: 2, ms: 400 } }, { click: '#w' }, { hold: 200 }] })).events;
+  const zck = zc.find(x => x.kind === 'click');
+  assert.ok(zck && zck.cam?.s === 2 && JSON.stringify(zck.rect) === JSON.stringify({ x: 290, y: 300, w: 700, h: 400 }), `zoomed screencast click ${JSON.stringify(zck)}`);
 
   // 12. pace scales holds: the same 1s hold at pace 2 films about twice as long.
   const p1 = await capture({ base, out, chapter: 'pace1', beats: [{ goto: '/a', hold: 1000 }] });
