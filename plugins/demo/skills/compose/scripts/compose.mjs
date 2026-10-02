@@ -364,11 +364,12 @@ function analyze(cfg) {
 
 // ---------- the capture camera ----------
 // demo:capture logs the in-browser camera's pose on each frame it changed ([frame, x, y, s],
-// `poses` in events.json; takes filmed before that have none). camAt is the pose on the frame
-// showing source time t, a page rect's frame rect under it is (rect - cam) * s, and a camera at
-// scale 1 is no camera, as in capture.
-function camAt(an, t) {
-  const P = an.poses, k = Math.round(t * an.fps);
+// `poses` in events.json; takes filmed before that have none). poseAt is the pose on source frame
+// k, camAt on the source frame at time t (an event's own frame time), a page rect's frame rect
+// under it is (rect - cam) * s, and a camera at scale 1 is no camera, as in capture.
+const camAt = (an, t) => poseAt(an, Math.round(t * an.fps));
+function poseAt(an, k) {
+  const P = an.poses;
   let lo = 0, hi = P.length - 1;
   if (k < P[0][0]) return { x: 0, y: 0, s: 1 };
   while (lo < hi) { const m = (lo + hi + 1) >> 1; if (P[m][0] <= k) lo = m; else hi = m - 1; }
@@ -591,6 +592,12 @@ function chapter(an, sp) {
   const toComp = (t) => CARD + rt.toOut(t);
   // and back: the source time on screen at composition time t (the latest that has played by t)
   const fromComp = (t) => { let lo = 0, hi = an.dur; for (let i = 0; i < 40; i++) { const m = (lo + hi) / 2; if (toComp(m) <= t) lo = m; else hi = m; } return lo; };
+  // The source frame on screen at composition time t. renderFootage's fps filter (round=near)
+  // gives each output frame the last source frame re-timed before the middle of the next output
+  // interval, so at 2x it is not the frame at fromComp(t) (measured on an index-coded take).
+  const shownFrame = (t) => Math.max(0, Math.ceil(fromComp(t + 0.5 / C.fps) * an.fps - 1e-6) - 1);
+  if (process.env.COMPOSE_TRACE) writeFileSync(`${C.out}/work/${name}-frames.json`, JSON.stringify(
+    Array.from({ length: Math.round(footDur * C.fps) }, (_, n) => [n, shownFrame(CARD + n / C.fps), Math.round(fromComp(CARD + n / C.fps) * an.fps)])));
   TOTALS[name] = total;
   const seam = seamsOf(C, name);
   const idx = C.chapters.findIndex((c) => c.name === name) + 1;
@@ -744,7 +751,7 @@ function chapter(an, sp) {
       // old power3 ease of time is a floor. A small correction, shrinking to nothing at each end,
       // keeps the two end boxes exactly the marks' own (a box can be cropped for a label).
       const p = an.spots[k - 1], g0 = p.ct + p.hold, arrive = s.cf + F(0.25);
-      const camC = (t) => camAt(an, fromComp(t)), cA = camC(g0), cB = camC(arrive);
+      const camC = (t) => poseAt(an, shownFrame(t)), cA = camC(g0), cB = camC(arrive);
       const centre = (c) => [c.x + an.srcW / c.s / 2, c.y + an.srcH / c.s / 2];
       const dist = (a, b) => { const [ax, ay] = centre(a), [bx, by] = centre(b); return Math.hypot((ax - bx) / an.srcW, (ay - by) / an.srcH) + Math.abs(Math.log(a.s / b.s)); };
       const lerp = (a, b, u) => ({ x: a.x + (b.x - a.x) * u, y: a.y + (b.y - a.y) * u, w: a.w + (b.w - a.w) * u, h: a.h + (b.h - a.h) * u });
