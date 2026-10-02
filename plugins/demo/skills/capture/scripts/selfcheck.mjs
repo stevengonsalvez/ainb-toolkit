@@ -38,6 +38,8 @@ const pages = {
   // Turns white once the input holds exactly the typed text: the last frame proves the type beat.
   '/type': `<body style="margin:0;background:${BG};height:100vh"><input id="q" style="margin:200px;font-size:30px" oninput="if (this.value === 'ferry times') document.body.style.background = '#fff'"></body>`,
   // A login form, and a home page that sends logged-out visitors to /welcome, not to /login.
+  // A login whose session the server can revoke: /logout2 ends it server-side, as real apps do.
+  '/login2': `<body><input id="email"><input id="password" type="password"><button onclick="const s = Math.random().toString(36).slice(2); fetch('/grant?sid=' + s).then(() => { document.cookie = 'sid2=' + s + ';path=/'; location = '/home2' })">Log in</button></body>`,
   '/login': `<body><input id="email"><input id="password" type="password"><button onclick="document.cookie='sid=1;path=/';location='/home'">Log in</button></body>`,
   '/welcome': `<body>welcome</body>`,
   // Splash until a slow request lands, like an SPA shell fetching its data.
@@ -51,7 +53,16 @@ const pages = {
   // A lazy-loaded module, like a code-split route: turns white once it has loaded.
   '/lazy': `<body style="margin:0;background:${BG};height:100vh"><button id="go" style="margin:200px" onclick="import('/mod.js').then(m => document.body.style.background = m.c)">go</button></body>`,
 };
+const sessions = new Set();
 const server = http.createServer((req, res) => {
+  if (req.url.startsWith('/grant?')) { sessions.add(new URL(req.url, base).searchParams.get('sid')); return res.end('ok'); }
+  if (req.url === '/home2' || req.url === '/logout2') {
+    const sid = (req.headers.cookie || '').match(/sid2=(\w+)/)?.[1];
+    res.setHeader('content-type', 'text/html');
+    if (req.url === '/logout2') { sessions.delete(sid); return res.end('<body>signed out</body>'); }
+    if (!sessions.has(sid)) { res.writeHead(302, { location: '/welcome' }); return res.end(); }
+    return res.end('<body><div id="me">signed in</div></body>');
+  }
   if (req.url === '/slow') return setTimeout(() => res.end('ok'), 1500);
   if (req.url === '/mod.js') { res.setHeader('content-type', 'text/javascript'); return res.end(`export const c = '#fff';`); }
   if (req.url === '/stream') { res.writeHead(200, { 'content-type': 'text/event-stream' }); return res.write('data: hi\n\n'); }
@@ -360,6 +371,14 @@ try {
   dr = await node([runMjs, wrongPath, '--dry-run']);
   assert.ok(dr.status === 1 && /FAIL Error: .*expected path \/b, got \/news/.test(dr.out) && !/\x1b\[|Call log/.test(dr.out) && /1 target\(s\) resolved, 0 miss\(es\), 1 other failure/.test(dr.out),
     `dry run on a failing (not missing) beat: exit ${dr.status}\n${dr.out}`);
+  //     The dry run really clicks: a chapter that signs out revokes the session it used. run.mjs
+  //     checks the session again after the dry run and re-mints it, so the take still films.
+  const signout = path.join(out, 'signout.beats.mjs');
+  fs.writeFileSync(signout, `export default ${JSON.stringify({ base, out: path.join(out, 'signout'), state: path.join(out, 'signout-state.json'), probe: '/home2',
+    login: { email: 'a@example.test', password: 'x', loginPath: '/login2', loggedInSel: '#me' }, capture: { mode: 'screencast' },
+    chapters: [{ name: 'c', beats: [{ goto: '/home2', ready: '#me' }, { goto: '/logout2' }] }] })};`);
+  dr = await node([runMjs, signout]);
+  assert.ok(dr.status === 0 && (dr.out.match(/session: minted/g) || []).length === 2, `a chapter that signs out: exit ${dr.status}\n${dr.out}`);
   dr = await node([runMjs, broken]);
   assert.ok(dr.status === 1 && !fs.existsSync(path.join(out, 'dry-broken')), `a broken file filmed: exit ${dr.status}\n${dr.out}`);
   //     And on the ferry example beside this skill, when it is there: green, in seconds.

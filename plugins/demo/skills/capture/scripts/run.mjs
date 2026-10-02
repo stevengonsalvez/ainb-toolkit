@@ -55,6 +55,8 @@ if (!flags.includes('--no-dry-run')) {
   console.log(`dry run: ${chapters.length} chapter(s), ${n} target(s) resolved, ${misses} miss(es), ${fails} other failure(s), ${((Date.now() - t0) / 1000).toFixed(1)}s`);
   if (misses || fails) process.exit(1);
   if (flags.includes('--dry-run')) process.exit(0);
+  // The dry run really clicked and typed: a sign-out beat may have ended the session it used.
+  if (cfg.login) console.log(`session: ${await ensureState(cfg)}`);
 }
 
 for (const ch of chapters) {
