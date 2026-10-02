@@ -617,12 +617,14 @@ export function mix(C) {
   const got = loudness(C, final);
   report.lufs = got.I; report.truePeak = got.TP; report.programme = programme; report.sfx = counts; report.lines = lines.length;
   report.music = A.music ? basename(A.music.file) : null;
-  // how far each cut sits from the nearest beat, in ms (cards are padded so it should be ~0)
+  // how far each segment start (and the film's end) sits from the nearest beat, in ms: cards are
+  // padded so it should be ~0. Only segment starts: the cuts inside a beat-paced chapter follow its
+  // lines, not the bed's grid.
   const grid = beatGrid(C);
   if (grid) report.cutsToBeats = segs.slice(1).concat({ start: total }).map((s) => Math.round(1000 * Math.abs(grid.nearest(s.start) - s.start)));
   const fails = [];
   // A cut more than a frame off the beat means a segment was rendered from a stale plan.
-  if (grid && report.cutsToBeats.some((ms) => ms > 1000 / C.fps)) fails.push(`cuts off the beat by ${report.cutsToBeats.join(', ')} ms: re-run compose.mjs and render.sh`);
+  if (grid && report.cutsToBeats.some((ms) => ms > 1000 / C.fps)) fails.push(`segment starts off the beat by ${report.cutsToBeats.join(', ')} ms: re-run compose.mjs and render.sh`);
   if (programme && !(Math.abs(got.I - T.target) <= T.tolerance)) fails.push(`loudness ${got.I} LUFS, target ${T.target} +-${T.tolerance}`);
   if (!(got.TP <= T.truePeak)) fails.push(`true peak ${got.TP} dBTP over ${T.truePeak}`);
   for (const c of report.clips || []) if (!c.ok) fails.push(`clip ${c.name}: ${c.lufs} LUFS, ${c.truePeak} dBTP`);
