@@ -283,12 +283,17 @@ chapter card (cardHold, silent) ─▶ beat ─▶ beat ─▶ ... ─▶ seam i
     with an optional `label` overriding the callout. A bare number (`"mark": 2`) is an index only
     in a take whose marks have no ids, where it cannot be taken for one; a take with two marks of
     one id is refused, and a miss lists the indices and the ids separately;
-  - `{ "take": "ch05b", "mark": "5.4" }` (or `"index"`): a mark from another chapter's take,
-    played between this chapter's beats with a hard cut like any other. A persona switch filmed as
-    its own take stays inside its chapter, and in its chapter's clip, instead of becoming a
-    segment of its own with a seam on each side. The beat is still-checked against the take it
-    came from (read against this chapter's take instead, the ferry's borrowed beat misses with
-    align 14.457, against 0.473), and a label given here stays in this chapter;
+  - `{ "take": "ch05b", "mark": "5.4" }` (or `"index"`): a mark from another take in `takes` (a
+    chapter's, or one filmed only to be borrowed), played between this chapter's beats with a
+    hard cut like any other. A persona switch filmed as its own take stays inside its chapter, and
+    in its chapter's clip, instead of becoming a segment of its own with a seam on each side. The
+    beat is still-checked against the take it came from (read against this chapter's take
+    instead, the ferry's borrowed beat misses with align 14.457, against 0.473), and a label given
+    here stays in this chapter. Its id is the mark's, or `<take>:<index>` for a mark with none
+    (`departures:1`); two beats of one chapter with the same id are refused, so give one an `"id"`.
+    Composing only the lending chapter after a re-shoot leaves the borrower's still behind: compose
+    both (the still-check would read it as an align miss). demo:export takes its steps from each
+    chapter's own take, so a borrowed beat is not a step there;
   - `{ "split": ["2.3", "2.4"] }`: two earlier filmed beats side by side, each callout under its
     window (a half-size pane drops the scrim's backdrop blur, see compose.mjs);
   - `{ "slide": ... }`: a screen with no app, styled from the theme like the cards, with an
