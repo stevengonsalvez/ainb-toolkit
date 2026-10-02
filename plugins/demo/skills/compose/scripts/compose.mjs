@@ -1101,8 +1101,9 @@ for (const n of names) if (!C.cards[n] && !C.chapters.some((c) => c.name === n))
 
 // Narration and the music's beat grid are settled before any picture is timed (audio.mjs).
 const A = audioSettings(C);
-const NAR = narrationClips(C);
 const GRID = beatGrid(C);
+// only the named segments' lines are spoken, unless their lengths decide others' timing
+const NAR = await narrationClips(C, C.targetDuration || GRID ? null : names);
 const fitFor = (an, sp) => fitNarration(an.spots.map((s) => ({ T: s.T, hold: s.hold, from: s.from, fade: F(0.25) })), NAR[an.name] || { marks: [] },
   (fz) => { const r = retime(an, sp, fz); return (t) => an.CARD + r.toOut(t); }, A?.narration, C.fps);
 // Segment lengths and starts so far, this run's or an earlier run's plan, for where each segment starts.
