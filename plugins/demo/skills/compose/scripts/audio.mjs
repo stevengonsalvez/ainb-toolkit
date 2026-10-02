@@ -443,7 +443,8 @@ function writeWav(C, path, chans) {
 export function loudness(C, file) {
   const s = spawnSync(C.ffmpeg, ['-nostdin', '-hide_banner', '-nostats', '-i', file, '-map', '0:a', '-af', 'ebur128=peak=true', '-f', 'null', '-'], { encoding: 'utf8', maxBuffer: 1 << 26 }).stderr;
   const sum = s.slice(s.lastIndexOf('Summary:'));
-  const num = (re) => { const m = sum.match(re); return m ? +m[1] : NaN; };
+  // silence measures -inf: a number that compares, not NaN, which failed every check it reached
+  const num = (re) => { const m = sum.match(re); return !m ? NaN : m[1] === '-inf' ? -Infinity : +m[1]; };
   return { I: num(/I:\s+(-?[\d.]+|-inf) LUFS/), TP: num(/Peak:\s+(-?[\d.]+|-inf) dBFS/) };
 }
 
@@ -480,14 +481,17 @@ function masterTo(C, T, inWav, outWav) {
 // Each chapter as its own mp4 (config "clips"): its segment's lossless render, given the one lossy
 // encode concat.sh gives the film, and its slice of the film's stems (effects, levelled narration,
 // ducked music, the music faded over 0.3s at the clip's own ends), mastered on its own to the
-// same target and checked the same way.
-function clips(C, A, segs, stems, programme) {
+// same target and checked the same way. A clip with no narration or music in it (a slides-only
+// chapter with no lines) is not a programme: it keeps its own level and only the ceiling is checked.
+function clips(C, A, segs, stems) {
   const out = [], work = `${C.out}/work/audio`, T = A.loudness, FADE = 0.3;
   mkdirSync(`${C.out}/out/clips`, { recursive: true });
   for (const s of segs.filter((x) => !C.cards[x.name])) {
     const i0 = Math.round(s.start * SR), n = Math.round(s.dur * SR), L = new Float32Array(n), Rt = new Float32Array(n);
+    let programme = false;
     for (let i = 0; i < n; i++) {
       const j = i0 + i, t = i / SR, f = Math.min(1, t / FADE, (s.dur - t) / FADE);
+      programme ||= !!(stems.voice[j] || (stems.mL && stems.mL[j]));
       const c = (stems.sfx[j] || 0) + (stems.voice[j] || 0);
       L[i] = c + (stems.mL ? (stems.mL[j] || 0) * f : 0); Rt[i] = c + (stems.mR ? (stems.mR[j] || 0) * f : 0);
     }
@@ -498,7 +502,7 @@ function clips(C, A, segs, stems, programme) {
       '-vf', 'scale=out_color_matrix=bt709:out_range=tv,format=yuv420p,setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv',
       '-c:v', 'libx264', '-preset', 'slow', '-crf', String(C.crf), '-tune', 'animation', '-c:a', 'aac', '-b:a', '192k', '-shortest', '-movflags', '+faststart', file]);
     const got = loudness(C, file), ok = (!programme || Math.abs(got.I - T.target) <= T.tolerance) && got.TP <= T.truePeak;
-    out.push({ name: s.name, file, dur: r3(s.dur), lufs: got.I, truePeak: got.TP, ok });
+    out.push({ name: s.name, file, dur: r3(s.dur), lufs: got.I, truePeak: got.TP, programme, ok });
   }
   return out;
 }
@@ -607,7 +611,7 @@ export function mix(C) {
     '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-shortest', '-movflags', '+faststart', tmp]);
   renameSync(tmp, final);
 
-  if (C.clips) report.clips = clips(C, A, segs, { sfx, voice, mL, mR }, programme);
+  if (C.clips) report.clips = clips(C, A, segs, { sfx, voice, mL, mR });
 
   // Measure what a viewer gets: the AAC in the final file, decoded.
   const got = loudness(C, final);
@@ -641,7 +645,7 @@ export function mix(C) {
   const lvl = programme ? `${got.I} LUFS (target ${T.target})` : `${got.I} LUFS (effects only, not normalised)`;
   console.log(`audio: ${lvl}, true peak ${got.TP} dBTP; clicks ${counts.click}, keys ${counts.key}, whooshes ${counts.whoosh}, pings ${counts.ping}, lines ${lines.length}${A.music ? `, music ${report.music}` : ''}`);
   console.log(`captions: ${caps.captions}  chapters: ${caps.chapters}${report.burned ? `  burned: ${report.burned}` : ''}`);
-  if (report.clips) console.log(`clips: ${report.clips.map((c) => `${c.name} ${c.dur}s ${c.lufs} LUFS ${c.truePeak} dBTP`).join(', ')} (${C.out}/out/clips)`);
+  if (report.clips) console.log(`clips: ${report.clips.map((c) => `${c.name} ${c.dur}s ${c.truePeak === -Infinity ? 'silent' : `${c.lufs} LUFS ${c.truePeak} dBTP`}`).join(', ')} (${C.out}/out/clips)`);
   if (fails.length) { console.error(`audio check FAILED: ${fails.join('; ')}`); return { ...report, fails }; }
   return report;
 }
