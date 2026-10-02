@@ -378,6 +378,45 @@ function segments(C) {
   });
 }
 
+// Gain to the loudness target plus a limiter 1 dB under the ceiling, corrected until within 0.15 LU.
+function masterTo(C, T, inWav, outWav) {
+  let g = T.target - loudness(C, inWav).I;
+  for (let k = 0; k < 3; k++) {
+    execFileSync(C.ffmpeg, ['-nostdin', '-loglevel', 'error', '-y', '-i', inWav, '-af',
+      `volume=${r3(g)}dB,alimiter=limit=${r3(dB(T.truePeak - 1))}:level=false:attack=1:release=60`, '-c:a', 'pcm_f32le', outWav]);
+    const d = T.target - loudness(C, outWav).I;
+    if (Math.abs(d) < 0.15) break;
+    g += d;
+  }
+  return r3(g);
+}
+
+// Each chapter as its own mp4 (config "clips"): its segment's lossless render, given the one lossy
+// encode concat.sh gives the film, and its slice of the film's stems (effects, levelled narration,
+// ducked music, the music faded over 0.3s at the clip's own ends), mastered on its own to the
+// same target and checked the same way.
+function clips(C, A, segs, stems, programme) {
+  const out = [], work = `${C.out}/work/audio`, T = A.loudness, FADE = 0.3;
+  mkdirSync(`${C.out}/out/clips`, { recursive: true });
+  for (const s of segs.filter((x) => !C.cards[x.name])) {
+    const i0 = Math.round(s.start * SR), n = Math.round(s.dur * SR), L = new Float32Array(n), Rt = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      const j = i0 + i, t = i / SR, f = Math.min(1, t / FADE, (s.dur - t) / FADE);
+      const c = (stems.sfx[j] || 0) + (stems.voice[j] || 0);
+      L[i] = c + (stems.mL ? (stems.mL[j] || 0) * f : 0); Rt[i] = c + (stems.mR ? (stems.mR[j] || 0) * f : 0);
+    }
+    const raw = `${work}/clip-${s.name}.wav`, mastered = `${work}/clip-${s.name}-master.wav`, file = `${C.out}/out/clips/${C.name}-${s.name}.mp4`;
+    writeWav(C, raw, [L, Rt]);
+    const audio = programme ? (masterTo(C, T, raw, mastered), mastered) : raw;
+    execFileSync(C.ffmpeg, ['-nostdin', '-loglevel', 'error', '-y', '-i', `${C.out}/out/seg/${s.name}.mp4`, '-i', audio, '-map', '0:v', '-map', '1:a',
+      '-vf', 'scale=out_color_matrix=bt709:out_range=tv,format=yuv420p,setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv',
+      '-c:v', 'libx264', '-preset', 'slow', '-crf', String(C.crf), '-tune', 'animation', '-c:a', 'aac', '-b:a', '192k', '-shortest', '-movflags', '+faststart', file]);
+    const got = loudness(C, file), ok = (!programme || Math.abs(got.I - T.target) <= T.tolerance) && got.TP <= T.truePeak;
+    out.push({ name: s.name, file, dur: r3(s.dur), lufs: got.I, truePeak: got.TP, ok });
+  }
+  return out;
+}
+
 export function mix(C) {
   const A = audioSettings(C), segs = segments(C), final = `${C.out}/out/${C.name}.mp4`;
   // The VIDEO stream's length: the file's own grows with an earlier mix's AAC padding.
@@ -474,24 +513,15 @@ export function mix(C) {
   const programme = !!(lines.length || A.music);
   const T = A.loudness;
   let master = `${work}/mix.wav`;
-  if (programme) {
-    let g = T.target - loudness(C, master).I;
-    for (let k = 0; k < 3; k++) {
-      execFileSync(C.ffmpeg, ['-nostdin', '-loglevel', 'error', '-y', '-i', `${work}/mix.wav`, '-af',
-        `volume=${r3(g)}dB,alimiter=limit=${r3(dB(T.truePeak - 1))}:level=false:attack=1:release=60`, '-c:a', 'pcm_f32le', `${work}/master.wav`]);
-      const d = T.target - loudness(C, `${work}/master.wav`).I;
-      if (Math.abs(d) < 0.15) break;
-      g += d;
-    }
-    report.gain = r3(g);
-    master = `${work}/master.wav`;
-  }
+  if (programme) { report.gain = masterTo(C, T, master, `${work}/master.wav`); master = `${work}/master.wav`; }
 
   // Mux: the picture is copied, never re-encoded.
   const tmp = `${C.out}/out/.${C.name}.audio.mp4`;
   execFileSync(C.ffmpeg, ['-nostdin', '-loglevel', 'error', '-y', '-i', final, '-i', master, '-map', '0:v', '-map', '1:a',
     '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-shortest', '-movflags', '+faststart', tmp]);
   renameSync(tmp, final);
+
+  if (C.clips) report.clips = clips(C, A, segs, { sfx, voice, mL, mR }, programme);
 
   // Measure what a viewer gets: the AAC in the final file, decoded.
   const got = loudness(C, final);
@@ -505,6 +535,7 @@ export function mix(C) {
   if (grid && report.cutsToBeats.some((ms) => ms > 1000 / C.fps)) fails.push(`cuts off the beat by ${report.cutsToBeats.join(', ')} ms: re-run compose.mjs and render.sh`);
   if (programme && !(Math.abs(got.I - T.target) <= T.tolerance)) fails.push(`loudness ${got.I} LUFS, target ${T.target} +-${T.tolerance}`);
   if (!(got.TP <= T.truePeak)) fails.push(`true peak ${got.TP} dBTP over ${T.truePeak}`);
+  for (const c of report.clips || []) if (!c.ok) fails.push(`clip ${c.name}: ${c.lufs} LUFS, ${c.truePeak} dBTP`);
   report.ok = !fails.length;
 
   // Listen-proxy: one waveform row per stem (sfx, narration, music) and the final mix, top to bottom.
@@ -524,6 +555,7 @@ export function mix(C) {
   const lvl = programme ? `${got.I} LUFS (target ${T.target})` : `${got.I} LUFS (effects only, not normalised)`;
   console.log(`audio: ${lvl}, true peak ${got.TP} dBTP; clicks ${counts.click}, keys ${counts.key}, whooshes ${counts.whoosh}, pings ${counts.ping}, lines ${lines.length}${A.music ? `, music ${report.music}` : ''}`);
   console.log(`captions: ${caps.captions}  chapters: ${caps.chapters}${report.burned ? `  burned: ${report.burned}` : ''}`);
+  if (report.clips) console.log(`clips: ${report.clips.map((c) => `${c.name} ${c.dur}s ${c.lufs} LUFS ${c.truePeak} dBTP`).join(', ')} (${C.out}/out/clips)`);
   if (fails.length) { console.error(`audio check FAILED: ${fails.join('; ')}`); return { ...report, fails }; }
   return report;
 }

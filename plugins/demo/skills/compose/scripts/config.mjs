@@ -176,6 +176,8 @@ export function loadConfig(path) {
     workers: raw.workers ?? 4,
     crf: raw.crf ?? 16,
     pace, speed, cut, beats,
+    // each chapter also as its own mp4, own loudness pass (audio.mjs); on by default in beat mode
+    clips: raw.clips ?? cut === 'beats',
     targetDuration: raw.targetDuration,
     chapterCardDur: r3((raw.chapterCardDur ?? 2.0) * pace),
     defaultPersona: raw.defaultPersona || '',
