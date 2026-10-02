@@ -42,8 +42,8 @@ re-render keeps the previous one, and it must hold its planned length times the 
 Renders run one at a time in the foreground with `workers` capture processes (default 4) under a
 timeout of 120s plus 10s per second of segment at 720p30, scaled by pixel rate (80s per second at
 the 1440p60 master): a harness that kills long background tasks for low memory will otherwise
-take the whole batch out. The timeout is GNU `timeout`, else `gtimeout` (Homebrew coreutils); stock macOS
-has neither, so there `render.sh` warns once and renders without a time limit.
+take the whole batch out. The render itself is `scripts/hfrender.mjs` (render.sh and the
+burned-caption cut both use it); its timeout is node's own, so it holds on stock macOS too.
 
 A worked example is `examples/ferry/`: a made-up ferry operator's three-page app
 (`serve.mjs`, `app/`), the `beats.mjs` that films it with demo:capture, and
@@ -388,10 +388,11 @@ Measured on a 5:36 ten-chapter demo, 47 marks. Change them in config, not in cod
   across the lit rect (`spotlight.sweep`). When the next mark lights within `spotlight.glide`
   (2.5s) of this hold ending and the square view does not change between them, the cut-out does
   not fade out: it glides, moving and reshaping onto the next rect over the gap with the camera
-  move. A glide lasts at least 0.35s: if the next mark lights sooner (pace above 1, or a spotlight
-  waiting for the camera), this hold ends early to make room and its label leaves as the glide
-  starts; if that would leave the hold under 0.7s, too short for the two stills, it fades
-  instead. Across a square re-frame the camera moves under the cut-out, so there it always fades
+  move, arriving when the next spotlight's fade-in would have finished (so a narration anchor
+  timed to that moment still lands on it). A glide lasts at least 0.35s: if the next mark lights
+  sooner (pace above 1, or a spotlight waiting for the camera), this hold ends early to make room
+  and its label leaves as the glide starts; if that would leave the hold under 0.7s, too short
+  for the two stills, or cut into the mark's narration line, it fades instead. Across a square re-frame the camera moves under the cut-out, so there it always fades
   out and irises in. Each run of glides is its own element, so one mark's fade-out can never touch
   the next (a shared one hid a mark lit within 0.3s of the last hold, found in review). It fades in 250ms before `t`, or once the zoom into the mark has
   settled in the footage if that is later, holds 1.5 to 2.5s, fades out. Fading in 250ms before
@@ -434,7 +435,8 @@ Both were found by looking at stills, not by reading code. Do not "simplify" the
 0.1` if later, so a spotlight that waited for the camera is not read mid-fade, and always at
 least 0.1s before still B, which is 0.05s before the fade-out. A hold too short for that window
 misses as "lit too briefly to check" instead of a false scrim or drift reading (measured: hold
-0.4s on the ferry board). For a spotlight that glided in, `litFrom` is its arrival and `fadeIn` is 0.
+0.4s on the ferry board). A spotlight that glides in arrives at `litFrom + fadeIn`, when its fade-in
+would have finished, so the stills read it the same way.
 It runs four tests against the rendered segment and the untouched source frame. It prints one
 line per mark and exits 1 if any mark misses.
 
@@ -529,13 +531,26 @@ encode (text crop inside each cut-out against the source screencast frame, RGB):
   x264's default of 250 the ferry check took 45.7s, now 29.1s, for 20% more disk (fares 115 MB at
   250). So `out/seg/` holds well under 1 GB per minute at the master, where PNGs would have been
   6.6 GB. It is scratch: delete it once the final mp4 is good.
-  **Free disk while rendering** is set by HyperFrames, not by the PNGs: before capturing it
-  refuses unless free space on the `out` filesystem is at least the raw RGBA size of the
-  segment's frames over 0.9 (width x height x 4 bytes per frame). At the 1440p60 master that is
-  about 1 GB per second of the longest segment (the ferry's 13.3s chapter needs 13.1 GB free; a
-  34s chapter would need 33 GB), at draft about 0.12 GB. The PNGs it actually writes are about
-  a tenth of that. Short of disk, render that segment as a draft, split the chapter in
-  demo:capture, or free space; `--low-memory-mode` does not lift the check.
+  **Free disk while rendering**: before capturing, HyperFrames refuses unless free space on the
+  `out` filesystem is at least the raw RGBA size of the render's frames over 0.9 (width x height
+  x 4 bytes a frame: about 1 GB per second at the 1440p60 master, so the ferry's 13.3s chapter
+  asks for 13.1 GB and a 34s chapter would ask for 33 GB; about 0.12 GB per second at draft),
+  although the PNGs it writes are about a tenth of that. `--low-memory-mode` does not lift the
+  check (measured: a 40s 1440p60 render was refused the same with it on). So `hfrender.mjs`
+  measures the free space first and, when a segment would not fit, renders it in time chunks that
+  do, using 80% of what the check allows, and says so in one line, as in this ferry run forced
+  into chunks with `HF_CHUNK_FRAMES=300` (an override for testing, which the line also names):
+  `fares: 649 frames need 10.6 GB free for HyperFrames' disk check, 25.0 GB is free: rendering
+  3 chunks of up to 217 frames`.
+  Each chunk is a copy of the project re-timed to a window of its timeline; the packed chunks join
+  without re-encoding. A chunk matches the whole render as closely as two whole renders match
+  each other: at the master, forced into 300-frame chunks, the ferry's departures and fares came
+  out 552 of 799 and 506 of 649 frames bit-exact against the whole render, the rest at 77 dB or
+  better, and two whole draft renders of fares differ the same way (276 of 324 bit-exact, the
+  rest about 86 dB); the chunked film passed the still-check 5/5. A chunk costs about 5s of
+  start-up (draft fares, 3 chunks: 48s against 45s). What the render really used at its peak,
+  sampling free space every second through the ferry master: 3.1 GB, during the 13.3s chapter
+  HyperFrames asked 13.1 GB for.
 
 At 720p the gap to the ceiling was crf 14; what remains below the ceiling is the 4:2:0 conversion and
 the full-to-limited range change, which any BT.709 4:2:0 delivery pays.
