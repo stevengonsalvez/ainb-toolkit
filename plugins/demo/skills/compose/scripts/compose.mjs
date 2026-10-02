@@ -536,9 +536,22 @@ function viewFor(an, fr) {
 const PREPAN = 0.8, OMEGA = 9.43, BLEND = 0.2;
 function followCrop(an, groups, toComp, total) {
   const cam = `"#${an.name}-cam"`, targets = [], pins = [];
+  const presses = [];
   for (const e of an.cues) if ((e.kind === 'click' || e.kind === 'type') && e.rect) {
     const c = an.poses ? camAt(an, e.t) : (e.cam || { x: 0, y: 0, s: 1 });
-    targets.push({ t: toComp(e.t) - PREPAN, view: viewFor(an, onFrame(e.rect, c)) });
+    presses.push({ tc: toComp(e.t), fr: onFrame(e.rect, c) });
+  }
+  // Presses closer than PREPAN share one view, of their union: a later press switching the crop
+  // early pulled it off the earlier one before it landed (open a menu, pick an option).
+  presses.sort((a, b) => a.tc - b.tc);
+  for (let i = 0; i < presses.length;) {
+    let j = i, x0 = presses[i].fr.x, y0 = presses[i].fr.y, x1 = x0 + presses[i].fr.w, y1 = y0 + presses[i].fr.h;
+    while (j + 1 < presses.length && presses[j + 1].tc - presses[j].tc < PREPAN) {
+      const r = presses[++j].fr;
+      x0 = Math.min(x0, r.x); y0 = Math.min(y0, r.y); x1 = Math.max(x1, r.x + r.w); y1 = Math.max(y1, r.y + r.h);
+    }
+    targets.push({ t: presses[i].tc - PREPAN, view: viewFor(an, { x: x0, y: y0, w: x1 - x0, h: y1 - y0 }) });
+    i = j + 1;
   }
   for (const g of groups) {
     const a = g[0], z = g.at(-1);
@@ -548,6 +561,7 @@ function followCrop(an, groups, toComp, total) {
   targets.sort((a, b) => a.t - b.t);
   const out = [], st = { ...targets[0].view }, vel = { x: 0, y: 0, s: 0 };
   let last = null, jump = 0, maxScale = 0;
+  const trace = [];
   const smooth = (x) => x * x * (3 - 2 * x);
   const sub = 4, dt = 1 / C.fps / sub;
   for (let f = 0; f <= Math.ceil(total * C.fps); f++) {
@@ -567,12 +581,14 @@ function followCrop(an, groups, toComp, total) {
     const w = next ? smooth(1 - (next.from - t) / BLEND) : 0, sh = (ch) => st[ch] + ((next ? next.view[ch] : 0) - st[ch]) * w;
     maxScale = Math.max(maxScale, sh('s'));
     const v = { x: r3(sh('x')), y: r3(sh('y')), s: +sh('s').toFixed(5) };
+    if (process.env.COMPOSE_TRACE) trace.push([r3(t), v.x, v.y, v.s]);
     if (last && Math.abs(v.x - last.x) < 0.05 && Math.abs(v.y - last.y) < 0.05 && Math.abs(v.s - last.s) < 1e-5) continue;
     out.push(`tl.set(${cam}, { x: ${v.x}, y: ${v.y}, scale: ${v.s} }, ${f ? (t - 1e-4).toFixed(6) : 0});`);
     last = v;
   }
   // how far the spring still was from a pin's view when the pin began: eased in over BLEND, but a
   // large one is a fast slide just before the spotlight
+  if (trace.length) writeFileSync(`${C.out}/work/${an.name}-crop.json`, JSON.stringify({ frames: trace, presses }));
   if (jump > 24) console.warn(`  warn ${an.name}: the crop's spring was still ${r3(jump)}px of footage short of a spotlight's view as it lit, eased in over ${BLEND}s (more time before the mark would help)`);
   return { lines: out, maxScale, jump };
 }
