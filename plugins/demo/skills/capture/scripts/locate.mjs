@@ -1,5 +1,6 @@
 // ABOUTME: Beat targets: a CSS/Playwright selector string (as before), or a locator chain tried
-// in order, and a miss that names the nearest candidates on the page.
+// in order, plus what the authoring tools need around them: a miss that names the nearest
+// candidates and a lint for CSS where a role or test id would do.
 //
 // A target is a string, an object, or an array of them (a chain):
 //   'header nav >> text=Fares'                     a selector (a single string keeps the old
@@ -12,6 +13,10 @@
 // A chain entry matches when it finds exactly one visible element; the first that does wins.
 
 export class LocatorMiss extends Error {}
+
+const ROLE_OF = { A: 'link', BUTTON: 'button', SELECT: 'combobox', TEXTAREA: 'textbox', TABLE: 'table', TR: 'row', TD: 'cell', TH: 'columnheader',
+  NAV: 'navigation', MAIN: 'main', HEADER: 'banner', FOOTER: 'contentinfo', UL: 'list', OL: 'list', LI: 'listitem', IMG: 'img', FORM: 'form',
+  H1: 'heading', H2: 'heading', H3: 'heading', H4: 'heading', H5: 'heading', H6: 'heading', SUMMARY: 'button', DIALOG: 'dialog' };
 
 export function toLocator(page, t) {
   if (typeof t === 'string') return page.locator(t);
@@ -83,4 +88,53 @@ async function nearest(page, chain, k = 6) {
   const dice = (a, b) => { const A = grams(a), B = grams(b); let n = 0; for (const x of A) if (B.has(x)) n++; return A.size + B.size ? (2 * n) / (A.size + B.size) : 0; };
   return [...seen].map(([key, n]) => ({ key: n > 1 ? `${key} (x${n})` : key, s: Math.max(0, ...wants.map((w) => dice(w, key))) }))
     .sort((a, b) => b.s - a.s).slice(0, k).map((c) => c.key);
+}
+
+// The element's role (its own role attribute, else the implicit one for its tag) and accessible
+// name from its snapshot, and its test id. Null role for a plain container.
+async function identify(loc) {
+  const el = await loc.evaluate((n, ROLE_OF) => {
+    const type = (n.getAttribute('type') || '').toLowerCase();
+    const role = n.getAttribute('role') || (n.tagName === 'A' && !n.hasAttribute('href') ? null : n.tagName === 'INPUT'
+      ? (['button', 'submit', 'reset'].includes(type) ? 'button' : ['checkbox', 'radio'].includes(type) ? type : 'textbox') : ROLE_OF[n.tagName] || null);
+    // the nearest landmark around it, to scope a role and name that is not unique on the page
+    const lm = n.parentElement?.closest('nav,header,main,footer,aside,form,[role=navigation],[role=banner],[role=main],[role=contentinfo],[role=complementary],[role=form]');
+    const LM = { NAV: 'navigation', HEADER: 'banner', MAIN: 'main', FOOTER: 'contentinfo', ASIDE: 'complementary', FORM: 'form' };
+    return { role, testid: n.getAttribute('data-testid'), landmark: lm ? lm.getAttribute('role') || LM[lm.tagName] : null };
+  }, ROLE_OF);
+  if (el.role) {
+    const first = (await loc.ariaSnapshot({ timeout: 2000 }).catch(() => '')).split('\n')[0];
+    const m = first.match(/^\s*- ([a-z]+)(?: "((?:[^"\\]|\\.)*)")?/);
+    el.name = m && m[1] === el.role && m[2] ? m[2].replace(/\\"/g, '"') : null;
+  }
+  return el;
+}
+
+// The steadiest single locator for a resolved element: role and name (inside its landmark when
+// the page has others like it), else test id, when that finds it alone; null when only a selector
+// will do.
+export async function better(page, loc) {
+  const el = await identify(loc);
+  const alone = async (t) => (await toLocator(page, t).filter({ visible: true }).count()) === 1;
+  if (el.role) {
+    const t = el.name ? { role: el.role, name: el.name } : { role: el.role };
+    if (await alone(t)) return t;
+    if (el.landmark) { const u = { ...t, in: { role: el.landmark } }; if (await alone(u)) return u; }
+  }
+  if (el.testid) { const t = { testid: el.testid }; if (await alone(t)) return t; }
+  return null;
+}
+
+// A target as it is written in a beats file.
+export const source = (t) => (typeof t === 'string' ? `'${t.replace(/'/g, "\\'")}'`
+  : `{ ${Object.entries(t).map(([k, v]) => `${k}: ${typeof v === 'object' ? source(v) : `'${String(v).replace(/'/g, "\\'")}'`}`).join(', ')} }`);
+
+// Lint: a selector (a lone string, or a chain that matched on a css entry) where a role or test id
+// would find the same element. Selectors break when markup or class names change; roles and test
+// ids survive a restyle.
+export async function lintTarget(page, target, hit) {
+  const t = chainOf(target)[hit.index];
+  if (typeof t !== 'string' && !t.css) return null;
+  const b = await better(page, hit.loc).catch(() => null);
+  return b && `${describe(t)} is a selector; ${source(b)} finds the same element and survives a restyle`;
 }

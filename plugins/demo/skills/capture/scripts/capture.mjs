@@ -21,7 +21,7 @@ import fs from 'fs'; import path from 'path'; import { execFile } from 'child_pr
 // Browsers come from $PLAYWRIGHT_BROWSERS_PATH when set, else Playwright's own default.
 import { chromium } from '@playwright/test';
 import { Camera, Cursor, tilt, CAMERA_REF_MS, CLICK_LEAD_MS } from './motion.mjs';
-import { resolve } from './locate.mjs';
+import { resolve, lintTarget } from './locate.mjs';
 
 const smoothstep = p => p * p * (3 - 2 * p);
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -191,8 +191,9 @@ async function film({ base, state, out, viewport = { width: 1280, height: 720 },
   const rec = det ? await deterministic({ W, H, cap, dir, state, overlayArgs }) : await screencast({ W, H, dir, state, overlayArgs });
   const { page } = rec;
   Object.assign(rec, { speed: cursor.speed || 0, pace }); rec.cursorTilt = cursor.tilt;
-  // targets: which locator each beat's targets resolved to.
-  const events = [], targets = [];
+  // targets: which locator each beat's targets resolved to; lints: selectors where a role or test
+  // id would do (with capture.lint).
+  const events = [], targets = [], lints = [], lint = !!cap.lint;
   try {
     const run = (async () => {
       // Targets are resolved fresh every beat: nav bars change with context
@@ -203,6 +204,7 @@ async function film({ base, state, out, viewport = { width: 1280, height: 720 },
       const find = async (target, use, beat, waitMs = 5000) => {
         const hit = await resolve(page, target, { use, beat, waitMs, now: rec.ms, sleep: ms => rec.sleep(ms) });
         targets.push({ beat, use, matched: hit.matched, ...(hit.of > 1 && { index: hit.index, of: hit.of }) });
+        if (lint) { const w = await lintTarget(page, target, hit).catch(() => null); if (w && !lints.some(l => l.endsWith(w))) lints.push(`beat "${beat}": ${use} ${w}`); }
         return hit.loc;
       };
       const rectOf = loc => loc.evaluate(n => { const r = n.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; });
@@ -314,6 +316,7 @@ async function film({ base, state, out, viewport = { width: 1280, height: 720 },
       ...(det && { blur: cap.blur && { ...cap.blur, spans: r.blurSpans, ...r.blurStats } }) };
     fs.writeFileSync(path.join(dir, 'events.json'), JSON.stringify({ chapter, viewport, dpr: r.dpr, fps: r.fps,
       capture: capInfo, dur: r.dur, frames: r.frames, events, targets }, null, 1));
+    if (lints.length) for (const w of lints) console.warn(`  lint ${chapter}: ${w}`);
     return { frames: r.frames, dur: r.dur, events: events.filter(e => e.kind === 'mark').length, dir, mode: cap.mode, fps: r.fps, dpr: r.dpr };
   } finally { await rec.close(); }
 }
