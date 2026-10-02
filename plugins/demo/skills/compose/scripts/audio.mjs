@@ -517,7 +517,8 @@ export function mix(C) {
     execFileSync(C.ffmpeg, ['-nostdin', '-loglevel', 'error', '-y', ...ins, '-filter_complex', fc, '-frames:v', '1', '-update', '1', `${C.out}/out/${C.name}-audio.png`]);
   }
 
-  if (A.captions.burn) report.burned = burnCaptions(C, segs, A, final);
+  // a vertical cut has its captions in the picture already (compose.mjs), so it is never burned twice
+  if (A.captions.burn && C.format !== 'vertical') report.burned = burnCaptions(C, segs, A, final);
   writeFileSync(`${C.out}/out/${C.name}.audio.json`, JSON.stringify(report, null, 1));
   const lvl = programme ? `${got.I} LUFS (target ${T.target})` : `${got.I} LUFS (effects only, not normalised)`;
   console.log(`audio: ${lvl}, true peak ${got.TP} dBTP; clicks ${counts.click}, keys ${counts.key}, whooshes ${counts.whoosh}, pings ${counts.ping}, lines ${lines.length}${A.music ? `, music ${report.music}` : ''}`);

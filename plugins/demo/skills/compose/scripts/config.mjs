@@ -90,19 +90,20 @@ export function loadConfig(path) {
   if (raw.cards?.end) cards['end-card'] = { ...cardDefaults, ...raw.cards.end };
   for (const c of Object.values(cards)) c.dur = r3(c.dur * pace);
 
-  // Output size. Everything is laid out in a design space (1280x720 landscape, 1080x1080 square)
-  // and scaled to the canvas with CSS zoom, so text and geometry rasterise at master size rather
-  // than being upscaled. quality "final" (default) is the master: 2560x1440 or 1440x1440 at 60fps,
-  // so a 2x take enters at native pixels. "draft" is 1280x720 or 1080x1080 at 30fps for iteration.
+  // Output size. Everything is laid out in a design space (1280x720 landscape, 1080x1080 square,
+  // 1080x1920 vertical) and scaled to the canvas with CSS zoom, so text and geometry rasterise at
+  // master size rather than being upscaled. quality "final" (default) is the master: 2560x1440,
+  // 1440x1440 or 1080x1920 at 60fps, so a 2x take enters at native pixels. "draft" is 1280x720,
+  // 1080x1080 or 720x1280 at 30fps for iteration.
   // Explicit width/height override the canvas; the design space keeps the format's height.
-  const DESIGN = { landscape: [1280, 720], square: [1080, 1080] };
-  const MASTER = { landscape: [2560, 1440], square: [1440, 1440] };
+  const DESIGN = { landscape: [1280, 720], square: [1080, 1080], vertical: [1080, 1920] };
+  const MASTER = { landscape: [2560, 1440], square: [1440, 1440], vertical: [1080, 1920] };
+  const DRAFT = { ...DESIGN, vertical: [720, 1280] };
   const format = raw.format || 'landscape';
-  if (format === 'vertical') throw new Error('config: format "vertical" is not supported: 16:9 footage cropped to 9:16 cannot keep wide marks readable. Use "landscape" or "square".');
-  if (!DESIGN[format]) throw new Error(`config: unknown format "${format}" (landscape or square)`);
+  if (!DESIGN[format]) throw new Error(`config: unknown format "${format}" (landscape, square or vertical)`);
   const quality = raw.quality || 'final';
   if (!['final', 'draft'].includes(quality)) throw new Error(`config: unknown quality "${quality}" (final or draft)`);
-  const [cw0, ch0] = quality === 'draft' ? DESIGN[format] : MASTER[format];
+  const [cw0, ch0] = quality === 'draft' ? DRAFT[format] : MASTER[format];
   const width = raw.width || (raw.height ? Math.round(raw.height * cw0 / ch0) : cw0);
   const height = raw.height || (raw.width ? Math.round(raw.width * ch0 / cw0) : ch0);
   if (width % 2 || height % 2) throw new Error('config: width and height must be even (4:2:0 delivery)');
@@ -193,10 +194,17 @@ export function seams(C) {
 // Where the footage "screen" sits: inside the framed window (padded, scaled by ws) or full
 // bleed. Design px, plus the same rect in canvas px for reading rendered frames.
 // sw x sh is the screen's own size in design px (what compose lays spotlights and labels out in,
-// and check.mjs measures in), shown at ws inside the window.
+// and check.mjs measures in), shown at ws inside the window. Landscape and square show the whole
+// design canvas, scaled into the padded window. Vertical has a window of its own between the
+// headline band and the caption band (VERTICAL), at 1:1, and the crop follows the target in it.
+export const VERTICAL = { top: 520, height: 820, safe: { top: 220, bottom: 420, left: 60, right: 120 } };
 export function screenRect(C) {
-  const pad = C.frame ? C.frame.padding : 0, ws = (C.dw - 2 * pad) / C.dw, padY = (C.dh - C.dh * ws) / 2;
   const z = C.zoom;
+  if (C.format === 'vertical') {
+    const pad = C.frame ? 40 : 0, sw = C.dw - 2 * pad, sh = VERTICAL.height, padY = VERTICAL.top;
+    return { pad, padY, ws: 1, sw, sh, canvas: [Math.round(pad * z), Math.round(padY * z), Math.round(sw * z), Math.round(sh * z)] };
+  }
+  const pad = C.frame ? C.frame.padding : 0, ws = (C.dw - 2 * pad) / C.dw, padY = (C.dh - C.dh * ws) / 2;
   return { pad, padY, ws, sw: C.dw, sh: C.dh, canvas: [Math.round(pad * z), Math.round(padY * z), Math.round(C.dw * ws * z), Math.round(C.dh * ws * z)] };
 }
 // Head and tail transitions of one segment.

@@ -6,8 +6,9 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync, mkdirSync, copyFileSync, existsSync } from 'node:fs';
 import { dirname, resolve, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadConfig, segmentNames, seams, seamsOf, screenRect, eventsPath, r3, esc, grayFrames, mad, hexToRgba } from './config.mjs';
+import { loadConfig, segmentNames, seams, seamsOf, screenRect, VERTICAL, eventsPath, r3, esc, grayFrames, mad, hexToRgba } from './config.mjs';
 import { audioSettings, narrationClips, fitNarration, beatGrid } from './audio.mjs';
+import { cues as captionCues } from './captions.mjs';
 
 const cfgPath = process.argv[2];
 if (!cfgPath) { console.error('usage: compose.mjs <config.json> [segment ...]'); process.exit(2); }
@@ -112,7 +113,7 @@ function squircle(w, h, r, k = 10) {
 const WW = SCW * WS, WH = SCH * WS, R = FR ? FR.radius : 0, SH = FR ? FR.shadow : 0;
 const ink = (a) => tint(T.text, a);
 const shadow = SH ? `0 0 0 1px ${ink(0.08 * SH)}, 0 1px 2px ${ink(0.16 * SH)}, 0 10px 24px ${ink(0.14 * SH)}, 0 36px 80px ${ink(0.22 * SH)}` : 'none';
-const SP = C.spotlight, FE = SP.feather;
+const SP = C.spotlight, FE = SP.feather, VS = VERTICAL.safe, VERT = C.format === 'vertical';
 const band = (dir, a, b) => `linear-gradient(${dir}, transparent calc(var(${a}) - ${FE}px), #000 var(${a}), #000 calc(var(${a}) + var(${b})), transparent calc(var(${a}) + var(${b}) + ${FE}px))`;
 const STYLE = `
 ${faces}
@@ -149,7 +150,7 @@ html, body { width: ${C.width}px; height: ${C.height}px; overflow: hidden; backg
   box-shadow: 0 1px 2px rgba(0,0,0,0.20), 0 10px 28px rgba(0,0,0,0.30); }
 .card { position: absolute; inset: 0; }
 .ghost { position: absolute; right: -0.04em; bottom: -0.2em; font-family: ${C.displayStack}; font-weight: 700;
-  font-size: ${Math.round(H * 0.56)}px; line-height: 1; letter-spacing: -0.04em; white-space: nowrap; color: ${T.text}; opacity: 0.055; }
+  font-size: ${Math.round(Math.min(W, H) * 0.56)}px; line-height: 1; letter-spacing: -0.04em; white-space: nowrap; color: ${T.text}; opacity: 0.055; }
 .hair { position: absolute; left: ${SAFE}px; right: ${SAFE}px; height: 1px; background: ${ink(0.14)}; transform-origin: 0 50%; }
 .cbox { position: absolute; left: ${Math.round(SAFE * 1.75)}px; right: ${Math.round(SAFE * 1.75)}px; top: 0; bottom: 0;
   display: flex; flex-direction: column; justify-content: center; align-items: flex-start; }
@@ -164,7 +165,16 @@ html, body { width: ${C.width}px; height: ${C.height}px; overflow: hidden; backg
 .sub { font-weight: 500; font-size: 26px; line-height: 1.3; color: ${T.muted}; margin-top: 22px; max-width: ${Math.round(W * 0.6)}px; }
 .sub b { color: ${T.highlight}; font-weight: 600; }
 #fade { position: absolute; inset: 0; background: ${T.bg}; opacity: 0; pointer-events: none; }
-`;
+${VERT ? `/* vertical: the headline band above the window and the caption band below it, both inside the
+   platforms' safe zones (VERTICAL.safe: clear of their top bar, bottom captions UI and side rail) */
+.vhead { position: absolute; left: ${VS.left}px; right: ${VS.right}px; top: ${VS.top}px; opacity: 0; }
+.vtitle { font-family: ${C.displayStack}; font-weight: 700; font-size: 60px; line-height: 1.05; letter-spacing: -0.02em;
+  color: ${T.text}; margin-top: 16px; text-wrap: balance; }
+.vcap { position: absolute; left: ${VS.left}px; right: ${VS.right}px; bottom: ${VS.bottom}px; height: 0; }
+.cue { position: absolute; left: 50%; bottom: 0; transform: translateX(-50%); opacity: 0; width: max-content; max-width: 100%;
+  padding: 14px 26px; border-radius: 18px; background: color-mix(in oklab, ${T.text} 88%, transparent);
+  font-family: ${C.bodyStack}; font-weight: 600; font-size: 40px; line-height: 1.25; color: #FFFFFF; text-align: center; text-wrap: balance; }
+` : ''}`;
 
 // A segment renders ceil(duration * fps) frames (measured: 3.067s rendered 93 frames, not 92), so a
 // duration that is meant to be whole frames is written rounded DOWN to the millisecond.
@@ -222,10 +232,29 @@ function seamLines(name, total) {
 const words = (s, cls) => esc(s).split(/\s+/).filter(Boolean).map((w) => (cls === 'wm' ? `<span class="wm"><span class="w">${w}</span></span>` : `<span class="w">${w}</span>`)).join(' ');
 const ghostWord = (s) => String(s).split(/\s+/).sort((a, b) => b.length - a.length)[0] || '';
 
+// Vertical only: captions burned into the segment itself, in the caption band. The narration's
+// words, the spoken one picked out, or without narration each spotlight's label while it is lit
+// (captions.mjs groups them, the same cues as the .vtt).
+function captionLayer(id, plan) {
+  if (!VERT) return { html: '', lines: [] };
+  const { cues: cs } = captionCues(C, [{ name: id, start: 0, plan }], A);
+  const lines = [], word = `color-mix(in oklab, ${T.highlight} 45%, white)`;
+  const html = cs.map((c, i) => {
+    const el = `#${id}-c${i}`;
+    lines.push(`tl.set("${el}", { opacity: 1 }, ${r3(c.start)});`, `tl.set("${el}", { opacity: 0 }, ${r3(c.end)});`);
+    if (!c.words) return `<div class="cue" id="${id}-c${i}">${esc(c.text)}</div>`;
+    c.words.forEach((w, k) => {
+      lines.push(`tl.set("${el}w${k}", { color: "${word}" }, ${r3(w.start)});`, `tl.set("${el}w${k}", { color: "#FFFFFF" }, ${r3(c.words[k + 1]?.start ?? c.end)});`);
+    });
+    return `<div class="cue" id="${id}-c${i}">${c.words.map((w, k) => `<span id="${id}-c${i}w${k}">${esc(w.text)}</span>`).join(' ')}</div>`;
+  }).join('\n');
+  return { html: `<div class="vcap">${html}</div>`, lines };
+}
+
 // Text card (title / switch / end). Edge-anchored type over the shared backdrop, an oversized
 // ghost word drifting behind it, a hairline; each kind enters differently (house motion rules:
 // no shared ease or direction across cards). The seam halves are the card's exits.
-function cardDoc(id, c, kind) {
+function cardDoc(id, c, kind, narration = []) {
   const dur = c.dur, last = segmentNames(C).at(-1) === id;
   const body = `<section id="${id}-card" class="card clip" data-start="0" data-duration="${fdur(dur)}">
   <div class="ghost" id="${id}-ghost">${esc(ghostWord(c.title))}</div>
@@ -262,7 +291,8 @@ function cardDoc(id, c, kind) {
   s.push(...seamLines(id, dur));
   // the film's last frame resolves to the backdrop colour: the one exit the house rules allow
   if (last) s.push(`tl.fromTo("#fade", { opacity: 0 }, { opacity: 1, duration: ${F(0.6)}, ease: "power1.in", immediateRender: false }, ${r3(dur - F(0.6))});`);
-  return doc(id, dur, body, s.join('\n'));
+  const cap = captionLayer(id, { narration, spots: [] });
+  return doc(id, dur, body + cap.html, [...s, ...cap.lines].join('\n'));
 }
 
 // ---------- chapter analysis (source time, independent of speed) ----------
@@ -475,8 +505,11 @@ function renderFootage(an, rt, out, scale) {
 // Footage keeps its own aspect. When the output aspect differs (square), each proof window gets a
 // view {s, x, y}: footage scaled by s and placed at x, y, chosen so the spotlit rect fits with room
 // for its label. The view is still inside a window, so spotlights stay put; it eases between windows.
+// Vertical zooms past the cover scale onto a small target, as far as the take's own pixels go
+// (a 2x take at 2 screen px per CSS px), so a button reads at phone size without upscaling.
 function viewFor(an, fr) {
-  const sMin = Math.min(SCW / an.srcW, SCH / an.srcH), sMax = Math.max(SCW / an.srcW, SCH / an.srcH);
+  const sMin = Math.min(SCW / an.srcW, SCH / an.srcH), cover = Math.max(SCW / an.srcW, SCH / an.srcH);
+  const sMax = VERT ? Math.max(cover, an.dpr / (Z * WS)) : cover;
   if (sMax - sMin < 1e-6) return { s: sMin, x: 0, y: 0 };
   const LH = C.layout.labelHeight, GAP = C.layout.labelGap;
   const s = Math.max(sMin, Math.min(sMax, (SCW - 2 * SAFE) / fr.w, (SCH - 2 * SAFE - LH - GAP) / fr.h));
@@ -484,6 +517,62 @@ function viewFor(an, fr) {
   const x = fw <= SCW ? (SCW - fw) / 2 : Math.min(0, Math.max(SCW - fw, SCW / 2 - cx * s));
   const y = fh <= SCH ? (SCH - fh) / 2 : Math.min(0, Math.max(SCH - fh, SCH / 2 - cy * s));
   return { s: r3(s), x: r3(x), y: r3(y) };
+}
+
+// ---------- vertical: the crop follows the target ----------
+// The crop (the view of the footage in the vertical window) follows the current target box on a
+// critically damped spring, stepped once a frame (omega 9.43 rad/s, the natural frequency of
+// Cap's screen spring, cited as a constant), so it never overshoots or jitters. Targets: each
+// click and each typed field (its rect under the camera that filmed it), switched PREPAN before
+// the press so the crop is already there when the pointer glides in (it glides for 0.5s before
+// a press) and it never enters from off-frame; and each group of spotlights, switched PREPAN
+// before it lights. While a spotlight is up, from its first fade-in to the end of its last
+// fade-out, the crop is pinned to that group's view: the cut-out and the still-check both
+// assume a still frame. A spring that has not quite arrived when a pin starts is eased onto the
+// pin's view over the last BLEND before it (a few px on ferry), never cut. Views clamp to the
+// footage's edges (viewFor).
+const PREPAN = 0.8, OMEGA = 9.43, BLEND = 0.2;
+function followCrop(an, groups, toComp, total) {
+  const cam = `"#${an.name}-cam"`, targets = [], pins = [];
+  for (const e of an.cues) if ((e.kind === 'click' || e.kind === 'type') && e.rect) {
+    const c = an.poses ? camAt(an, e.t) : (e.cam || { x: 0, y: 0, s: 1 });
+    targets.push({ t: toComp(e.t) - PREPAN, view: viewFor(an, onFrame(e.rect, c)) });
+  }
+  for (const g of groups) {
+    const a = g[0], z = g.at(-1);
+    targets.push({ t: a.cf - PREPAN, view: a.view });
+    pins.push({ from: a.cf, to: z.ct + z.hold + F(0.3), view: a.view });
+  }
+  targets.sort((a, b) => a.t - b.t);
+  const out = [], st = { ...targets[0].view }, vel = { x: 0, y: 0, s: 0 };
+  let last = null, jump = 0, maxScale = 0;
+  const smooth = (x) => x * x * (3 - 2 * x);
+  const sub = 4, dt = 1 / C.fps / sub;
+  for (let f = 0; f <= Math.ceil(total * C.fps); f++) {
+    const t = f / C.fps, pin = pins.find((p) => t >= p.from - 1e-9 && t <= p.to + 1e-9);
+    if (pin) {
+      jump = Math.max(jump, Math.hypot(st.x - pin.view.x, st.y - pin.view.y));
+      Object.assign(st, pin.view); vel.x = vel.y = vel.s = 0;
+    } else {
+      // (shown below: the spring, eased onto the next pin's view as that pin nears)
+      const goal = (targets.filter((q) => q.t <= t).at(-1) ?? targets[0]).view;
+      for (let k = 0; k < sub; k++) for (const ch of ['x', 'y', 's']) {
+        vel[ch] += (OMEGA * OMEGA * (goal[ch] - st[ch]) - 2 * OMEGA * vel[ch]) * dt;
+        st[ch] += vel[ch] * dt;
+      }
+    }
+    const next = pin ? null : pins.find((p) => p.from > t && p.from - t < BLEND);
+    const w = next ? smooth(1 - (next.from - t) / BLEND) : 0, sh = (ch) => st[ch] + ((next ? next.view[ch] : 0) - st[ch]) * w;
+    maxScale = Math.max(maxScale, sh('s'));
+    const v = { x: r3(sh('x')), y: r3(sh('y')), s: +sh('s').toFixed(5) };
+    if (last && Math.abs(v.x - last.x) < 0.05 && Math.abs(v.y - last.y) < 0.05 && Math.abs(v.s - last.s) < 1e-5) continue;
+    out.push(`tl.set(${cam}, { x: ${v.x}, y: ${v.y}, scale: ${v.s} }, ${f ? (t - 1e-4).toFixed(6) : 0});`);
+    last = v;
+  }
+  // how far the spring still was from a pin's view when the pin began: eased in over BLEND, but a
+  // large one is a fast slide just before the spotlight
+  if (jump > 24) console.warn(`  warn ${an.name}: the crop's spring was still ${r3(jump)}px of footage short of a spotlight's view as it lit, eased in over ${BLEND}s (more time before the mark would help)`);
+  return { lines: out, maxScale, jump };
 }
 
 // ---------- chapter ----------
@@ -589,7 +678,10 @@ function chapter(an, sp) {
       place: pick[0], box: [x, y, w, h].map(Math.round),
       labBox: [pick[2].left, pick[2].top, lw, LH].map(Math.round), view: s.view,
     });
-    return `<div id="${name}-l${s.i}" class="lab" style="left:${r3(pick[2].left)}px;top:${r3(pick[2].top)}px">${esc(s.label)}</div>`;
+    // vertical with no narration: the burned caption IS the label, at a size a phone can read, so
+    // the small one by the spotlight stays laid out (check.mjs measures it) but is not drawn
+    const dup = VERT && !fit.placed.length ? ';display:none' : '';
+    return `<div id="${name}-l${s.i}" class="lab" style="left:${r3(pick[2].left)}px;top:${r3(pick[2].top)}px${dup}">${esc(s.label)}</div>`;
   }).join('\n');
 
   // Chapter card: a ghost numeral behind, persona kicker, title words rising out of their line
@@ -624,7 +716,9 @@ function chapter(an, sp) {
   // Framing (square): one set at 0, then an eased move between consecutive groups while nothing is lit.
   const cam = `#${name}-cam`, V = (v) => `x: ${v.x}, y: ${v.y}, scale: ${v.s}`;
   lines.push(`tl.set("${cam}", { ${V(groups[0][0].view)}, transformOrigin: "0 0" }, 0);`);
-  for (let i = 1; i < groups.length; i++) {
+  let maxScale = Math.max(...an.spots.map((s) => s.view.s));
+  if (VERT) { const f = followCrop(an, groups, toComp, total); lines.push(...f.lines); maxScale = Math.max(maxScale, f.maxScale); }
+  else for (let i = 1; i < groups.length; i++) {
     const a = groups[i - 1].at(-1), b = groups[i][0];
     if (JSON.stringify(a.view) === JSON.stringify(b.view)) continue;
     const t0 = a.ct + a.hold + F(0.3), t1 = b.cf;
@@ -700,10 +794,16 @@ function chapter(an, sp) {
 ${[...new Set(an.spots.map((s) => s.run))].map((r) => `<div class="sl" id="${name}-sl${r}"><div class="scrim"></div><div class="ring"><div class="sweep" id="${name}-sw${r}"></div></div></div>`).join('\n')}
 ${labels}
 </div></div></div>`;
-  const d = project(name, doc(name, total, `${card}\n${win}`, lines.join('\n')));
+  // Vertical: the chapter title stays up in the headline band once the window is in, and the
+  // captions run in the caption band.
+  const narration = fit.placed.map(({ slot, at, lit, dur, file, text, anchor, words }) => ({ slot, at: r3(at), ...(lit != null && { lit: r3(lit) }), dur, file, text, anchor, words }));
+  const cap = captionLayer(name, { narration, spots: report });
+  const head = VERT ? `<div class="vhead" id="${name}-vh"><div class="kicker"><span class="kbar"></span><span>${esc(cfg.persona || C.defaultPersona || '')}</span></div><div class="vtitle">${esc(cfg.title)}</div></div>` : '';
+  if (VERT) lines.push(`tl.fromTo("#${name}-vh", { opacity: 0, y: 24 }, { opacity: 1, y: 0, duration: ${F(0.6)}, ease: "power3.out" }, ${r3(CARD)});`);
+  const d = project(name, doc(name, total, [card, win, head, cap.html].filter(Boolean).join('\n'), [...lines, ...cap.lines].join('\n')));
   // Footage is written at the pixel size it is shown at (window scale, zoom, largest view), capped
   // at the take's own: a 2x take enters a 1440p master at native density, lanczos-scaled once.
-  const shown = Z * WS * Math.max(1, ...an.spots.map((s) => s.view.s));
+  const shown = Z * WS * Math.max(1, maxScale);
   renderFootage(an, rt, `${d}/assets/footage/${name}.mp4`, Math.min(an.dpr, shown));
   const meta = { name, kind: 'chapter', start: startOf(name), total: GRID ? total : r3(total), srcDur: r3(an.dur), cardDur: CARD, srcW: an.srcW, srcH: an.srcH,
     speed: sp, kept: an.kept.map((k) => k.map(r3)), cuts: r3(an.dur - rt.kept.reduce((a, [x, y]) => a + y - x, 0)),
@@ -719,7 +819,7 @@ ${labels}
       const at = toComp(e.t) + fit.freezes.reduce((a, f) => a + (e.dur && f.t > e.t && f.t <= e.t + e.dur ? f.d : 0), 0);
       return { kind: e.kind, at: r3(at), ...(e.dur != null && { dur: r3(toComp(e.t + e.dur) - at) }), ...(e.chars && { chars: e.chars }) };
     }),
-    narration: fit.placed.map(({ slot, at, lit, dur, file, text, anchor, words }) => ({ slot, at: r3(at), ...(lit != null && { lit: r3(lit) }), dur, file, text, anchor, words })) };
+    narration };
   writeFileSync(`${C.out}/work/${name}.plan.json`, JSON.stringify(meta, null, 1));
   return meta;
 }
@@ -820,8 +920,8 @@ for (const n of order) {
     const clip = NAR[n]?.card, N = A?.narration, base = cardDur(n);
     card.dur = GRID ? base + padToBeat(n, base) : r3(base);
     TOTALS[n] = card.dur;
-    project(n, cardDoc(n, card, n === 'title-card' ? 'title' : n === 'end-card' ? 'end' : 'switch'));
     const narration = clip ? [{ slot: 'card', at: N.lead, dur: clip.dur, file: clip.file, text: clip.text, anchor: clip.anchor, words: clip.words }] : [];
+    project(n, cardDoc(n, card, n === 'title-card' ? 'title' : n === 'end-card' ? 'end' : 'switch', narration));
     writeFileSync(`${C.out}/work/${n}.plan.json`, JSON.stringify({ name: n, kind: 'card', start, total: card.dur, spots: [], narration }, null, 1));
     console.log(`${n}: card ${r3(card.dur)}s`);
     continue;

@@ -22,6 +22,7 @@ const C = loadConfig(cfgPath);
 // Measured in the screen's design px, the space compose lays out in: a rendered frame is cropped
 // to the footage's screen (inside the framed window, or the whole frame when full bleed) and
 // scaled to it, so every threshold below means the same thing at draft and at the 1440p master.
+// The screen is the design canvas for landscape and square, the window between the bands for vertical.
 const SR = screenRect(C), W = SR.sw, H = SR.sh, K = C.check, SCREEN = SR.canvas;
 
 // Captions on the contact tiles need drawtext (libfreetype), which some ffmpeg builds lack, a
