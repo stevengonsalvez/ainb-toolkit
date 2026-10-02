@@ -34,13 +34,17 @@ First run only, from that directory: `npm ci`, then
 
 ```bash
 cd "$SKILL_DIR"
-npm run check                                   # self-check, ~8 min, no app needed
-node scripts/run.mjs /path/to/beats.mjs [chapter ...]   # capture + encode each chapter
+npm run check                                   # self-check, ~9 min, no app needed
+node scripts/run.mjs /path/to/beats.mjs --dry-run       # every target resolved, no frames: seconds
+node scripts/run.mjs /path/to/beats.mjs [chapter ...]   # dry run, then capture + encode each chapter
 scripts/montage.sh <out>/<chapter>.mp4          # 4x3 contact sheet; LOOK at it
+node scripts/inventory.mjs <url>                # what a beat can target on a page (see Drafting beats)
 ```
 
 - Browsers: Playwright reads `PLAYWRIGHT_BROWSERS_PATH` when it is set and otherwise uses its own default (`~/.cache/ms-playwright` on Linux). Export `PLAYWRIGHT_BROWSERS_PATH="$PW"` in the shell that runs the rig and keep that directory stable; the scripts never set it for you. The installed revision must match `node_modules/playwright-core/browsers.json` (1.62.0 wants chromium 1234). On mismatch: `PLAYWRIGHT_BROWSERS_PATH="$PW" npx playwright install chromium`. Prefer a directory you control over `~/.cache/ms-playwright`, which other tooling clears: measured wiped twice on one machine with 34G free, so not disk pressure.
 - Write beats files and `out` under a scratch dir, never in a project repo.
+- Narration (composing a demo whose config has `narration`) runs `hyperframes tts`, which reads
+  `HYPERFRAMES_PYTHON`: point it at a venv with `kokoro-onnx` and `soundfile` installed.
 - After every take: open the montage. Check head is not blank/black, tail is not a splash, zoom frames are sharp.
 - `run.mjs` prints each chapter's mode, fps, density and wall time, e.g.
   `fares: deterministic 60fps x2, 659 frames, 11.0s, 2 marks, filmed in 210s`. A chapter that fell back
@@ -199,19 +203,138 @@ A beat is an object; keys run in this fixed order within one beat:
 |-----|-------|--------|
 | `name` | string | used in error messages |
 | `goto` | path | navigate. FIRST beat of a chapter must be a `goto` |
-| `click` | scoped selector | glide cursor to target, click |
-| `ready` | selector | after goto/click/type, wait until visible (preferred) |
+| `click` | target | glide cursor to target, click |
+| `ready` | target | after goto/click/type, wait until visible (preferred) |
 | `readyCap` | ms | cap for `ready`, or for network-quiet fallback (8000) |
 | `settle` | ms | extra wait after ready/quiet, default 400 |
 | `expectPath` | string path or RegExp | assert pathname; throws and fails the take. A string matches that path or anything below it: `/reports` accepts `/reports/7`, never `/reports-archive` |
 | `scroll` | px | smooth `scrollBy` |
-| `type` | `{into, text, cps=12}` | glide to the field, click it, type `text` key by key at `cps` characters per second (`type()`, never `fill()`, so the viewer sees it typed), then wait like a click: `ready`, else network quiet, then `settle` |
-| `zoom` | `{on, scale=2, ms=700}` | move the camera onto the element centre on a spring (see Motion); the beat goes on once it has settled. `ms: 0` is a cut |
+| `type` | `{into: target, text, cps=12}` | glide to the field, click it, type `text` key by key at `cps` characters per second (`type()`, never `fill()`, so the viewer sees it typed), then wait like a click: `ready`, else network quiet, then `settle` |
+| `zoom` | `{on: target, scale=2, ms=700}` | move the camera onto the element centre on a spring (see Motion); the beat goes on once it has settled. `ms: 0` is a cut |
 | `wide` | `true` or ms | camera back to full frame, same spring |
-| `mark` | `{label, on}` | push an event into events.json (after zoom/wide) |
+| `mark` | `{label, on: target}` | push an event into events.json (after zoom/wide) |
 | `hold` | ms | keep filming. Deterministic: the pointer parks just off the lower right corner of the mark made in this beat (inside the camera box) and stays still. Screencast: the pointer drifts, which keeps frames coming (fact 1) |
 
 Order: goto, click, wait (ready or network quiet), settle, expectPath, [filming starts here on beat 0], scroll, type, zoom, wide, mark, hold.
+
+### Targets: selectors and locator chains
+
+A target is a selector string, as it always was, or a locator, or a chain of them tried in order:
+
+```js
+click: [{ role: 'link', name: 'Fares', in: { role: 'navigation' } }, { testid: 'nav-fares' }, 'header nav >> text=Fares'],
+mark: { label: 'Resident fare needs proof', on: [{ role: 'cell', name: 'Island resident' }, '#resident'] },
+```
+
+| form | finds |
+|---|---|
+| `'css or Playwright selector'` | `page.locator(...)`; alone, its first match (the old meaning) |
+| `{ role, name }` | `getByRole`, exact name (`name` optional) |
+| `{ testid }` | `getByTestId` |
+| `{ text }`, `{ label }`, `{ placeholder }` | the exact `getBy*` |
+| `{ css }` | a selector inside a chain |
+| any of them plus `in: <target>` | the same, inside any element `in` finds |
+
+A chain entry matches when it finds exactly one visible element, and the first that does wins
+(for `ready` too: a chain `ready` waits for exactly one visible match; a lone selector string
+waits for its first match to be visible, as before);
+`events.json` records which (`targets`). A target that finds nothing within 5s (on the take's
+clock) fails the take at once with every entry tried, how many visible elements each found, and
+the nearest names on the page from its accessibility tree, e.g.:
+
+```
+beat "bad": click target matched no single visible element after 5000ms. Tried role=link[name="Fare list"]
+(0 visible), testid=nav-fares (0 visible). Nearest on the page: link "Fares" (x5), cell "Fares" (x4), ...
+```
+
+Prefer role and name, then test id (Playwright's locator order): they survive a restyle that
+breaks a class or a DOM path. Put the selector last, as the fallback. The dry run lints a
+selector when a role and name (or the same scoped to its landmark) or a test id finds that very
+element and nothing else, and prints the replacement; `capture: { lint: true }` in a beats file
+prints the same lints while filming.
+
+## Dry run
+
+`run.mjs` dry-runs every chapter it is about to film, and `--dry-run` does only that (`--no-dry-run`
+skips it). The same beat loop drives a plain page with no frames: every target and `ready`
+resolves, clicks and typing happen, every wait that exists for the viewer (hold, settle, glides,
+the gap between keys) is cut to at most 20ms. It prints a table per chapter (beat, use, the
+locator that matched and which chain entry, ms per beat), the selector lints and the narrative
+lint, and exits 1 before a frame is filmed on any `MISS` (a target the page does not have) or
+`FAIL` (anything else: a goto that fails, an `expectPath` that does not hold), each said in one
+line. After a clean dry run with `login`, the session is checked again before filming.
+
+**The dry run really clicks and types.** Everything a beat does happens twice, once in the dry
+run and once on film: a form submits twice, a cart fills twice, an invite goes out twice, a
+sign-out ends the session. Write beats that can run twice (land on pages, open and close, type
+into search, not submit what cannot be undone), or pass `--no-dry-run` for a chapter that cannot.
+Run it after every UI change and in CI, but in CI only against an environment of its own (a
+preview or a seeded local app), never a shared one other people use.
+
+Ferry: both chapters, 14 targets, 1.3s (1.8s inside `npm run check`, starting the app included).
+
+## Drafting beats (for the agent running this skill)
+
+Given a goal ("show a late sailing and the resident fare") and an app URL, write the beats file
+yourself; no API key and nothing to install beyond this skill. Explore, write, dry-run, iterate:
+
+```
+goal + URL ──▶ inventory.mjs ──▶ beats.mjs + narration ──▶ run.mjs --dry-run ──▶ green? ──▶ film
+                   ▲                                              │ miss, lint
+                   └──────────────── fix the target ◀─────────────┘
+```
+
+1. **See the page as targets.** `node scripts/inventory.mjs <url>` lists everything a beat can
+   point at (role, name, test id, rect) with the chain to write for it. For a state you reach by
+   clicking (a modal, a later page), write the beats that get there and run
+   `node scripts/inventory.mjs <beats.mjs> <chapter> <beat>`: it replays them and lists that page.
+   A logged-in app: `--state <session-state.json>` with a URL (the beats file's `state`, which
+   `run.mjs` mints), or the beats form, which logs in itself. It walks the top document only; an
+   element inside an iframe or a shadow root needs a selector or an `in:` around it.
+2. **Shape the story before the beats.** One idea per chapter, at most 5 chapters; each chapter's
+   first mark on screen inside 3s (land with no hold, act, zoom, mark); each proof is a zoom plus a
+   `mark` with a label of at most 6 words, held 1.5 to 2s; end on a `wide`.
+3. **Write targets as chains, steadiest first**: the inventory's chain column (role and name,
+   then test id), then a selector as the last entry. Mark what frames the proof (a card, a row, a
+   cell), not a word inside it. A container with no role keeps its `#id`.
+4. **Write the narration** in the compose config (`chapters[].narration.marks`, one line per
+   mark, `{@anchor}` before the word that should light the spotlight), about 2.3 words per second
+   of the time until the next mark, and point the beats file at it: `compose: './x.config.json'`.
+5. **`node scripts/run.mjs beats.mjs --dry-run` until it exits 0.** A miss prints the nearest
+   names on the page: fix the target from them (or re-run the inventory at that beat). Act on a
+   selector lint unless the element truly has no role. Fix narrative warnings by holding longer or
+   saying less.
+6. **Film** (`run.mjs`, which dry-runs again first), compose, and check, as in the compose skill.
+   Narration is spoken by `hyperframes tts`, which needs a Python with `kokoro-onnx` and
+   `soundfile`: make a venv with them and export `HYPERFRAMES_PYTHON=<venv>/bin/python` before
+   `compose.mjs`, or it stops with "The kokoro-onnx package is not installed".
+
+`examples/ferry-draft/` is this procedure run on the ferry example app for that goal, from scratch:
+two chapters (the late sailing on the card and on its board row; the Fares link, then the
+resident fare and its proof note), every target a role chain with a selector last except the card,
+narration in `draft.config.json`. Measured: the dry run resolved 12 targets with 0 misses in 0.9s
+(every chain on its first entry) and printed no narrative warnings once the last line had a word
+more (at 103 wpm it said "a long silence"); filmed deterministic in 308s and 421s for 7.4s and
+8.6s of footage on a loaded machine; composed with narration (compose's `HYPERFRAMES_PYTHON`
+setup), `check.mjs` 4/4 marks hit, final 25.7s at -14 LUFS, and its walkthrough export 5 steps,
+the click among them as "Open Fares". Copy the directory beside the ferry app's, serve that app,
+then `node scripts/run.mjs <copy>/beats.mjs`.
+
+## Narrative lint
+
+Printed with the dry run, warnings only, from the timeline the beats will film (estimated from
+their own durations at pace; on the ferry takes the estimate ran 0.2 to 0.7s early against the
+filmed marks, e.g. 2.0, 4.3, 7.9s against 2.22, 4.68, 8.58s):
+
+- each chapter's first mark on screen by 3s (a hook inside 3s keeps viewers);
+- no hold over 2s without a mark in its beat (a still frame that long loses viewers);
+- narration at 120 to 160 words a minute over the time until the next mark (compose freezes the
+  footage to fit a longer line, so the film runs slow). Needs the narration: name the compose
+  config in the beats file, `compose: './demo.config.json'` (relative to the beats file);
+- at most 5 chapters and about 120s of footage in all.
+
+The ferry beats with the narrated config get three: the departures and fares narration lines over
+200 wpm, and the fares chapter's first mark at about 4s (it navigates there first).
 
 ## Motion
 
@@ -328,7 +451,7 @@ One per chapter, written next to the frames at `<out>/<chapter>/events.json`; `<
       "cam":  { "x": 312.5, "y": 360, "w": 640, "h": 360, "s": 2 } },
     { "t": 1.29, "kind": "camera", "t0": 1.29, "t1": 1.884,
       "cam":  { "x": 312.5, "y": 360, "w": 640, "h": 360, "s": 2 } },
-    { "t": 3.4, "kind": "click",
+    { "t": 3.4, "kind": "click", "name": "Reports", "role": "link",
       "rect": { "x": 1012, "y": 668, "w": 96, "h": 40 }, "cam": null }
   ],
   "poses": [
@@ -348,8 +471,12 @@ One per chapter, written next to the frames at `<out>/<chapter>/events.json`; `<
 element (the field, for a type), and `cam`, the camera box in force, in the same CSS px as a
 mark's, so a consumer can point at what was clicked or typed into. A click's rect is taken as the
 press lands; a type cue's after the typing, so a field that widens as it fills is measured as it
-ends up. `rect` is `null` when the target has no box (display:none, zero size). Takes filmed
-before this have cues without either field: treat both as optional. A consumer that reads only marks filters on `kind`. A `camera` event is one zoom or wide glide: `t0` and `t1` its
+ends up. `rect` is `null` when the target has no box (display:none, zero size). They also carry `name`,
+the target's accessible name and `role` as the browser's accessibility tree has them (the same
+source the lint and inventory use: a button holding an image with `alt="Save"` is `button` "Save",
+an `<input type=search>` is `searchbox`), the name cut at a word under 40 characters; each `null`
+when there is none. Takes filmed before these have cues
+without them: treat all four as optional. A consumer that reads only marks filters on `kind`. A `camera` event is one zoom or wide glide: `t0` and `t1` its
   start and end, `cam` the box it ends on (`null` for a wide). demo:compose plays
   every camera move at 1x and fades a spotlight in only once the move into it has settled.
   Deterministic: `t1` is the frame the spring settled on, exactly. Screencast: the last pose
@@ -368,6 +495,10 @@ before this have cues without either field: treat both as optional. A consumer t
 - `rect`: element box in page CSS px (layout viewport, `getBoundingClientRect`); unaffected by the camera.
 - `cam`: camera at that moment. `null` = full frame. Otherwise `{x, y, w, h}` visible region in CSS px and `s` scale.
 - Frame position of a rect: `screenX = (rect.x - cam.x) * cam.s`, `screenY = (rect.y - cam.y) * cam.s`, size `* cam.s`. With `cam: null` it is `rect` as-is. (Checked on the sample: `(655 - 360) * 2 = 590`, where the nav's top edge sits in the zoomed frame.)
+- `targets`: one entry per target the beats resolved, in order: `{ beat, use, matched }`, where
+  `use` is `click`, `type`, `zoom`, `mark` or `ready` and `matched` the locator that found it,
+  plus `index` and `of` when it came from a chain (`index` 1 of `of` 2 = the chain's second entry
+  matched: the first has gone stale, so update the beats). Takes filmed before have none.
 - Downstream: `demo:compose` reads this file directly. Its `labels` default to the `label` written here, so a good capture label is a usable on-screen label. If composing by hand instead, place the mp4 as a video clip and time/position overlays from `events[]`; clip timing (`data-start`, `data-duration`, `data-media-start`) is owned by `hyperframes-core`.
 
 ## Worked examples
@@ -418,11 +549,14 @@ Takes land in `<copy>/takes/`, where the compose config expects them.
 
 - `scripts/capture.mjs`: `capture()`, `mintState()`, `ensureState()`, `checkPath()`; the deterministic and screencast recorders and the fallback between them. Edit here to change waits and beats.
 - `scripts/motion.mjs`: the spring solver for camera and pointer, and click and tilt constants. Edit here to change how things move.
-- `scripts/run.mjs`: runs chapters from a beats file, encodes each.
+- `scripts/run.mjs`: dry-runs, then films each chapter of a beats file and encodes it; `--dry-run` stops after the dry run.
+- `scripts/locate.mjs`: targets: selector strings and locator chains, the miss message with its nearest candidates, the selector lint, and the page inventory.
+- `scripts/inventory.mjs`: prints what a beat can target on a page (role, name, test id, rect, chain to write).
+- `scripts/narrative.mjs`: the narrative lint and the timeline estimate it runs on.
 - `scripts/encode.sh`: `cfr/` (the constant-rate frame sequence, at the take's `fps`) to a
   lossless H.264 mp4: libx264rgb `-qp 0` for deterministic PNGs, libx264 `-qp 0` for screencast
   JPEGs (their own 4:2:0 pixels); both measured bit-exact (PSNR inf). It is an intermediate:
   demo:compose makes the only lossy encode. Browsers cannot play the lossless profiles, ffmpeg
   and the montage can.
 - `scripts/montage.sh`: contact sheet for grading a take.
-- `scripts/selfcheck.mjs`: local throwaway server; asserts the springs (a retarget keeps velocity, a zoom from wide is pre-aimed, the camera settles exactly, a planned click lands within half a pixel), path guard (including a sibling path such as `/reports-archive`), zoom framing, events.json schema, 2560x1440 at exactly 60fps with every frame in the mp4, 0 repeated frames on an animated page, the SSE fallback with its one message, motion blur only inside camera moves with samples at most 1.5px apart and camera frames gap-filled (also when capped), a failing blur job failing the take, non-blank head, non-splash tail, screencast hold frame count, scroll-then-zoom in both modes, bare-text mis-click failing, one cursor on a page with an iframe, the cursor mounting where storage throws, every click restarting its feedback, a `type` beat typing key by key in both modes with a hidden cursor, `pace: 2` lengthening a hold, `loggedInSel` re-minting a dead session, and the pointer keeping its size under a 2x zoom and after navigating while zoomed, in both modes, with the click ring taking `cursor.ring`.
+- `scripts/selfcheck.mjs`: local throwaway server; asserts the springs (a retarget keeps velocity, a zoom from wide is pre-aimed, the camera settles exactly, a planned click lands within half a pixel), path guard (including a sibling path such as `/reports-archive`), zoom framing, events.json schema, 2560x1440 at exactly 60fps with every frame in the mp4, 0 repeated frames on an animated page, the SSE fallback with its one message, motion blur only inside camera moves with samples at most 1.5px apart and camera frames gap-filled (also when capped), a failing blur job failing the take, non-blank head, non-splash tail, screencast hold frame count, scroll-then-zoom in both modes, bare-text mis-click failing, one cursor on a page with an iframe, the cursor mounting where storage throws, every click restarting its feedback, a `type` beat typing key by key in both modes with a hidden cursor, `pace: 2` lengthening a hold, `loggedInSel` re-minting a dead session, and the pointer keeping its size under a 2x zoom and after navigating while zoomed, in both modes, with the click ring taking `cursor.ring`; click and type cues' rects, names and roles (a nav link, a placeholder, an over-long aria-label cut at a word); a locator chain falling through to its second entry and recorded in `targets`; a miss naming every entry and the nearest candidates and writing no events.json; `run.mjs --dry-run` exiting 0 on a good beats file and 1 on a broken one, a plain run of a broken file filming nothing, and the ferry example's dry run passing; and the narrative lint's rules on a synthetic timeline.

@@ -116,8 +116,10 @@ the motion weight (0.5) costs such a loop 3 to 12 points against 10 per spotligh
 **Steps.** One per mark in demo order (every mark has a rect and a label), plus each click or
 type cue with a target (demo:capture records the clicked or typed-into element's rect and the
 camera box on each). A type beat is filmed as a click into the field then the type cue; the two
-make one step, "Type here", at the click's frame and rect (the field before it widened or hid).
-Click steps read "Click here". Cues that point at nothing are not steps, each case said in a
+make one step at the click's frame and rect (the field before it widened or hid). Cue steps are
+labelled from the target's accessible name and role as demo:capture recorded them: "Open Fares"
+for a link, "Click Save" otherwise, "Type in Search" for a field; takes filmed before names were
+recorded read "Click here" and "Type here". Cues that point at nothing are not steps, each case said in a
 warning: no `rect` at all (the take predates demo:capture recording targets: re-film it),
 `rect: null` (the target had no box when filmed: display:none or zero size), or a rect wholly
 outside its frame (below the fold, outside the camera box). The label is the narration line for that
@@ -181,8 +183,8 @@ matching check goes red.
 
 - demo:export reads demo:compose's config loader from `../compose/scripts/`, so it runs from
   the plugin's `skills/` directory with compose beside it, as the plugin installs it.
-- Click and type steps have generic labels ("Click here", "Type here"): the cues carry no
-  copy of their own. Put a mark on anything that needs words.
+- Click and type steps say only what the target is called ("Open Fares"), not why. Put a mark
+  on anything that needs words.
 - The loop stays inside one chapter; a demo whose chapters are all shorter than 8 s gets a
   shorter loop and a warning.
 - Hotspots are rectangles; a rotated or clipped element shows its bounding box.

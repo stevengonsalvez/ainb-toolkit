@@ -3,10 +3,11 @@
 // (no app, no login). Exits non-zero if the core capture logic breaks.
 // Usage: node selfcheck.mjs   (or `npm run check` from the skill dir)
 import http from 'http'; import fs from 'fs'; import os from 'os'; import path from 'path';
-import assert from 'assert/strict'; import { execFileSync } from 'child_process';
+import assert from 'assert/strict'; import { execFileSync, execFile, spawn } from 'child_process'; import { fileURLToPath } from 'url';
 import { chromium } from '@playwright/test';
 import { capture, checkPath, ensureState, overlay } from './capture.mjs';
 import { Camera, Cursor, spring1d, CAMERA, CURSOR, SNAPPY } from './motion.mjs';
+import { narrativeLint, composeFor } from './narrative.mjs';
 
 const BG = '#3a6ea5';                             // luma ~100: neither blank white nor splash black
 const nav = `<nav class="fixed bottom-0" style="position:fixed;bottom:0;left:0;right:0;height:64px;background:#222;display:flex;gap:40px;justify-content:center;align-items:center">
@@ -23,11 +24,22 @@ const pages = {
   '/plain2': `<body style="margin:0;background:${BG};height:100vh"></body>`,
   '/frame': `<body style="margin:0;background:${BG};height:100vh"><iframe src="/news" width="400" height="200"></iframe></body>`,
   // Fields for the type cue's rect: one widens as it fills, one hides once it holds "go".
-  '/grow': `<body style="margin:0;background:${BG};height:100vh"><input id="g" style="position:absolute;left:100px;top:100px;width:100px;box-sizing:border-box" oninput="this.style.width = (100 + this.value.length * 20) + 'px'"></body>`,
-  '/hide': `<body style="margin:0;background:${BG};height:100vh"><input id="h" style="position:absolute;left:100px;top:100px" oninput="if (this.value === 'go') this.style.display = 'none'"></body>`,
+  '/grow': `<body style="margin:0;background:${BG};height:100vh"><input id="g" placeholder="Search sailings" style="position:absolute;left:100px;top:100px;width:100px;box-sizing:border-box" oninput="this.style.width = (100 + this.value.length * 20) + 'px'"></body>`,
+  '/hide': `<body style="margin:0;background:${BG};height:100vh"><input id="h" placeholder="short" aria-label="Departure port for the outbound crossing you want" style="position:absolute;left:100px;top:100px" oninput="if (this.value === 'go') this.style.display = 'none'"></body>`,
+  // A button named only by its image's alt text.
+  '/imgbtn': `<body style="margin:0;background:${BG};height:100vh"><button id="b" style="position:absolute;left:100px;top:200px"><img alt="Save" width="24" height="24" src="data:image/gif;base64,R0lGODlhAQABAAAAACw="></button></body>`,
+  // A full-page modal that a seeded localStorage key removes, over the button a beat clicks.
+  '/consent': `<body style="margin:0;background:${BG};height:100vh"><button id="go" style="margin:200px">go</button><div id="modal" style="position:fixed;inset:0;background:#000"></div><script>if (localStorage.getItem('consent') === 'yes') document.getElementById('modal').remove()</script></body>`,
+  // Two navigations with a link of the same name, and a search field beside a text field.
+  '/navs': `<body style="margin:0;background:${BG};height:100vh"><header><nav><a href="#h">Home</a></nav></header><input type="search" id="s" aria-label="Find"><input id="t" aria-label="Name"><footer><nav><a href="#f">Home</a></nav></footer></body>`,
+  // A second "Go" button appears once the pointer nears the first (mid-glide, after the target
+  // resolved; the pointer parks at the centre before that).
+  '/dup': `<body style="margin:0;background:${BG};height:100vh"><button style="margin:200px">Go</button><script>addEventListener('mousemove', e => { if (e.clientX > 50 && e.clientX < 450 && document.querySelectorAll('button').length < 2) document.body.insertAdjacentHTML('beforeend', '<button>Go</button>'); })</script></body>`,
   // Turns white once the input holds exactly the typed text: the last frame proves the type beat.
   '/type': `<body style="margin:0;background:${BG};height:100vh"><input id="q" style="margin:200px;font-size:30px" oninput="if (this.value === 'ferry times') document.body.style.background = '#fff'"></body>`,
   // A login form, and a home page that sends logged-out visitors to /welcome, not to /login.
+  // A login whose session the server can revoke: /logout2 ends it server-side, as real apps do.
+  '/login2': `<body><input id="email"><input id="password" type="password"><button onclick="const s = Math.random().toString(36).slice(2); fetch('/grant?sid=' + s).then(() => { document.cookie = 'sid2=' + s + ';path=/'; location = '/home2' })">Log in</button></body>`,
   '/login': `<body><input id="email"><input id="password" type="password"><button onclick="document.cookie='sid=1;path=/';location='/home'">Log in</button></body>`,
   '/welcome': `<body>welcome</body>`,
   // Splash until a slow request lands, like an SPA shell fetching its data.
@@ -41,7 +53,16 @@ const pages = {
   // A lazy-loaded module, like a code-split route: turns white once it has loaded.
   '/lazy': `<body style="margin:0;background:${BG};height:100vh"><button id="go" style="margin:200px" onclick="import('/mod.js').then(m => document.body.style.background = m.c)">go</button></body>`,
 };
+const sessions = new Set();
 const server = http.createServer((req, res) => {
+  if (req.url.startsWith('/grant?')) { sessions.add(new URL(req.url, base).searchParams.get('sid')); return res.end('ok'); }
+  if (req.url === '/home2' || req.url === '/logout2') {
+    const sid = (req.headers.cookie || '').match(/sid2=(\w+)/)?.[1];
+    res.setHeader('content-type', 'text/html');
+    if (req.url === '/logout2') { sessions.delete(sid); return res.end('<body>signed out</body>'); }
+    if (!sessions.has(sid)) { res.writeHead(302, { location: '/welcome' }); return res.end(); }
+    return res.end('<body><div id="me">signed in</div></body>');
+  }
   if (req.url === '/slow') return setTimeout(() => res.end('ok'), 1500);
   if (req.url === '/mod.js') { res.setHeader('content-type', 'text/javascript'); return res.end(`export const c = '#fff';`); }
   if (req.url === '/stream') { res.writeHead(200, { 'content-type': 'text/event-stream' }); return res.write('data: hi\n\n'); }
@@ -145,6 +166,30 @@ try {
   assert.deepEqual([sh.aim(0, 10, 10), sh.aim(0.05, 5, 5), sh.aim(0.3, 0, 0)], [true, false, true], 'shake window is not 100ms');
   sh.aim(1, 10, 10); assert.ok(sh.click(1.05, 5, 5) > 1.05, 'a click reversing a tiny move was dropped as shake');
 
+  // 2b. Narrative lint, on the timeline the beats will film (no browser): a still hold over 2s with
+  //     no mark, a first mark after 3s, narration over 160 wpm until the next mark, and more than
+  //     5 chapters each warn; a tight chapter does not.
+  const slow = { name: 'slow', beats: [{ goto: '/', hold: 2500 }, { click: 'x' }, { zoom: { on: 'y', ms: 800 }, mark: { label: 'Late', on: 'y' }, hold: 1500 },
+    { zoom: { on: 'z' }, mark: { label: 'Cars', on: 'z' } }] };
+  const tight = { name: 'tight', beats: [{ goto: '/' }, { zoom: { on: 'y' }, mark: { label: 'Late', on: 'y' }, hold: 1500 }] };
+  const said = { chapters: [{ name: 'slow', narration: { marks: ['one two three four five six seven eight nine ten {@x}eleven twelve', null] } },
+    { name: 'tight', narration: { marks: ['the next sailing is late'] } }] };
+  const nl = narrativeLint({ chapters: [slow, tight] }, said);
+  for (const re of [/slow: beat "#0" holds 2.5s with no mark/, /slow: first mark \("Late"\) at about 4.2s/, /slow: narration for "Late" runs 327 wpm over the 2.2s/])
+    assert.ok(nl.some(w => re.test(w)), `narrative lint missed ${re}: ${JSON.stringify(nl)}`);
+  assert.ok(!nl.some(w => /^tight:/.test(w)), `narrative lint flagged a tight chapter: ${JSON.stringify(nl)}`);
+  //     Typing on screen fills a sparse line's window: 4 words over the 4s before the next mark
+  //     warn as slow, but not when that window is mostly typing.
+  const sparse = (typed) => narrativeLint({ chapters: [{ name: 's', beats: [{ goto: '/' }, { zoom: { on: 'y' }, mark: { label: 'A', on: 'y' }, hold: 1000 },
+    typed ? { type: { into: 'q', text: 'ferry times to the island', cps: 12 } } : { hold: 2500 }, { mark: { label: 'B', on: 'z' } }] }] },
+    { chapters: [{ name: 's', narration: { marks: ['one two three four', null] } }] }).filter(w => /runs \d+ wpm/.test(w));
+  assert.ok(sparse(false).length === 1 && sparse(true).length === 0, `slow narration rule with/without typing: ${JSON.stringify([sparse(false), sparse(true)])}`);
+  //     A compose config the beats file names but that is not there, or not JSON, is said, with its path.
+  assert.throws(() => composeFor({ compose: './nope.json' }, path.join(out, 'b.mjs')), /compose: \.\/nope\.json \(from the beats file\) is not there/);
+  fs.writeFileSync(path.join(out, 'bad.json'), '{ nope');
+  assert.throws(() => composeFor({ compose: './bad.json' }, path.join(out, 'b.mjs')), /bad\.json is not valid JSON/);
+  assert.ok(narrativeLint({ chapters: Array.from({ length: 6 }, (_, i) => ({ ...tight, name: `c${i}` })) }).some(w => /^6 chapters/.test(w)), 'six chapters not flagged');
+
   // 3. Main take (deterministic, the default): zoom, marks, scoped click, wait out the splash.
   const r = await capture({ base, out, chapter: 'main', beats: [
     { goto: '/a' },
@@ -170,6 +215,8 @@ try {
   const nav = e.events.find(m => m.label === 'nav').rect, cr = clicks[0].rect;
   assert.ok(cr && cr.w > 0 && cr.h > 0 && cr.x >= nav.x && cr.y >= nav.y && cr.x + cr.w <= nav.x + nav.w && cr.y + cr.h <= nav.y + nav.h && 'cam' in clicks[0] && clicks[0].cam === null,
     `click rect ${JSON.stringify(clicks[0])} not inside the nav ${JSON.stringify(nav)}`);
+  //    And its accessible name and role, so the walkthrough can say "Open REPORTS".
+  assert.ok(clicks[0].name === 'REPORTS' && clicks[0].role === 'link', `click name/role ${JSON.stringify(clicks[0])}`);
   for (const m of moves) assert.ok(m.t1 - m.t0 >= 0.3, `camera event span ${m.t0}..${m.t1} too short for a 500ms spring`);
   assert.ok(moves[0].t1 <= z.t, 'zoom ended after the mark that follows it');
   assert.equal(z.cam.s, 2, 'zoom did not reach scale 2');
@@ -294,6 +341,72 @@ try {
   await assert.rejects(capture({ base, out, chapter: 'wrong', beats: [
     { goto: '/a' }, { name: 'bare', click: 'text=REPORTS', expectPath: '/b' }] }), /expected path \/b, got \/news/);
 
+  // 9b. Locator chains: the first entry that finds exactly one visible element wins, and
+  //     events.json records which. A chain that finds nothing fails the take at once, naming each
+  //     entry with what it found and the nearest candidates on the page, and writes no events.json.
+  const lc = await capture({ base, out, chapter: 'chain', capture: SC, cursor: { hidden: true }, beats: [
+    { goto: '/a' }, { name: 'nav', click: [{ testid: 'reports' }, { role: 'link', name: 'REPORTS' }], expectPath: '/b' }] });
+  assert.deepEqual(ev(lc).targets.find(t => t.use === 'click'), { beat: 'nav', use: 'click', matched: 'role=link[name="REPORTS"]', index: 1, of: 2 }, `chain match ${JSON.stringify(ev(lc).targets)}`);
+  await assert.rejects(capture({ base, out, chapter: 'chain-miss', capture: SC, beats: [{ goto: '/a' }, { name: 'nav', click: [{ role: 'link', name: 'REPORT' }, { testid: 'reports' }] }] }),
+    e => /beat "nav": click .*Tried role=link\[name="REPORT"\] \(0 visible\), testid=reports \(0 visible\)\. Nearest on the page: .*link "REPORTS"/.test(e.message) || assert.fail(`miss message: ${e.message}`));
+  assert.ok(!fs.existsSync(path.join(out, 'chain-miss', 'events.json')), 'a take that missed a target wrote events.json');
+  //     The dry run (run.mjs --dry-run) resolves every target with no frames: exit 0 on a good beats
+  //     file, 1 naming the beat on a broken one; and a plain run dry-runs first, so a broken file
+  //     films nothing. Async: a blocking spawn would stall this process's own server.
+  const node = args => new Promise(res => execFile(process.execPath, args, { encoding: 'utf8' }, (err, stdout, stderr) => res({ status: err ? err.code : 0, out: stdout + stderr })));
+  const runMjs = path.join(path.dirname(fileURLToPath(import.meta.url)), 'run.mjs');
+  const beatsFile = (name, chapters) => { const f = path.join(out, `${name}.beats.mjs`); fs.writeFileSync(f, `export default ${JSON.stringify({ base, out: path.join(out, name), chapters })};`); return f; };
+  const good = beatsFile('dry-good', [{ name: 'c', beats: [{ goto: '/a', ready: { role: 'navigation' } }, { name: 'nav', click: { role: 'link', name: 'REPORTS' }, expectPath: '/b' }] }]);
+  const broken = beatsFile('dry-broken', [{ name: 'c', beats: [{ goto: '/a' }, { name: 'gone', click: { role: 'button', name: 'Export' } }] }]);
+  let dr = await node([runMjs, good, '--dry-run']);
+  assert.ok(dr.status === 0 && /1 chapter\(s\), 2 target\(s\) resolved, 0 miss/.test(dr.out), `dry run on a good file: exit ${dr.status}\n${dr.out}`);
+  dr = await node([runMjs, broken, '--dry-run']);
+  assert.ok(dr.status === 1 && /MISS beat "gone": click/.test(dr.out), `dry run on a broken file: exit ${dr.status}\n${dr.out}`);
+  //     The dry run seeds localStorage like a take: the consent key removes the modal over #go.
+  const consent = path.join(out, 'consent.beats.mjs');
+  fs.writeFileSync(consent, `export default ${JSON.stringify({ base, out: path.join(out, 'consent'), localStorage: { consent: 'yes' }, chapters: [{ name: 'c', beats: [{ goto: '/consent' }, { name: 'go', click: '#go' }] }] })};`);
+  dr = await node([runMjs, consent, '--dry-run']);
+  assert.ok(dr.status === 0, `dry run with a seeded consent key: exit ${dr.status}\n${dr.out}`);
+  //     The selector lint suggests only a locator that finds this very element: not the header's
+  //     Home link for the footer's, and searchbox (its real role) for a search field.
+  const navs = path.join(out, 'navs.beats.mjs');
+  fs.writeFileSync(navs, `export default ${JSON.stringify({ base, out: path.join(out, 'navs'), chapters: [{ name: 'c', beats: [{ goto: '/navs' },
+    { name: 'foot', mark: { label: 'home', on: 'footer a' } }, { name: 'find', mark: { label: 'find', on: '#s' } }] }] })};`);
+  dr = await node([runMjs, navs, '--dry-run']);
+  const lints = dr.out.split('\n').filter(l => /lint:/.test(l));
+  assert.ok(dr.status === 0 && !lints.some(l => /beat "foot"/.test(l)) && lints.some(l => /beat "find".*\{ role: "searchbox", name: "Find" \}/.test(l)) && !lints.some(l => /textbox/.test(l)),
+    `lint suggestions: ${JSON.stringify(lints)}`);
+  //     A failure that is not a miss says what it is, plainly: no ANSI, no call log, counted apart.
+  const wrongPath = beatsFile('dry-wrong', [{ name: 'c', beats: [{ goto: '/a' }, { name: 'bare', click: 'text=REPORTS', expectPath: '/b' }] }]);
+  dr = await node([runMjs, wrongPath, '--dry-run']);
+  assert.ok(dr.status === 1 && /FAIL Error: .*expected path \/b, got \/news/.test(dr.out) && !/\x1b\[|Call log/.test(dr.out) && /1 target\(s\) resolved, 0 miss\(es\), 1 other failure/.test(dr.out),
+    `dry run on a failing (not missing) beat: exit ${dr.status}\n${dr.out}`);
+  //     The dry run really clicks: a chapter that signs out revokes the session it used. run.mjs
+  //     checks the session again after the dry run and re-mints it, so the take still films.
+  const signout = path.join(out, 'signout.beats.mjs');
+  fs.writeFileSync(signout, `export default ${JSON.stringify({ base, out: path.join(out, 'signout'), state: path.join(out, 'signout-state.json'), probe: '/home2',
+    login: { email: 'a@example.test', password: 'x', loginPath: '/login2', loggedInSel: '#me' }, capture: { mode: 'screencast' },
+    chapters: [{ name: 'c', beats: [{ goto: '/home2', ready: '#me' }, { goto: '/logout2' }] }] })};`);
+  dr = await node([runMjs, signout]);
+  assert.ok(dr.status === 0 && (dr.out.match(/session: minted/g) || []).length === 2, `a chapter that signs out: exit ${dr.status}\n${dr.out}`);
+  dr = await node([runMjs, broken]);
+  assert.ok(dr.status === 1 && !fs.existsSync(path.join(out, 'dry-broken')), `a broken file filmed: exit ${dr.status}\n${dr.out}`);
+  //     And on the ferry example beside this skill, when it is there: green, in seconds.
+  const ferry = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../compose/examples/ferry');
+  let ferryDry = 'skipped (no compose example beside this skill)';
+  if (fs.existsSync(path.join(ferry, 'beats.mjs'))) {
+    const free = await new Promise(res => { const t = http.createServer().listen(0, () => { const p = t.address().port; t.close(() => res(p)); }); });
+    const app = spawn(process.execPath, ['serve.mjs', String(free)], { cwd: ferry, stdio: ['ignore', 'pipe', 'inherit'] });
+    try {
+      const port = await new Promise((res, rej) => { setTimeout(() => rej(new Error('ferry app did not start in 15s')), 15000).unref(); app.stdout.on('data', d => { const m = String(d).match(/ferry on (\d+)/); if (m) res(m[1]); }); app.on('exit', () => rej(new Error('ferry app exited'))); });
+      const t0 = Date.now();
+      dr = await new Promise(res => execFile(process.execPath, [runMjs, 'beats.mjs', '--dry-run'], { cwd: ferry, encoding: 'utf8', env: { ...process.env, PORT: port } },
+        (err, stdout, stderr) => res({ status: err ? err.code : 0, out: stdout + stderr })));
+      ferryDry = `${((Date.now() - t0) / 1000).toFixed(1)}s`;
+      assert.ok(dr.status === 0 && / 0 miss/.test(dr.out), `ferry dry run: exit ${dr.status}\n${dr.out}`);
+    } finally { app.kill(); }
+  }
+
   // 10. Overlay: one cursor per page even with an iframe, mounts in a sandboxed document where
   //     storage throws, and every click restarts the feedback (one ring animation, from its start).
   const browser = await chromium.launch();
@@ -344,6 +457,22 @@ try {
   const [gc, gt] = await cues('/grow', '#g', 'ferry'), [hc, ht] = await cues('/hide', '#h', 'go');
   assert.ok(gc.rect.w === 100 && gt.rect.w === 200, `widening field: click ${JSON.stringify(gc.rect)}, type ${JSON.stringify(gt.rect)}`);
   assert.ok(hc.rect && hc.rect.w > 0 && ht.rect === null, `hiding field: click ${JSON.stringify(hc.rect)}, type ${JSON.stringify(ht.rect)}`);
+  //  Names: a placeholder names a field with no label; aria-label wins over it, cut under 40.
+  assert.ok(gc.name === 'Search sailings' && gc.role === 'textbox' && gt.name === 'Search sailings', `placeholder name ${gc.name}/${gt.name}, role ${gc.role}`);
+  assert.ok(hc.name === 'Departure port for the outbound\u2026' && hc.name.length < 40, `aria-label name ${JSON.stringify(hc.name)}`);
+  //  A chain target on a field that hides as it is typed into: its type cue reads the rect through
+  //  the handle pinned at resolve time, so it is null at once, not after Playwright's 30s wait
+  //  for the chain's visible-only locator. And a button named by its image's alt text is named.
+  let tq = Date.now();
+  const hz = ev(await capture({ base, out, chapter: 'cue-hide-chain', capture: SC, cursor: { hidden: true },
+    beats: [{ goto: '/hide' }, { type: { into: [{ placeholder: 'short' }, '#h'], text: 'go', cps: 20 } }, { hold: 200 }] })).events.find(x => x.kind === 'type');
+  tq = (Date.now() - tq) / 1000;
+  assert.ok(hz.rect === null && hz.name === hc.name && tq < 20, `hiding chain field: type cue ${JSON.stringify(hz)}, take ${tq.toFixed(1)}s`);
+  const ib = ev(await capture({ base, out, chapter: 'cue-imgbtn', capture: SC, cursor: { hidden: true }, beats: [{ goto: '/imgbtn' }, { click: '#b' }, { hold: 200 }] })).events.find(x => x.kind === 'click');
+  assert.ok(ib.name === 'Save' && ib.role === 'button', `img-alt button cue ${JSON.stringify(ib)}`);
+  //  A second match appearing between resolving a target and clicking it is a miss naming the chain.
+  await assert.rejects(capture({ base, out, chapter: 'dup', capture: SC, beats: [{ goto: '/dup' }, { name: 'go', click: { role: 'button', name: 'Go' } }] }),
+    e => /beat "go": click target role=button\[name="Go"\] matched more than one visible element by the time it was clicked/.test(e.message) || assert.fail(`dup: ${e.message}`));
   //  A click while zoomed in screencast mode records its rect in the frame the camera box is in
   //  (CSS px from the scroll the zoom started at): #w at top 2000 after a 1700 scroll is at 300.
   const zc = ev(await capture({ base, out, chapter: 'zoom-click-sc', capture: SC, cursor: { hidden: true },
@@ -390,6 +519,7 @@ try {
   console.log(`selfcheck OK: springs ${JSON.stringify(springs)}; pre-aim holds the fixed point; retarget keeps velocity; settles exact; ms 0 cuts; click lands at ${press.toFixed(3)}s; shake 100ms`);
   console.log(`selfcheck OK: main ${r.frames} frames/${r.dur.toFixed(2)}s 2560x1440@60 mp4 ${n} frames luma head ${head} tail ${tail}; anim ${md5.length} frames 0 repeats; blur spans ${JSON.stringify(spans)} inside camera moves, up to ${bb.maxSamples} samples ${bb.maxGap}px apart, capped run filled ${capped.filled} frames`);
   console.log(`selfcheck OK: lazy import stays deterministic; SSE runs on under auto, falls back to ${fb.mode} under pause, one message each; screencast hold ${h.frames} frames; scroll-zoom luma ${zl.det}/${zl.sc}; guard threw`);
+  console.log(`selfcheck OK: locator chain falls through to entry 2 and is recorded; a miss names the chain and nearest candidates and films nothing; dry run 0/1; ferry dry run ${ferryDry}`);
   console.log(`selfcheck OK: cursor under 2x zoom det ${cs.det.map(f2)} sc ${cs.sc.map(f2)} (zoomed, after nav); ring per click ${JSON.stringify(ripple)}; type det ${f2(ty.det[0])}s sc ${f2(ty.sc[0])}s; pace ${f2(p1.dur)}s -> ${f2(p2.dur)}s; loggedInSel re-mints; sandbox errors ${sandboxErrs}`);
 } finally {
   server.close(); fs.rmSync(out, { recursive: true, force: true });
