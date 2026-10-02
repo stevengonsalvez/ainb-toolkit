@@ -476,7 +476,7 @@ least 0.1s before still B, which is 0.05s before the fade-out. A hold too short 
 misses as "lit too briefly to check" instead of a false scrim or drift reading (measured: hold
 0.4s on the ferry board). A spotlight that glides in arrives at `litFrom + fadeIn`, when its fade-in
 would have finished, so the stills read it the same way.
-It runs four tests against the rendered segment and the untouched source frame. It prints one
+It runs five tests against the rendered segment and the untouched source frame. It prints one
 line per mark and exits 1 if any mark misses.
 
 Every reading happens in the design space compose lays out in: the rendered frame is cropped to
@@ -492,6 +492,7 @@ segment begins (`tailFrom`). Compose ends any hold before that seam, and warns w
 | `dim`     | ring outside the cut-out / same ring in the source           | scrim not applied                    |
 | `sd`      | luma spread under the cut-out                                | cut-out landed on empty background   |
 | `drift`   | cut-out region, still A vs still B, in the source            | defect 1: hold outran a camera move  |
+| `align`   | mean luma difference, render vs source framed through the mark's view, under the cut-out | crop or camera not yet where the spotlight was laid out (still moving) |
 | label     | label box vs spotlight box, geometric                        | defect 2: label over its spotlight   |
 
 The ring samples 34px clear of the box edge and skips the label rect. Closer in, the spotlight's
@@ -500,6 +501,13 @@ config refuses `spotlight.feather` over 24. The thresholds did not move for the 
 were not loosened: with the feathered, blurred scrim the ferry reads lit 1.00 and dim
 0.397-0.399, against 1.00 and 0.396-0.397 from the old hard-edged one (the scrim is 60% black,
 so a clean dim reads 0.40; the gate is 0.62).
+
+`align` (gate `check.alignMax`, 7 of 255) was added with the vertical crop, which moves under the
+footage: `lit` and `dim` are ratios that hold over a shifted page, and `drift` reads the source,
+so a crop still sliding while a spotlight was up passed every other test (falsified: crop retargeted 0.2s
+into each hold, both marks still hit). With `align` those two miss at 11.1 and 9.0. Correct
+renders on ferry read 0.47-0.56 (landscape draft), 1.7-3.0 (vertical master) and 2.4-4.3
+(vertical draft, the 720-wide render scaled up to the 1000px design window, so text edges soften).
 
 It also writes `work/stills-<chapter>.png`, a 2-wide tile of every still with its mark index and
 time drawn on. **Look at it.** The numbers say the geometry is right; the sheet says the label
