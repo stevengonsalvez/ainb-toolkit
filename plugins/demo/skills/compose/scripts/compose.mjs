@@ -169,9 +169,9 @@ ${VERT ? `/* vertical: the headline band above the window and the caption band b
    platforms' safe zones (VERTICAL.safe: clear of their top bar, bottom captions UI and side rail) */
 .vhead { position: absolute; left: ${VS.left}px; right: ${VS.right}px; top: ${VS.top}px; opacity: 0; }
 .vtitle { font-family: ${C.displayStack}; font-weight: 700; font-size: 60px; line-height: 1.05; letter-spacing: -0.02em;
-  color: ${T.text}; margin-top: 16px; text-wrap: balance; }
+  color: ${T.text}; margin-top: 16px; text-wrap: balance; overflow-wrap: anywhere; }
 .vcap { position: absolute; left: ${VS.left}px; right: ${VS.right}px; bottom: ${VS.bottom}px; height: 0; }
-.cue { position: absolute; left: 50%; bottom: 0; transform: translateX(-50%); opacity: 0; width: max-content; max-width: 100%;
+.cue { position: absolute; left: 50%; bottom: 0; transform: translateX(-50%); opacity: 0; width: max-content; max-width: 100%; overflow-wrap: anywhere;
   padding: 14px 26px; border-radius: 18px; background: color-mix(in oklab, ${T.text} 88%, transparent);
   font-family: ${C.bodyStack}; font-weight: 600; font-size: 40px; line-height: 1.25; color: #FFFFFF; text-align: center; text-wrap: balance; }
 ` : ''}`;
@@ -239,6 +239,8 @@ function captionLayer(id, plan) {
   if (!VERT || A?.captions.burn === false) return { html: '', lines: [] };
   const { cues: cs } = captionCues(C, [{ name: id, start: 0, plan }], A);
   const lines = [], word = `color-mix(in oklab, ${T.highlight} 45%, white)`;
+  // the 160px band under the window holds two lines of about 40 characters; more rises over it
+  for (const c of cs) if (c.text.length > 80) console.warn(`  warn ${id}: caption "${c.text.slice(0, 40)}..." is ${c.text.length} characters; over about 80 it rises over the window`);
   const html = cs.map((c, i) => {
     const el = `#${id}-c${i}`;
     lines.push(`tl.set("${el}", { opacity: 1 }, ${r3(c.start)});`, `tl.set("${el}", { opacity: 0 }, ${r3(c.end)});`);
@@ -845,6 +847,8 @@ ${labels}
   // captions run in the caption band.
   const narration = fit.placed.map(({ slot, at, lit, dur, file, text, anchor, words }) => ({ slot, at: r3(at), ...(lit != null && { lit: r3(lit) }), dur, file, text, anchor, words }));
   const cap = captionLayer(name, { narration, spots: report });
+  // four 60px lines fit the 300px band above the window, about 100 characters at 900px wide
+  if (VERT && (cfg.title || '').length > 100) console.warn(`  warn ${name}: the chapter title is ${cfg.title.length} characters; over about 100 the vertical headline runs into the window`);
   const head = VERT ? `<div class="vhead" id="${name}-vh"><div class="kicker"><span class="kbar"></span><span>${esc(cfg.persona || C.defaultPersona || '')}</span></div><div class="vtitle">${esc(cfg.title)}</div></div>` : '';
   if (VERT) lines.push(`tl.fromTo("#${name}-vh", { opacity: 0, y: 24 }, { opacity: 1, y: 0, duration: ${F(0.6)}, ease: "power3.out" }, ${r3(CARD)});`);
   const d = project(name, doc(name, total, [card, win, head, cap.html].filter(Boolean).join('\n'), [...lines, ...cap.lines].join('\n')));
