@@ -288,8 +288,9 @@ chapter card (cardHold, silent) ─▶ beat ─▶ beat ─▶ ... ─▶ seam i
   - `{ "slide": ... }`: a screen with no app, styled from the theme like the cards, with an
     optional `label` callout and `title`:
     `"title"` (`kicker`, `title`, `sub`, a `note` such as "Example data"), `"tiles"` (`tiles`: a
-    word or two each), `"devices"` (`web`, `tablet`, `phone`: image files shown in a browser
-    window, a tablet and a phone), `"pricing"` (`tiers`: `name`, `price`, `points`, `highlight`),
+    word or two each; a word too wide for its tile shrinks that title to fit, never breaks),
+    `"devices"` (`web`, `tablet`, `phone`: image files shown in a browser window, a tablet and a
+    phone), `"pricing"` (`tiers`: `name`, `price`, `points`, `highlight`),
     `"steps"` (`steps`: numbered, joined by a line drawn in), `"end"` (`title`, `url`, `sub`).
   A chapter of slides only needs no footage. `narration.marks[i]` is the line of beat `i`.
 - **Clips**: `"clips": true` (the default here) also writes each chapter as its own mp4 in
