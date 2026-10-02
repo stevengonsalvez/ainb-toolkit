@@ -112,9 +112,29 @@ components:
     - workflow
 
   plugins:
+    - name: agytoggle
+      skills:
+        - agytoggle
+    - name: demo
+      skills:
+        - brag
+        - capture
+        - compose
     - name: godmode
       skills:
         - godmode
+    - name: orchestrate
+      skills:
+        - adopt
+        - discover
+        - handover
+        - loop
+        - preflight
+        - retire
+        - spawn
+        - status
+        - takeover
+        - tick
 
   workflows:
     - name: single-agent
@@ -144,6 +164,7 @@ components:
 
   utilities:
     hooks:
+      - README
       - bash_auto_background
       - compile-statusline
       - cost_tracker
@@ -152,7 +173,6 @@ components:
       - post_tool_use
       - pre_compact
       - pre_tool_use
-      - README
       - run_with_profile
       - session_start
       - statusline
