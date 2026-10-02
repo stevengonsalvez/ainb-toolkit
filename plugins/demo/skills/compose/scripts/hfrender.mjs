@@ -64,7 +64,7 @@ export function renderToMp4(C, dir, out, log) {
   const fit = Math.floor(free * 0.9 * 0.8 / per), size0 = +process.env.HF_CHUNK_FRAMES || fit;
   if (size0 < C.fps) throw new Error(`${basename(dir)}: ${gb(free)} free on ${dirname(out)}, under the ${gb(C.fps * per / 0.72)} HyperFrames needs to capture one second at ${C.width}x${C.height}. Free disk space or use quality "draft"`);
   const n = Math.ceil(frames / Math.min(frames, size0)), size = Math.ceil(frames / n);
-  if (n > 1) console.log(`  ${basename(dir)}: ${frames} frames need ${gb(frames * per / 0.9)} free for HyperFrames' disk check, ${gb(free)} is free: rendering ${n} chunks of up to ${size} frames`);
+  if (n > 1) console.log(`  ${basename(dir)}: ${frames} frames need ${gb(frames * per / 0.9)} free for HyperFrames' disk check, ${gb(free)} is free${size0 === fit ? '' : ` (HF_CHUNK_FRAMES=${size0})`}: rendering ${n} chunks of up to ${size} frames`);
   const workers = String(C.workers), PER = Math.ceil(10 * C.width * C.height * C.fps / (1280 * 720 * 30));
   const parts = [];
   let logText = '', alpha = 0;
