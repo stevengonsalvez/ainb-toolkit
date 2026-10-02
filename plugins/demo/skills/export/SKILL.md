@@ -114,11 +114,13 @@ the motion weight (0.5) costs such a loop 3 to 12 points against 10 per spotligh
 | `--out` | `<out>/export/interactive` | |
 
 **Steps.** One per mark in demo order (every mark has a rect and a label), plus each click or
-type cue that carries a `rect` (demo:capture records the clicked or typed-into element's rect
-and the camera box on each). A type beat's click into the field and its typing make one step,
-"Type here", at the click's frame. Takes filmed before demo:capture recorded these rects have
-cues without them; those are counted, skipped and named in a warning (the ferry example's takes
-predate it: 1 click skipped). Click steps read "Click here". The label is the narration line for that
+type cue with a target (demo:capture records the clicked or typed-into element's rect and the
+camera box on each). A type beat is filmed as a click into the field then the type cue; the two
+make one step, "Type here", at the click's frame and rect (the field before it widened or hid).
+Click steps read "Click here". Cues that point at nothing are not steps, each case said in a
+warning: no `rect` at all (the take predates demo:capture recording targets: re-film it),
+`rect: null` (the target had no box when filmed: display:none or zero size), or a rect wholly
+outside its frame (below the fold, outside the camera box). The label is the narration line for that
 mark when the demo has narration, else compose's label for that spotlight (so the config's
 `labels` overrides apply), else the capture's, cut at a word to under 60 characters
 (longer hotspot copy loses about 12% completion in Arcade's benchmarks).
@@ -132,7 +134,8 @@ of PNG. Each run first removes the step images, page and `steps.json` an earlier
 
 **Hotspots**: the mark rect in page CSS px, through the camera box in force at the mark
 (zoom `s`, origin `x`,`y`), times the take's density, fitted to the frame's real size from its
-PNG header and clipped to it. A target wholly outside its frame fails the export.
+PNG header and clipped to it. A mark wholly outside its frame fails the export (a mark is
+what the demo is about); a click or type is dropped instead, as above.
 
 **The page**: one HTML file, no network. Hotspot with a pulsing ring (still under
 `prefers-reduced-motion`); its label sits below it, else above, else inside its lower edge
