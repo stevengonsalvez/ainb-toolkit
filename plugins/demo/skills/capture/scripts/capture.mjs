@@ -21,6 +21,7 @@ import fs from 'fs'; import path from 'path'; import { execFile } from 'child_pr
 // Browsers come from $PLAYWRIGHT_BROWSERS_PATH when set, else Playwright's own default.
 import { chromium } from '@playwright/test';
 import { Camera, Cursor, tilt, CAMERA_REF_MS, CLICK_LEAD_MS } from './motion.mjs';
+import { resolve } from './locate.mjs';
 
 const smoothstep = p => p * p * (3 - 2 * p);
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -190,22 +191,27 @@ async function film({ base, state, out, viewport = { width: 1280, height: 720 },
   const rec = det ? await deterministic({ W, H, cap, dir, state, overlayArgs }) : await screencast({ W, H, dir, state, overlayArgs });
   const { page } = rec;
   Object.assign(rec, { speed: cursor.speed || 0, pace }); rec.cursorTilt = cursor.tilt;
-  const events = [];
+  // targets: which locator each beat's targets resolved to.
+  const events = [], targets = [];
   try {
     const run = (async () => {
       // Targets are resolved fresh every beat: nav bars change with context
       // (one item vanished from the nav after another was clicked), so cached handles go stale.
-      const rectOf = async (sel, beat) => {
-        const el = page.locator(sel).first();
-        if (!(await el.count())) throw new Error(`beat "${beat}": selector ${sel} matched nothing`);
-        return el.evaluate(n => { const r = n.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; });
+      // A target is a selector or a locator chain (locate.mjs); which entry matched is recorded in
+      // events.json `targets`, and a miss fails the take at once, naming the nearest candidates,
+      // rather than filming on. The wait runs on the take's clock, like `ready`.
+      const find = async (target, use, beat, waitMs = 5000) => {
+        const hit = await resolve(page, target, { use, beat, waitMs, now: rec.ms, sleep: ms => rec.sleep(ms) });
+        targets.push({ beat, use, matched: hit.matched, ...(hit.of > 1 && { index: hit.index, of: hit.of }) });
+        return hit.loc;
       };
+      const rectOf = loc => loc.evaluate(n => { const r = n.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; });
       // A click or type cue's target: its rect, in the same CSS px as a mark's, or null when it has
       // no box (display:none, zero size), so a consumer has nothing to point at; its accessible name
       // (aria-label, else its label or text, else placeholder or title; under 40 characters) and its
       // role, so a consumer can say "Open Fares" rather than "Click here". Either may be null.
-      const cueTarget = async sel => {
-        const t = await page.locator(sel).first().evaluate(n => {
+      const cueTarget = async loc => {
+        const t = await loc.evaluate(n => {
           const b = n.getBoundingClientRect(), clean = s => (s || '').replace(/\s+/g, ' ').trim();
           const byId = id => clean(document.getElementById(id)?.textContent);
           const field = /^(INPUT|TEXTAREA|SELECT)$/.test(n.tagName);
@@ -228,13 +234,7 @@ async function film({ base, state, out, viewport = { width: 1280, height: 720 },
       };
       // isVisible() does not wait, so this polls on the take's own clock: footage time under
       // deterministic capture, where Playwright's wall-clock timeouts would run ~10x short.
-      const ready = async (sel, capMs, name) => {
-        const end = rec.ms() + capMs;
-        while (!(await page.locator(sel).first().isVisible().catch(() => false))) {
-          if (rec.ms() > end) throw new Error(`beat "${name}": ready ${sel} not visible after ${capMs}ms`);
-          await rec.sleep(50);
-        }
-      };
+      const ready = (target, capMs, name) => find(target, 'ready', name, capMs);
       const clock = { now: rec.ms, sleep: (_, ms) => rec.sleep(ms) };
       let lastMark = null;
 
@@ -245,13 +245,12 @@ async function film({ base, state, out, viewport = { width: 1280, height: 720 },
         if (step.goto || step.click) quiet = step.ready ? null : networkQuiet(page, { cap: step.readyCap }, clock);
         if (step.goto) await page.goto(base + step.goto, { waitUntil: 'domcontentloaded', timeout: rec.T(30000) });
         if (step.click) {
-          const el = page.locator(step.click).first();
-          if (!(await el.count())) throw new Error(`beat "${name}": selector ${step.click} matched nothing`);
+          const el = await find(step.click, 'click', name);
           const r = await el.boundingBox();
           if (r) await rec.glideTo(r.x + r.width / 2, r.y + r.height / 2, P(300), true);
           // Sound cue for compose, as the press lands, with its target's rect and the camera box
           // in force (as a mark has them). Clicks before filming starts are not recorded.
-          if (rec.filming) { const t = rec.now(); events.push({ t, kind: 'click', ...await cueTarget(step.click), cam: rec.cam }); }
+          if (rec.filming) { const t = rec.now(); events.push({ t, kind: 'click', ...await cueTarget(el), cam: rec.cam }); }
           await el.click({ timeout: rec.T(8000) });
         }
         if (step.goto || step.click) {
@@ -268,18 +267,17 @@ async function film({ base, state, out, viewport = { width: 1280, height: 720 },
         // Typing can fetch (search-as-you-type), so it waits like a click: ready, else network quiet, then settle.
         if (step.type) {
           const { into, text, cps = 12 } = step.type;
-          const el = page.locator(into).first();
-          if (!(await el.count())) throw new Error(`beat "${name}": selector ${into} matched nothing`);
+          const el = await find(into, 'type', name);
           const r = await el.boundingBox();
           if (r) await rec.glideTo(r.x + r.width / 2, r.y + r.height / 2, P(300), true);
           const typed = step.ready ? null : networkQuiet(page, { cap: step.readyCap }, clock);
           const tc = rec.now(), cam = rec.cam;
-          events.push({ t: tc, kind: 'click', ...await cueTarget(into), cam });
+          events.push({ t: tc, kind: 'click', ...await cueTarget(el), cam });
           await el.click({ timeout: rec.T(8000) });
           const t0 = rec.now();
           for (const ch of String(text)) { await page.keyboard.type(ch); await rec.sleep(1000 / cps); }
           // measured after the typing: a field that widens on focus or input is pointed at as it ends up
-          events.push({ t: t0, kind: 'type', dur: rec.now() - t0, chars: String(text).length, ...await cueTarget(into), cam: rec.cam });
+          events.push({ t: t0, kind: 'type', dur: rec.now() - t0, chars: String(text).length, ...await cueTarget(el), cam: rec.cam });
           if (step.ready) await ready(step.ready, step.readyCap ?? 15000, name);
           else await typed();
           await rec.sleep(P(step.settle ?? 400));
@@ -287,7 +285,7 @@ async function film({ base, state, out, viewport = { width: 1280, height: 720 },
         // Each camera move is logged as a `camera` event (start t0, end t1): compose plays it at 1x
         // and lights a spotlight only once it has ended.
         if (step.zoom) {
-          const r = await rectOf(step.zoom.on, name);
+          const r = await rectOf(await find(step.zoom.on, 'zoom', name));
           // Zooming while zoomed: the override may have moved the scroll since camScroll was read.
           if (rec.cam) { const sc = await page.evaluate(() => ({ x: scrollX, y: scrollY })); r.x += sc.x - rec.camScroll.x; r.y += sc.y - rec.camScroll.y; }
           const t0 = rec.now(), to = boxFor(r, step.zoom.scale ?? 2);
@@ -301,7 +299,7 @@ async function film({ base, state, out, viewport = { width: 1280, height: 720 },
         }
         // A mark is the handoff to the compositor: what to point at, and when.
         if (step.mark) {
-          lastMark = await rectOf(step.mark.on, name);
+          lastMark = await rectOf(await find(step.mark.on, 'mark', name));
           events.push({ t: rec.now(), kind: 'mark', label: step.mark.label, rect: lastMark, cam: rec.cam });
         }
         if (step.hold) await rec.hold(P(step.hold), lastMark);
@@ -315,7 +313,7 @@ async function film({ base, state, out, viewport = { width: 1280, height: 720 },
       ...(det && { network: cap.netNote ? 'advance' : cap.network === 'advance' ? 'advance' : 'pause', ...(cap.netNote && { networkNote: cap.netNote }) }),
       ...(det && { blur: cap.blur && { ...cap.blur, spans: r.blurSpans, ...r.blurStats } }) };
     fs.writeFileSync(path.join(dir, 'events.json'), JSON.stringify({ chapter, viewport, dpr: r.dpr, fps: r.fps,
-      capture: capInfo, dur: r.dur, frames: r.frames, events }, null, 1));
+      capture: capInfo, dur: r.dur, frames: r.frames, events, targets }, null, 1));
     return { frames: r.frames, dur: r.dur, events: events.filter(e => e.kind === 'mark').length, dir, mode: cap.mode, fps: r.fps, dpr: r.dpr };
   } finally { await rec.close(); }
 }

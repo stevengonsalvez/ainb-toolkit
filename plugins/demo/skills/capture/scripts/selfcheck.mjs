@@ -296,6 +296,15 @@ try {
   await assert.rejects(capture({ base, out, chapter: 'wrong', beats: [
     { goto: '/a' }, { name: 'bare', click: 'text=REPORTS', expectPath: '/b' }] }), /expected path \/b, got \/news/);
 
+  // 9b. Locator chains: the first entry that finds exactly one visible element wins, and
+  //     events.json records which. A chain that finds nothing fails the take at once, naming each
+  //     entry with what it found and the nearest candidates on the page, and writes no events.json.
+  const lc = await capture({ base, out, chapter: 'chain', capture: SC, cursor: { hidden: true }, beats: [
+    { goto: '/a' }, { name: 'nav', click: [{ testid: 'reports' }, { role: 'link', name: 'REPORTS' }], expectPath: '/b' }] });
+  assert.deepEqual(ev(lc).targets.find(t => t.use === 'click'), { beat: 'nav', use: 'click', matched: 'role=link[name="REPORTS"]', index: 1, of: 2 }, `chain match ${JSON.stringify(ev(lc).targets)}`);
+  await assert.rejects(capture({ base, out, chapter: 'chain-miss', capture: SC, beats: [{ goto: '/a' }, { name: 'nav', click: [{ role: 'link', name: 'REPORT' }, { testid: 'reports' }] }] }),
+    e => /beat "nav": click .*Tried role=link\[name="REPORT"\] \(0 visible\), testid=reports \(0 visible\)\. Nearest on the page: .*link "REPORTS"/.test(e.message) || assert.fail(`miss message: ${e.message}`));
+  assert.ok(!fs.existsSync(path.join(out, 'chain-miss', 'events.json')), 'a take that missed a target wrote events.json');
   // 10. Overlay: one cursor per page even with an iframe, mounts in a sandboxed document where
   //     storage throws, and every click restarts the feedback (one ring animation, from its start).
   const browser = await chromium.launch();
@@ -395,6 +404,7 @@ try {
   console.log(`selfcheck OK: springs ${JSON.stringify(springs)}; pre-aim holds the fixed point; retarget keeps velocity; settles exact; ms 0 cuts; click lands at ${press.toFixed(3)}s; shake 100ms`);
   console.log(`selfcheck OK: main ${r.frames} frames/${r.dur.toFixed(2)}s 2560x1440@60 mp4 ${n} frames luma head ${head} tail ${tail}; anim ${md5.length} frames 0 repeats; blur spans ${JSON.stringify(spans)} inside camera moves, up to ${bb.maxSamples} samples ${bb.maxGap}px apart, capped run filled ${capped.filled} frames`);
   console.log(`selfcheck OK: lazy import stays deterministic; SSE runs on under auto, falls back to ${fb.mode} under pause, one message each; screencast hold ${h.frames} frames; scroll-zoom luma ${zl.det}/${zl.sc}; guard threw`);
+  console.log(`selfcheck OK: locator chain falls through to entry 2 and is recorded; a miss names the chain and nearest candidates and films nothing`);
   console.log(`selfcheck OK: cursor under 2x zoom det ${cs.det.map(f2)} sc ${cs.sc.map(f2)} (zoomed, after nav); ring per click ${JSON.stringify(ripple)}; type det ${f2(ty.det[0])}s sc ${f2(ty.sc[0])}s; pace ${f2(p1.dur)}s -> ${f2(p2.dur)}s; loggedInSel re-mints; sandbox errors ${sandboxErrs}`);
 } finally {
   server.close(); fs.rmSync(out, { recursive: true, force: true });
