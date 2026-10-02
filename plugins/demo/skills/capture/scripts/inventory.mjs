@@ -2,7 +2,7 @@
 // ABOUTME: Lists what a beat could target on a page: every interactive element, landmark, heading,
 // table and anything with an id or test id, with its role, accessible name, test id, rect (CSS px)
 // and the locator chain to write for it (steadiest first). The draft procedure in SKILL.md reads it.
-// Usage: node inventory.mjs <url> [--json]
+// Usage: node inventory.mjs <url> [--state session-state.json] [--json]
 //        node inventory.mjs <beats.mjs> <chapter> [beat] [--json]
 //          replays the chapter's beats (a dry run, no frames) up to and including `beat` (a name or
 //          index; all of them when omitted), then lists the page it is on.
@@ -11,13 +11,16 @@ import { chromium } from '@playwright/test';
 import { capture, ensureState } from './capture.mjs';
 import { inventory, source } from './locate.mjs';
 
-const argv = process.argv.slice(2), json = argv.includes('--json'), [a, chapter, upto] = argv.filter(x => x !== '--json');
-if (!a || (!/^https?:/.test(a) && !chapter)) { console.error('usage: node inventory.mjs <url> [--json] | <beats.mjs> <chapter> [beat] [--json]'); process.exit(2); }
+// A logged-in page needs the session: --state takes the file a beats file's `state` names
+// (run.mjs mints it), and the beats form uses the beats file's own.
+const argv = process.argv.slice(2), json = argv.includes('--json'), si = argv.indexOf('--state'), state = si >= 0 ? argv[si + 1] : undefined;
+const [a, chapter, upto] = argv.filter((x, i) => x !== '--json' && i !== si && i !== si + 1);
+if (!a || (si >= 0 && !state) || (!/^https?:/.test(a) && !chapter)) { console.error('usage: node inventory.mjs <url> [--state session-state.json] [--json] | <beats.mjs> <chapter> [beat] [--json]'); process.exit(2); }
 let items, where = a;
 if (/^https?:/.test(a)) {
   const browser = await chromium.launch();
   try {
-    const page = await (await browser.newContext({ viewport: { width: 1280, height: 720 } })).newPage();
+    const page = await (await browser.newContext({ viewport: { width: 1280, height: 720 }, storageState: state })).newPage();
     await page.goto(a, { waitUntil: 'networkidle', timeout: 30000 });
     items = await inventory(page);
   } finally { await browser.close(); }
