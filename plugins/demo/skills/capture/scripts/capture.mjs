@@ -325,7 +325,8 @@ async function film({ base, state, out, viewport = { width: 1280, height: 720 },
       capture: capInfo, dur: r.dur, frames: r.frames, events, targets }, null, 1));
     if (lints.length) for (const w of lints) console.warn(`  lint ${chapter}: ${w}`);
     return { frames: r.frames, dur: r.dur, events: events.filter(e => e.kind === 'mark').length, dir, mode: cap.mode, fps: r.fps, dpr: r.dpr };
-  } finally { await rec.close(); }
+  } catch (e) { e.targets = targets; throw e; }   // what resolved before it failed, for the dry run's count
+  finally { await rec.close(); }
 }
 
 // The camera's metrics override zooms the overlay with the page (measured 1.5x bigger at scale

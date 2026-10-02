@@ -7,6 +7,7 @@
 //   --no-dry-run  film without it
 import path from 'path'; import { pathToFileURL, fileURLToPath } from 'url'; import { execFileSync } from 'child_process';
 import { capture, ensureState } from './capture.mjs';
+import { LocatorMiss } from './locate.mjs';
 import { narrativeLint, composeFor } from './narrative.mjs';
 
 const argv = process.argv.slice(2), flags = argv.filter(a => a.startsWith('--')), [file, ...only] = argv.filter(a => !a.startsWith('--'));
@@ -23,7 +24,11 @@ if (cfg.login) console.log(`session: ${await ensureState(cfg)}`);
 
 if (!flags.includes('--no-dry-run')) {
   const t0 = Date.now();
-  let misses = 0, n = 0;
+  let misses = 0, fails = 0, n = 0;
+  // A miss is a target the page does not have; anything else (a goto that fails, an expectPath
+  // that does not hold, a script error) is said as what it is: its first line, no ANSI colour,
+  // without Playwright's call log.
+  const plain = e => `${e instanceof LocatorMiss ? '' : `${e.name || 'Error'}: `}${String(e.message).replace(/\x1b\[[0-9;]*m/g, '').split(/\nCall log:/)[0].trim()}`;
   for (const ch of chapters) {
     try {
       const r = await capture(opts(ch, { mode: 'dry' }));
@@ -39,15 +44,16 @@ if (!flags.includes('--no-dry-run')) {
       }
       for (const w of r.lints) console.log(`  lint: ${w}`);
     } catch (e) {
-      misses++;
-      console.log(`${ch.name}\n  MISS ${e.message}`);
+      n += e.targets?.length || 0;
+      if (e instanceof LocatorMiss) misses++; else fails++;
+      console.log(`${ch.name}\n  ${e instanceof LocatorMiss ? 'MISS' : 'FAIL'} ${plain(e)}`);
     }
   }
   // Pacing, from the beats themselves (and the narration, when the beats file names its compose
   // config): warnings, never a failure.
   for (const w of narrativeLint({ ...cfg, chapters }, composeFor(cfg, path.resolve(file)))) console.log(`narrative: ${w}`);
-  console.log(`dry run: ${chapters.length} chapter(s), ${n} target(s) resolved, ${misses} miss(es), ${((Date.now() - t0) / 1000).toFixed(1)}s`);
-  if (misses) process.exit(1);
+  console.log(`dry run: ${chapters.length} chapter(s), ${n} target(s) resolved, ${misses} miss(es), ${fails} other failure(s), ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+  if (misses || fails) process.exit(1);
   if (flags.includes('--dry-run')) process.exit(0);
 }
 

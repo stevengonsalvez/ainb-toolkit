@@ -355,6 +355,11 @@ try {
   const lints = dr.out.split('\n').filter(l => /lint:/.test(l));
   assert.ok(dr.status === 0 && !lints.some(l => /beat "foot"/.test(l)) && lints.some(l => /beat "find".*\{ role: "searchbox", name: "Find" \}/.test(l)) && !lints.some(l => /textbox/.test(l)),
     `lint suggestions: ${JSON.stringify(lints)}`);
+  //     A failure that is not a miss says what it is, plainly: no ANSI, no call log, counted apart.
+  const wrongPath = beatsFile('dry-wrong', [{ name: 'c', beats: [{ goto: '/a' }, { name: 'bare', click: 'text=REPORTS', expectPath: '/b' }] }]);
+  dr = await node([runMjs, wrongPath, '--dry-run']);
+  assert.ok(dr.status === 1 && /FAIL Error: .*expected path \/b, got \/news/.test(dr.out) && !/\x1b\[|Call log/.test(dr.out) && /1 target\(s\) resolved, 0 miss\(es\), 1 other failure/.test(dr.out),
+    `dry run on a failing (not missing) beat: exit ${dr.status}\n${dr.out}`);
   dr = await node([runMjs, broken]);
   assert.ok(dr.status === 1 && !fs.existsSync(path.join(out, 'dry-broken')), `a broken file filmed: exit ${dr.status}\n${dr.out}`);
   //     And on the ferry example beside this skill, when it is there: green, in seconds.
