@@ -49,6 +49,7 @@ function narrationSettings(n) {
   const N = { tts, speed: 1, model: 'medium.en', lead: 0.3, gap: 0.35, tail: 0.35, level: -16, ...TTS[tts], ...n };
   // ponytail: Aura-2 speaks at its own pace; refuse a speed rather than resample the voice
   if (tts === 'deepgram' && N.speed !== 1) throw new Error('audio.narration.speed is not supported with tts "deepgram" (leave it at 1)');
+  if (tts === 'deepgram' && !/^aura-/.test(N.voice)) throw new Error(`audio.narration.voice "${N.voice}" is not a Deepgram Aura voice (e.g. aura-2-thalia-en)`);
   return N;
 }
 
@@ -166,9 +167,9 @@ const clipKey = (N, text) => N.tts === 'hyperframes'
   ? createHash('sha1').update(JSON.stringify([text, N.voice, N.speed, N.model])).digest('hex').slice(0, 16)
   : `dg-${createHash('sha256').update(JSON.stringify(['deepgram', text, N.voice, SR])).digest('hex').slice(0, 24)}`;
 
-// One clip per narrated line, through `hyperframes tts`, and its word times through
-// `hyperframes transcribe`, both cached by text, voice and model. medium.en by default: on a
-// word with a known start small.en was 0.5s early and medium.en within 5ms.
+// One clip per narrated line and its word times, both cached: `hyperframes tts` and `hyperframes
+// transcribe` (medium.en by default: on a word with a known start small.en was 0.5s early and
+// medium.en within 5ms), or Deepgram speak and listen.
 export async function narrationClips(C) {
   const A = audioSettings(C);
   if (!A) return {};
