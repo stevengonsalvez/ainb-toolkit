@@ -163,8 +163,11 @@ function checkChapter(name) {
     // aligned: under the cut-out the render IS the source framed through the mark's view, so a
     // crop or camera that has not reached that view while the spotlight is up (the vertical crop
     // still sliding) shows other footage. lit and drift cannot see it: both ratios hold over a
-    // shifted page and drift reads the source. Mean luma difference, 0-255.
-    const align = Math.max(...[0, 1].map((k) => diff(ren[k], raw[k], box)));
+    // shifted page and drift reads the source. Mean luma difference, 0-255, read only on stills
+    // past the light sweep (sweepTo), which brightens the cut-out for 0.8s; if both fall inside
+    // it, on still B, the later one.
+    const clear = [0, 1].filter((k) => at[k] >= (s.sweepTo ?? 0));
+    const align = Math.max(...(clear.length ? clear : [1]).map((k) => diff(ren[k], raw[k], box)));
     if (!short && align > K.alignMax) why.push(`cut-out off its footage ${r3(align)}`);
 
     // A gliding cut-out: no frame of it may cover more than glideStep of its path, or 1.5x the

@@ -682,7 +682,7 @@ function chapter(an, sp) {
     s.box = [x, y, w, h].map(r3); s.dir = pick[0];
     report.push({
       i: s.i, label: s.label, srcT: r3(s.m.t), shift: s.shift || 0, compT: r3(s.ct), litFrom: r3(s.cf),
-      fadeIn: F(0.25), glided: !!s.glided, hold: r3(s.hold), srcHold: r3(s.srcHold),
+      fadeIn: F(0.25), glided: !!s.glided, ...(SP.sweep && !s.glided && { sweepTo: r3(s.cf + F(0.9)) }), hold: r3(s.hold), srcHold: r3(s.srcHold),
       place: pick[0], box: [x, y, w, h].map(Math.round),
       labBox: [pick[2].left, pick[2].top, lw, LH].map(Math.round), view: s.view,
     });
