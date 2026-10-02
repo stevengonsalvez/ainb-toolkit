@@ -102,8 +102,34 @@ function hf(args, cwd) {
   return j;
 }
 
-// Speak `text` into `out` (a wav). HyperFrames runs locally; Deepgram is one HTTPS request per
-// clip, 48kHz 16-bit mono WAV, retried on 429 and 5xx.
+// One Deepgram request: up to 4 attempts, 60s each, on a network failure, a 429 or 5xx, or a
+// response `accept` refuses (a 200 that is not what was asked for); the wait honours Retry-After
+// (capped at 30s), else 1, 2, 4s. `accept(response)` returns the result or throws.
+const backoff = () => +(process.env.DEMO_DG_BACKOFF_MS ?? 1000);   // the self-check shortens it
+async function dg(what, url, init, accept) {
+  for (let attempt = 1; ; attempt++) {
+    let why, wait = backoff() * 2 ** (attempt - 1);
+    try {
+      const r = await fetch(url, { ...init, headers: { Authorization: `Token ${process.env.DEEPGRAM_API_KEY}`, ...init.headers }, signal: AbortSignal.timeout(60e3) });
+      if (r.ok) {
+        try { return await accept(r); } catch (e) { why = `${what}: ${e.message}`; }
+      } else {
+        why = `${what} ${r.status}: ${(await r.text()).slice(0, 300)}`;
+        if (r.status !== 429 && r.status < 500) throw new Error(why);
+        const ra = r.headers.get('retry-after');
+        if (ra != null) wait = Math.min(30e3, Number.isFinite(+ra) ? +ra * 1000 : Math.max(0, Date.parse(ra) - Date.now()));
+      }
+    } catch (e) {
+      if (why && e.message === why) throw e;              // a refusal that retrying will not change
+      why = `${what}: ${e.name === 'TimeoutError' ? 'no answer in 60s' : e.cause?.code || e.message}`;
+    }
+    if (attempt === 4) throw new Error(`${why} (gave up after 4 attempts)`);
+    console.warn(`  warn: ${why}; retrying`);
+    await new Promise((res) => setTimeout(res, wait));
+  }
+}
+// Speak `text` into `out` (a wav). HyperFrames runs locally; Deepgram is one request per clip,
+// 48kHz 16-bit mono WAV.
 async function speak(N, text, out, dir) {
   if (N.tts === 'hyperframes') {
     writeFileSync(`${out}.txt`, text);
@@ -111,21 +137,19 @@ async function speak(N, text, out, dir) {
     return;
   }
   const url = `https://api.deepgram.com/v1/speak?model=${encodeURIComponent(N.voice)}&encoding=linear16&sample_rate=${SR}&container=wav`;
-  for (let attempt = 1; ; attempt++) {
-    const r = await fetch(url, { method: 'POST', headers: { Authorization: `Token ${process.env.DEEPGRAM_API_KEY}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) });
-    if (r.ok) { writeFileSync(`${out}.part`, Buffer.from(await r.arrayBuffer())); renameSync(`${out}.part`, out); return; }
-    const why = `Deepgram speak ${r.status} for voice ${N.voice}: ${(await r.text()).slice(0, 300)}`;
-    if ((r.status !== 429 && r.status < 500) || attempt === 3) throw new Error(why);
-    console.warn(`  warn: ${why}; retrying`);
-    await new Promise((res) => setTimeout(res, 1000 * 2 ** attempt));
-  }
+  const buf = await dg(`Deepgram speak (voice ${N.voice})`, url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) }, async (r) => {
+    return Buffer.from(await r.arrayBuffer());
+  });
+  writeFileSync(`${out}.part`, buf); renameSync(`${out}.part`, out);
 }
 // Word times for a Deepgram clip from Deepgram's own recogniser (nova-3), as { text, start, end }.
 async function listen(file) {
-  const r = await fetch('https://api.deepgram.com/v1/listen?model=nova-3', { method: 'POST',
-    headers: { Authorization: `Token ${process.env.DEEPGRAM_API_KEY}`, 'Content-Type': 'audio/wav' }, body: readFileSync(file) });
-  if (!r.ok) throw new Error(`Deepgram listen ${r.status}: ${(await r.text()).slice(0, 300)}`);
-  return (await r.json()).results.channels[0].alternatives[0].words.map((w) => ({ text: w.word, start: w.start, end: w.end }));
+  return dg(`Deepgram listen (${basename(file)})`, 'https://api.deepgram.com/v1/listen?model=nova-3',
+    { method: 'POST', headers: { 'Content-Type': 'audio/wav' }, body: readFileSync(file) }, async (r) => {
+      const j = await r.json(), words = j?.results?.channels?.[0]?.alternatives?.[0]?.words;
+      if (!Array.isArray(words)) throw new Error(`no word list in the answer: ${JSON.stringify(j).slice(0, 200)}`);
+      return words.map((w) => ({ text: w.word, start: w.start, end: w.end }));
+    });
 }
 // The file a line is spoken into. HyperFrames keys keep their old recipe (text, voice, speed and
 // the recogniser model), so existing caches stay valid; a Deepgram clip is keyed by what it is
