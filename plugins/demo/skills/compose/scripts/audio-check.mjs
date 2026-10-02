@@ -2,7 +2,10 @@
 // audio-check.mjs: the sound layer's timing logic on synthetic input, no TTS, no render, a second.
 // node audio-check.mjs   (exit 1 on the first failure)
 import assert from 'node:assert/strict';
-import { parseLine, align, fitNarration, locateAnchor, fitGrid } from './audio.mjs';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { parseLine, align, fitNarration, locateAnchor, fitGrid, audioSettings, narrationClips } from './audio.mjs';
 import { vtt } from './captions.mjs';
 
 // 1. `{@name}` marks the word after it; without one the first word is the anchor.
@@ -89,5 +92,18 @@ const k = 3; let u = 0.05;
 for (const [q, [len, hz, amp]] of plan.slice(k).entries()) { syl(tail, u, len * (q ? 1 : 1.1), hz, amp); u += len * (q ? 1 : 1.1) + 0.04; }
 const truth = at[k], got = locateAnchor(line, tail, truth - 0.2);
 assert.ok(Math.abs(got.at - truth) <= 0.015 && got.r > 0.8, `anchor at ${got.at} (r ${got.r}), expected ${truth}`);
+
+// 6. Deepgram: its own default voice, no speed, an unknown engine refused, and without
+//    DEEPGRAM_API_KEY a run stops before any request, naming the variable.
+const dgC = (narration) => ({ audio: { narration }, configDir: '.', format: 'landscape' });
+assert.equal(audioSettings(dgC({ tts: 'deepgram' })).narration.voice, 'aura-2-thalia-en');
+assert.equal(audioSettings(dgC({})).narration.voice, 'af_heart');
+assert.throws(() => audioSettings(dgC({ tts: 'deepgram', speed: 1.2 })), /speed/);
+assert.throws(() => audioSettings(dgC({ tts: 'elevenlabs' })), /hyperframes" or "deepgram/);
+const out = mkdtempSync(join(tmpdir(), 'audio-check-')), key = process.env.DEEPGRAM_API_KEY, realFetch = globalThis.fetch;
+delete process.env.DEEPGRAM_API_KEY;
+globalThis.fetch = () => { throw new Error('a request was made'); };
+await assert.rejects(narrationClips({ ...dgC({ tts: 'deepgram' }), out, cards: {}, chapters: [{ name: 'c', narration: { marks: ['Hello there.'] } }] }), /DEEPGRAM_API_KEY/);
+globalThis.fetch = realFetch; if (key) process.env.DEEPGRAM_API_KEY = key; rmSync(out, { recursive: true, force: true });
 
 console.log(`audio-check OK: anchors on spotlights, ${freezes.length} freezes in whole frames, located tail at ${got.at}s (truth ${truth.toFixed(3)}, r ${got.r.toFixed(3)})`);
