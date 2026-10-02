@@ -236,7 +236,7 @@ mark: { label: 'Resident fare needs proof', on: [{ role: 'cell', name: 'Island r
 A chain entry matches when it finds exactly one visible element, and the first that does wins;
 `events.json` records which (`targets`). A target that finds nothing within 5s (on the take's
 clock) fails the take at once with every entry tried, how many visible elements each found, and
-the nearest names on the page from its accessibility snapshot, e.g.:
+the nearest names on the page from its accessibility tree, e.g.:
 
 ```
 beat "bad": click target matched no single visible element after 5000ms. Tried role=link[name="Fare list"]

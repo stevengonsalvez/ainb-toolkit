@@ -70,7 +70,7 @@ export async function resolve(page, target, { use, beat, waitMs = 5000, now = Da
   }
 }
 
-// The page's own roles and names (its accessibility snapshot) plus its test ids, ranked by how
+// The page's own roles and names (its accessibility tree) plus its test ids, ranked by how
 // alike they are to the names, texts and test ids the chain asked for.
 async function nearest(page, chain, k = 6) {
   const snap = await page.locator('body').ariaSnapshot({ timeout: 2000 });
@@ -91,7 +91,7 @@ async function nearest(page, chain, k = 6) {
 }
 
 // The element's role (its own role attribute, else the implicit one for its tag) and accessible
-// name from its snapshot, and its test id. Null role for a plain container.
+// name from the accessibility tree, and its test id. Null role for a plain container.
 async function identify(loc) {
   const el = await loc.evaluate((n, ROLE_OF) => {
     const type = (n.getAttribute('type') || '').toLowerCase();
