@@ -560,6 +560,7 @@ the full-to-limited range change, which any BT.709 4:2:0 delivery pays.
 - `scripts/config.mjs`: config load, defaults, font stacks, segment ordering.
 - `scripts/compose.mjs`: one standalone HyperFrames project per segment. Separate projects keep
   each render small and lint clean.
+- `scripts/hfrender.mjs`: one project to one lossless mp4, in time chunks when the disk is short.
 - `scripts/render.sh`, `scripts/concat.sh`: render loop (PNG sequences, packed losslessly) and
   the seams plus the one final encode (see Encode chain). concat.sh also writes
   `work/timeline.json`: where each segment starts in the final cut, with its seam.
