@@ -115,7 +115,7 @@ Only `takes` and `chapters` are required. Everything below shows the default whe
   "fadeLead": 0.25,                   // spotlight fades in this long before the mark (or once the zoom settles)
   "deadHold": 2.0,                    // freezes longer than this get trimmed
   "layout": { "safeMargin": 64, "labelHeight": 48, "labelGap": 14, "maxLabelWords": 6 },
-  "check":  { "litRatio": 0.80, "dimRatio": 0.62, "contentSd": 8, "driftMax": 12 },
+  "check":  { "litRatio": 0.80, "dimRatio": 0.62, "contentSd": 8, "driftMax": 12, "alignMax": 7, "glideStep": 0.2 },
   "audio": {                          // optional; "audio": false turns the sound layer off
     "sfx":       { "level": 0, "click": true, "type": true, "zoom": true, "mark": true },  // or false
     "music":     { "file": "bed.mp3", "level": -18, "duck": 11, "fadeIn": 1.5, "fadeOut": 2.5,
@@ -123,7 +123,7 @@ Only `takes` and `chapters` are required. Everything below shows the default whe
     "narration": { "voice": "af_heart", "speed": 1, "model": "medium.en",
                    "lead": 0.3, "gap": 0.35, "tail": 0.35, "level": -16 },
     "loudness":  { "target": -14, "truePeak": -1, "tolerance": 1 },
-    "captions":  { "burn": false, "maxWords": 7 }
+    "captions":  { "burn": false, "maxWords": 7 }   // burn: true by default for vertical (in the picture)
   }
 }
 ```
@@ -181,19 +181,33 @@ speed      2x    ramp    1x     ramp   2x   ramp    1x     ramp
   down (clear of the platforms' top bar). Middle: the window, 1000x820 at y 520, cropping the
   16:9 footage. Bottom: burned captions, the lowest edge 420px above the bottom (clear of the
   caption and action UI), 60px in from the left and 120px from the right (the side rail). The
-  captions are the narration's words with the spoken one picked out (captions.mjs, the same cues
-  as the .vtt, so concat.sh does not burn them again), or without narration each spotlight's
-  label while it is lit; the small label by the spotlight is then not drawn, the caption is the
-  label at a size a phone reads. Title, switch and end cards fill the 9:16 frame and carry their
-  narration as captions.
+  captions are the narration's words with the spoken one picked out (captions.mjs cues), or
+  without narration each spotlight's label while it is lit; the small label by the spotlight is
+  then not drawn, the caption is the label at a size a phone reads. Title, switch and end cards
+  fill the 9:16 frame and carry their narration as captions. In-picture captions are the
+  vertical default of `audio.captions.burn`: the .vtt is then not written (uploaded beside the
+  video a platform shows them twice) and concat.sh burns nothing more; `"burn": false` leaves
+  the picture without them, keeps the labels by the spotlights and writes the .vtt. A caption
+  wraps anywhere rather than run past the safe width (a 91-character URL label wrapped to four
+  lines inside it, looked at), and compose warns on a caption over about 80 characters (the band
+  under the window holds two lines; that URL rose over the window's bottom edge) and on a chapter
+  title over about 100, where the headline reaches the window.
   The crop follows the current target on a critically damped spring (omega 9.43 rad/s, Cap's
-  screen spring as a constant; never overshoots): each click and typed field, switched 0.8s
-  before the press so the crop is already there when the pointer glides in and nothing enters
-  from off-frame, and each group of spotlights, switched 0.8s before it lights. From a
-  spotlight's fade-in to the end of its fade-out the crop is pinned to the spotlight's view, the
-  spring eased onto it over the last 0.2s rather than cut (it was 3.1px and 4.3px short on
-  ferry, a visible snap before). Views zoom past the cover scale onto a small target, up to the
-  take's own pixels (2 screen px per CSS px for a 2x take), and clamp to the footage's edges.
+  screen spring as a constant): each click and typed field, switched 0.8s before the press so
+  the crop is already there when the pointer glides in and nothing enters from off-frame, and
+  each group of spotlights, switched 0.8s before it lights. Presses less than 0.8s apart share
+  one view, of their union (open a menu, pick an option): each switching on its own pulled the
+  crop toward the second before the first landed, the first press 2,503px off the crop on a probe
+  with two clicks 0.3s apart; now both inside. From a spotlight's fade-in to the end of its
+  fade-out the crop is pinned to the spotlight's view, the spring eased onto it over the last
+  0.2s rather than cut (it was 3.1px and 4.3px short on ferry, a visible snap before), and a
+  press that lands outside a pinned crop is warned about: the crop does not follow the pointer.
+  From rest the spring never overshoots, but a retarget while it still moves can carry it past
+  the goal, so every frame is clamped onto the footage: ferry's fares showed an 85px strip of
+  backdrop beside the footage for a moment before; now none. Views zoom past the cover scale onto
+  a small target, up to 2 design px per CSS px for a 2x take (the take's own pixels at the
+  1080x1920 master). The limit is in design px, so a draft frames exactly as the master: it was
+  in canvas px, and a 96x40 button zoomed 3x in the draft against 2x at the master; now 2x in both.
   A spotlight's cut-out and label live inside the crop, so they move with it.
 
 Measured on the ferry example, filmed fresh (two chapters, five marks, 3s title and end cards),
@@ -384,8 +398,8 @@ music file ──▶ hyperframes beats ─▶ card padding, every cut on a beat 
   config). `"captions": { "burn": true }` also writes `out/<name>-captions.mp4` with the captions
   burned in and the spoken word in `theme.highlight`, rendered through HyperFrames: for social
   cuts that autoplay muted. Word highlights follow the recogniser's word times, so they can sit
-  up to about 0.2s off; anchors do not. `format: "vertical"` has them in the picture already, so
-  `burn` is skipped there.
+  up to about 0.2s off; anchors do not. `format: "vertical"` draws them into the picture itself
+  instead (`burn` defaults to true there, with no .vtt; false leaves them out and writes it).
 - **Listen-proxy**: `out/<name>-audio.png` stacks four waveforms: effects, narration, music, final
   mix. Look at it for clipping, the ducks and where each sound sits. `out/<name>.audio.json` holds
   the measurements, cue counts and duck windows.
@@ -418,16 +432,23 @@ Measured on a 5:36 ten-chapter demo, 47 marks. Change them in config, not in cod
   anchor timed to that moment still lands on it). The glide rides the filmed camera: the cut-out
   travels across the page, from one mark's rect to the next, and each frame draws that page rect
   where the capture camera had it on that frame (`poses` in events.json), so the content under
-  the hole never slides. Its progress is how far the camera has come from the one mark's pose to
-  the next (centre distance plus log zoom, never going back), with the old power3 ease of time as
-  a floor: the camera often rests zoomed out between two marks, and a hole tied to the camera
-  alone parked half way across two cards for 1s. Measured on ferry (three glides, design px of
-  the 1280-wide screen): the eased frame-space tween it replaces slid over the content by up to
-  252px (mean 106) on one glide and 113 and 191px on the others; now 0 by construction (the
-  correction that keeps the end boxes exact came to 0px), and the traced box drawn over a frame
-  rendered mid-glide sits on the hole's edge within 1px. When the camera is 99% of the way to the next
-  mark the hole is 1.7, 3.7 and 8.1px from its final box, where the tween was 42.4, 7.1 and
-  121.5px off: it arrives with the content, not after it. `COMPOSE_TRACE=1` writes the per-frame
+  the hole never slides. Its progress is the length of the camera's path so far over the whole
+  path's (centre distance plus log zoom, frame to frame), with the old power3 ease of time as a
+  floor: the camera often rests zoomed out between two marks, and a hole tied to the camera alone
+  parked half way across two cards for 1s. The path length never jumps; the first version took
+  the ratio of distances to the two end poses, which snapped the hole half way in one frame when
+  the camera ends where it started (a zoom out and back between two marks: step 0.50 of the path
+  on a probe take, now 0.05). The pose is the one on the source frame actually shown: the
+  re-timed footage gives each output frame the last source frame before the middle of the next
+  output interval (ffmpeg's `fps`, round=near), which on an index-coded take matched 292 of 339
+  frames and the rest within one; reading the frame at the re-timed time matched 37, one to two
+  frames behind at 2x. Measured on ferry (three glides, design px of the 1280-wide screen): the
+  eased frame-space tween it replaces slid over the content by up to 258px (mean 111) on one glide
+  and 114 and 192px on the others; now 0 by construction (the correction that keeps the end
+  boxes exact came to 0px), and mid-glide the still-check reads the rendered hole on its planned
+  box (below). When the camera is 99% of the way to the next mark the hole is 1.4, 3.3 and 9.6px
+  from its final box, where the tween was 42.4, 12.3 and 146.1px off: it arrives with the content,
+  not after it. `COMPOSE_TRACE=1` writes the per-frame
   trace (`work/<chapter>-glide-m<i>.json`). A take without `poses` keeps the eased tween. A glide lasts at least 0.35s: if the next mark lights
   sooner (pace above 1, or a spotlight waiting for the camera), this hold ends early to make room
   and its label leaves as the glide starts; if that would leave the hold under 0.7s, too short
@@ -494,6 +515,7 @@ segment begins (`tailFrom`). Compose ends any hold before that seam, and warns w
 | `drift`   | cut-out region, still A vs still B, in the source            | defect 1: hold outran a camera move  |
 | `align`   | mean luma difference, render vs source framed through the mark's view, under the cut-out | crop or camera not yet where the spotlight was laid out (still moving) |
 | label     | label box vs spotlight box, geometric                        | defect 2: label over its spotlight   |
+| glide     | largest share of the glide's path in one frame (plan); lit, dim and align of the hole at the glide's middle frame | a glide that snaps, or a hole not drawn where planned |
 
 The ring samples 34px clear of the box edge and skips the label rect. Closer in, the spotlight's
 own 22px glow reads as "not dimmed" and every mark fails; so would the feather, which is why
@@ -502,12 +524,25 @@ were not loosened: with the feathered, blurred scrim the ferry reads lit 1.00 an
 0.397-0.399, against 1.00 and 0.396-0.397 from the old hard-edged one (the scrim is 60% black,
 so a clean dim reads 0.40; the gate is 0.62).
 
-`align` (gate `check.alignMax`, 7 of 255) was added with the vertical crop, which moves under the
+`align` (gate `check.alignMax`, 7 of 255, set from ferry readings, not derived) was added with the vertical crop, which moves under the
 footage: `lit` and `dim` are ratios that hold over a shifted page, and `drift` reads the source,
 so a crop still sliding while a spotlight was up passed every other test (falsified: crop retargeted 0.2s
 into each hold, both marks still hit). With `align` those two miss at 11.1 and 9.0. Correct
 renders on ferry read 0.47-0.56 (landscape draft), 1.7-3.0 (vertical master) and 2.4-4.3
 (vertical draft, the 720-wide render scaled up to the 1000px design window, so text edges soften).
+The source side is a nearest-neighbour scale of the 1x-sized read, so dense small text reads
+higher than ferry's; raise `alignMax` for such an app rather than trusting 7 blindly. It is read
+only on stills past the light sweep (`sweepTo` in plan.json, 0.9s after the spotlight starts),
+which brightens the cut-out: a spotlight that waited for the camera put still A inside it, about 8
+on dark UI. If both stills fall inside, still B is used.
+
+A glided spotlight is also checked mid-glide. No frame may cover more than `check.glideStep`
+(0.2) of the path, or 1.5x the steepest frame of the power3 ease on a short glide: ferry's glides
+peak at 0.06-0.12, a probe with the old progress (the camera ending where it started) at 0.50, a
+miss. And the glide's middle frame is read like a still: ferry's holes read lit 1.00, dim 0.40,
+align 0.27 and 0.76. With the per-frame sets removed from the rendered project, so the hole
+waited at the last mark, both glides miss (align 30.6 and 11.5); lit and dim alone still passed
+(0.88 and 0.96, dim 0.48 and 0.60), which is why align is read there too.
 
 It also writes `work/stills-<chapter>.png`, a 2-wide tile of every still with its mark index and
 time drawn on. **Look at it.** The numbers say the geometry is right; the sheet says the label
