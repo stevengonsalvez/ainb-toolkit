@@ -236,7 +236,7 @@ const ghostWord = (s) => String(s).split(/\s+/).sort((a, b) => b.length - a.leng
 // words, the spoken one picked out, or without narration each spotlight's label while it is lit
 // (captions.mjs groups them, the same cues as the .vtt).
 function captionLayer(id, plan) {
-  if (!VERT) return { html: '', lines: [] };
+  if (!VERT || A?.captions.burn === false) return { html: '', lines: [] };
   const { cues: cs } = captionCues(C, [{ name: id, start: 0, plan }], A);
   const lines = [], word = `color-mix(in oklab, ${T.highlight} 45%, white)`;
   const html = cs.map((c, i) => {
@@ -719,7 +719,7 @@ function chapter(an, sp) {
     });
     // vertical with no narration: the burned caption IS the label, at a size a phone can read, so
     // the small one by the spotlight stays laid out (check.mjs measures it) but is not drawn
-    const dup = VERT && !fit.placed.length ? ';display:none' : '';
+    const dup = VERT && A?.captions.burn !== false && !fit.placed.length ? ';display:none' : '';
     return `<div id="${name}-l${s.i}" class="lab" style="left:${r3(pick[2].left)}px;top:${r3(pick[2].top)}px${dup}">${esc(s.label)}</div>`;
   }).join('\n');
 

@@ -35,7 +35,8 @@ export function audioSettings(C) {
     music,
     narration: { voice: 'af_heart', speed: 1, model: 'medium.en', lead: 0.3, gap: 0.35, tail: 0.35, level: -16, ...(a.narration || {}) },
     loudness: { target: -14, truePeak: -1, tolerance: 1, ...(a.loudness || {}) },
-    captions: { burn: false, maxWords: 7, ...(a.captions || {}) },
+    // vertical burns its captions into the picture by default (compose.mjs); burn: false turns it off
+    captions: { burn: C.format === 'vertical', maxWords: 7, ...(a.captions || {}) },
   };
 }
 

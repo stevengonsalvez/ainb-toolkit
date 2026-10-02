@@ -58,10 +58,13 @@ export function cues(C, segs, A) {
 export function writeCaptions(C, segs, A) {
   const { kind, cues: cs } = cues(C, segs, A);
   const base = `${C.out}/out/${C.name}`;
-  writeFileSync(`${base}.captions.vtt`, vtt(cs));
+  // a vertical cut with its captions in the picture gets no .vtt: uploaded beside it, a platform
+  // would show them twice
+  const inPicture = C.format === 'vertical' && A?.captions.burn !== false;
+  if (inPicture) rmSync(`${base}.captions.vtt`, { force: true }); else writeFileSync(`${base}.captions.vtt`, vtt(cs));
   const title = (n) => C.cards[n]?.title ?? C.chapters.find((c) => c.name === n)?.title ?? n;
   writeFileSync(`${base}.chapters.vtt`, vtt(segs.map((s) => ({ start: s.start, end: s.start + s.dur, text: title(s.name) }))));
-  return { captions: `${base}.captions.vtt (${cs.length} ${kind} cues)`, chapters: `${base}.chapters.vtt (${segs.length})` };
+  return { captions: inPicture ? `in the picture (${cs.length} ${kind} cues, no .vtt)` : `${base}.captions.vtt (${cs.length} ${kind} cues)`, chapters: `${base}.chapters.vtt (${segs.length})` };
 }
 
 // Captions burned into a copy of the final video: one HyperFrames project holding the video
