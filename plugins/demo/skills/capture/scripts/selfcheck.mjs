@@ -26,6 +26,8 @@ const pages = {
   // Fields for the type cue's rect: one widens as it fills, one hides once it holds "go".
   '/grow': `<body style="margin:0;background:${BG};height:100vh"><input id="g" placeholder="Search sailings" style="position:absolute;left:100px;top:100px;width:100px;box-sizing:border-box" oninput="this.style.width = (100 + this.value.length * 20) + 'px'"></body>`,
   '/hide': `<body style="margin:0;background:${BG};height:100vh"><input id="h" placeholder="short" aria-label="Departure port for the outbound crossing you want" style="position:absolute;left:100px;top:100px" oninput="if (this.value === 'go') this.style.display = 'none'"></body>`,
+  // A button named only by its image's alt text.
+  '/imgbtn': `<body style="margin:0;background:${BG};height:100vh"><button id="b" style="position:absolute;left:100px;top:200px"><img alt="Save" width="24" height="24" src="data:image/gif;base64,R0lGODlhAQABAAAAACw="></button></body>`,
   // A full-page modal that a seeded localStorage key removes, over the button a beat clicks.
   '/consent': `<body style="margin:0;background:${BG};height:100vh"><button id="go" style="margin:200px">go</button><div id="modal" style="position:fixed;inset:0;background:#000"></div><script>if (localStorage.getItem('consent') === 'yes') document.getElementById('modal').remove()</script></body>`,
   // Two navigations with a link of the same name, and a search field beside a text field.
@@ -421,6 +423,16 @@ try {
   //  Names: a placeholder names a field with no label; aria-label wins over it, cut under 40.
   assert.ok(gc.name === 'Search sailings' && gc.role === 'textbox' && gt.name === 'Search sailings', `placeholder name ${gc.name}/${gt.name}, role ${gc.role}`);
   assert.ok(hc.name === 'Departure port for the outbound\u2026' && hc.name.length < 40, `aria-label name ${JSON.stringify(hc.name)}`);
+  //  A chain target on a field that hides as it is typed into: its type cue reads the rect through
+  //  the handle pinned at resolve time, so it is null at once, not after Playwright's 30s wait
+  //  for the chain's visible-only locator. And a button named by its image's alt text is named.
+  let tq = Date.now();
+  const hz = ev(await capture({ base, out, chapter: 'cue-hide-chain', capture: SC, cursor: { hidden: true },
+    beats: [{ goto: '/hide' }, { type: { into: [{ placeholder: 'short' }, '#h'], text: 'go', cps: 20 } }, { hold: 200 }] })).events.find(x => x.kind === 'type');
+  tq = (Date.now() - tq) / 1000;
+  assert.ok(hz.rect === null && hz.name === hc.name && tq < 20, `hiding chain field: type cue ${JSON.stringify(hz)}, take ${tq.toFixed(1)}s`);
+  const ib = ev(await capture({ base, out, chapter: 'cue-imgbtn', capture: SC, cursor: { hidden: true }, beats: [{ goto: '/imgbtn' }, { click: '#b' }, { hold: 200 }] })).events.find(x => x.kind === 'click');
+  assert.ok(ib.name === 'Save' && ib.role === 'button', `img-alt button cue ${JSON.stringify(ib)}`);
   //  A click while zoomed in screencast mode records its rect in the frame the camera box is in
   //  (CSS px from the scroll the zoom started at): #w at top 2000 after a 1700 scroll is at 300.
   const zc = ev(await capture({ base, out, chapter: 'zoom-click-sc', capture: SC, cursor: { hidden: true },
