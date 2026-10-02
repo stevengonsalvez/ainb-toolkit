@@ -883,7 +883,7 @@ for (const n of names) if (!C.cards[n] && !C.chapters.some((c) => c.name === n))
 
 // Narration and the music's beat grid are settled before any picture is timed (audio.mjs).
 const A = audioSettings(C);
-const NAR = narrationClips(C);
+const NAR = await narrationClips(C);
 const GRID = beatGrid(C);
 const fitFor = (an, sp) => fitNarration(an.spots.map((s) => ({ T: s.T, hold: s.hold, from: s.from, fade: F(0.25) })), NAR[an.name] || { marks: [] },
   (fz) => { const r = retime(an, sp, fz); return (t) => an.CARD + r.toOut(t); }, A?.narration, C.fps);
