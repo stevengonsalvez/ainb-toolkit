@@ -515,16 +515,24 @@ function viewFor(an, fr) {
   if (sMax - sMin < 1e-6) return { s: sMin, x: 0, y: 0 };
   const LH = C.layout.labelHeight, GAP = C.layout.labelGap;
   const s = Math.max(sMin, Math.min(sMax, (SCW - 2 * SAFE) / fr.w, (SCH - 2 * SAFE - LH - GAP) / fr.h));
-  const fw = an.srcW * s, fh = an.srcH * s, cx = fr.x + fr.w / 2, cy = fr.y + fr.h / 2;
-  const x = fw <= SCW ? (SCW - fw) / 2 : Math.min(0, Math.max(SCW - fw, SCW / 2 - cx * s));
-  const y = fh <= SCH ? (SCH - fh) / 2 : Math.min(0, Math.max(SCH - fh, SCH / 2 - cy * s));
-  return { s: r3(s), x: r3(x), y: r3(y) };
+  const cx = fr.x + fr.w / 2, cy = fr.y + fr.h / 2, v = clampView(an, { s, x: SCW / 2 - cx * s, y: SCH / 2 - cy * s });
+  return { s: r3(v.s), x: r3(v.x), y: r3(v.y) };
+}
+// A view kept on the footage: scale between contain and the zoom limit, and the footage covering
+// the screen wherever it is big enough to (centred where it is not), so no backdrop shows beside it.
+function clampView(an, { s, x, y }) {
+  const sMin = Math.min(SCW / an.srcW, SCH / an.srcH), cover = Math.max(SCW / an.srcW, SCH / an.srcH);
+  s = Math.min(Math.max(s, sMin), VERT ? Math.max(cover, an.dpr / WS) : cover);
+  const fw = an.srcW * s, fh = an.srcH * s;
+  return { s, x: fw <= SCW ? (SCW - fw) / 2 : Math.min(0, Math.max(SCW - fw, x)), y: fh <= SCH ? (SCH - fh) / 2 : Math.min(0, Math.max(SCH - fh, y)) };
 }
 
 // ---------- vertical: the crop follows the target ----------
 // The crop (the view of the footage in the vertical window) follows the current target box on a
 // critically damped spring, stepped once a frame (omega 9.43 rad/s, the natural frequency of
-// Cap's screen spring, cited as a constant), so it never overshoots or jitters. Targets: each
+// Cap's screen spring, cited as a constant): from rest it never overshoots, but a retarget while
+// it still moves can carry it past the new goal, so every frame is clamped onto the footage
+// (clampView) and no backdrop shows beside it. Targets: each
 // click and each typed field (its rect under the camera that filmed it), switched PREPAN before
 // the press so the crop is already there when the pointer glides in (it glides for 0.5s before
 // a press) and it never enters from off-frame; and each group of spotlights, switched PREPAN
@@ -579,8 +587,9 @@ function followCrop(an, groups, toComp, total) {
     }
     const next = pin ? null : pins.find((p) => p.from > t && p.from - t < BLEND);
     const w = next ? smooth(1 - (next.from - t) / BLEND) : 0, sh = (ch) => st[ch] + ((next ? next.view[ch] : 0) - st[ch]) * w;
-    maxScale = Math.max(maxScale, sh('s'));
-    const v = { x: r3(sh('x')), y: r3(sh('y')), s: +sh('s').toFixed(5) };
+    const cv = clampView(an, { s: sh('s'), x: sh('x'), y: sh('y') });
+    maxScale = Math.max(maxScale, cv.s);
+    const v = { x: r3(cv.x), y: r3(cv.y), s: +cv.s.toFixed(5) };
     if (process.env.COMPOSE_TRACE) trace.push([r3(t), v.x, v.y, v.s]);
     if (last && Math.abs(v.x - last.x) < 0.05 && Math.abs(v.y - last.y) < 0.05 && Math.abs(v.s - last.s) < 1e-5) continue;
     out.push(`tl.set(${cam}, { x: ${v.x}, y: ${v.y}, scale: ${v.s} }, ${f ? (t - 1e-4).toFixed(6) : 0});`);
