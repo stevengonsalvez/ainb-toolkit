@@ -165,7 +165,9 @@ export async function inventory(page) {
   const out = [];
   for (const it of items) {
     const loc = page.locator(`[data-demo-inv="${it.i}"]`);
-    const el = await identify(loc);
+    // A node the app re-rendered since the walk above is gone; the fresh one is not a target yet.
+    const el = await identify(loc).catch(() => null);
+    if (!el) continue;
     const chain = [];
     const b = await better(page, loc, el);
     if (b) chain.push(b);
