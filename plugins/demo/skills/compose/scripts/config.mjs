@@ -7,12 +7,14 @@ import { dirname, resolve, isAbsolute, basename } from 'node:path';
 export const r3 = (x) => Math.round(x * 1000) / 1000;
 export const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/'/g, '&#39;');
 
-// capture writes either <takes>/<chapter>-events.json or <takes>/<chapter>/events.json
-export function eventsPath(takes, name) {
+// capture writes either <takes>/<chapter>-events.json or <takes>/<chapter>/events.json; with
+// `optional`, a chapter with no take (slides, or only borrowed beats) gives null instead of a throw
+export function eventsPath(takes, name, optional = false) {
   const flat = `${takes}/${name}-events.json`;
   if (existsSync(flat)) return flat;
   const nested = `${takes}/${name}/events.json`;
   if (existsSync(nested)) return nested;
+  if (optional) return null;
   throw new Error(`${name}: no events.json (looked at ${flat} and ${nested})`);
 }
 
