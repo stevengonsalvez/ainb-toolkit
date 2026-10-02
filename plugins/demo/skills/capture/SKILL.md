@@ -208,7 +208,7 @@ A beat is an object; keys run in this fixed order within one beat:
 | `readyCap` | ms | cap for `ready`, or for network-quiet fallback (8000) |
 | `settle` | ms | extra wait after ready/quiet, default 400 |
 | `expectPath` | string path or RegExp | assert pathname; throws and fails the take. A string matches that path or anything below it: `/reports` accepts `/reports/7`, never `/reports-archive` |
-| `scroll` | px | smooth `scrollBy` |
+| `scroll` | px, or a target | px: smooth window `scrollBy`. A target: smooth `scrollIntoView` to mid-viewport, which also moves a scrolling dialog or panel the window cannot |
 | `type` | `{into: target, text, cps=12}` | glide to the field, click it, type `text` key by key at `cps` characters per second (`type()`, never `fill()`, so the viewer sees it typed), then wait like a click: `ready`, else network quiet, then `settle` |
 | `zoom` | `{on: target, scale=2, ms=700}` | move the camera onto the element centre on a spring (see Motion); the beat goes on once it has settled. `ms: 0` is a cut |
 | `wide` | `true` or ms | camera back to full frame, same spring |
@@ -496,7 +496,7 @@ without them: treat all four as optional. A consumer that reads only marks filte
 - `cam`: camera at that moment. `null` = full frame. Otherwise `{x, y, w, h}` visible region in CSS px and `s` scale.
 - Frame position of a rect: `screenX = (rect.x - cam.x) * cam.s`, `screenY = (rect.y - cam.y) * cam.s`, size `* cam.s`. With `cam: null` it is `rect` as-is. (Checked on the sample: `(655 - 360) * 2 = 590`, where the nav's top edge sits in the zoomed frame.)
 - `targets`: one entry per target the beats resolved, in order: `{ beat, use, matched }`, where
-  `use` is `click`, `type`, `zoom`, `mark` or `ready` and `matched` the locator that found it,
+  `use` is `click`, `type`, `scroll`, `zoom`, `mark` or `ready` and `matched` the locator that found it,
   plus `index` and `of` when it came from a chain (`index` 1 of `of` 2 = the chain's second entry
   matched: the first has gone stale, so update the beats). Takes filmed before have none.
 - Downstream: `demo:compose` reads this file directly. Its `labels` default to the `label` written here, so a good capture label is a usable on-screen label. If composing by hand instead, place the mp4 as a video clip and time/position overlays from `events[]`; clip timing (`data-start`, `data-duration`, `data-media-start`) is owned by `hyperframes-core`.

@@ -267,7 +267,10 @@ async function film({ base, state, out, viewport = { width: 1280, height: 720 },
         // Start filming only once the first page is ready: starting before paint
         // put a white about:blank frame plus ~85 black splash frames at the head.
         if (!rec.filming) await rec.start();
-        if (step.scroll) { await page.evaluate(y => window.scrollBy({ top: y, behavior: 'smooth' }), step.scroll); await rec.sleep(700); }
+        // A number scrolls the window by that many px. A target scrolls whatever contains it (a
+        // dialog or panel the window cannot move) until it sits mid-viewport.
+        if (typeof step.scroll === 'number') { await page.evaluate(y => window.scrollBy({ top: y, behavior: 'smooth' }), step.scroll); await rec.sleep(700); }
+        else if (step.scroll) { await (await find(step.scroll, 'scroll', name)).evaluate(n => n.scrollIntoView({ block: 'center', behavior: 'smooth' })); await rec.sleep(700); }
         // Typed key by key so the viewer sees it being entered; fill() would paste it in one frame.
         // Typing can fetch (search-as-you-type), so it waits like a click: ready, else network quiet, then settle.
         if (step.type) {
