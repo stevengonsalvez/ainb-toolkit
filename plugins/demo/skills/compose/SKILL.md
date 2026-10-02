@@ -266,7 +266,8 @@ chapter card (cardHold, silent) ─▶ beat ─▶ beat ─▶ ... ─▶ seam i
   `{@anchor}` does nothing here: the spotlight is up from the cut and the line starts at `lead`. Nothing is sped up and nothing travels on screen: beats meet in hard cuts, or
   a `beats.fade` micro-fade of 1 to 4 frames. The first filmed beat after a chapter card brings
   the window in (tilted, eased flat over 0.6s) and lights after it. `beats.floor` (0, off) is the
-  shortest a beat holds: a short line's beat holds that long, the pad growing to fill it. Compose
+  shortest any beat holds, with a line or without, a slide or a split: a short line's pad grows
+  to fill it (a first beat with no card counts the seam into it, as `min` and `max` do). Compose
   warns when a beat falls outside `beats.min`-`beats.max` (3-6s) and when a line runs over
   `beats.lineMax` (7s): split it. The last beat holds through the seam into the next segment, so its pad stays clear
   of the transition; with a music bed the card takes the beat pad, or with no card the last beat.
