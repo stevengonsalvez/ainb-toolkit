@@ -294,8 +294,11 @@ chapter card (cardHold, silent) ─▶ beat ─▶ beat ─▶ ... ─▶ seam i
 Measured on `examples/ferry/ferry.beats.config.json` (four chapters, 12 beats: three slides, a
 split, five filmed, three more slides; HyperFrames' local voice), 720p30 draft: 43.9s, render
 155s (3.4s per output second), still-check 5/5 marks and 12/12 beats, -14.0 LUFS, four clips at
--14.0 to -14.1 LUFS. With a music bed every cut sits on a beat (0ms) and the bed ducks under all
-12 lines. Falsified: the callout hidden reads 1.1 and 1.5 where drawn ones read 111 to 125, both
+-14.0 to -14.1 LUFS. The 1440p60 master (fresh clone): 43.7s, render 1174s (26.9s per output
+second, under load; four segments of 251-374s, a slide segment costing about what a filmed one
+does), 460 MB of `out/seg/`, 13 MB final, clips 2.3 to 3.9 MB, still-check 5/5 and 12/12, -14.1
+LUFS and every clip -14.0 to -14.1. With a music bed every cut sits on a beat (0ms) and the bed
+ducks under all 12 lines. Falsified: the callout hidden reads 1.1 and 1.5 where drawn ones read 111 to 125, both
 miss; a beat cut 0.2s before its line ends misses ("line ends 8.595s, after its cut at 8.4s").
 Looked at: every slide kind, the split, a filmed beat after a card, a 3-frame micro-fade.
 
