@@ -283,6 +283,17 @@ chapter card (cardHold, silent) ─▶ beat ─▶ beat ─▶ ... ─▶ seam i
     with an optional `label` overriding the callout. A bare number (`"mark": 2`) is an index only
     in a take whose marks have no ids, where it cannot be taken for one; a take with two marks of
     one id is refused, and a miss lists the indices and the ids separately;
+  - `{ "take": "ch05b", "mark": "5.4" }` (or `"index"`): a mark from another take in `takes` (a
+    chapter's, or one filmed only to be borrowed), played between this chapter's beats with a
+    hard cut like any other. A persona switch filmed as its own take stays inside its chapter, and
+    in its chapter's clip, instead of becoming a segment of its own with a seam on each side. The
+    beat is still-checked against the take it came from (read against this chapter's take
+    instead, the ferry's borrowed beat misses with align 14.457, against 0.473), and a label given
+    here stays in this chapter. Its id is the mark's, or `<take>:<index>` for a mark with none
+    (`departures:1`); two beats of one chapter with the same id are refused, so give one an `"id"`.
+    Composing only the lending chapter after a re-shoot leaves the borrower's still behind: compose
+    both (the still-check would read it as an align miss). demo:export takes its steps from each
+    chapter's own take, so a borrowed beat is not a step there;
   - `{ "split": ["2.3", "2.4"] }`: two earlier filmed beats side by side, each callout under its
     window (a half-size pane drops the scrim's backdrop blur, see compose.mjs);
   - `{ "slide": ... }`: a screen with no app, styled from the theme like the cards, with an
@@ -308,14 +319,15 @@ chapter card (cardHold, silent) ─▶ beat ─▶ beat ─▶ ... ─▶ seam i
   cut frames read 0.54 to 0.61, the sparsest slide 1.37, filmed beats 2 to 7). Slides and splits
   are gated on timing and on their cut frames.
 
-Measured on `examples/ferry/ferry.beats.config.json` (four chapters, 12 beats: three slides, a
-split, five filmed, three more slides; HyperFrames' local voice), 720p30 draft: 43.9s, render
-155s (3.4s per output second), still-check 5/5 marks and 12/12 beats, -14.0 LUFS, four clips at
--14.0 to -14.1 LUFS. The 1440p60 master (fresh clone): 43.7s, render 1174s (26.9s per output
-second, under load; four segments of 251-374s, a slide segment costing about what a filmed one
-does), 460 MB of `out/seg/`, 13 MB final, clips 2.3 to 3.9 MB, still-check 5/5 and 12/12, -14.1
-LUFS and every clip -14.0 to -14.1. With a music bed every segment start sits on a beat (0ms) and
-the bed ducks under all 12 lines; the cuts inside a chapter follow its lines, not the bed. Falsified: the callout hidden reads 1.1 and 1.5 where drawn ones read 111 to 125, both
+Measured on `examples/ferry/ferry.beats.config.json` (four chapters, 13 beats: three slides, a
+split, six filmed of which one is borrowed from another take, three more slides; HyperFrames'
+local voice), 720p30 draft: 47.2s, render 163s (3.5s per output second), still-check 6/6 marks
+and 13/13 beats, -14.0 LUFS, four clips at -14.0 to -14.1 LUFS. The 1440p60 master (fresh
+clone): 47.1s, render 1255s (26.7s per output second, under load; a slide segment costs about
+what a filmed one does), 452 MB of `out/seg/`, 12 MB final, clips 2.8 to 3.9 MB, still-check 6/6
+and 13/13, -14.0 LUFS and every clip -14.0 to -14.1. With a music bed (measured on the 12-beat
+version, before the borrowed beat) every segment start sits on a beat (0ms) and the bed ducks
+under all 12 lines; the cuts inside a chapter follow its lines, not the bed. Falsified: the callout hidden reads 1.1 and 1.5 where drawn ones read 111 to 125, both
 miss; a beat cut 0.2s before its line ends misses ("line ends 8.595s, after its cut at 8.4s");
 the probe's blank frame 272 misses ("shows only the backdrop (edge 0.609)") and passes since.
 Looked at: every slide kind, the split, a filmed beat after a card, a 3-frame micro-fade.

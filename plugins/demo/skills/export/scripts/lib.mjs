@@ -138,7 +138,10 @@ const cueLabel = (e) => e.label || (e.kind === 'type' ? (e.name ? `Type in ${e.n
 export function steps(C, tl) {
   const out = []; let skipped = 0, hidden = 0;
   for (const ch of tl.chapters) {
-    const ev = JSON.parse(readFileSync(eventsPath(C.takes, ch.name), 'utf8'));
+    // steps come from a chapter's own take as filmed: a beat-paced chapter of slides, or of beats
+    // borrowed from other takes, has none
+    let path; try { path = eventsPath(C.takes, ch.name); } catch { continue; }
+    const ev = JSON.parse(readFileSync(path, 'utf8'));
     const dpr = ev.dpr ?? 1, fps = ev.fps ?? 30, vp = ev.viewport || { width: 1280, height: 720 };
     let cam = null, mark = 0, click = null;      // click: the step the cue just before made, if a click
     const said = (i) => ch.narration.find((l) => l.slot === i)?.text;

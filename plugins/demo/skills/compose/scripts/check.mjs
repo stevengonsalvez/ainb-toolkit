@@ -144,8 +144,9 @@ function checkChapter(name) {
     if (at[0] < (plan.settledFrom ?? 0) || at[1] > (plan.tailFrom ?? Infinity)) why.push(`still inside a transition (${at[0]}-${at[1]}s; window settles ${plan.settledFrom}s, seam ${plan.tailFrom}s)`);
 
     const ren = at.map((t) => grayFrame(seg, segFrame(nSeg, t), W, H, SCREEN));
-    const sw = plan.srcW ?? W, sh = plan.srcH ?? H, view = s.view ?? { s: 1, x: 0, y: 0 };
-    const raw = atSrc.map((t) => framed(grayFrame(src, t, sw, sh), sw, sh, view, bgLuma));
+    // a beat from another chapter's take is read against that take
+    const sw = s.srcW ?? plan.srcW ?? W, sh = s.srcH ?? plan.srcH ?? H, view = s.view ?? { s: 1, x: 0, y: 0 };
+    const raw = atSrc.map((t) => framed(grayFrame(s.take ? `${C.takes}/${s.take}.mp4` : src, t, sw, sh), sw, sh, view, bgLuma));
 
     // lit: undimmed inside, dimmed outside, measured against the same frame of the source
     const litR = [0, 1].map((k) => stats(ren[k], box).mean / Math.max(1, stats(raw[k], box).mean));

@@ -6,7 +6,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync, mkdirSync, copyFileSync, existsSync, rmSync } from 'node:fs';
 import { dirname, resolve, basename, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadConfig, segmentNames, seams, seamsOf, screenRect, VERTICAL, eventsPath, r3, esc, grayFrames, mad, hexToRgba, clipSpans, frameCount } from './config.mjs';
+import { loadConfig, segmentNames, seams, seamsOf, screenRect, VERTICAL, eventsPath, r3, esc, grayFrames, mad, hexToRgba, clipSpans, frameCount, resolveBeats } from './config.mjs';
 import { audioSettings, narrationClips, fitNarration, beatGrid } from './audio.mjs';
 import { cues as captionCues } from './captions.mjs';
 
@@ -933,28 +933,6 @@ ${labels}
 // to them. A chapter card holds beats.cardHold, silent. Slides (no app screen) and splits (two
 // earlier beats side by side) come from chapters[].beats.
 const upFrames = (d) => Math.ceil(d * C.fps - 1e-6);   // seconds to whole frames, never shorter
-function beatItems(cfg, an) {
-  const spots = an?.spots || [], ids = spots.map((s) => s.m.id).filter((x) => x != null);
-  const dup = ids.filter((x, i) => ids.indexOf(x) !== i);
-  if (dup.length) throw new Error(`${cfg.name}: the take has more than one mark with id ${[...new Set(dup)].join(', ')}`);
-  const known = `marks 0-${spots.length - 1} by index${ids.length ? `, ids ${ids.join(', ')}` : ', no ids'}`;
-  // A filmed beat names its mark by id ("mark": "4.2") or by index ({ "index": 2 }); a bare number
-  // is an index only in a take whose marks have no ids, where it cannot be mistaken for one.
-  const items = (cfg.beats || spots.map((s) => ({ index: s.i }))).map((b, i) => ({ ...b, i }));
-  for (const b of items) {
-    if (b.mark == null && b.index == null) continue;
-    if (typeof b.mark === 'number' && ids.length) throw new Error(`${cfg.name} beat ${b.i}: "mark": ${b.mark} in a take whose marks have ids; name it by id, or by index with { "index": ${b.mark} } (${known})`);
-    const idx = b.index ?? (typeof b.mark === 'number' ? b.mark : null);
-    b.spot = idx != null ? spots[idx] : spots.find((s) => s.m.id === String(b.mark));
-    if (!b.spot) throw new Error(`${cfg.name} beat ${b.i}: no mark ${JSON.stringify(b.mark ?? b.index)} in the take (${known})`);
-  }
-  for (const b of items) b.id = String(b.id ?? (b.spot ? b.spot.m.id ?? b.spot.i : `b${b.i}`));
-  for (const b of items) if (b.split) {
-    b.parts = b.split.map((ref) => items.find((x) => x.id === String(ref) && x.i < b.i && x.spot));
-    if (b.parts.some((x) => !x)) throw new Error(`${cfg.name} beat ${b.i}: split ${JSON.stringify(b.split)} must name two earlier filmed beats`);
-  }
-  return items;
-}
 // The take frame a filmed beat shows: the mark's own frame (m.t, not the spot's T, which
 // continuous pacing pushes later when two marks sit close), or once a camera move into it has
 // settled if that is later, kept inside the take (a mark in its last half frame rounded past it).
@@ -1007,8 +985,14 @@ ${labelOutside ? '' : `<div id="${id}-l" class="lab" style="left:${r3(b.lab.left
 }
 function beatChapter(cfg) {
   const { name } = cfg, N = A?.narration;
-  const an = (cfg.beats ? cfg.beats.some((b) => b.mark != null || b.index != null) : true) ? analysis(cfg) : null;
-  const items = beatItems(cfg, an), clips = NAR[name]?.marks || [];
+  // a filmed beat reads its own take: the chapter's, or another one in takes named by `take`
+  const takeOf = (n) => {
+    if (n !== name && !existsSync(`${C.takes}/${n}.mp4`)) throw new Error(`${name}: a beat names take "${n}", which has no footage at ${C.takes}/${n}.mp4`);
+    return analysis(C.chapters.find((c) => c.name === n) ?? { name: n });
+  };
+  const items = resolveBeats(cfg, (n) => takeOf(n).spots), clips = NAR[name]?.marks || [];
+  for (const b of items) if (b.spot) b.an = takeOf(b.src);
+  const an = items.find((b) => b.an && !b.take)?.an;
   if (cfg.narration?.intro) console.warn(`  warn ${name}: narration.intro is not spoken in beat mode (chapter cards are silent)`);
   if (clips.length > items.length) console.warn(`  warn ${name}: ${clips.length} lines for ${items.length} beats; the extra lines are not spoken`);
   const seam = seamsOf(C, name), last = segmentNames(C).at(-1) === name, tail = seam.out.dur || (last ? F(0.6) : 0);
@@ -1016,7 +1000,7 @@ function beatChapter(cfg) {
   for (const b of items) if (b.spot) {
     const { rect, cam } = b.spot.m, c = cam || { x: 0, y: 0, s: 1 };
     const fr = { x: (rect.x - c.x) * c.s, y: (rect.y - c.y) * c.s, w: rect.w * c.s, h: rect.h * c.s };
-    b.view = viewFor(an, fr);
+    b.view = viewFor(b.an, fr);
     b.label = b.label ?? b.spot.label;
     const { x, y, w, h, lw, pick } = placeLabel(fr, b.view, b.label);
     Object.assign(b, { box: [x, y, w, h].map(r3), lab: pick[2], dir: pick[0], labBox: [pick[2].left, pick[2].top, lw, C.layout.labelHeight].map(Math.round) });
@@ -1062,11 +1046,12 @@ function beatChapter(cfg) {
       lines.push(`tl.fromTo("${lab}", { opacity: 0, scale: 0.88, transformOrigin: "${o}" }, { opacity: 1, scale: 1, duration: ${F(0.45)}, ease: "back.out(1.7)", immediateRender: false }, ${lit});`);
     };
     if (b.spot) {
-      inner = beatWindow(id, b, an);
+      inner = beatWindow(id, b, b.an);
       if (lit > b.start) lines.push(...windowArrival(`#${id}-ww`, b.start, ENT));
       light(id, b.box, `#${id}-l`, b.dir);
-      const k = b.k = stillFrame(an, b.spot);
-      report.push({ i: b.i, id: b.id, label: b.label, still: true, srcT: r3(k / an.fps), seek: r3((k - 0.4) / an.fps), frame: k,
+      const k = b.k = stillFrame(b.an, b.spot);
+      report.push({ i: b.i, id: b.id, label: b.label, still: true, srcT: r3(k / b.an.fps), seek: r3((k - 0.4) / b.an.fps), frame: k,
+        ...(b.take && { take: b.take, srcW: b.an.srcW, srcH: b.an.srcH }),
         compT: lit, litFrom: lit, fadeIn: F(0.25), glided: false, ...(SP.sweep && { sweepTo: r3(lit + F(0.9)) }),
         hold: r3((b.i === items.length - 1 ? total - tail : b.end) - lit), srcHold: 0, place: b.dir, box: b.box.map(Math.round), labBox: b.labBox, view: b.view });
     } else if (b.parts) {
@@ -1074,7 +1059,7 @@ function beatChapter(cfg) {
       const gap = 36, hw = (W - 2 * SAFE - gap) / 2, z = hw / SCW, hh = SCH * z, top = (H - hh - C.layout.labelHeight - 18) / 2;
       b.parts.forEach((p, k) => {
         const sid = `${id}-p${k}`, left = SAFE + k * (hw + gap);
-        inner += beatWindow(sid, p, an, ` style="left:${r3(left)}px;top:${r3(top)}px;width:${r3(hw)}px;height:${r3(hh)}px"`, z, true);
+        inner += beatWindow(sid, p, p.an, ` style="left:${r3(left)}px;top:${r3(top)}px;width:${r3(hw)}px;height:${r3(hh)}px"`, z, true);
         if (lit > b.start) lines.push(...windowArrival(`#${sid}-ww`, b.start, ENT));
         inner += `<div class="lab" id="${sid}-l" style="left:${r3(left)}px;top:${r3(top + hh + 18)}px">${esc(p.label)}</div>`;
         light(sid, p.box, `#${sid}-l`, 'below');
@@ -1104,7 +1089,7 @@ function beatChapter(cfg) {
   for (const x of ['stills', 'slides']) { rmSync(`${d}/assets/${x}`, { recursive: true, force: true }); mkdirSync(`${d}/assets/${x}`, { recursive: true }); }
   // one file per window that shows it (a split reuses two beats' stills): the same image twice in
   // one project is a duplicate-media lint warning
-  const still = (p, file) => stillPng(an, p.k ?? stillFrame(an, p.spot), `${d}/assets/stills/${file}.png`, Math.min(an.dpr, Z * WS * Math.max(1, p.view.s)));
+  const still = (p, file) => stillPng(p.an, p.k ?? stillFrame(p.an, p.spot), `${d}/assets/stills/${file}.png`, Math.min(p.an.dpr, Z * WS * Math.max(1, p.view.s)));
   for (const b of items) {
     if (b.spot) still(b, `${name}-b${b.i}`);
     for (const [k, p] of (b.parts || []).entries()) still(p, `${name}-b${b.i}-p${k}`);

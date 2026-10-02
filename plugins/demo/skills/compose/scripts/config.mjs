@@ -148,6 +148,7 @@ export function loadConfig(path) {
       const kinds = ['mark', 'index', 'slide', 'split'].filter((k) => b[k] != null);
       if (kinds.length !== 1) throw new Error(`${at} needs exactly one of mark, index, slide or split`);
       if (b.index != null && !(Number.isInteger(b.index) && b.index >= 0)) throw new Error(`${at}: index must be a whole number >= 0`);
+      if (b.take != null && !(typeof b.take === 'string' && b.take && (b.mark != null || b.index != null))) throw new Error(`${at}: take names another take in takes, with the mark or index to show from it`);
       if (b.split != null && !(Array.isArray(b.split) && b.split.length === 2)) throw new Error(`${at}: split takes two earlier beats, e.g. ["2.3", "2.4"]`);
       if (b.slide == null) continue;
       if (!SLIDES[b.slide]) throw new Error(`${at}: slide "${b.slide}" is not one of ${Object.keys(SLIDES).join(', ')}`);
@@ -218,6 +219,43 @@ export function loadConfig(path) {
 // point (7.866666 + 4.483334 came to 12.350000000000001, past p = 12.35): exactly one clip on every
 // frame. Rounding start and duration on their own (to the ms, one up, one down) left a blank frame
 // at about one hard cut in five. spans: [[f0, f1], ...] -> attributes.
+// A chapter's beats in order, each filmed one resolved to its spot: by id ("mark": "4.2") or index
+// ({ "index": 2 }) in the chapter's own take, or in another one named by "take" (a persona switch
+// filmed as its own take, played between this chapter's beats with no seam). A bare number is an
+// index only in a take whose marks have no ids, where it cannot be mistaken for one. Splits point
+// at two earlier filmed beats. spotsOf(take) lists a take's spots ({ i, m: { id } }); each beat
+// gets its own copy, so a label set here does not reach that take's own chapter.
+export function resolveBeats(cfg, spotsOf) {
+  const seen = {};
+  const take = (name) => seen[name] ??= (() => {
+    const spots = spotsOf(name), ids = spots.map((s) => s.m.id).filter((x) => x != null);
+    const dup = ids.filter((x, i) => ids.indexOf(x) !== i);
+    if (dup.length) throw new Error(`${cfg.name}: take ${name} has more than one mark with id ${[...new Set(dup)].join(', ')}`);
+    return { spots, ids, known: `marks 0-${spots.length - 1} by index${ids.length ? `, ids ${ids.join(', ')}` : ', no ids'}` };
+  })();
+  const items = (cfg.beats || take(cfg.name).spots.map((s) => ({ index: s.i }))).map((b, i) => ({ ...b, i }));
+  for (const b of items) {
+    if (b.mark == null && b.index == null) continue;
+    b.src = b.take ?? cfg.name;
+    const { spots, ids, known } = take(b.src), where = b.take ? `take ${b.take}` : 'the take';
+    if (typeof b.mark === 'number' && ids.length) throw new Error(`${cfg.name} beat ${b.i}: "mark": ${b.mark} in a take whose marks have ids; name it by id, or by index with { "index": ${b.mark} } (${known})`);
+    const idx = b.index ?? (typeof b.mark === 'number' ? b.mark : null);
+    const spot = idx != null ? spots[idx] : spots.find((s) => s.m.id === String(b.mark));
+    if (!spot) throw new Error(`${cfg.name} beat ${b.i}: no mark ${JSON.stringify(b.mark ?? b.index)} in ${where} (${known})`);
+    b.spot = { ...spot };
+  }
+  for (const b of items) b.id = String(b.id ?? (b.spot ? b.spot.m.id ?? (b.take ? `${b.take}:${b.spot.i}` : b.spot.i) : `b${b.i}`));
+  // ids are unique per take, not per chapter: a borrowed mark can share one with this take's own,
+  // and a split naming it would take whichever came first
+  const ids = items.map((b) => b.id), twice = ids.filter((x, i) => ids.indexOf(x) !== i);
+  if (twice.length) throw new Error(`${cfg.name}: two beats have id ${[...new Set(twice)].join(', ')}; give one its own "id"`);
+  for (const b of items) if (b.split) {
+    b.parts = b.split.map((ref) => items.find((x) => x.id === String(ref) && x.i < b.i && x.spot));
+    if (b.parts.some((x) => !x)) throw new Error(`${cfg.name} beat ${b.i}: split ${JSON.stringify(b.split)} must name two earlier filmed beats`);
+  }
+  return items;
+}
+
 export function clipSpans(spans, fps) {
   const us = (f) => Math.floor(f * 1e6 / fps + 1e-6);
   return spans.map(([f0, f1]) => ({ start: (us(f0) / 1e6).toFixed(6), duration: ((us(f1) - us(f0) - 1) / 1e6).toFixed(6) }));

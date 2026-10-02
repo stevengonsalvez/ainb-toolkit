@@ -102,10 +102,23 @@
         "Single and return per ticket",
         "Resident fare needs proof"
       ],
+      "beats": [
+        {
+          "index": 0
+        },
+        {
+          "index": 1
+        },
+        {
+          "take": "departures",
+          "index": 1
+        }
+      ],
       "narration": {
         "marks": [
           "Every ticket lists a single and a return fare.",
-          "The island resident fare needs proof of address."
+          "The island resident fare needs proof of address.",
+          "And before you buy, check there is still space on board."
         ]
       }
     },

@@ -6,7 +6,7 @@ import { mkdtempSync, rmSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseLine, align, fitNarration, locateAnchor, fitGrid, audioSettings, narrationClips, loudness } from './audio.mjs';
-import { clipSpans } from './config.mjs';
+import { clipSpans, resolveBeats } from './config.mjs';
 import { execFileSync } from 'node:child_process';
 import { vtt } from './captions.mjs';
 
@@ -170,6 +170,24 @@ if (key) process.env.DEEPGRAM_API_KEY = key; else delete process.env.DEEPGRAM_AP
   const L = loudness({ ffmpeg: process.env.FFMPEG || 'ffmpeg' }, f);
   assert.ok(L.TP === -Infinity && L.TP <= -1, `silence read ${JSON.stringify(L)}`);
   rmSync(d, { recursive: true, force: true });
+}
+
+// 10. A beat from another take: { take, mark } and { take, index } resolve in that take, the rest in
+//     the chapter's own, a split may pair beats from both, and a miss names the take it looked in.
+{
+  // one spot list per take, as compose's analysis cache gives it
+  const takes = {}, spotsOf = (n) => takes[n] ??= ({ athlete: ['5.1', '5.2', '5.5'], coach: ['5.4'], plain: [null, null] }[n] || []).map((id, i) => ({ i, m: { id, t: i }, label: `${n} ${i}` }));
+  const cfg = { name: 'athlete', beats: [{ mark: '5.1' }, { mark: '5.2' }, { take: 'coach', mark: '5.4' }, { mark: '5.5' }, { take: 'plain', index: 1 }, { split: ['5.5', '5.4'] }] };
+  const items = resolveBeats(cfg, spotsOf);
+  assert.deepEqual(items.map((b) => [b.id, b.src, b.spot?.label]), [['5.1', 'athlete', 'athlete 0'], ['5.2', 'athlete', 'athlete 1'], ['5.4', 'coach', 'coach 0'],
+    ['5.5', 'athlete', 'athlete 2'], ['plain:1', 'plain', 'plain 1'], ['b5', undefined, undefined]]);
+  assert.deepEqual(items[5].parts.map((p) => p.src), ['athlete', 'coach']);
+  items[2].spot.label = 'relabelled';
+  assert.equal(resolveBeats({ name: 'coach' }, spotsOf)[0].spot.label, 'coach 0', "a label set on a borrowed beat must not reach that take's own chapter");
+  assert.throws(() => resolveBeats({ name: 'athlete', beats: [{ take: 'coach', mark: '5.2' }] }, spotsOf), /no mark "5.2" in take coach \(marks 0-0 by index, ids 5.4\)/);
+  // ids are unique per take, so a borrowed one can match this take's own: refused, not resolved by order
+  assert.throws(() => resolveBeats({ name: 'coach', beats: [{ mark: '5.4' }, { take: 'athlete', mark: '5.2' }, { take: 'other', index: 0 }] },
+    (n) => (n === 'other' ? [{ i: 0, m: { id: '5.4' } }] : spotsOf(n))), /two beats have id 5.4; give one its own "id"/);
 }
 
 console.log(`audio-check OK: anchors on spotlights, ${freezes.length} freezes in whole frames, located tail at ${got.at}s (truth ${truth.toFixed(3)}, r ${got.r.toFixed(3)})`);
