@@ -3,10 +3,10 @@
 // Generates one standalone HyperFrames project per chapter, plus title / switch / end cards.
 // Everything app-specific comes from the config. Nothing here knows what app was filmed.
 import { execFileSync, spawnSync } from 'node:child_process';
-import { readFileSync, writeFileSync, mkdirSync, copyFileSync, existsSync } from 'node:fs';
-import { dirname, resolve, basename } from 'node:path';
+import { readFileSync, writeFileSync, mkdirSync, copyFileSync, existsSync, rmSync } from 'node:fs';
+import { dirname, resolve, basename, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadConfig, segmentNames, seams, seamsOf, screenRect, VERTICAL, eventsPath, r3, esc, grayFrames, mad, hexToRgba } from './config.mjs';
+import { loadConfig, segmentNames, seams, seamsOf, screenRect, VERTICAL, eventsPath, r3, esc, grayFrames, mad, hexToRgba, clipSpans, frameCount } from './config.mjs';
 import { audioSettings, narrationClips, fitNarration, beatGrid } from './audio.mjs';
 import { cues as captionCues } from './captions.mjs';
 
@@ -114,6 +114,7 @@ const WW = SCW * WS, WH = SCH * WS, R = FR ? FR.radius : 0, SH = FR ? FR.shadow 
 const ink = (a) => tint(T.text, a);
 const shadow = SH ? `0 0 0 1px ${ink(0.08 * SH)}, 0 1px 2px ${ink(0.16 * SH)}, 0 10px 24px ${ink(0.14 * SH)}, 0 36px 80px ${ink(0.22 * SH)}` : 'none';
 const SP = C.spotlight, FE = SP.feather, VS = VERTICAL.safe, VERT = C.format === 'vertical';
+const BT = C.beats;
 const band = (dir, a, b) => `linear-gradient(${dir}, transparent calc(var(${a}) - ${FE}px), #000 var(${a}), #000 calc(var(${a}) + var(${b})), transparent calc(var(${a}) + var(${b}) + ${FE}px))`;
 const STYLE = `
 ${faces}
@@ -174,6 +175,39 @@ ${VERT ? `/* vertical: the headline band above the window and the caption band b
 .cue { position: absolute; left: 50%; bottom: 0; transform: translateX(-50%); opacity: 0; width: max-content; max-width: 100%; overflow-wrap: anywhere;
   padding: 14px 26px; border-radius: 18px; background: color-mix(in oklab, ${T.text} 88%, transparent);
   font-family: ${C.bodyStack}; font-weight: 600; font-size: 40px; line-height: 1.25; color: #FFFFFF; text-align: center; text-wrap: balance; }
+` : ''}${C.cut === 'beats' ? `/* beat mode: one section per beat; slides share the cards' type and the theme's surfaces */
+.beat { position: absolute; inset: 0; }
+.bin { position: absolute; inset: 0; }
+.foot.still { object-fit: fill; }
+.slide { position: absolute; inset: 0; padding: ${SAFE}px ${Math.round(SAFE * 1.75)}px; display: flex; flex-direction: column; justify-content: center; }
+.slab { position: absolute; left: ${Math.round(SAFE * 1.75)}px; top: ${SAFE}px; white-space: nowrap; background: ${T.surface}; border: 1px solid ${C.accentEdge};
+  border-left: 5px solid ${T.accent}; border-radius: 10px; padding: 11px 18px 11px 14px; font-family: ${C.displayStack}; font-weight: 600;
+  font-size: 22px; line-height: 24px; color: ${T.text}; box-shadow: 0 1px 2px rgba(0,0,0,0.20), 0 10px 28px rgba(0,0,0,0.30); }
+.stitle { font-family: ${C.displayStack}; font-weight: 700; font-size: 46px; line-height: 1.08; letter-spacing: -0.02em; color: ${T.text}; max-width: ${Math.round(W * 0.8)}px; text-wrap: balance; }
+.note { position: absolute; left: ${Math.round(SAFE * 1.75)}px; bottom: ${SAFE}px; font-family: ${C.bodyStack}; font-weight: 600; font-size: 16px;
+  letter-spacing: 0.14em; text-transform: uppercase; color: ${T.muted}; border: 1px solid ${ink(0.22)}; border-radius: 999px; padding: 8px 16px; }
+.row { display: flex; gap: 22px; margin-top: 34px; width: 100%; }
+.tile { flex: 1; min-width: 0; background: ${T.surface}; border-radius: 18px; padding: 28px 26px; border-top: 4px solid ${T.accent};
+  box-shadow: 0 1px 2px ${ink(0.10)}, 0 14px 34px ${ink(0.12)}; }
+.tile .n { font-family: ${C.bodyStack}; font-weight: 600; font-size: 15px; letter-spacing: 0.16em; color: ${T.muted}; }
+.tile .t { font-family: ${C.displayStack}; font-weight: 700; font-size: 34px; line-height: 1.1; color: ${T.text}; margin-top: 14px; overflow-wrap: anywhere; }
+.tile .p { font-family: ${C.displayStack}; font-weight: 700; font-size: 44px; color: ${T.accent}; margin-top: 10px; }
+.tile ul { list-style: none; margin-top: 16px; font-size: 19px; line-height: 1.45; color: ${T.muted}; }
+.tile.hi { background: ${T.text}; border-top-color: ${T.highlight}; }
+.tile.hi .t, .tile.hi .p { color: ${T.bg}; } .tile.hi ul, .tile.hi .n { color: ${tint(T.bg, 0.75)}; }
+.steps { display: flex; margin-top: 46px; width: 100%; position: relative; }
+.steps .line { position: absolute; left: 30px; right: 30px; top: 29px; height: 3px; background: ${tint(T.accent, 0.35)}; transform-origin: 0 50%; }
+.step { flex: 1; position: relative; padding-right: 26px; }
+.step .dot { width: 60px; height: 60px; border-radius: 50%; background: ${T.accent}; color: ${T.surface}; display: flex; align-items: center; justify-content: center;
+  font-family: ${C.displayStack}; font-weight: 700; font-size: 26px; }
+.step .t { font-family: ${C.displayStack}; font-weight: 600; font-size: 26px; line-height: 1.2; color: ${T.text}; margin-top: 22px; }
+.dev { position: absolute; background: #0E0F12; box-shadow: 0 2px 4px ${ink(0.18)}, 0 24px 60px ${ink(0.28)}; overflow: hidden; }
+.dev img { position: absolute; left: 0; top: 0; width: 100%; height: 100%; object-fit: cover; object-position: 50% 0; }
+.dev.web { border-radius: 14px; padding-top: 30px; } .dev.web img { top: 30px; height: calc(100% - 30px); }
+.dev.web .bar { position: absolute; left: 0; right: 0; top: 0; height: 30px; background: ${T.surface}; }
+.dev.web .bar i { position: absolute; top: 10px; width: 10px; height: 10px; border-radius: 50%; background: ${ink(0.22)}; }
+.dev.tablet { border-radius: 26px; border: 12px solid #0E0F12; } .dev.phone { border-radius: 30px; border: 9px solid #0E0F12; }
+.url { font-family: ${C.displayStack}; font-weight: 700; font-size: 40px; color: ${T.accent}; margin-top: 26px; }
 ` : ''}`;
 
 // A segment renders ceil(duration * fps) frames (measured: 3.067s rendered 93 frames, not 92), so a
@@ -610,6 +644,66 @@ function followCrop(an, groups, toComp, total) {
   return { lines: out, maxScale, jump };
 }
 
+// The window arrives tilted and eases flat; the transform is then reset to 2D identity so the
+// footage is never resampled through a 3D layer.
+function windowArrival(sel, at, ent) {
+  const tilt = FR ? FR.tilt : 0, ww = JSON.stringify(sel);
+  const from = tilt ? `{ opacity: 0, y: 36, scale: 0.94, rotationX: ${r3(tilt * 0.55)}, rotationY: ${-tilt}, transformPerspective: 1400, transformOrigin: "50% 60%" }` : '{ opacity: 0, scale: 1.03 }';
+  return [`tl.fromTo(${ww}, ${from}, { opacity: 1, y: 0, scale: 1, rotationX: 0, rotationY: 0, duration: ${ent}, ease: "power3.out" }, ${r3(at)});`,
+    `tl.set(${ww}, { transformPerspective: 0, rotationX: 0, rotationY: 0, y: 0, scale: 1 }, ${r3(at + ent)});`];
+}
+
+// ---------- spotlight and label layout ----------
+// the cut-out for a frame rect under view v: 8px of air, kept 6px inside the frame
+const boxOf = (fr, v) => {
+  const x = Math.max(6, fr.x * v.s + v.x - 8), y = Math.max(6, fr.y * v.s + v.y - 8);
+  return [x, y, Math.min(SCW - 6, fr.x * v.s + v.x + fr.w * v.s + 8) - x, Math.min(SCH - 6, fr.y * v.s + v.y + fr.h * v.s + 8) - y];
+};
+// The cut-out box and where its label goes. DEFECT 2 guard: a label must not cover its own
+// spotlight. Try each side outside the cut-out inside the safe margin; if nothing fits, crop the
+// cut-out instead of overlapping.
+function placeLabel(fr, view, label) {
+  const LH = C.layout.labelHeight, GAP = C.layout.labelGap;
+  let [x, y, w, h] = boxOf(fr, view);
+  const lw = label.length * 12.2 + 44;
+  const cands = [
+    ['below', SCH - SAFE - (y + h + GAP) >= LH, { left: Math.min(Math.max(x, SAFE), SCW - SAFE - lw), top: y + h + GAP }],
+    ['above', y - GAP - LH >= SAFE, { left: Math.min(Math.max(x, SAFE), SCW - SAFE - lw), top: y - GAP - LH }],
+    ['right', SCW - SAFE - (x + w + GAP) >= lw, { left: x + w + GAP, top: Math.min(Math.max(y, SAFE), SCH - SAFE - LH) }],
+    ['left', x - GAP - lw >= SAFE, { left: x - GAP - lw, top: Math.min(Math.max(y, SAFE), SCH - SAFE - LH) }],
+  ];
+  let pick = cands.find((k) => k[1]);
+  if (!pick) {
+    h = SCH - SAFE - LH - GAP - y;
+    pick = ['below-cropped', true, { left: Math.min(Math.max(x, SAFE), SCW - SAFE - lw), top: y + h + GAP }];
+  }
+  return { x, y, w, h, lw, pick };
+}
+
+// Chapter card: a ghost numeral behind, persona kicker, title words rising out of their line
+// masks. It leaves as the window arrives (the two overlap: the arrival is the card's exit).
+function chapterCard(name, cfg, CARD, cardEnd) {
+  const idx = C.chapters.findIndex((c) => c.name === name) + 1, q = (x) => `"#${name}-${x}"`;
+  const html = `<section id="${name}-card" class="card clip" data-start="0" data-duration="${cardEnd}" data-track-index="2">
+  <div class="ghost" id="${name}-ghost">${String(idx).padStart(2, '0')}</div>
+  <div class="cbox" id="${name}-box">
+    <div class="kicker" id="${name}-kick"><span class="kbar" id="${name}-kbar"></span><span>${esc(cfg.persona || C.defaultPersona || '')}</span></div>
+    <div class="ttl" id="${name}-ttl">${words(cfg.title, 'wm')}</div>
+    <div class="rule" id="${name}-rule"></div>
+  </div>
+</section>`;
+  const lines = [
+    `tl.fromTo(${q('ghost')}, { y: 60, opacity: 0 }, { y: 0, opacity: 0.055, duration: ${F(1.4)}, ease: "sine.out" }, 0);`,
+    `tl.fromTo(${q('kbar')}, { scaleX: 0 }, { scaleX: 1, duration: ${F(0.45)}, ease: "power3.out" }, ${F(0.12)});`,
+    `tl.fromTo(${q('kick')}, { opacity: 0, x: -24 }, { opacity: 1, x: 0, duration: ${F(0.5)}, ease: "power3.out" }, ${F(0.15)});`,
+    `tl.fromTo("#${name}-ttl .w", { yPercent: 108 }, { yPercent: 0, duration: ${F(0.7)}, ease: "power4.out", stagger: ${F(0.06)} }, ${F(0.22)});`,
+    `tl.fromTo(${q('rule')}, { scaleX: 0 }, { scaleX: 1, duration: ${F(0.5)}, ease: "power2.out" }, ${F(0.45)});`,
+    `tl.fromTo(${q('box')}, { opacity: 1, y: 0, filter: "blur(0px)" }, { opacity: 0, y: -28, filter: "blur(8px)", duration: ${r3(cardEnd - CARD + F(0.2))}, ease: "power2.in", immediateRender: false }, ${r3(CARD - F(0.2))});`,
+    `tl.fromTo(${q('ghost')}, { opacity: 0.055 }, { opacity: 0, duration: ${r3(cardEnd - CARD + F(0.2))}, ease: "power2.in", immediateRender: false }, ${r3(CARD - F(0.2))});`,
+  ];
+  return { html, lines };
+}
+
 // ---------- chapter ----------
 function chapter(an, sp) {
   const { name, cfg } = an;
@@ -633,7 +727,6 @@ function chapter(an, sp) {
     Array.from({ length: Math.round(footDur * C.fps) }, (_, n) => [n, shownFrame(CARD + n / C.fps), Math.round(fromComp(CARD + n / C.fps) * an.fps)])));
   TOTALS[name] = total;
   const seam = seamsOf(C, name);
-  const idx = C.chapters.findIndex((c) => c.name === name) + 1;
   // A film that ends on this chapter fades to the backdrop colour, as an end card would; that
   // fade, or the seam into the next segment, is the tail no spotlight may reach into.
   const last = segmentNames(C).at(-1) === name, tail = seam.out.dur || (last ? F(0.6) : 0);
@@ -689,35 +782,15 @@ function chapter(an, sp) {
     s.hold = start - s.ct; s.glide = true; n.glided = true;
   }
 
-  const LH = C.layout.labelHeight, GAP = C.layout.labelGap;
   const report = [];
-  // the cut-out for a frame rect under view v: 8px of air, kept 6px inside the frame
-  const boxOf = (fr, v) => {
-    const x = Math.max(6, fr.x * v.s + v.x - 8), y = Math.max(6, fr.y * v.s + v.y - 8);
-    return [x, y, Math.min(SCW - 6, fr.x * v.s + v.x + fr.w * v.s + 8) - x, Math.min(SCH - 6, fr.y * v.s + v.y + fr.h * v.s + 8) - y];
-  };
   const labels = an.spots.map((s) => {
-    let [x, y, w, h] = boxOf(s.fr, s.view);
-    const lw = s.label.length * 12.2 + 44;
-    // DEFECT 2 guard: a label must not cover its own spotlight. Try each side outside the
-    // cut-out inside the safe margin; if nothing fits, crop the cut-out instead of overlapping.
-    const cands = [
-      ['below', SCH - SAFE - (y + h + GAP) >= LH, { left: Math.min(Math.max(x, SAFE), SCW - SAFE - lw), top: y + h + GAP }],
-      ['above', y - GAP - LH >= SAFE, { left: Math.min(Math.max(x, SAFE), SCW - SAFE - lw), top: y - GAP - LH }],
-      ['right', SCW - SAFE - (x + w + GAP) >= lw, { left: x + w + GAP, top: Math.min(Math.max(y, SAFE), SCH - SAFE - LH) }],
-      ['left', x - GAP - lw >= SAFE, { left: x - GAP - lw, top: Math.min(Math.max(y, SAFE), SCH - SAFE - LH) }],
-    ];
-    let pick = cands.find((k) => k[1]);
-    if (!pick) {
-      h = SCH - SAFE - LH - GAP - y;
-      pick = ['below-cropped', true, { left: Math.min(Math.max(x, SAFE), SCW - SAFE - lw), top: y + h + GAP }];
-    }
+    const { x, y, w, h, lw, pick } = placeLabel(s.fr, s.view, s.label);
     s.box = [x, y, w, h].map(r3); s.dir = pick[0];
     report.push({
       i: s.i, label: s.label, srcT: r3(s.m.t), shift: s.shift || 0, compT: r3(s.ct), litFrom: r3(s.cf),
       fadeIn: F(0.25), glided: !!s.glided, ...(SP.sweep && !s.glided && { sweepTo: r3(s.cf + F(0.9)) }), hold: r3(s.hold), srcHold: r3(s.srcHold),
       place: pick[0], box: [x, y, w, h].map(Math.round),
-      labBox: [pick[2].left, pick[2].top, lw, LH].map(Math.round), view: s.view,
+      labBox: [pick[2].left, pick[2].top, lw, C.layout.labelHeight].map(Math.round), view: s.view,
     });
     // vertical with no narration: the burned caption IS the label, at a size a phone can read, so
     // the small one by the spotlight stays laid out (check.mjs measures it) but is not drawn
@@ -725,35 +798,12 @@ function chapter(an, sp) {
     return `<div id="${name}-l${s.i}" class="lab" style="left:${r3(pick[2].left)}px;top:${r3(pick[2].top)}px${dup}">${esc(s.label)}</div>`;
   }).join('\n');
 
-  // Chapter card: a ghost numeral behind, persona kicker, title words rising out of their line
-  // masks. It leaves as the window arrives (the two overlap: the arrival is the card's exit).
   const firstLit = Math.min(...an.spots.map((s) => s.cf));
   const ent = r3(Math.max(1 / C.fps, Math.min(F(0.9), firstLit - CARD - 0.1)));
   const cardEnd = r3(CARD + F(0.25));
-  const card = `<section id="${name}-card" class="card clip" data-start="0" data-duration="${cardEnd}" data-track-index="2">
-  <div class="ghost" id="${name}-ghost">${String(idx).padStart(2, '0')}</div>
-  <div class="cbox" id="${name}-box">
-    <div class="kicker" id="${name}-kick"><span class="kbar" id="${name}-kbar"></span><span>${esc(cfg.persona || C.defaultPersona || '')}</span></div>
-    <div class="ttl" id="${name}-ttl">${words(cfg.title, 'wm')}</div>
-    <div class="rule" id="${name}-rule"></div>
-  </div>
-</section>`;
-  const q = (x) => `"#${name}-${x}"`, ww = q('ww');
-  const lines = [
-    `tl.fromTo(${q('ghost')}, { y: 60, opacity: 0 }, { y: 0, opacity: 0.055, duration: ${F(1.4)}, ease: "sine.out" }, 0);`,
-    `tl.fromTo(${q('kbar')}, { scaleX: 0 }, { scaleX: 1, duration: ${F(0.45)}, ease: "power3.out" }, ${F(0.12)});`,
-    `tl.fromTo(${q('kick')}, { opacity: 0, x: -24 }, { opacity: 1, x: 0, duration: ${F(0.5)}, ease: "power3.out" }, ${F(0.15)});`,
-    `tl.fromTo("#${name}-ttl .w", { yPercent: 108 }, { yPercent: 0, duration: ${F(0.7)}, ease: "power4.out", stagger: ${F(0.06)} }, ${F(0.22)});`,
-    `tl.fromTo(${q('rule')}, { scaleX: 0 }, { scaleX: 1, duration: ${F(0.5)}, ease: "power2.out" }, ${F(0.45)});`,
-    `tl.fromTo(${q('box')}, { opacity: 1, y: 0, filter: "blur(0px)" }, { opacity: 0, y: -28, filter: "blur(8px)", duration: ${r3(cardEnd - CARD + F(0.2))}, ease: "power2.in", immediateRender: false }, ${r3(CARD - F(0.2))});`,
-    `tl.fromTo(${q('ghost')}, { opacity: 0.055 }, { opacity: 0, duration: ${r3(cardEnd - CARD + F(0.2))}, ease: "power2.in", immediateRender: false }, ${r3(CARD - F(0.2))});`,
-  ];
-  // The window arrives tilted and eases flat before the first spotlight lights; the transform is
-  // then reset to 2D identity so the footage is never resampled through a 3D layer.
-  const tilt = FR ? FR.tilt : 0;
-  const from = tilt ? `{ opacity: 0, y: 36, scale: 0.94, rotationX: ${r3(tilt * 0.55)}, rotationY: ${-tilt}, transformPerspective: 1400, transformOrigin: "50% 60%" }` : '{ opacity: 0, scale: 1.03 }';
-  lines.push(`tl.fromTo(${ww}, ${from}, { opacity: 1, y: 0, scale: 1, rotationX: 0, rotationY: 0, duration: ${ent}, ease: "power3.out" }, ${r3(CARD)});`);
-  lines.push(`tl.set(${ww}, { transformPerspective: 0, rotationX: 0, rotationY: 0, y: 0, scale: 1 }, ${r3(CARD + ent)});`);
+  const { html: card, lines } = chapterCard(name, cfg, CARD, cardEnd);
+  const q = (x) => `"#${name}-${x}"`;
+  lines.push(...windowArrival(`#${name}-ww`, CARD, ent));
   // Framing (square): one set at 0, then an eased move between consecutive groups while nothing is lit.
   const cam = `#${name}-cam`, V = (v) => `x: ${v.x}, y: ${v.y}, scale: ${v.s}`;
   lines.push(`tl.set("${cam}", { ${V(groups[0][0].view)}, transformOrigin: "0 0" }, 0);`);
@@ -875,6 +925,201 @@ ${labels}
   return meta;
 }
 
+// ---------- beat-paced chapter (cut: "beats") ----------
+// One beat is one screen, one callout and one line. A filmed mark becomes a still of its settled
+// frame with its spotlight and label, held for its narration line plus beats.pad (beats.hold
+// without a line), and beats meet in jump cuts: nothing on screen travels or is sped up. The
+// lines are spoken and measured before any of this (narrationClips), and the timeline is built
+// to them. A chapter card holds beats.cardHold, silent. Slides (no app screen) and splits (two
+// earlier beats side by side) come from chapters[].beats.
+const upFrames = (d) => Math.ceil(d * C.fps - 1e-6);   // seconds to whole frames, never shorter
+function beatItems(cfg, an) {
+  const spots = an?.spots || [], ids = spots.map((s) => s.m.id).filter((x) => x != null);
+  const dup = ids.filter((x, i) => ids.indexOf(x) !== i);
+  if (dup.length) throw new Error(`${cfg.name}: the take has more than one mark with id ${[...new Set(dup)].join(', ')}`);
+  const known = `marks 0-${spots.length - 1} by index${ids.length ? `, ids ${ids.join(', ')}` : ', no ids'}`;
+  // A filmed beat names its mark by id ("mark": "4.2") or by index ({ "index": 2 }); a bare number
+  // is an index only in a take whose marks have no ids, where it cannot be mistaken for one.
+  const items = (cfg.beats || spots.map((s) => ({ index: s.i }))).map((b, i) => ({ ...b, i }));
+  for (const b of items) {
+    if (b.mark == null && b.index == null) continue;
+    if (typeof b.mark === 'number' && ids.length) throw new Error(`${cfg.name} beat ${b.i}: "mark": ${b.mark} in a take whose marks have ids; name it by id, or by index with { "index": ${b.mark} } (${known})`);
+    const idx = b.index ?? (typeof b.mark === 'number' ? b.mark : null);
+    b.spot = idx != null ? spots[idx] : spots.find((s) => s.m.id === String(b.mark));
+    if (!b.spot) throw new Error(`${cfg.name} beat ${b.i}: no mark ${JSON.stringify(b.mark ?? b.index)} in the take (${known})`);
+  }
+  for (const b of items) b.id = String(b.id ?? (b.spot ? b.spot.m.id ?? b.spot.i : `b${b.i}`));
+  for (const b of items) if (b.split) {
+    b.parts = b.split.map((ref) => items.find((x) => x.id === String(ref) && x.i < b.i && x.spot));
+    if (b.parts.some((x) => !x)) throw new Error(`${cfg.name} beat ${b.i}: split ${JSON.stringify(b.split)} must name two earlier filmed beats`);
+  }
+  return items;
+}
+// The take frame a filmed beat shows: the mark's own frame (m.t, not the spot's T, which
+// continuous pacing pushes later when two marks sit close), or once a camera move into it has
+// settled if that is later, kept inside the take (a mark in its last half frame rounded past it).
+function stillFrame(an, s) {
+  const t = s.m.t, mv = an.moves.filter(([a]) => a < t).at(-1);
+  const at = mv && mv[1] > t - 0.3 ? Math.max(t, settledAt(an.mp4, mv[1], an.name, an.fps)) : t;
+  an.frames ??= frameCount(C, an.mp4);
+  return Math.min(an.frames - 1, Math.round(at * an.fps));
+}
+// Frame k of a take, scaled once (lanczos) to the size it is shown at. The seek sits 0.4 frame
+// early (a seek returns the first frame at or after it), as check.mjs reads it.
+function stillPng(an, k, out, scale) {
+  execFileSync(C.ffmpeg, ['-nostdin', '-loglevel', 'error', '-y', '-ss', String(Math.max(0, (k - 0.4) / an.fps)), '-i', an.mp4, '-frames:v', '1',
+    '-vf', `scale=${Math.round(an.srcW * scale)}:${Math.round(an.srcH * scale)}:flags=lanczos`, out]);
+  if (!existsSync(out)) throw new Error(`${an.name}: no frame ${k} in ${an.mp4} for a beat's still`);
+}
+function slideHtml(b, id) {
+  const items = (xs) => xs.map(esc);
+  const callout = b.label ? `<div class="slab" id="${id}-c">${esc(b.label)}</div>` : '';
+  const head = b.title ? `<div class="stitle" id="${id}-h">${esc(b.title)}</div>` : '';
+  if (b.slide === 'title' || b.slide === 'end') {
+    return `<div class="cbox" id="${id}-box">
+  ${b.kicker ? `<div class="kicker"><span class="kbar"></span><span>${esc(b.kicker)}</span></div>` : ''}
+  <div class="ttl" id="${id}-h">${words(b.title || '', 'wm')}</div>
+  ${b.url ? `<div class="url" id="${id}-u">${esc(b.url)}</div>` : '<div class="rule"></div>'}
+  ${b.sub ? `<div class="sub">${esc(b.sub)}</div>` : ''}
+</div>${b.note ? `<div class="note" id="${id}-n">${esc(b.note)}</div>` : ''}${callout}`;
+  }
+  if (b.slide === 'tiles') return `<div class="slide">${head}<div class="row">${items(b.tiles || []).map((t, k) => `<div class="tile" id="${id}-t${k}"><div class="n">${String(k + 1).padStart(2, '0')}</div><div class="t">${t}</div></div>`).join('')}</div></div>${callout}`;
+  if (b.slide === 'pricing') return `<div class="slide">${head}<div class="row">${(b.tiers || []).map((p, k) => `<div class="tile${p.highlight ? ' hi' : ''}" id="${id}-t${k}"><div class="t">${esc(p.name)}</div><div class="p">${esc(p.price ?? '')}</div><ul>${items(p.points || []).map((x) => `<li>${x}</li>`).join('')}</ul></div>`).join('')}</div></div>${callout}`;
+  if (b.slide === 'steps') return `<div class="slide">${head}<div class="steps"><div class="line" id="${id}-ln"></div>${items(b.steps || []).map((t, k) => `<div class="step" id="${id}-t${k}"><div class="dot">${k + 1}</div><div class="t">${t}</div></div>`).join('')}</div></div>${callout}`;
+  // devices: a browser window, a tablet and a phone, each showing its given still
+  const dev = { web: [W * 0.11, H * 0.22, W * 0.56, W * 0.56 * 0.66], tablet: [W * 0.6, H * 0.3, W * 0.25, W * 0.25 * 1.3], phone: [W * 0.5, H * 0.43, W * 0.14, W * 0.14 * 2.05] };
+  return `${head ? `<div class="slide" style="justify-content:flex-start">${head}</div>` : ''}${Object.entries(dev).filter(([k]) => b[k]).map(([k, [x, y, w, h]], n) =>
+    `<div class="dev ${k}" id="${id}-t${n}" style="left:${r3(x)}px;top:${r3(y)}px;width:${r3(w)}px;height:${r3(h)}px">${k === 'web' ? '<div class="bar"><i style="left:12px"></i><i style="left:28px"></i><i style="left:44px"></i></div>' : ''}<img src="assets/slides/${id}-${k}${extname(b[k])}"></div>`).join('')}${callout}`;
+}
+// A filmed beat's window: its still, spotlight and label, at the screen's own layout. A split's
+// half-size pane drops the scrim's backdrop blur: under the pane's zoom Chrome filled the blur to
+// the unscaled screen's bounds (looked at). A beat's spotlight inherits its section's visibility
+// rather than setting its own: a child set visible stays drawn after the framework hides the
+// section, and two earlier beats' scrims darkened the split behind it (looked at).
+function beatWindow(id, b, an, style = '', zoom = null, labelOutside = false) {
+  const s = b.spot, v = b.view;
+  const win = zoom ? `<div class="win" style="clip-path:${squircle(SCW * zoom, SCH * zoom, R * zoom * 2)}">` : '<div class="win">';
+  return `<div class="winwrap" id="${id}-ww"${style}><div class="winshadow"></div>${win}<div class="screen"${zoom ? ` style="zoom:${r3(zoom)}"` : ''}>
+<div class="cam" style="width:${an.srcW}px;height:${an.srcH}px;transform:translate(${v.x}px,${v.y}px) scale(${v.s});transform-origin:0 0"><img class="foot still" src="assets/stills/${id}.png"></div>
+<div class="sl" id="${id}-sl" style="visibility:inherit;--x:${b.box[0]}px;--y:${b.box[1]}px;--w:${b.box[2]}px;--h:${b.box[3]}px"><div class="scrim"${zoom ? ' style="backdrop-filter:none"' : ''}></div><div class="ring"><div class="sweep" id="${id}-sw"></div></div></div>
+${labelOutside ? '' : `<div id="${id}-l" class="lab" style="left:${r3(b.lab.left)}px;top:${r3(b.lab.top)}px">${esc(s.label)}</div>`}
+</div></div></div>`;
+}
+function beatChapter(cfg) {
+  const { name } = cfg, N = A?.narration;
+  const an = (cfg.beats ? cfg.beats.some((b) => b.mark != null || b.index != null) : true) ? analysis(cfg) : null;
+  const items = beatItems(cfg, an), clips = NAR[name]?.marks || [];
+  if (cfg.narration?.intro) console.warn(`  warn ${name}: narration.intro is not spoken in beat mode (chapter cards are silent)`);
+  if (clips.length > items.length) console.warn(`  warn ${name}: ${clips.length} lines for ${items.length} beats; the extra lines are not spoken`);
+  const seam = seamsOf(C, name), last = segmentNames(C).at(-1) === name, tail = seam.out.dur || (last ? F(0.6) : 0);
+  // layout first: views, boxes and labels of the filmed beats
+  for (const b of items) if (b.spot) {
+    const { rect, cam } = b.spot.m, c = cam || { x: 0, y: 0, s: 1 };
+    const fr = { x: (rect.x - c.x) * c.s, y: (rect.y - c.y) * c.s, w: rect.w * c.s, h: rect.h * c.s };
+    b.view = viewFor(an, fr);
+    b.label = b.label ?? b.spot.label;
+    const { x, y, w, h, lw, pick } = placeLabel(fr, b.view, b.label);
+    Object.assign(b, { box: [x, y, w, h].map(r3), lab: pick[2], dir: pick[0], labBox: [pick[2].left, pick[2].top, lw, C.layout.labelHeight].map(Math.round) });
+    b.spot.label = b.label;
+  }
+  // timing, all in whole frames (clipSpans): each beat holds its line plus pad; the first beat
+  // waits out the seam when there is no card, and the last holds through the tail seam so its pad
+  // stays clear of it
+  const hasCard = cfg.card !== false;
+  let cardF = hasCard ? Math.round(BT.cardHold * C.fps) : 0;
+  for (const b of items) {
+    const c = clips[b.i];
+    b.lead = BT.lead + (!hasCard && b.i === 0 ? seam.in.dur : 0);
+    b.frames = upFrames(c ? b.lead + c.dur + BT.pad : b.lead + BT.hold);
+    if (c && c.dur > BT.lineMax) console.warn(`  warn ${name} beat ${b.id}: line runs ${r3(c.dur)}s, over ${BT.lineMax}s: split it`);
+    if (b.frames / C.fps < BT.min || b.frames / C.fps > BT.max) console.warn(`  warn ${name} beat ${b.id}: holds ${r3(b.frames / C.fps)}s, outside ${BT.min}-${BT.max}s`);
+  }
+  items.at(-1).frames += Math.round(tail * C.fps);
+  // with a music bed the segment ends on a beat: the card takes the pad, or with no card the last
+  // beat holds a little longer (a pad before the first beat would show an empty frame)
+  const padF = Math.round(padToBeat(name, (cardF + items.reduce((a, b) => a + b.frames, 0)) / C.fps) * C.fps);
+  if (hasCard) cardF += padF; else items.at(-1).frames += padF;
+  let f = cardF;
+  for (const b of items) { b.f0 = f; f += b.frames; b.f1 = f; b.start = r3(b.f0 / C.fps); b.end = r3(b.f1 / C.fps); }
+  const CARD = cardF / C.fps, total = f / C.fps;
+  TOTALS[name] = total;
+
+  const html = [], lines = [], report = [], placed = [], q = (x) => `"#${x}"`;
+  const ENT = F(0.6), cardEnd = r3(CARD + F(0.25));
+  if (hasCard) { const cc = chapterCard(name, cfg, CARD, cardEnd); html.push(cc.html); lines.push(...cc.lines); }
+  const fadeF = BT.fade / C.fps;
+  for (const b of items) {
+    const id = `${name}-b${b.i}`, extraF = b.i < items.length - 1 ? BT.fade : 0;
+    let inner = '';
+    // spotlight and label come in once the window is in (the first beat after a card) or at the cut
+    const lit = r3(b.start + (hasCard && b.i === items.findIndex((x) => x.spot || x.parts) && (b.spot || b.parts) ? ENT : 0));
+    const light = (sid, box, lab, dir) => {
+      lines.push(`tl.fromTo("#${sid}-sl", { opacity: 0 }, { opacity: 1, duration: ${F(0.25)}, ease: "power1.out", immediateRender: false }, ${lit});`);
+      const dx = box[2] * 0.06 + 6, dy = box[3] * 0.06 + 6, ib = [box[0] - dx, box[1] - dy, box[2] + 2 * dx, box[3] + 2 * dy].map(r3), vv = (x) => `"--x": "${x[0]}px", "--y": "${x[1]}px", "--w": "${x[2]}px", "--h": "${x[3]}px"`;
+      lines.push(`tl.fromTo("#${sid}-sl", { ${vv(ib)} }, { ${vv(box)}, duration: ${F(0.5)}, ease: "expo.out", immediateRender: false }, ${lit});`);
+      if (SP.sweep) lines.push(`tl.fromTo("#${sid}-sw", { xPercent: -110, opacity: 1 }, { xPercent: 240, opacity: 1, duration: ${F(0.8)}, ease: "power2.inOut", immediateRender: false }, ${r3(lit + F(0.1))});`);
+      const o = { below: '0% 0%', 'below-cropped': '0% 0%', above: '0% 100%', right: '0% 50%', left: '100% 50%' }[dir] ?? '0% 0%';
+      lines.push(`tl.fromTo("${lab}", { opacity: 0, scale: 0.88, transformOrigin: "${o}" }, { opacity: 1, scale: 1, duration: ${F(0.45)}, ease: "back.out(1.7)", immediateRender: false }, ${lit});`);
+    };
+    if (b.spot) {
+      inner = beatWindow(id, b, an);
+      if (lit > b.start) lines.push(...windowArrival(`#${id}-ww`, b.start, ENT));
+      light(id, b.box, `#${id}-l`, b.dir);
+      const k = b.k = stillFrame(an, b.spot);
+      report.push({ i: b.i, id: b.id, label: b.label, still: true, srcT: r3(k / an.fps), seek: r3((k - 0.4) / an.fps), frame: k,
+        compT: lit, litFrom: lit, fadeIn: F(0.25), glided: false, ...(SP.sweep && { sweepTo: r3(lit + F(0.9)) }),
+        hold: r3((b.i === items.length - 1 ? total - tail : b.end) - lit), srcHold: 0, place: b.dir, box: b.box.map(Math.round), labBox: b.labBox, view: b.view });
+    } else if (b.parts) {
+      // two earlier beats side by side, each callout under its window
+      const gap = 36, hw = (W - 2 * SAFE - gap) / 2, z = hw / SCW, hh = SCH * z, top = (H - hh - C.layout.labelHeight - 18) / 2;
+      b.parts.forEach((p, k) => {
+        const sid = `${id}-p${k}`, left = SAFE + k * (hw + gap);
+        inner += beatWindow(sid, p, an, ` style="left:${r3(left)}px;top:${r3(top)}px;width:${r3(hw)}px;height:${r3(hh)}px"`, z, true);
+        if (lit > b.start) lines.push(...windowArrival(`#${sid}-ww`, b.start, ENT));
+        inner += `<div class="lab" id="${sid}-l" style="left:${r3(left)}px;top:${r3(top + hh + 18)}px">${esc(p.label)}</div>`;
+        light(sid, p.box, `#${sid}-l`, 'below');
+      });
+    } else {
+      inner = slideHtml(b, id);
+      // The slide's parts settle in, in order, from the cut. They start part-way in, set on the cut
+      // frame itself: from nothing, the cut frame showed only the backdrop (a blank frame at every
+      // slide), and unset, the later parts showed in full until their turn and then dropped out.
+      const parts = `"#${id} .slab, #${id} .stitle, #${id} .tile, #${id} .step, #${id} .dev, #${id} .cbox > *, #${id} .note"`, from = '{ opacity: 0.6, y: 12 }';
+      lines.push(`tl.set(${parts}, ${from}, ${b.start});`);
+      lines.push(`tl.fromTo(${parts}, ${from}, { opacity: 1, y: 0, duration: ${F(0.5)}, ease: "power3.out", stagger: ${F(0.08)}, immediateRender: false }, ${b.start});`);
+      if (b.slide === 'steps') lines.push(`tl.fromTo("#${id}-ln", { scaleX: 0.2 }, { scaleX: 1, duration: ${F(0.9)}, ease: "power2.inOut", immediateRender: false }, ${b.start});`);
+    }
+    const span = clipSpans([[b.f0, b.f1 + extraF]], C.fps)[0];
+    html.push(`<section id="${id}" class="beat clip" data-start="${span.start}" data-duration="${span.duration}" data-track-index="1"><div class="bin" id="${id}-in">${inner}</div></section>`);
+    if (fadeF && b.i > 0) lines.push(`tl.fromTo("#${id}-in", { opacity: 0 }, { opacity: 1, duration: ${r3(fadeF)}, ease: "none", immediateRender: false }, ${b.start});`);
+    const c = clips[b.i];
+    if (c) placed.push({ slot: b.i, at: r3(b.start + b.lead), lit, dur: c.dur, file: c.file, text: c.text, anchor: c.anchor, words: c.words });
+  }
+  lines.push(...seamLines(name, total));
+  if (last) lines.push(`tl.fromTo("#fade", { opacity: 0 }, { opacity: 1, duration: ${F(0.6)}, ease: "power1.in", immediateRender: false }, ${r3(total - F(0.6))});`);
+  const cap = captionLayer(name, { narration: placed, spots: report });
+  const d = project(name, doc(name, total, [...html, cap.html].filter(Boolean).join('\n'), [...lines, ...cap.lines].join('\n')));
+  // assets: each filmed beat's still at the size it is shown, and the slides' images
+  // a reused project keeps no stills or slide images from an earlier beat list
+  for (const x of ['stills', 'slides']) { rmSync(`${d}/assets/${x}`, { recursive: true, force: true }); mkdirSync(`${d}/assets/${x}`, { recursive: true }); }
+  // one file per window that shows it (a split reuses two beats' stills): the same image twice in
+  // one project is a duplicate-media lint warning
+  const still = (p, file) => stillPng(an, p.k ?? stillFrame(an, p.spot), `${d}/assets/stills/${file}.png`, Math.min(an.dpr, Z * WS * Math.max(1, p.view.s)));
+  for (const b of items) {
+    if (b.spot) still(b, `${name}-b${b.i}`);
+    for (const [k, p] of (b.parts || []).entries()) still(p, `${name}-b${b.i}-p${k}`);
+  }
+  for (const b of items) for (const k of ['phone', 'tablet', 'web']) if (b[k]) copyFileSync(b[k], `${d}/assets/slides/${name}-b${b.i}-${k}${extname(b[k])}`);
+  const firstWin = items.find((x) => x.spot || x.parts);
+  const meta = { name, kind: 'chapter', mode: 'beats', start: startOf(name), total: GRID ? total : r3(total), cardDur: r3(CARD), srcW: an?.srcW, srcH: an?.srcH,
+    settledFrom: firstWin && hasCard ? r3(firstWin.start + ENT) : 0, tailFrom: r3(total - tail), spots: report,
+    beats: items.map((b) => ({ i: b.i, id: b.id, kind: b.spot ? 'mark' : b.parts ? 'split' : `slide:${b.slide}`, start: b.start, end: b.end,
+      cut: r3(b.i === items.length - 1 ? total - tail : b.end), ...(clips[b.i] && { line: { at: r3(b.start + b.lead), end: r3(b.start + b.lead + clips[b.i].dur) } }) })),
+    pad: BT.pad, freezes: [], cues: [], narration: placed };
+  writeFileSync(`${C.out}/work/${name}.plan.json`, JSON.stringify(meta, null, 1));
+  return meta;
+}
+
 // ---------- run ----------
 mkdirSync(`${C.out}/work`, { recursive: true });
 const want = process.argv.slice(3);
@@ -883,8 +1128,9 @@ for (const n of names) if (!C.cards[n] && !C.chapters.some((c) => c.name === n))
 
 // Narration and the music's beat grid are settled before any picture is timed (audio.mjs).
 const A = audioSettings(C);
-const NAR = narrationClips(C);
 const GRID = beatGrid(C);
+// only the named segments' lines are spoken, unless their lengths decide others' timing
+const NAR = await narrationClips(C, C.targetDuration || GRID ? null : names);
 const fitFor = (an, sp) => fitNarration(an.spots.map((s) => ({ T: s.T, hold: s.hold, from: s.from, fade: F(0.25) })), NAR[an.name] || { marks: [] },
   (fz) => { const r = retime(an, sp, fz); return (t) => an.CARD + r.toOut(t); }, A?.narration, C.fps);
 // Segment lengths and starts so far, this run's or an earlier run's plan, for where each segment starts.
@@ -930,7 +1176,8 @@ const speedFor = (cfg, travel) => ({ ...C.speed, travel, ...(cfg.speed || {}) })
 const analyses = new Map();
 const analysis = (cfg) => analyses.get(cfg.name) ?? analyses.set(cfg.name, analyze(cfg)).get(cfg.name);
 let travel = C.speed.travel;
-if (C.targetDuration) {
+if (C.targetDuration && C.cut === 'beats') console.warn('warn: targetDuration is ignored with cut "beats": beats hold their lines, nothing is sped up');
+else if (C.targetDuration) {
   // Whole-video length at a given travel speed, computed from the plan: nothing is rendered.
   // Chapters not filmed yet cannot be measured: leave them out, say so, and keep going.
   const filmed = C.chapters.filter((c) => existsSync(`${C.takes}/${c.name}.mp4`));
@@ -978,6 +1225,11 @@ for (const n of order) {
     continue;
   }
   const cfg = C.chapters.find((c) => c.name === n);
+  if (C.cut === 'beats') {
+    const m = beatChapter(cfg);
+    console.log(`${n}: total ${m.total}s, ${m.beats.length} beats ${m.beats.map((b) => `${b.id}:${r3(b.end - b.start)}`).join(' ')}`);
+    continue;
+  }
   const m = chapter(analysis(cfg), speedFor(cfg, travel));
   console.log(`${n}: total ${m.total}s (src ${m.srcDur}, cut ${m.cuts}, travel ${m.speed.travel}x) spots ${m.spots.map((s) => `${s.place}${s.shift ? '+' + s.shift : ''}/${s.hold}`).join(' ')}`);
   // where each narrated mark's anchor word starts against its spotlight being fully lit; 0 by construction

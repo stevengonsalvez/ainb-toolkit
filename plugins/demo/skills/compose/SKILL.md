@@ -109,18 +109,23 @@ Only `takes` and `chapters` are required. Everything below shows the default whe
         "marks": ["The {@next}next sailing runs late.", null] } }  // one per mark, null = none
   ],
   "speed":  { "travel": 2, "rampMs": 250 },
+  "cut": "continuous",                // or "beats": one still per mark, held for its line; see Beat-paced cut
+  "beats":  { "pad": 0.6, "lead": 0, "cardHold": 2.5, "hold": 3, "fade": 0, "min": 3, "max": 6, "lineMax": 7 },
+  "clips": false,                     // each chapter also as its own mp4 (default true with "cut": "beats")
   "pace": 1,
   "targetDuration": 45,               // optional, seconds, whole video
   "hold":   { "min": 1.5, "max": 2.2 },
   "fadeLead": 0.25,                   // spotlight fades in this long before the mark (or once the zoom settles)
   "deadHold": 2.0,                    // freezes longer than this get trimmed
   "layout": { "safeMargin": 64, "labelHeight": 48, "labelGap": 14, "maxLabelWords": 6 },
-  "check":  { "litRatio": 0.80, "dimRatio": 0.62, "contentSd": 8, "driftMax": 12, "alignMax": 7, "glideStep": 0.2 },
+  "check":  { "litRatio": 0.80, "dimRatio": 0.62, "contentSd": 8, "driftMax": 12, "alignMax": 7, "glideStep": 0.2, "calloutMin": 12, "cutEdge": 0.9 },
   "audio": {                          // optional; "audio": false turns the sound layer off
     "sfx":       { "level": 0, "click": true, "type": true, "zoom": true, "mark": true },  // or false
     "music":     { "file": "bed.mp3", "level": -18, "duck": 11, "fadeIn": 1.5, "fadeOut": 2.5,
                    "start": 0, "snap": true },          // no file, no music
-    "narration": { "voice": "af_heart", "speed": 1, "model": "medium.en",
+    "narration": { "tts": "hyperframes", // or "deepgram" (Aura-2; key from DEEPGRAM_API_KEY)
+                   "voice": "af_heart",   // deepgram default "aura-2-thalia-en"
+                   "speed": 1, "model": "medium.en",
                    "lead": 0.3, "gap": 0.35, "tail": 0.35, "level": -16 },
     "loudness":  { "target": -14, "truePeak": -1, "tolerance": 1 },
     "captions":  { "burn": false, "maxWords": 7 }   // burn: true by default for vertical (in the picture)
@@ -243,6 +248,78 @@ window duplicate then drop a frame. The spacing it keeps clear is the take's own
 (measured on ferry, a source-index marker per frame: 1 duplicate-and-drop pair per chapter inside
 1x windows, 0 once the take's fps is used).
 
+## Beat-paced cut
+
+`"cut": "beats"` paces the film one line per screen instead of playing the footage. One beat is
+one screen, one callout and one line:
+
+```
+lines spoken and measured first ─▶ beat = lead + line + pad (whole frames) ─▶ jump cut ─▶ next beat
+chapter card (cardHold, silent) ─▶ beat ─▶ beat ─▶ ... ─▶ seam into the next chapter
+```
+
+- **A filmed beat** is the still of its mark's own frame (the mark's `t`, or once a camera move
+  into it has settled if that is later, kept inside the take; extracted once at the size it is
+  shown, lanczos), in the framed window, with its spotlight irising in and its callout (the mark's
+  label) popping in at the cut. It holds for its narration line plus `beats.pad` (0.6s), the line
+  starting `beats.lead` (0) after the cut; a beat with no line holds `beats.hold` (3s). A line's
+  `{@anchor}` does nothing here: the spotlight is up from the cut and the line starts at `lead`. Nothing is sped up and nothing travels on screen: beats meet in hard cuts, or
+  a `beats.fade` micro-fade of 1 to 4 frames. The first filmed beat after a chapter card brings
+  the window in (tilted, eased flat over 0.6s) and lights after it. Compose warns when a beat
+  falls outside `beats.min`-`beats.max` (3-6s) and when a line runs over `beats.lineMax` (7s):
+  split it. The last beat holds through the seam into the next segment, so its pad stays clear
+  of the transition; with a music bed the card takes the beat pad, or with no card the last beat.
+  The whole chapter is laid out in whole frames and each beat written as a clip that starts on
+  its first frame and ends a microsecond before the next one's (`clipSpans`): rounding the start
+  and the length on their own left a frame with no beat on it, only the backdrop, at 2148 of
+  8000 random cuts (a probe at 30fps with lines of 2.31, 3.02 and 1.87s rendered frame 272
+  blank), and none since. A slide's parts start part-way in on the cut frame itself and settle
+  over 0.5s, so its first frame is never empty.
+- **A chapter card** holds `beats.cardHold` (2.5s) with no narration (`narration.intro` is not
+  spoken, and compose says so); `"card": false` on a chapter leaves it out.
+- **`chapters[].beats`** orders a chapter's beats; without it each filmed mark is one beat, in
+  order. Each entry is one of:
+  - `{ "mark": "4.2" }` (the mark's `id` in events.json) or `{ "index": 2 }`: a filmed mark,
+    with an optional `label` overriding the callout. A bare number (`"mark": 2`) is an index only
+    in a take whose marks have no ids, where it cannot be taken for one; a take with two marks of
+    one id is refused, and a miss lists the indices and the ids separately;
+  - `{ "split": ["2.3", "2.4"] }`: two earlier filmed beats side by side, each callout under its
+    window (a half-size pane drops the scrim's backdrop blur, see compose.mjs);
+  - `{ "slide": ... }`: a screen with no app, styled from the theme like the cards, with an
+    optional `label` callout and `title`:
+    `"title"` (`kicker`, `title`, `sub`, a `note` such as "Example data"), `"tiles"` (`tiles`: a
+    word or two each), `"devices"` (`web`, `tablet`, `phone`: image files shown in a browser
+    window, a tablet and a phone), `"pricing"` (`tiers`: `name`, `price`, `points`, `highlight`),
+    `"steps"` (`steps`: numbered, joined by a line drawn in), `"end"` (`title`, `url`, `sub`).
+  A chapter of slides only needs no footage. `narration.marks[i]` is the line of beat `i`.
+- **Clips**: `"clips": true` (the default here) also writes each chapter as its own mp4 in
+  `out/clips/`: its segment's lossless render given the one lossy encode the film gets, and its
+  slice of the film's stems (the music faded over 0.3s at the clip's ends), mastered on its own to
+  the same loudness target and checked the same way (a clip off target fails audio.mjs). A clip
+  with no narration or music in it (a slides-only chapter with no lines) keeps its own level and
+  only its ceiling is checked: silence measures -inf, which passes, where it read NaN and failed
+  the whole film.
+- **The still-check** reads every filmed beat like a mark (lit, dim, align, with the still's own
+  source frame for both stills), checks its callout is drawn (`callout`: mean luma difference
+  under the label against the source dimmed by that still's scrim ratio, gate `check.calloutMin`
+  12), checks every beat's line, measured from the spoken file itself, ends at least `pad` before
+  its cut, and reads both frames of every cut: a frame with only the backdrop on it has almost no
+  edges (mean luma step between neighbouring pixels at 320x180, gate `check.cutEdge` 0.9; blank
+  cut frames read 0.54 to 0.61, the sparsest slide 1.37, filmed beats 2 to 7). Slides and splits
+  are gated on timing and on their cut frames.
+
+Measured on `examples/ferry/ferry.beats.config.json` (four chapters, 12 beats: three slides, a
+split, five filmed, three more slides; HyperFrames' local voice), 720p30 draft: 43.9s, render
+155s (3.4s per output second), still-check 5/5 marks and 12/12 beats, -14.0 LUFS, four clips at
+-14.0 to -14.1 LUFS. The 1440p60 master (fresh clone): 43.7s, render 1174s (26.9s per output
+second, under load; four segments of 251-374s, a slide segment costing about what a filmed one
+does), 460 MB of `out/seg/`, 13 MB final, clips 2.3 to 3.9 MB, still-check 5/5 and 12/12, -14.1
+LUFS and every clip -14.0 to -14.1. With a music bed every segment start sits on a beat (0ms) and
+the bed ducks under all 12 lines; the cuts inside a chapter follow its lines, not the bed. Falsified: the callout hidden reads 1.1 and 1.5 where drawn ones read 111 to 125, both
+miss; a beat cut 0.2s before its line ends misses ("line ends 8.595s, after its cut at 8.4s");
+the probe's blank frame 272 misses ("shows only the backdrop (edge 0.609)") and passes since.
+Looked at: every slide kind, the split, a filmed beat after a card, a 3-frame micro-fade.
+
 ## The look
 
 All config-driven, and the defaults are the premium look. Layout is in design px (1280x720, or
@@ -318,6 +395,7 @@ Everything is timed from what capture recorded, not inferred from the picture:
 ```
 events.json ─▶ compose.mjs ─▶ plan.json cues (click, type, camera) + spots ──────┐
 narration ───▶ hyperframes tts ─▶ transcribe ─▶ anchor match ─▶ freezes ────────┼─▶ audio.mjs ─▶ <name>.mp4
+          └──▶ deepgram speak ─▶ deepgram listen ─▶ anchor word start ──┘
 music file ──▶ hyperframes beats ─▶ card padding, every cut on a beat ──────────┘    captions.vtt, chapters.vtt
 ```
 
@@ -360,7 +438,7 @@ music file ──▶ hyperframes beats ─▶ card padding, every cut on a beat 
   Duck depth measured 11.00 dB.
 - **Narration**, only when lines are configured: `narration` on a card (spoken over it; the card
   stays up until the line ends) and on a chapter (`intro` over the chapter card, `marks` one line
-  per mark, `null` to skip one). `hyperframes tts` (Kokoro, local) speaks each line once and caches
+  per mark, `null` to skip one). `hyperframes tts` (Kokoro, local; or Deepgram, below) speaks each line once and caches
   it under `work/audio/tts` by text, voice and model. Every narrated beat **holds until its line has
   finished**: where a line would outlast its spotlight or start before the previous one ends, the
   footage freezes on a still frame for whole frames until it fits: at the end of the previous hold
@@ -378,6 +456,31 @@ music file ──▶ hyperframes beats ─▶ card padding, every cut on a beat 
   lines, inside one 30fps frame. On the finished narrated ferry cut, burst against the spotlight
   being fully lit was -23ms to +8ms at all five anchors. A weak match (correlation under 0.8)
   falls back to the recogniser's time and says so.
+- **Deepgram voices** (`"tts": "deepgram"`): Aura-2 over HTTPS, one request per line, 48kHz WAV.
+  Every request (speak and listen) gets up to 4 attempts of 60s each, retried on a dropped
+  connection, a 429 or a 5xx (waiting as long as Retry-After asks, at most 30s, else 1, 2, 4s),
+  and a clip is cached only once it is a WAV: a 200 carrying an HTML page or a cut-off body is
+  refused and retried, never kept as the line. The key is read from `DEEPGRAM_API_KEY` only, never from a config file;
+  without it a run that has a line to speak stops before speaking anything and names the variable,
+  and a run whose lines are all cached needs no key. Each clip is cached by sha256 of text, voice
+  and rate (`work/audio/tts/dg-*.wav`), so a re-render, a re-timing or a new anchor never re-bills
+  a line. `voice` is any Aura model (anything else, such as the local default `af_heart` left in,
+  is refused before a request); a `speed` other than 1 is refused (Aura-2 has its own pace). Word times
+  come from Deepgram's recogniser (nova-3, `/v1/listen`, cached beside the clip), and the anchor
+  is its word start: the tail match above needs the tail spoken as the line spoke it, and Aura-2
+  re-speaks it differently. The recogniser listens in the voice's language (the `-en` of the
+  model), without smart formatting, so a number spelled out in the line is heard back as words.
+  An anchor word it did not hear has only an interpolated time, and compose warns: reword the
+  line or move the anchor. Compose speaks only the lines of the segments it was asked for, unless
+  their lengths decide other segments' timing (a music bed, `targetDuration`). Measured on 14 anchors (the ferry's five and nine more lines), each
+  estimate read against the word's audible onset on a spectrogram: listen within about 20ms on
+  13, the 14th ("the block", at the b's closure) 110ms early; `hyperframes transcribe` up to
+  270ms early; the tail match under r 0.8 on 3 and on the wrong word on 3 (up to 390ms). The
+  ferry narrated cut with `"tts": "deepgram"`: 5/5, -14.1 LUFS, -1.9 dBTP, anchors placed at the
+  spotlight's lit time. Four voices auditioned on one 13-word line (crude autocorrelation pitch,
+  pauses over 150ms): thalia (default) 5.2s, f0 216Hz, 9.5 semitones of range, a short comma
+  pause; apollo 6.6s, 150Hz, 10.5, the slowest; draco (British) 5.7s, 109Hz, 7.6, the flattest;
+  pandora (British) 5.4s, 198Hz, 8.9, the longest comma pause. Pick by ear: it is a config value.
 - **Loudness**: a mix with narration or music is mastered to `loudness.target` (-14 LUFS
   integrated) by measured gain plus a limiter 1 dB under `truePeak` (-1 dBTP), corrected once,
   then measured again on the AAC in the final file. `audio.mjs` exits 1, failing `concat.sh`, when
@@ -659,6 +762,8 @@ the full-to-limited range change, which any BT.709 4:2:0 delivery pays.
 - `render.sh` and `concat.sh` are `#!/bin/bash`, which is bash 3.2 on macOS: they use no bash-4
   features (no `mapfile`, associative arrays or case-changing expansions). The sound layer is
   Node, and needs no `timeout` binary.
+- `examples/ferry/ferry.beats.config.json`, `examples/ferry/slides/`: the ferry in beat mode, with
+  one slide of each kind (the device images are the ferry app at web, tablet and phone sizes).
 - `scripts/check.mjs`: the gate. For square and vertical output it frames the source frame with
   the same view as the composition before comparing.
 - `assets/template/`: `hyperframes.json`, `package.json`, and a vendored `gsap.min.js` so a

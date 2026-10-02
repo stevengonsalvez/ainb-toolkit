@@ -14,7 +14,7 @@ import { inventory, source } from './locate.mjs';
 // A logged-in page needs the session: --state takes the file a beats file's `state` names
 // (run.mjs mints it), and the beats form uses the beats file's own.
 const argv = process.argv.slice(2), json = argv.includes('--json'), si = argv.indexOf('--state'), state = si >= 0 ? argv[si + 1] : undefined;
-const [a, chapter, upto] = argv.filter((x, i) => x !== '--json' && i !== si && i !== si + 1);
+const [a, chapter, upto] = argv.filter((x, i) => x !== '--json' && (si < 0 || (i !== si && i !== si + 1)));
 if (!a || (si >= 0 && !state) || (!/^https?:/.test(a) && !chapter)) { console.error('usage: node inventory.mjs <url> [--state session-state.json] [--json] | <beats.mjs> <chapter> [beat] [--json]'); process.exit(2); }
 let items, where = a;
 if (/^https?:/.test(a)) {
@@ -35,7 +35,7 @@ if (/^https?:/.test(a)) {
   items = r.inventory; where = `${chapter} after beat ${ch.beats[k].name || `#${k}`}`;
 }
 if (json) { console.log(JSON.stringify(items, null, 1)); process.exit(0); }
-console.log(`${items.length} targets on ${where}`);
+console.log(`${items.length} targets on ${where}${items.skipped ? ` (skipped ${items.skipped} re-rendered node${items.skipped > 1 ? 's' : ''})` : ''}`);
 for (const it of items) {
   const what = `${it.role || it.tag}${it.name ? ` "${it.name}"` : ''}`, r = it.rect;
   console.log(`  ${what.slice(0, 44).padEnd(44)} ${`${r.x},${r.y} ${r.w}x${r.h}`.padEnd(18)} ${it.chain.length ? `[${it.chain.map(source).join(', ')}]` : `(text: ${it.text || 'none'})`}`);
