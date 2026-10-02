@@ -188,7 +188,7 @@ async function film({ base, state, out, viewport = { width: 1280, height: 720 },
   const det = cap.mode === 'deterministic';
   const P = ms => ms * pace;
   const overlayArgs = { ls, hidden: !!cursor.hidden, ringColor: cursor.ring || '#FFFFFF', follow: !det };
-  const rec = dry ? await dryRun({ W, H, state }) : det ? await deterministic({ W, H, cap, dir, state, overlayArgs }) : await screencast({ W, H, dir, state, overlayArgs });
+  const rec = dry ? await dryRun({ W, H, state, overlayArgs }) : det ? await deterministic({ W, H, cap, dir, state, overlayArgs }) : await screencast({ W, H, dir, state, overlayArgs });
   const { page } = rec;
   Object.assign(rec, { speed: cursor.speed || 0, pace }); rec.cursorTilt = cursor.tilt;
   // targets: which locator each beat's targets resolved to; lints: selectors where a role or test
@@ -345,10 +345,13 @@ function poser(cdp) {
 // The same beat loop drives a plain page: every target and every `ready` resolves for real and
 // clicks and typing happen, so a broken target fails here, but nothing is filmed or posed and every
 // wait for show (hold, settle, glide, the gap between keys) is cut to at most 20ms.
-async function dryRun({ W, H, state }) {
+async function dryRun({ W, H, state, overlayArgs }) {
   const browser = await chromium.launch();
   const ctx = await browser.newContext({ viewport: { width: W, height: H }, storageState: state });
   const page = await ctx.newPage();
+  // The same init script as a take: it seeds `localStorage` (a consent key that keeps a banner
+  // away), so the page the dry run clicks through is the page the take films. Cursor hidden.
+  await page.addInitScript(overlay, { ...overlayArgs, hidden: true });
   const rec = {
     page, filming: false, cam: null, camScroll: { x: 0, y: 0 }, speed: 0, pace: 1,
     failed: new Promise(() => {}),
