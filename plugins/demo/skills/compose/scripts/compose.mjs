@@ -985,8 +985,11 @@ ${labelOutside ? '' : `<div id="${id}-l" class="lab" style="left:${r3(b.lab.left
 }
 function beatChapter(cfg) {
   const { name } = cfg, N = A?.narration;
-  // a filmed beat reads its own take: the chapter's, or another chapter's named by `take`
-  const takeOf = (n) => analysis(C.chapters.find((c) => c.name === n) ?? { name: n });
+  // a filmed beat reads its own take: the chapter's, or another one in takes named by `take`
+  const takeOf = (n) => {
+    if (n !== name && !existsSync(`${C.takes}/${n}.mp4`)) throw new Error(`${name}: a beat names take "${n}", which has no footage at ${C.takes}/${n}.mp4`);
+    return analysis(C.chapters.find((c) => c.name === n) ?? { name: n });
+  };
   const items = resolveBeats(cfg, (n) => takeOf(n).spots), clips = NAR[name]?.marks || [];
   for (const b of items) if (b.spot) b.an = takeOf(b.src);
   const an = items.find((b) => b.an && !b.take)?.an;
