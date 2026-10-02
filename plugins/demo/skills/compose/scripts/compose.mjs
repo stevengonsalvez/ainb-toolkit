@@ -6,14 +6,14 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync, mkdirSync, copyFileSync, existsSync } from 'node:fs';
 import { dirname, resolve, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadConfig, segmentNames, eventsPath, r3, esc, grayFrames, mad } from './config.mjs';
+import { loadConfig, segmentNames, seams, seamsOf, screenRect, eventsPath, r3, esc, grayFrames, mad, hexToRgba } from './config.mjs';
 import { audioSettings, narrationClips, fitNarration, beatGrid } from './audio.mjs';
 
 const cfgPath = process.argv[2];
 if (!cfgPath) { console.error('usage: compose.mjs <config.json> [segment ...]'); process.exit(2); }
 const C = loadConfig(cfgPath);
 const SKILL = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const W = C.width, H = C.height, SAFE = C.layout.safeMargin;
+const W = C.dw, H = C.dh, SAFE = C.layout.safeMargin;   // design px, see the document section
 const F = (x) => r3(x * C.pace);          // fade and card-motion timings scale with pace
 
 // ---------- project scaffold ----------
@@ -25,6 +25,12 @@ function project(name, html) {
   for (const f of ['hyperframes.json', 'package.json', 'gsap.min.js']) copyFileSync(`${SKILL}/assets/template/${f}`, `${d}/${f}`);
   writeFileSync(`${d}/meta.json`, JSON.stringify({ id: name, name, createdAt: new Date(0).toISOString() }, null, 1));
   for (const f of C.fontFiles) copyFileSync(f, `${d}/assets/fonts/${basename(f)}`);
+  // Grain tile for the backdrop: fixed-seed noise, so every render of it is identical. A bitmap
+  // tile costs nothing per frame; an SVG feTurbulence grain cost ~0.3s a frame at 1440p (measured).
+  const grain = `${C.out}/work/grain.png`;
+  if (!existsSync(grain)) execFileSync(C.ffmpeg, ['-nostdin', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=gray:s=256x256',
+    '-vf', 'noise=alls=64:allf=u:all_seed=7,format=gray', '-frames:v', '1', grain]);
+  copyFileSync(grain, `${d}/assets/grain.png`);
   writeFileSync(`${d}/index.html`, html);
   return d;
 }
@@ -77,36 +83,86 @@ function keep(dur, cuts) {
 }
 
 // ---------- document ----------
-const T = C.theme;
+// Everything is laid out in design px (W x H: 1280x720 or 1080x1080) inside #stage, which CSS
+// zoom scales to the canvas, so type and geometry rasterise at master size. Layers, back to front:
+// #bg backdrop and grain (shared by every segment, so a crossfade between two segments only moves
+// content), then #content: cards, and the framed window holding the footage, spotlight and labels.
+const T = C.theme, FR = C.frame, Z = C.zoom;
+const SR = screenRect(C), WS = SR.ws, PAD = SR.pad, PADY = SR.padY;
+const BACK = FR ?? { backdrop: 'glow', grain: 0.045 };
 const faces = C.fontFaces.join('\n');
+const tint = (hex, a) => hexToRgba(hex, a);
+const backdrop = {
+  solid: T.bg,
+  gradient: `linear-gradient(155deg, color-mix(in oklab, ${T.bg} 90%, white), ${T.bg} 55%, color-mix(in oklab, ${T.bg} 88%, black))`,
+};
+backdrop.glow = `radial-gradient(55% 70% at 12% 8%, ${tint(T.accent, 0.20)}, transparent 70%),
+  radial-gradient(50% 65% at 92% 96%, ${tint(T.highlight, 0.14)}, transparent 70%), ${backdrop.gradient}`;
+// Continuous-curvature (squircle, superellipse n=4) outline for the window, as a polygon:
+// clip-path, not overflow + corner-shape, which drops the spotlight's backdrop-filter mask (measured).
+function squircle(w, h, r, k = 10) {
+  const sp = (v) => Math.sign(v) * Math.sqrt(Math.abs(v));          // superellipse n=4: |x|^4 + |y|^4 = 1
+  const pts = [];
+  // clockwise from the left edge: corner centres with their quarter of the angle range
+  for (const [cx, cy, a0] of [[r, r, Math.PI], [w - r, r, 1.5 * Math.PI], [w - r, h - r, 0], [r, h - r, 0.5 * Math.PI]]) {
+    for (let i = 0; i <= k; i++) { const a = a0 + (Math.PI / 2) * (i / k); pts.push([cx + r * sp(Math.cos(a)), cy + r * sp(Math.sin(a))]); }
+  }
+  return `polygon(${pts.map(([x, y]) => `${r3(x)}px ${r3(y)}px`).join(', ')})`;
+}
+const WW = W * WS, WH = H * WS, R = FR ? FR.radius : 0, SH = FR ? FR.shadow : 0;
+const ink = (a) => tint(T.text, a);
+const shadow = SH ? `0 0 0 1px ${ink(0.08 * SH)}, 0 1px 2px ${ink(0.16 * SH)}, 0 10px 24px ${ink(0.14 * SH)}, 0 36px 80px ${ink(0.22 * SH)}` : 'none';
+const SP = C.spotlight, FE = SP.feather;
+const band = (dir, a, b) => `linear-gradient(${dir}, transparent calc(var(${a}) - ${FE}px), #000 var(${a}), #000 calc(var(${a}) + var(${b})), transparent calc(var(${a}) + var(${b}) + ${FE}px))`;
 const STYLE = `
 ${faces}
 * { margin: 0; padding: 0; box-sizing: border-box; }
-html, body { width: ${W}px; height: ${H}px; overflow: hidden; background: ${T.bg}; }
+html, body { width: ${C.width}px; height: ${C.height}px; overflow: hidden; background: ${T.bg}; }
 #root { position: relative; width: 100%; height: 100%; overflow: hidden; background: ${T.bg};
   font-family: ${C.bodyStack}; color: ${T.text}; }
+#stage { position: absolute; left: 0; top: 0; width: ${W}px; height: ${H}px; zoom: ${Z}; }
 /* A png-sequence render forces the root and body transparent, and concat.sh flattens any
    transparent pixel to black (measured without this). Invariant: every visible element sits on
    an opaque layer; this full-bleed fill is that layer for the root. concat.sh warns otherwise. */
-#bg { position: absolute; inset: 0; background: ${T.bg}; }
+#bg { position: absolute; inset: 0; background: ${backdrop[BACK.backdrop]}; }
+#grain { position: absolute; inset: 0; opacity: ${BACK.grain}; background: url(assets/grain.png) repeat; background-size: ${r3(256 / Z)}px; }
+#content { position: absolute; inset: 0; }
+.winwrap { position: absolute; left: ${r3(PAD)}px; top: ${r3(PADY)}px; width: ${r3(WW)}px; height: ${r3(WH)}px; }
+.winshadow { position: absolute; inset: 0; border-radius: ${R}px; corner-shape: squircle; box-shadow: ${shadow}; background: ${T.surface}; }
+.win { position: absolute; inset: 0; ${R ? `clip-path: ${squircle(WW, WH, R)};` : ''} }
+/* zoom, not transform: scale(): under a scaled ancestor Chrome mirrors the spotlight's
+   backdrop-filter at the unscaled bounds (whole words reflected at the edges, measured). */
+.screen { position: absolute; left: 0; top: 0; width: ${W}px; height: ${H}px; zoom: ${r3(WS)}; background: ${T.bg}; }
 .cam { position: absolute; left: 0; top: 0; }
 .foot { position: absolute; inset: 0; width: 100%; height: 100%; }
-.card { position: absolute; inset: 0; background: ${T.bg}; display: flex; flex-direction: column;
-  align-items: center; justify-content: center; text-align: center; }
-.card .inner { display: flex; flex-direction: column; align-items: center; }
-.kicker { font-family: ${C.bodyStack}; font-weight: 600; font-size: 18px;
-  letter-spacing: 0.18em; text-transform: uppercase; color: ${T.accent}; }
-.ttl { font-family: ${C.displayStack}; font-weight: 700; font-size: 64px;
-  letter-spacing: -0.02em; color: ${T.text}; margin-top: 14px; }
-.rule { width: 72px; height: 4px; border-radius: 2px; background: ${T.accent}; margin-top: 22px; }
-.sub { font-weight: 500; font-size: 24px; color: ${T.muted}; margin-top: 20px; }
-.sub b { color: ${T.highlight}; font-weight: 600; }
-.spot { position: absolute; border-radius: 12px; opacity: 0; pointer-events: none;
-  box-shadow: 0 0 0 2px ${T.accent}, 0 0 22px 3px ${C.accentGlow}, 0 0 0 3000px ${C.scrim}; }
+.sl { position: absolute; inset: 0; opacity: 0; visibility: hidden; pointer-events: none; --x: 0px; --y: 0px; --w: 0px; --h: 0px; }
+.scrim { position: absolute; inset: 0; background: ${C.scrim}; ${SP.blur ? `backdrop-filter: blur(${SP.blur}px) saturate(0.8);` : ''}
+  mask-image: linear-gradient(#000, #000), ${band('90deg', '--x', '--w')}, ${band('180deg', '--y', '--h')};
+  mask-composite: subtract, intersect, add; }
+.ring { position: absolute; left: var(--x); top: var(--y); width: var(--w); height: var(--h); border-radius: 12px; overflow: hidden;
+  box-shadow: 0 0 0 1.5px ${C.accentEdge}, 0 0 22px 2px ${C.accentGlow}; }
+.sweep { position: absolute; top: -20%; bottom: -20%; left: 0; width: 45%; opacity: 0;
+  background: linear-gradient(100deg, transparent, rgba(255,255,255,0.30) 50%, transparent); }
 .lab { position: absolute; opacity: 0; white-space: nowrap; background: ${T.surface}; border: 1px solid ${C.accentEdge};
   border-left: 5px solid ${T.accent}; border-radius: 10px; padding: 11px 18px 11px 14px;
   font-family: ${C.displayStack}; font-weight: 600; font-size: 22px; line-height: 24px; color: ${T.text};
-  box-shadow: 0 8px 24px rgba(0,0,0,0.55); }
+  box-shadow: 0 1px 2px rgba(0,0,0,0.20), 0 10px 28px rgba(0,0,0,0.30); }
+.card { position: absolute; inset: 0; }
+.ghost { position: absolute; right: -0.04em; bottom: -0.2em; font-family: ${C.displayStack}; font-weight: 700;
+  font-size: ${Math.round(H * 0.56)}px; line-height: 1; letter-spacing: -0.04em; white-space: nowrap; color: ${T.text}; opacity: 0.055; }
+.hair { position: absolute; left: ${SAFE}px; right: ${SAFE}px; height: 1px; background: ${ink(0.14)}; transform-origin: 0 50%; }
+.cbox { position: absolute; left: ${Math.round(SAFE * 1.75)}px; right: ${Math.round(SAFE * 1.75)}px; top: 0; bottom: 0;
+  display: flex; flex-direction: column; justify-content: center; align-items: flex-start; }
+.kicker { display: flex; align-items: center; gap: 14px; font-family: ${C.bodyStack}; font-weight: 600; font-size: 18px;
+  letter-spacing: 0.18em; text-transform: uppercase; color: ${T.accent}; }
+.kbar { width: 30px; height: 3px; border-radius: 2px; background: ${T.accent}; transform-origin: 0 50%; }
+.ttl { font-family: ${C.displayStack}; font-weight: 700; font-size: ${W > H ? 76 : 70}px; line-height: 1.04;
+  letter-spacing: -0.025em; color: ${T.text}; margin-top: 18px; max-width: ${Math.round(W * 0.72)}px; text-wrap: balance; }
+.wm { display: inline-block; overflow: hidden; vertical-align: top; padding-bottom: 0.1em; margin-bottom: -0.1em; }
+.w { display: inline-block; }
+.rule { width: 84px; height: 4px; border-radius: 2px; background: ${T.accent}; margin-top: 26px; transform-origin: 0 50%; }
+.sub { font-weight: 500; font-size: 26px; line-height: 1.3; color: ${T.muted}; margin-top: 22px; max-width: ${Math.round(W * 0.6)}px; }
+.sub b { color: ${T.highlight}; font-weight: 600; }
 #fade { position: absolute; inset: 0; background: ${T.bg}; opacity: 0; pointer-events: none; }
 `;
 
@@ -119,15 +175,20 @@ function doc(id, dur, body, script) {
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=${W}, height=${H}" />
+<meta name="viewport" content="width=${C.width}, height=${C.height}" />
 <script src="gsap.min.js"></script>
 <style>${STYLE}</style>
 </head>
 <body>
-<div id="root" data-composition-id="${id}" data-start="0" data-duration="${fdur(dur)}" data-width="${W}" data-height="${H}">
+<div id="root" data-composition-id="${id}" data-start="0" data-duration="${fdur(dur)}" data-width="${C.width}" data-height="${C.height}">
+<div id="stage">
 <div id="bg"></div>
+<div id="grain"></div>
+<div id="content">
 ${body}
+</div>
 <div id="fade"></div>
+</div>
 </div>
 <script>
 const tl = gsap.timeline({ paused: true });
@@ -139,21 +200,69 @@ window.__timelines["${id}"] = tl;
 `;
 }
 
-// Text-only card composition (title / switch / end).
-function cardDoc(id, c) {
-  const dur = c.dur;
+// The segment's own halves of its seams (concat.sh dissolves the overlap): the incoming half
+// resolves #content out of a blur (or, for a whip, out of a push from the right), the outgoing
+// half throws it the same way. concat.sh dissolves a blur seam and wipes a whip (soft-edged, right
+// to left, with the push). Filters and transforms are cleared at rest: a lingering
+// blur(0px) or 3D transform keeps a costly layer, and can resample the footage.
+function seamLines(name, total) {
+  const { in: a, out: b } = seamsOf(C, name), out = [];
+  const pose = { blur: { filter: 'blur(10px)', scale: 1.02 }, whip: { filter: 'blur(16px)', x: W * 0.24 } };
+  if (a.dur) {
+    out.push(`tl.fromTo("#content", ${JSON.stringify(pose[a.kind])}, { filter: "blur(0px)", x: 0, scale: 1, duration: ${r3(a.dur)}, ease: "${a.kind === 'whip' ? 'power3.out' : 'power2.out'}" }, 0);`);
+    out.push(`tl.set("#content", { filter: "none" }, ${r3(a.dur)});`);
+  }
+  if (b.dur) {
+    const p = b.kind === 'whip' ? { filter: 'blur(16px)', x: -W * 0.24 } : { filter: 'blur(10px)', scale: 0.985 };
+    out.push(`tl.fromTo("#content", { filter: "blur(0px)", x: 0, scale: 1 }, { ...${JSON.stringify(p)}, duration: ${r3(b.dur)}, ease: "${b.kind === 'whip' ? 'power3.in' : 'power2.in'}", immediateRender: false }, ${r3(total - b.dur)});`);
+  }
+  return out;
+}
+
+const words = (s, cls) => esc(s).split(/\s+/).filter(Boolean).map((w) => (cls === 'wm' ? `<span class="wm"><span class="w">${w}</span></span>` : `<span class="w">${w}</span>`)).join(' ');
+const ghostWord = (s) => String(s).split(/\s+/).sort((a, b) => b.length - a.length)[0] || '';
+
+// Text card (title / switch / end). Edge-anchored type over the shared backdrop, an oversized
+// ghost word drifting behind it, a hairline; each kind enters differently (house motion rules:
+// no shared ease or direction across cards). The seam halves are the card's exits.
+function cardDoc(id, c, kind) {
+  const dur = c.dur, last = segmentNames(C).at(-1) === id;
   const body = `<section id="${id}-card" class="card clip" data-start="0" data-duration="${fdur(dur)}">
-  <div class="inner" id="${id}-inner">
-    <div class="kicker">${esc(c.kicker)}</div>
-    <div class="ttl">${esc(c.title)}</div>
+  <div class="ghost" id="${id}-ghost">${esc(ghostWord(c.title))}</div>
+  <div class="hair" id="${id}-hair" style="top:${H - SAFE}px"></div>
+  <div class="cbox" id="${id}-box">
+    <div class="kicker" id="${id}-kick"><span class="kbar" id="${id}-kbar"></span><span>${esc(c.kicker)}</span></div>
+    <div class="ttl" id="${id}-ttl">${words(c.title, kind === 'switch' ? 'w' : 'wm')}</div>
     <div class="rule" id="${id}-rule"></div>
-    <div class="sub">${c.sub}</div>
+    <div class="sub" id="${id}-sub">${c.sub}</div>
   </div>
 </section>`;
-  const script = `tl.fromTo("#${id}-inner", { opacity: 0, y: 18 }, { opacity: 1, y: 0, duration: ${F(0.6)}, ease: "power3.out" }, ${F(0.15)});
-tl.fromTo("#${id}-rule", { scaleX: 0 }, { scaleX: 1, duration: ${F(0.5)}, ease: "power2.out" }, ${F(0.35)});
-tl.fromTo("#fade", { opacity: 0 }, { opacity: 1, duration: ${F(0.4)}, ease: "power1.in" }, ${r3(dur - F(0.4))});`;
-  return doc(id, dur, body, script);
+  const s = [], q = (x) => `"#${id}-${x}"`;
+  s.push(`tl.fromTo(${q('ghost')}, { x: ${W * 0.03}, opacity: 0 }, { x: ${-W * 0.03}, opacity: 0.055, duration: ${r3(dur)}, ease: "sine.out" }, 0);`);
+  s.push(`tl.fromTo(${q('hair')}, { scaleX: 0 }, { scaleX: 1, duration: ${F(1.1)}, ease: "power2.inOut" }, ${F(0.1)});`);
+  s.push(`tl.fromTo(${q('kbar')}, { scaleX: 0 }, { scaleX: 1, duration: ${F(0.5)}, ease: "power3.out" }, ${F(0.2)});`);
+  // Filter tweens leave blur(0px), a costly layer, so filters are cleared once the last of them
+  // has ended. Staggered word tweens end late on long titles: count the stagger in.
+  const n = String(c.title).split(/\s+/).filter(Boolean).length;
+  let clear = 0;
+  const at = (t0, d, st = 0) => { clear = Math.max(clear, t0 + d + st * (n - 1)); return t0; };
+  if (kind === 'title') {
+    s.push(`tl.fromTo(${q('kick')}, { opacity: 0, x: -18, filter: "blur(6px)" }, { opacity: 1, x: 0, filter: "blur(0px)", duration: ${F(0.9)}, ease: "expo.out" }, ${at(F(0.2), F(0.9))});`);
+    s.push(`tl.fromTo("#${id}-ttl .w", { yPercent: 105, filter: "blur(10px)" }, { yPercent: 0, filter: "blur(0px)", duration: ${F(0.8)}, ease: "expo.out", stagger: ${F(0.07)} }, ${at(F(0.3), F(0.8), F(0.07))});`);
+  } else if (kind === 'switch') {
+    s.push(`tl.fromTo(${q('kick')}, { opacity: 0, x: 40 }, { opacity: 1, x: 0, duration: ${F(0.5)}, ease: "power3.out" }, ${F(0.15)});`);
+    s.push(`tl.fromTo("#${id}-ttl .w", { opacity: 0, x: 70, filter: "blur(12px)" }, { opacity: 1, x: 0, filter: "blur(0px)", duration: ${F(0.6)}, ease: "power4.out", stagger: ${F(0.05)} }, ${at(F(0.22), F(0.6), F(0.05))});`);
+  } else {
+    s.push(`tl.fromTo(${q('kick')}, { opacity: 0 }, { opacity: 1, duration: ${F(0.6)}, ease: "sine.out" }, ${F(0.2)});`);
+    s.push(`tl.fromTo(${q('ttl')}, { opacity: 0, scale: 1.06, filter: "blur(14px)", transformOrigin: "0% 50%" }, { opacity: 1, scale: 1, filter: "blur(0px)", duration: ${F(1.0)}, ease: "power2.out" }, ${at(F(0.25), F(1.0))});`);
+  }
+  s.push(`tl.fromTo(${q('rule')}, { scaleX: 0 }, { scaleX: 1, duration: ${F(0.55)}, ease: "power2.out" }, ${F(0.55)});`);
+  s.push(`tl.fromTo(${q('sub')}, { opacity: 0, y: 10, filter: "blur(6px)" }, { opacity: 1, y: 0, filter: "blur(0px)", duration: ${F(0.6)}, ease: "power2.out" }, ${at(F(0.7), F(0.6))});`);
+  s.push(`tl.set(["#${id}-ttl", "#${id}-ttl .w", ${q('sub')}, ${q('kick')}], { filter: "none" }, ${r3(clear)});`);
+  s.push(...seamLines(id, dur));
+  // the film's last frame resolves to the backdrop colour: the one exit the house rules allow
+  if (last) s.push(`tl.fromTo("#fade", { opacity: 0 }, { opacity: 1, duration: ${F(0.6)}, ease: "power1.in", immediateRender: false }, ${r3(dur - F(0.6))});`);
+  return doc(id, dur, body, s.join('\n'));
 }
 
 // ---------- chapter analysis (source time, independent of speed) ----------
@@ -218,7 +327,7 @@ function analyze(cfg) {
   }
   const kept = keep(dur - 0.03, cuts);
   const vp = ev.viewport || { width: 1280, height: 720 };
-  return { cfg, name, mp4, dur, spots, moves, kept, srcW: vp.width, srcH: vp.height, fps: ev.fps ?? 30, CARD: cfg.cardDur ?? C.chapterCardDur,
+  return { cfg, name, mp4, dur, spots, moves, kept, srcW: vp.width, srcH: vp.height, fps: ev.fps ?? 30, dpr: ev.dpr ?? 1, CARD: cfg.cardDur ?? C.chapterCardDur,
     cues: ev.events.filter((e) => ['click', 'type', 'camera'].includes(e.kind)).map((e) => (e.kind === 'camera' ? { ...e, dur: e.t1 - e.t0 } : e)) };
 }
 
@@ -329,7 +438,7 @@ function retime(an, sp, freezes = []) {
 // 2x its viewport at 60fps, so this is a lanczos downsample, a sharpness gain over filming at 1x
 // (supersampling). Lossless (x264 -qp 0, libx264rgb for an RGB take, so no colour conversion):
 // concat.sh makes the one lossy encode.
-function renderFootage(an, rt, out) {
+function renderFootage(an, rt, out, scale) {
   const f = (x) => x.toFixed(6);
   const sel = an.kept.map(([a, b]) => `between(t,${f(a)},${f(b)})`).join('+');
   let u = `T-${f(an.kept.at(-1)[0])}+${f(rt.U.at(-1))}`;
@@ -342,7 +451,7 @@ function renderFootage(an, rt, out) {
   }
   const pix = execFileSync(C.ffprobe, ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=pix_fmt', '-of', 'csv=p=0', an.mp4]).toString().trim();
   execFileSync(C.ffmpeg, ['-nostdin', '-loglevel', 'error', '-y', '-i', an.mp4,
-    '-vf', `select='${sel}',setpts='(st(0,${u});${o})/TB',fps=${C.fps},scale=${an.srcW >> 1 << 1}:${an.srcH >> 1 << 1}:flags=lanczos,tpad=stop_mode=clone:stop_duration=${f(0.2 + rt.tail)}`,
+    '-vf', `select='${sel}',setpts='(st(0,${u});${o})/TB',fps=${C.fps},scale=${Math.round(an.srcW * scale) >> 1 << 1}:${Math.round(an.srcH * scale) >> 1 << 1}:flags=lanczos,tpad=stop_mode=clone:stop_duration=${f(0.2 + rt.tail)}`,
     '-an', '-c:v', /^(gbr|rgb|bgr)/.test(pix) ? 'libx264rgb' : 'libx264', '-qp', '0', '-preset', 'veryfast', out]);
 }
 
@@ -375,14 +484,11 @@ function chapter(an, sp) {
   const total = an.CARD + footDur + pad, CARD = total - footDur;
   const toComp = (t) => CARD + rt.toOut(t);
   TOTALS[name] = total;
-
-  const card = `<section id="${name}-card" class="card clip" data-start="0" data-duration="${r3(CARD)}" data-track-index="2">
-  <div class="inner" id="${name}-inner">
-    <div class="kicker">${esc(cfg.persona || C.defaultPersona || '')}</div>
-    <div class="ttl">${esc(cfg.title)}</div>
-    <div class="rule" id="${name}-rule"></div>
-  </div>
-</section>`;
+  const seam = seamsOf(C, name);
+  const idx = C.chapters.findIndex((c) => c.name === name) + 1;
+  // A film that ends on this chapter fades to the backdrop colour, as an end card would; that
+  // fade, or the seam into the next segment, is the tail no spotlight may reach into.
+  const last = segmentNames(C).at(-1) === name, tail = seam.out.dur || (last ? F(0.6) : 0);
 
   // frame position of a rect: (rect - cam) * cam.s  (see demo-capture handoff contract)
   for (const s of an.spots) {
@@ -393,6 +499,13 @@ function chapter(an, sp) {
   // Grouped in OUTPUT time, where the camera move is scheduled: travel speed shrinks the gaps,
   // and a source-time split left moves with no room (end before start).
   for (const s of an.spots) { s.ct = toComp(s.T); s.cf = toComp(s.from); }
+  // The tail seam throws the window out, so nothing may still be lit, or fading out, inside it.
+  const lastLit = total - tail - F(0.3);
+  for (const s of an.spots) {
+    if (s.ct + s.hold <= lastLit) continue;
+    console.warn(`  warn ${name} m${s.i}: hold cut from ${r3(s.hold)}s to ${r3(lastLit - s.ct)}s so it has faded before the ${last ? 'final fade' : `${seam.out.kind} into the next segment`}`);
+    s.hold = Math.max(0.2, lastLit - s.ct);
+  }
   const groups = [];
   for (const s of an.spots) {
     const g = groups.at(-1), prev = g?.at(-1);
@@ -404,10 +517,33 @@ function chapter(an, sp) {
     const v = viewFor(an, { x: x0, y: y0, w: x1 - x0, h: y1 - y0 });
     for (const s of g) s.view = v;
   }
+  // The spotlight glides to the next mark (moves and reshapes) when that one lights within
+  // spotlight.glide of this hold ending, inside the same view: across a square re-frame the
+  // camera moves under it, so there it fades out and irises in instead. A glide takes at least
+  // GLIDE: when the next mark lights sooner (pace > 1, or a spotlight waiting for the camera),
+  // this hold ends early to make room, and its label leaves as the glide starts. If that would
+  // leave the hold under HOLD_MIN, too short for the still-check's two stills, it does not glide.
+  // A glide stands in for the next spotlight's fade-in: it arrives when that fade-in would have
+  // finished, so the next mark is fully lit at the same moment either way (and a narration anchor
+  // placed on that moment still lands on it).
+  // Each run of glides is one spotlight element, so one run's fade-out never touches the next.
+  const GLIDE = F(0.35), HOLD_MIN = 0.7, same = (a, b) => JSON.stringify(a.view) === JSON.stringify(b.view);
+  let run = 0;
+  for (const [k, s] of an.spots.entries()) {
+    const n = an.spots[k + 1];
+    s.run = run;
+    s.glide = false;
+    if (!n || !(SP.glide > 0) || !same(s, n) || n.cf - (s.ct + s.hold) > SP.glide) { run++; continue; }
+    const start = Math.min(s.ct + s.hold, n.cf + F(0.25) - GLIDE);
+    // nor while this mark's narration line is still being spoken
+    const said = Math.max(-Infinity, ...fit.placed.filter((p) => p.slot === s.i).map((p) => p.at + p.dur));
+    if (start - s.ct < HOLD_MIN || start < said) { run++; continue; }
+    s.hold = start - s.ct; s.glide = true; n.glided = true;
+  }
 
   const LH = C.layout.labelHeight, GAP = C.layout.labelGap;
   const report = [];
-  const overlays = an.spots.map((s) => {
+  const labels = an.spots.map((s) => {
     const fr = s.fr, v = s.view;
     let x = fr.x * v.s + v.x - 8, y = fr.y * v.s + v.y - 8, w = fr.w * v.s + 16, h = fr.h * v.s + 16;
     const x2 = Math.min(W - 6, x + w), y2 = Math.min(H - 6, y + h);
@@ -426,49 +562,97 @@ function chapter(an, sp) {
       h = H - SAFE - LH - GAP - y;
       pick = ['below-cropped', true, { left: Math.min(Math.max(x, SAFE), W - SAFE - lw), top: y + h + GAP }];
     }
-    const ct = s.ct;
+    s.box = [x, y, w, h].map(r3); s.dir = pick[0];
     report.push({
-      i: s.i, label: s.label, srcT: r3(s.m.t), shift: s.shift || 0, compT: r3(ct), litFrom: r3(s.cf), fadeIn: F(0.25), hold: r3(s.hold), srcHold: r3(s.srcHold),
+      i: s.i, label: s.label, srcT: r3(s.m.t), shift: s.shift || 0, compT: r3(s.ct), litFrom: r3(s.cf),
+      fadeIn: F(0.25), glided: !!s.glided, hold: r3(s.hold), srcHold: r3(s.srcHold),
       place: pick[0], box: [x, y, w, h].map(Math.round),
       labBox: [pick[2].left, pick[2].top, lw, LH].map(Math.round), view: v,
     });
-    s.ct = ct; s.dir = pick[0];
-    return `<div id="${name}-s${s.i}" class="spot" style="left:${r3(x)}px;top:${r3(y)}px;width:${r3(w)}px;height:${r3(h)}px"></div>
-<div id="${name}-l${s.i}" class="lab" style="left:${r3(pick[2].left)}px;top:${r3(pick[2].top)}px">${esc(s.label)}</div>`;
+    return `<div id="${name}-l${s.i}" class="lab" style="left:${r3(pick[2].left)}px;top:${r3(pick[2].top)}px">${esc(s.label)}</div>`;
   }).join('\n');
 
+  // Chapter card: a ghost numeral behind, persona kicker, title words rising out of their line
+  // masks. It leaves as the window arrives (the two overlap: the arrival is the card's exit).
+  const firstLit = Math.min(...an.spots.map((s) => s.cf));
+  const ent = r3(Math.max(1 / C.fps, Math.min(F(0.9), firstLit - CARD - 0.1)));
+  const cardEnd = r3(CARD + F(0.25));
+  const card = `<section id="${name}-card" class="card clip" data-start="0" data-duration="${cardEnd}" data-track-index="2">
+  <div class="ghost" id="${name}-ghost">${String(idx).padStart(2, '0')}</div>
+  <div class="cbox" id="${name}-box">
+    <div class="kicker" id="${name}-kick"><span class="kbar" id="${name}-kbar"></span><span>${esc(cfg.persona || C.defaultPersona || '')}</span></div>
+    <div class="ttl" id="${name}-ttl">${words(cfg.title, 'wm')}</div>
+    <div class="rule" id="${name}-rule"></div>
+  </div>
+</section>`;
+  const q = (x) => `"#${name}-${x}"`, ww = q('ww');
   const lines = [
-    `tl.fromTo("#${name}-inner", { opacity: 0, y: 18 }, { opacity: 1, y: 0, duration: ${F(0.5)}, ease: "power3.out" }, ${F(0.1)});`,
-    `tl.fromTo("#${name}-rule", { scaleX: 0 }, { scaleX: 1, duration: ${F(0.45)}, ease: "power2.out" }, ${F(0.3)});`,
-    `tl.to("#${name}-inner", { opacity: 0, duration: ${F(0.3)}, ease: "power1.in" }, ${r3(CARD - F(0.35))});`,
-    `tl.fromTo("#fade", { opacity: 1 }, { opacity: 0, duration: ${F(0.35)}, ease: "power1.out", immediateRender: false }, ${r3(CARD)});`,
-    `tl.fromTo("#fade", { opacity: 0 }, { opacity: 1, duration: ${F(0.35)}, ease: "power1.in", immediateRender: false }, ${r3(total - F(0.35))});`,
+    `tl.fromTo(${q('ghost')}, { y: 60, opacity: 0 }, { y: 0, opacity: 0.055, duration: ${F(1.4)}, ease: "sine.out" }, 0);`,
+    `tl.fromTo(${q('kbar')}, { scaleX: 0 }, { scaleX: 1, duration: ${F(0.45)}, ease: "power3.out" }, ${F(0.12)});`,
+    `tl.fromTo(${q('kick')}, { opacity: 0, x: -24 }, { opacity: 1, x: 0, duration: ${F(0.5)}, ease: "power3.out" }, ${F(0.15)});`,
+    `tl.fromTo("#${name}-ttl .w", { yPercent: 108 }, { yPercent: 0, duration: ${F(0.7)}, ease: "power4.out", stagger: ${F(0.06)} }, ${F(0.22)});`,
+    `tl.fromTo(${q('rule')}, { scaleX: 0 }, { scaleX: 1, duration: ${F(0.5)}, ease: "power2.out" }, ${F(0.45)});`,
+    `tl.fromTo(${q('box')}, { opacity: 1, y: 0, filter: "blur(0px)" }, { opacity: 0, y: -28, filter: "blur(8px)", duration: ${r3(cardEnd - CARD + F(0.2))}, ease: "power2.in", immediateRender: false }, ${r3(CARD - F(0.2))});`,
+    `tl.fromTo(${q('ghost')}, { opacity: 0.055 }, { opacity: 0, duration: ${r3(cardEnd - CARD + F(0.2))}, ease: "power2.in", immediateRender: false }, ${r3(CARD - F(0.2))});`,
   ];
-  // Framing: one set at 0, then an eased move between consecutive groups while nothing is lit.
+  // The window arrives tilted and eases flat before the first spotlight lights; the transform is
+  // then reset to 2D identity so the footage is never resampled through a 3D layer.
+  const tilt = FR ? FR.tilt : 0;
+  const from = tilt ? `{ opacity: 0, y: 36, scale: 0.94, rotationX: ${r3(tilt * 0.55)}, rotationY: ${-tilt}, transformPerspective: 1400, transformOrigin: "50% 60%" }` : '{ opacity: 0, scale: 1.03 }';
+  lines.push(`tl.fromTo(${ww}, ${from}, { opacity: 1, y: 0, scale: 1, rotationX: 0, rotationY: 0, duration: ${ent}, ease: "power3.out" }, ${r3(CARD)});`);
+  lines.push(`tl.set(${ww}, { transformPerspective: 0, rotationX: 0, rotationY: 0, y: 0, scale: 1 }, ${r3(CARD + ent)});`);
+  // Framing (square): one set at 0, then an eased move between consecutive groups while nothing is lit.
   const cam = `#${name}-cam`, V = (v) => `x: ${v.x}, y: ${v.y}, scale: ${v.s}`;
   lines.push(`tl.set("${cam}", { ${V(groups[0][0].view)}, transformOrigin: "0 0" }, 0);`);
   for (let i = 1; i < groups.length; i++) {
     const a = groups[i - 1].at(-1), b = groups[i][0];
     if (JSON.stringify(a.view) === JSON.stringify(b.view)) continue;
     const t0 = a.ct + a.hold + F(0.3), t1 = b.cf;
-    lines.push(`tl.to("${cam}", { ${V(b.view)}, duration: ${r3(Math.max(0.05, t1 - t0))}, ease: "power2.inOut" }, ${r3(Math.min(t0, t1 - 0.05))});`);
+    lines.push(`tl.fromTo("${cam}", { ${V(a.view)} }, { ${V(b.view)}, duration: ${r3(Math.max(0.05, t1 - t0))}, ease: "power2.inOut", immediateRender: false }, ${r3(Math.min(t0, t1 - 0.05))});`);
   }
-  for (const s of an.spots) {
-    const dy = { 'below-cropped': -8, below: -8, above: 8, right: 0, left: 0 }[s.dir] ?? 0;
-    const dx = { right: -8, left: 8 }[s.dir] || 0;
-    lines.push(`tl.fromTo("#${name}-s${s.i}", { opacity: 0 }, { opacity: 1, duration: ${F(0.25)}, ease: "power1.out" }, ${r3(s.cf)});`);
-    lines.push(`tl.fromTo("#${name}-l${s.i}", { opacity: 0, x: ${dx}, y: ${dy} }, { opacity: 1, x: 0, y: 0, duration: ${F(0.3)}, ease: "power2.out" }, ${r3(Math.max(s.cf, s.ct - F(0.1)))});`);
-    lines.push(`tl.to(["#${name}-s${s.i}", "#${name}-l${s.i}"], { opacity: 0, duration: ${F(0.3)}, ease: "power1.in" }, ${r3(s.ct + s.hold)});`);
+  // Spotlight: one feathered cut-out per run of glides, its rect in CSS vars on .sl. Every tween is a
+  // fromTo with explicit start values: workers seek frames out of order, so a .to() would read
+  // its start from whatever frame that worker rendered last.
+  const vars = (b) => `"--x": "${b[0]}px", "--y": "${b[1]}px", "--w": "${b[2]}px", "--h": "${b[3]}px"`;
+  const iris = (b) => { const dx = b[2] * 0.06 + 6, dy = b[3] * 0.06 + 6; return [b[0] - dx, b[1] - dy, b[2] + 2 * dx, b[3] + 2 * dy].map(r3); };
+  for (const [k, s] of an.spots.entries()) {
+    const end = r3(s.ct + s.hold), sl = q(`sl${s.run}`);
+    if (s.glided) {
+      const p = an.spots[k - 1], pe = p.ct + p.hold, arrive = s.cf + F(0.25), d = Math.max(1 / C.fps, arrive - pe);
+      lines.push(`tl.fromTo(${sl}, { ${vars(p.box)} }, { ${vars(s.box)}, duration: ${r3(d)}, ease: "power3.inOut", immediateRender: false }, ${r3(arrive - d)});`);
+    } else {
+      lines.push(`tl.set(${sl}, { visibility: "visible" }, ${r3(s.cf)});`);
+      lines.push(`tl.fromTo(${sl}, { opacity: 0 }, { opacity: 1, duration: ${F(0.25)}, ease: "power1.out", immediateRender: false }, ${r3(s.cf)});`);
+      lines.push(`tl.fromTo(${sl}, { ${vars(iris(s.box))} }, { ${vars(s.box)}, duration: ${F(0.5)}, ease: "expo.out", immediateRender: false }, ${r3(s.cf)});`);
+      if (SP.sweep) lines.push(`tl.fromTo(${q(`sw${s.run}`)}, { xPercent: -110, opacity: 1 }, { xPercent: 240, opacity: 1, duration: ${F(0.8)}, ease: "power2.inOut", immediateRender: false }, ${r3(s.cf + F(0.1))});`);
+    }
+    const o = { below: '0% 0%', 'below-cropped': '0% 0%', above: '0% 100%', right: '0% 50%', left: '100% 50%' }[s.dir];
+    const dy = { 'below-cropped': -10, below: -10, above: 10 }[s.dir] ?? 0, dx = { right: -10, left: 10 }[s.dir] ?? 0;
+    lines.push(`tl.fromTo("#${name}-l${s.i}", { opacity: 0, scale: 0.88, x: ${dx}, y: ${dy}, transformOrigin: "${o}" }, { opacity: 1, scale: 1, x: 0, y: 0, duration: ${F(0.45)}, ease: "back.out(1.7)", immediateRender: false }, ${r3(Math.max(s.cf, s.ct - F(0.1)))});`);
+    lines.push(`tl.fromTo("#${name}-l${s.i}", { opacity: 1 }, { opacity: 0, duration: ${F(0.2)}, ease: "power2.in", immediateRender: false }, ${end});`);
+    if (!s.glide) {
+      lines.push(`tl.fromTo(${sl}, { opacity: 1 }, { opacity: 0, duration: ${F(0.3)}, ease: "power1.in", immediateRender: false }, ${end});`);
+      lines.push(`tl.set(${sl}, { visibility: "hidden" }, ${r3(end + F(0.3))});`);
+    }
   }
+  lines.push(...seamLines(name, total));
+  if (last) lines.push(`tl.fromTo("#fade", { opacity: 0 }, { opacity: 1, duration: ${F(0.6)}, ease: "power1.in", immediateRender: false }, ${r3(total - F(0.6))});`);
 
-  const vid = `<div id="${name}-cam" class="cam" style="width:${an.srcW}px;height:${an.srcH}px">
+  const win = `<div class="winwrap" id="${name}-ww"><div class="winshadow"></div><div class="win"><div class="screen">
+<div id="${name}-cam" class="cam" style="width:${an.srcW}px;height:${an.srcH}px">
 <video id="${name}-v" class="foot clip" src="assets/footage/${name}.mp4" data-start="${r3(CARD)}" data-duration="${footDur}" data-media-start="0" data-track-index="0" muted playsinline></video>
-</div>`;
-  const d = project(name, doc(name, total, `${vid}\n${card}\n${overlays}`, lines.join('\n')));
-  renderFootage(an, rt, `${d}/assets/footage/${name}.mp4`);
+</div>
+${[...new Set(an.spots.map((s) => s.run))].map((r) => `<div class="sl" id="${name}-sl${r}"><div class="scrim"></div><div class="ring"><div class="sweep" id="${name}-sw${r}"></div></div></div>`).join('\n')}
+${labels}
+</div></div></div>`;
+  const d = project(name, doc(name, total, `${card}\n${win}`, lines.join('\n')));
+  // Footage is written at the pixel size it is shown at (window scale, zoom, largest view), capped
+  // at the take's own: a 2x take enters a 1440p master at native density, lanczos-scaled once.
+  const shown = Z * WS * Math.max(1, ...an.spots.map((s) => s.view.s));
+  renderFootage(an, rt, `${d}/assets/footage/${name}.mp4`, Math.min(an.dpr, shown));
   const meta = { name, kind: 'chapter', start: startOf(name), total: GRID ? total : r3(total), srcDur: r3(an.dur), cardDur: CARD, srcW: an.srcW, srcH: an.srcH,
     speed: sp, kept: an.kept.map((k) => k.map(r3)), cuts: r3(an.dur - rt.kept.reduce((a, [x, y]) => a + y - x, 0)),
-    footDur, spots: report,
+    footDur, settledFrom: r3(CARD + ent), tailFrom: r3(total - tail), spots: report,
     // narration freezes as [start, length] in composition seconds; check.mjs maps stills through them
     freezes: [...new Set(fit.freezes.map((f) => f.t))].map((t) => {
       const d = fit.freezes.filter((f) => f.t === t).reduce((a, f) => a + f.d, 0);
@@ -503,25 +687,31 @@ const PLANS = Object.fromEntries(segmentNames(C).map((n) => {
   return [n, existsSync(p) ? JSON.parse(readFileSync(p, 'utf8')) : null];
 }));
 const TOTALS = Object.fromEntries(segmentNames(C).map((n) => [n, PLANS[n]?.total ?? null]));
+// A segment starts where the previous one ends less the seam between them: a transition overlaps
+// the two (concat.sh), so with transitions on every later start moves earlier by the seams before it.
+const SEAM = Object.fromEntries(segmentNames(C).map((n, i) => [n, seams(C)[i].dur]));
+const OUT = Object.fromEntries(segmentNames(C).map((n, i, a) => [n, SEAM[a[i + 1]] ?? 0]));
 const startOf = (n) => {
   let start = 0;
-  for (const m of segmentNames(C)) { if (m === n) return start; if (TOTALS[m] == null) return null; start += TOTALS[m]; }
+  for (const m of segmentNames(C)) { start -= SEAM[m]; if (m === n) return start; if (TOTALS[m] == null) return null; start += TOTALS[m]; }
   return null;
 };
-// With a music bed, each segment's leading card grows by under one beat so the segment ends,
-// to the frame, on a beat: every cut lands on the music.
-// Starts are counted in whole frames (each segment renders whole frames), so the padded segment
-// ends exactly on the frame nearest the beat.
-const padAt = (start, total) => {
+// With a music bed, each segment's leading card grows by under one beat so the next segment
+// starts, to the frame, on a beat: every cut lands on the music. With a transition the cut is the
+// moment the next segment starts to come in, `out` (its seam) before this one ends; the last
+// segment's end is the film's.
+// Starts are counted in whole frames (each segment renders whole frames, seams are whole frames),
+// so the padded segment ends exactly on the frame nearest the beat.
+const padAt = (start, total, out = 0) => {
   if (!GRID) return 0;
-  const s0 = Math.round(start * C.fps);
-  return (Math.round(GRID.after(s0 / C.fps + total - 1e-3) * C.fps) - s0) / C.fps - total;
+  const s0 = Math.round(start * C.fps), cut = total - out;
+  return (Math.round(GRID.after(s0 / C.fps + cut - 1e-3) * C.fps) - s0) / C.fps - cut;
 };
 function padToBeat(n, total) {
   if (!GRID) return 0;
   const start = startOf(n);
   if (start == null) { console.warn(`warn: ${n} not snapped to the beat: an earlier segment has no plan yet`); return 0; }
-  return padAt(start, total);
+  return padAt(start, total, OUT[n]);
 }
 // A card's length before any beat padding: a narrated card stays up until its line has finished.
 const cardDur = (n) => {
@@ -543,10 +733,11 @@ if (C.targetDuration) {
   const length = (v) => segmentNames(C).reduce((t, n) => {
     const c = C.chapters.find((x) => x.name === n);
     if (c && !filmed.includes(c)) return t;
+    t -= SEAM[n];                                    // a seam overlaps this segment with the last
     const an = c && analysis(c), sp = c && speedFor(c, v);
     // the same arithmetic as chapter() and the card branch: a pad decides on a beat, and a
     // millisecond either side of one is a whole beat of difference
-    const foot = c ? r3(retime(an, sp, fitFor(an, sp).freezes).footDur) : 0, base = c ? an.CARD + foot : cardDur(n), pad = padAt(t, base);
+    const foot = c ? r3(retime(an, sp, fitFor(an, sp).freezes).footDur) : 0, base = c ? an.CARD + foot : cardDur(n), pad = padAt(t, base, OUT[n]);
     return t + (GRID ? base + pad : c ? an.CARD + foot : r3(base));
   }, 0);
   // ponytail: bisection on travel alone; proof windows, cards and holds are never sped up to hit it.
@@ -574,7 +765,7 @@ for (const n of order) {
     const clip = NAR[n]?.card, N = A?.narration, base = cardDur(n);
     card.dur = GRID ? base + padToBeat(n, base) : r3(base);
     TOTALS[n] = card.dur;
-    project(n, cardDoc(n, card));
+    project(n, cardDoc(n, card, n === 'title-card' ? 'title' : n === 'end-card' ? 'end' : 'switch'));
     const narration = clip ? [{ slot: 'card', at: N.lead, dur: clip.dur, file: clip.file, text: clip.text, anchor: clip.anchor, words: clip.words }] : [];
     writeFileSync(`${C.out}/work/${n}.plan.json`, JSON.stringify({ name: n, kind: 'card', start, total: card.dur, spots: [], narration }, null, 1));
     console.log(`${n}: card ${r3(card.dur)}s`);

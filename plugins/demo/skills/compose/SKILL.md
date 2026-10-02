@@ -1,6 +1,6 @@
 ---
 name: compose
-description: Turn captured product footage into a finished demo video - spotlight plus short label at each proof moment, chapter title cards, persona-switch and end cards, dead-hold trims and a mechanical still-check, plus a sound layer timed from the capture's own events (UI sound effects, an optional ducked music bed with cuts on the beat, optional narration whose anchor words fire the spotlights, a loudness-checked mix) and WebVTT captions and chapters. Takes a demo:capture take directory (per-chapter mp4 plus events.json) and one JSON config carrying the brand, chapter titles, card copy and any label overrides; everything else is derived from the capture. Use when asked to "compose the demo", "assemble the captured chapters", "add spotlights and callouts to the footage", "put title cards on the demo", "cut the demo together", "make the walkthrough video from the takes", or to re-cut one chapter after re-shooting it, or to "add narration", "add a voiceover", "add music", "add sound effects" or "add captions" to a demo. Renders through HyperFrames. Does not record anything; pair it with demo:capture.
+description: Turn captured product footage into a finished demo video - a 1440p60 master with the app in a framed window on a themed backdrop, a feathered spotlight that glides between proof moments with a short label at each, blur and push transitions, chapter title cards, persona-switch and end cards, dead-hold trims and a mechanical still-check, plus a sound layer timed from the capture's own events (UI sound effects, an optional ducked music bed with cuts on the beat, optional narration whose anchor words fire the spotlights, a loudness-checked mix) and WebVTT captions and chapters. Takes a demo:capture take directory (per-chapter mp4 plus events.json) and one JSON config carrying the brand, chapter titles, card copy and any label overrides; everything else is derived from the capture. Use when asked to "compose the demo", "assemble the captured chapters", "add spotlights and callouts to the footage", "put title cards on the demo", "cut the demo together", "make the walkthrough video from the takes", or to re-cut one chapter after re-shooting it, or to "add narration", "add a voiceover", "add music", "add sound effects" or "add captions" to a demo. Renders through HyperFrames. Does not record anything; pair it with demo:capture.
 ---
 
 # demo:compose
@@ -10,11 +10,11 @@ Assemble captured chapters into one demo video. Capture it elsewhere.
 ```
 demo:capture takes/ ──▶ compose.mjs ──▶ projects/<segment>/  (HyperFrames)
   <ch>.mp4                  ▲              │
-  <ch>-events.json      config.json     render.sh ──▶ out/seg/<segment>/
-                        (brand, copy)      │      (PNG frames, lossless)
+  <ch>-events.json      config.json     render.sh ──▶ out/seg/<segment>.mp4
+                        (brand, copy)      │      (PNG frames, packed lossless)
                                         check.mjs  ──▶ hit / miss per mark  ◀── THE GATE
                                            │
-                                        concat.sh ──▶ out/<name>.mp4 + montage  (the ONE lossy encode)
+                                        concat.sh ──▶ out/<name>.mp4 + montage  (seams dissolved; the ONE lossy encode)
 ```
 
 Pairs with **demo:capture** (the sibling skill in this plugin), which produces the take
@@ -35,14 +35,15 @@ bash "$S/scripts/concat.sh"  my.config.json             # final mp4 with sound, 
 ```
 
 Every command takes optional segment names to limit the work (`compose.mjs cfg.json consent`).
-`render.sh` skips a segment whose frame directory is newer than its `index.html`, so a killed
-run resumes. A segment is rendered aside and swapped in only once it succeeds, so a failed
+`render.sh` skips a segment whose `out/seg/<segment>.mp4` is newer than its `index.html`, so a
+killed run resumes. A segment is rendered aside and swapped in only once it succeeds, so a failed
 re-render keeps the previous one, and it must hold its planned length times the frame rate
-(30fps, passed to HyperFrames as `--fps`) or render.sh fails it.
-Renders run one at a time in the foreground under a timeout of 120s plus 10s per second of
-segment: a harness that kills long background tasks for low memory will otherwise take the
-whole batch out. The timeout is GNU `timeout`, else `gtimeout` (Homebrew coreutils); stock macOS
-has neither, so there `render.sh` warns once and renders without a time limit.
+(60fps final, 30fps draft, passed to HyperFrames as `--fps`) or render.sh fails it.
+Renders run one at a time in the foreground with `workers` capture processes (default 4) under a
+timeout of 120s plus 10s per second of segment at 720p30, scaled by pixel rate (80s per second at
+the 1440p60 master): a harness that kills long background tasks for low memory will otherwise
+take the whole batch out. The render itself is `scripts/hfrender.mjs` (render.sh and the
+burned-caption cut both use it); its timeout is node's own, so it holds on stock macOS too.
 
 A worked example is `examples/ferry/`: a made-up ferry operator's three-page app
 (`serve.mjs`, `app/`), the `beats.mjs` that films it with demo:capture, and
@@ -57,6 +58,9 @@ node "$S/scripts/compose.mjs" ferry.config.json && bash "$S/scripts/render.sh" f
 node "$S/scripts/check.mjs" ferry.config.json && bash "$S/scripts/concat.sh" ferry.config.json
 ```
 
+At the default 1440p60 master the ferry renders in about 15 minutes on an 8-core host without a
+GPU (measured under load, see The look); `"quality": "draft"` in the config makes it about 3.
+
 ## Config
 
 Only `takes` and `chapters` are required. Everything below shows the default where there is one.
@@ -67,7 +71,16 @@ Only `takes` and `chapters` are required. Everything below shows the default whe
   "takes": "/scratch/takes",          // demo:capture output dir (required)
   "out": "./compose",                 // work dir: projects/, out/, work/
   "format": "landscape",              // or "square"; see Playback pace and format
-  "width": 1280, "height": 720,       // default from format; set to override it
+  "quality": "final",                 // 2560x1440 (square 1440x1440) at 60fps; "draft" = 1280x720 (1080x1080) at 30fps
+  "width": 2560, "height": 1440,      // default from format and quality; set one to override the canvas
+  "frame": {                          // the framed window; false = full-bleed footage
+    "style": "window", "padding": 80, "radius": 24, "shadow": 1,
+    "backdrop": "glow",               // "glow" (gradient plus accent light), "gradient" or "solid"
+    "grain": 0.045, "tilt": 9 },      // tilt: degrees the window arrives at, eased flat
+  "spotlight": { "feather": 18, "glide": 2.5, "sweep": true, "blur": 2 },
+  "transitions": { "blur": 0.5, "whip": 0.4 },  // seam lengths in seconds; false = hard cuts
+  "workers": 4,                       // hyperframes capture processes
+  "crf": 16,                          // the one lossy encode
   "theme": {
     "bg": "#101114", "surface": "#1B1D22", "accent": "#C8CDD6",
     "highlight": "#9AA3B2", "text": "#FFFFFF", "muted": "#B5BAC4",
@@ -155,7 +168,9 @@ speed      2x    ramp    1x     ramp   2x   ramp    1x     ramp
   reported, not met. Chapters with their own `speed.travel` keep it. It measures every chapter
   that has footage, even when the command names only some, so a partial re-run picks the same
   speed; chapters not filmed yet are left out with a warning.
-- **`format`**: `"landscape"` 1280x720 (default), `"square"` 1080x1080. Footage stays 16:9.
+- **`format`**: `"landscape"` (default), `"square"`. At `quality: "final"` (default) that is a
+  2560x1440 or 1440x1440 master at 60fps; `"draft"` gives 1280x720 or 1080x1080 at 30fps, about
+  8x less render work, for iterating on copy and timing. Footage stays 16:9.
   For square, each proof window gets its own framing: footage scaled and placed so the spotlit
   rect (from `events.json` `rect` and `cam`) fits with room for its label, between the
   cover scale (fills the square, crops the sides) and the contain scale (whole frame, bands
@@ -178,18 +193,85 @@ The ferry app is quick, so travel is a small share of it; the saving grows with 
 navigation time.
 
 How it works: `compose.mjs` writes each chapter's footage already cut and re-timed (one ffmpeg
-pass: `select` for the kept ranges, `setpts` with the piecewise speed curve, `fps=30` (the output rate), a
-lanczos scale to the take's CSS viewport, written lossless), so the HyperFrames project holds one plain `<video>`.
-A deterministic take (demo:capture's default: 2560x1440 at 60fps, `dpr` and `fps` in its events.json) is
-downsampled here to the composition's 1280x720 at 30fps. That supersampling is itself a gain: on the ferry
-fares table the final cut measures acutance 35.0 against 32.5 from a screencast take, and the JPEG
-ringing around small caps is gone. An RGB take is written with libx264rgb, so no colour conversion
-happens before concat.sh's single encode. Rects and camera boxes stay in CSS px, whatever the density. At a constant whole-number speed it nudges each
-piece by under 1/60s so source frames never sit on a half frame, which otherwise made a 1x
-window duplicate then drop a frame. The spacing it keeps clear is the take's own: a 60fps take
-lands two source frames per output frame at 1x, and assuming 30 put one of each pair on the half
+pass: `select` for the kept ranges, `setpts` with the piecewise speed curve, `fps` at the output
+rate, a lanczos scale to the pixel size the footage is shown at, written lossless), so the
+HyperFrames project holds one plain `<video>`. Shown size is the take's CSS viewport times the
+window scale, the canvas zoom and the largest square view, capped at the take's own pixels, so
+the browser at most scales it down (between square views). A deterministic take (demo:capture's default: 2560x1440 at 60fps,
+`dpr` and `fps` in its events.json) enters the default framed 1440p60 master at 2240x1260 (one
+lanczos downsample, x0.875) and full bleed (`frame: false`) at its native 2560x1440, and at 1x
+every source frame plays. At `quality: "draft"` it is downsampled to the 720p30 window. An RGB
+take is written with libx264rgb, so no colour conversion happens before concat.sh's single encode.
+Rects and camera boxes stay in CSS px, whatever the density. At a constant whole-number speed it
+nudges each piece by under 1/60s so source frames never sit on a half frame, which otherwise made a 1x
+window duplicate then drop a frame. The spacing it keeps clear is the take's own: at 30fps output a
+60fps take lands two source frames per output frame at 1x, and assuming 30 put one of each pair on the half
 (measured on ferry, a source-index marker per frame: 1 duplicate-and-drop pair per chapter inside
 1x windows, 0 once the take's fps is used).
+
+## The look
+
+All config-driven, and the defaults are the premium look. Layout is in design px (1280x720, or
+1080x1080 square) inside a stage that CSS `zoom` scales to the canvas, so type, cards, labels and
+spotlight geometry rasterise at master size instead of being upscaled (HyperFrames'
+`--resolution` supersampling was measured slower).
+
+- **Framed window** (`frame`): the footage sits in a window inset by `padding` (80 design px:
+  2240x1260 of the 2560x1440 master), with squircle corners (a superellipse clip-path; CSS
+  `corner-shape` with `overflow: hidden` silently broke the spotlight's mask), a layered soft
+  shadow tinted from `theme.text`, on a backdrop from the theme: `glow` is a diagonal gradient of
+  `theme.bg` with soft accent and highlight light in opposite corners, plus a fixed-seed grain
+  tile against 8-bit banding. The window arrives with the chapter: rising, scaling from 0.94 and
+  tilted `tilt` degrees in 3D, eased flat before the first spotlight lights, then reset to a 2D
+  identity transform so the footage is never resampled through a 3D layer. `frame: false` is
+  full bleed, as before, on the same backdrop for the cards.
+- **Transitions** (`transitions`): each seam joins the two segments' own halves, rendered by
+  HyperFrames, with `xfade` in concat.sh: a blur crossfade (content blurs 10px and eases scale,
+  dissolved; 0.5s) and, where one chapter hands over to the next chapter or a switch card, a
+  whip (content pushed a quarter of the frame left out of, and in from the right through, a 16px
+  blur, joined by a soft-edged wipe travelling the same way; 0.4s). A plain dissolve under the
+  push read as a fade with a drift: the outgoing half only moves fast once it is mostly gone. The backdrop
+  is identical in every segment, so only content moves. Seams overlap, so the ferry cut runs
+  28.75s against 30.17s with hard cuts. Picked over one master composition by measurement: a
+  HyperFrames transition needs both scenes in one composition, and one composition of a whole
+  film at 1440p60 renders as one unresumable job, where per-segment renders resume and a seam
+  costs one `xfade` (concat of the ferry master: 82s).
+- **Cards**: edge-anchored type over the backdrop, an oversized ghost word (the chapter number
+  on chapter cards) drifting at 5.5% opacity behind, a hairline, and an entrance per kind: title
+  words rise out of a blur on expo out, chapter words rise out of line masks on power4, switch
+  cards push in from the right, the end card resolves from a blur and scale. Each card leaves
+  through its seam; the film's last segment, end card or chapter, fades out to `theme.bg`.
+
+Measured on the ferry example (two chapters, five marks), 8-core host with no GPU, under a load
+average of 12 to 20 from other renders (so wall times are upper bounds):
+
+| output | render.sh | per output second | `out/seg/` | final mp4 | still-check |
+|---|---|---|---|---|---|
+| before: 720p30, full bleed, hard cuts | 61s | 2.0s | 70 MB of PNG | 4.0 MB, 30.17s | 5/5 |
+| default: 1440p60 framed | 881s | 30.6s | 349 MB | 14 MB, 28.75s | 5/5 |
+| `frame: false`, 1440p60 | 973s | 33.8s | 329 MB | 14 MB | 5/5 |
+| `format: "square"`, 1440x1440 at 60 | 701s | 24.4s | 193 MB | 7.3 MB | 5/5 |
+| `quality: "draft"`, 720p30 framed | 203s | 7.1s | 65 MB | 4.3 MB | 5/5 |
+
+`out/seg/` sizes above were packed with x264's default keyframe interval; render.sh now packs with a
+keyframe every 30 frames, about 20% more (the default ferry run: 435 MB). So a 5-minute
+film takes about 2.5 hours at the master on this host, under load, and about 35
+minutes as a draft: iterate in draft, render the master once. A bare 1440p60 window
+probe (no blur, grain or tilt) captured at 12.2s per second with 4 workers and 41s with the
+single worker HyperFrames picks on its own, so `workers` matters more than any effect. The
+dimming blur costs about 7% (fares: 397s against 370s), because the spotlight layer is hidden
+whenever nothing is lit. Peak RSS of any one process was 0.49 GB.
+
+Text sharpness of the final mp4, by capture-pro's measure (mean gradient over edge pixels of the
+same fares-table crop, resampled to 2x its CSS size), against the 720p30 master this replaces:
+
+| crop | before (720p30) | default (framed 1440p60) | `frame: false` | draft (framed 720p30) |
+|---|---|---|---|---|
+| zoomed, mark "Resident fare needs proof" | 54.6 | 68.7 (+26%) | 114.1 (+109%) | 49.8 |
+| wide, the whole fares table at 1x | 41.0 | 59.8 (+46%) | 74.3 (+81%) | 45.2 |
+
+Full bleed keeps every capture pixel; the window shows them at 0.875, still well past the old
+master. A draft looks like the old master, softer where zoomed because the window is smaller.
 
 ## Sound, narration and captions
 
@@ -219,12 +301,18 @@ music file ──▶ hyperframes beats ─▶ card padding, every cut on a beat 
   within half a frame, 16.7ms at 30fps). `hyperframes beats` only seeds the tempo: on a 100 BPM
   tick bed it reported 101.4 BPM, which walked its beats 0.8s off the ticks within a minute. The
   grid is a steady period and phase fitted to the bed's own onsets, and a bed with no beat steady
-  enough (fit contrast under 2.5) gets a warning and unsnapped cuts rather than a failure. Every
+  enough (fit contrast under 2.5) gets a warning and unsnapped cuts rather than a failure. The
+  fitted grid is cached under `work/audio/beats` by the bed's content (sha256: 20ms for a 17 MB
+  bed), so a bed replaced under the same name is fitted again (keyed by name and mtime, a 120 BPM
+  bed copied over a 100 BPM one with an older mtime kept the old grid, 200ms off the beat). Every
   segment is whole frames (a duration that is not renders one frame too many), and starts are
   counted in frames, so a fresh compose lands its cuts on the first run. Re-cutting one chapter
   moves every later start, so with a bed `compose.mjs` also composes again each later segment
   whose start has moved, and `audio.mjs` fails when a cut sits more than a frame off the grid,
   which only a segment rendered from a stale plan can do: re-run `compose.mjs` and `render.sh`.
+  With transitions a cut is the frame the next segment starts to come in (its seam overlaps the
+  end of this one), so the pad aims that frame at the beat, and `audio.mjs` places every sound at
+  the segment starts `concat.sh` records in `work/timeline.json`, seams already taken off.
 
   | bed (ferry example, measured) | detector | fitted | cuts off the beat | result |
   |---|---|---|---|---|
@@ -297,8 +385,19 @@ match) on synthetic input in about a second.
 
 Measured on a 5:36 ten-chapter demo, 47 marks. Change them in config, not in code.
 
-- **Spotlight**: dim everything except the mark's rect (default 60% black scrim, rounded
-  cut-out, accent edge and glow). Fades in 250ms before `t`, or once the zoom into the mark has
+- **Spotlight**: dim everything except the mark's rect (default 60% black scrim, softened by a
+  2px blur, `spotlight.blur`), through a cut-out feathered over 18px outside the rect, with a thin
+  accent edge and glow. It irises in (from 6% larger, expo out over 0.5s) with one light sweep
+  across the lit rect (`spotlight.sweep`). When the next mark lights within `spotlight.glide`
+  (2.5s) of this hold ending and the square view does not change between them, the cut-out does
+  not fade out: it glides, moving and reshaping onto the next rect over the gap with the camera
+  move, arriving when the next spotlight's fade-in would have finished (so a narration anchor
+  timed to that moment still lands on it). A glide lasts at least 0.35s: if the next mark lights
+  sooner (pace above 1, or a spotlight waiting for the camera), this hold ends early to make room
+  and its label leaves as the glide starts; if that would leave the hold under 0.7s, too short
+  for the two stills, or cut into the mark's narration line, it fades instead. Across a square re-frame the camera moves under the cut-out, so there it always fades
+  out and irises in. Each run of glides is its own element, so one mark's fade-out can never touch
+  the next (a shared one hid a mark lit within 0.3s of the last hold, found in review). It fades in 250ms before `t`, or once the zoom into the mark has
   settled in the footage if that is later, holds 1.5 to 2.5s, fades out. Fading in 250ms before
   `t` regardless put 51% of each ferry zoom's motion under the fading-in cut-out; now 0.7%, the
   frame that completes the move. Settled means the camera event's end (from demo:capture), then
@@ -310,9 +409,10 @@ Measured on a 5:36 ten-chapter demo, 47 marks. Change them in config, not in cod
   badge; now 0.18-0.22s, bounded by the window) and compose warns about them. `plan.json`
   records when each spotlight starts as `litFrom` and its fade as `fadeIn`.
 - **Labels**: at most 6 words, sentence case, placed clear of the cut-out inside a 64px safe
-  margin. Over-long labels warn rather than fail. Rewrite the capture's label candidates for
+  margin, popping in on a spring (back out, from 0.88 scale toward the cut-out). Over-long labels warn rather than fail. Rewrite the capture's label candidates for
   clarity; never claim something the footage does not show.
 - **Chapter cards** about 2s (persona line plus chapter title), **title and end cards** about 3s.
+  Lengths are design px throughout (720 lines landscape, 1080 square); the canvas scales them.
 - No annotation is ever burned into the footage. Everything is an overlay on top of an
   untouched capture, so a relabel is a re-render and never a re-shoot. Sound is a layer of its
   own (see above), so re-mixing is `node scripts/audio.mjs <config>` and never a re-render.
@@ -338,8 +438,17 @@ Both were found by looking at stills, not by reading code. Do not "simplify" the
 0.1` if later, so a spotlight that waited for the camera is not read mid-fade, and always at
 least 0.1s before still B, which is 0.05s before the fade-out. A hold too short for that window
 misses as "lit too briefly to check" instead of a false scrim or drift reading (measured: hold
-0.4s on the ferry board). It runs four tests against the rendered segment and the untouched source frame. It prints one line per
-mark and exits 1 if any mark misses.
+0.4s on the ferry board). A spotlight that glides in arrives at `litFrom + fadeIn`, when its fade-in
+would have finished, so the stills read it the same way.
+It runs four tests against the rendered segment and the untouched source frame. It prints one
+line per mark and exits 1 if any mark misses.
+
+Every reading happens in the design space compose lays out in: the rendered frame is cropped to
+the footage's screen inside the framed window (the whole frame when `frame: false`) and scaled to
+1280x720 (1080x1080 square), so the thresholds below mean the same at draft and at the master,
+framed or not. A still is also a miss if it falls inside a transition: before the window has
+settled (its arrival and tilt, `settledFrom` in plan.json) or after the seam into the next
+segment begins (`tailFrom`). Compose ends any hold before that seam, and warns when it cuts one.
 
 | test      | what it measures                                            | what it catches                      |
 |-----------|-------------------------------------------------------------|--------------------------------------|
@@ -350,7 +459,11 @@ mark and exits 1 if any mark misses.
 | label     | label box vs spotlight box, geometric                        | defect 2: label over its spotlight   |
 
 The ring samples 34px clear of the box edge and skips the label rect. Closer in, the spotlight's
-own 22px glow reads as "not dimmed" and every mark fails.
+own 22px glow reads as "not dimmed" and every mark fails; so would the feather, which is why
+config refuses `spotlight.feather` over 24. The thresholds did not move for the new look, and
+were not loosened: with the feathered, blurred scrim the ferry reads lit 1.00 and dim
+0.397-0.399, against 1.00 and 0.396-0.397 from the old hard-edged one (the scrim is 60% black,
+so a clean dim reads 0.40; the gate is 0.62).
 
 It also writes `work/stills-<chapter>.png`, a 2-wide tile of every still with its mark index and
 time drawn on. **Look at it.** The numbers say the geometry is right; the sheet says the label
@@ -371,8 +484,24 @@ screencast JPEG                       capture, the one source
   ─▶ take mp4         x264 -qp 0      bit-exact against the JPEGs
   ─▶ retimed footage  x264 -qp 0      bit-exact
   ─▶ segment frames   PNG             --format png-sequence --video-frame-format png
-  ─▶ final mp4        x264 crf 14     slow, tune animation, yuv420p, BT.709 tags
+  ─▶ segment mp4      x264rgb -qp 0   packed by render.sh, bit-exact against the PNGs
+  ─▶ final mp4        x264 crf 16     slow, tune animation, yuv420p, BT.709 tags, faststart
 ```
+
+The table below was measured at 720p30 with the final at crf 14. At the 1440p60 master the crf
+was re-measured on the ferry fares segment, against the same 4:2:0 conversion encoded losslessly
+(so it isolates the crf):
+
+| crf | luma PSNR | SSIM | text crop PSNR | size (10.8s) |
+|---|---|---|---|---|
+| 12 | 55.0 dB | 0.9985 | 54.9 dB | 7.3 MB |
+| 14 | 53.4 dB | 0.9978 | 53.4 dB | 5.8 MB |
+| **16** (default) | 52.0 dB | 0.9970 | 52.0 dB | 4.6 MB |
+| 18 | 50.6 dB | 0.9959 | 50.4 dB | 3.6 MB |
+| 20 | 49.2 dB | 0.9946 | 48.9 dB | 2.7 MB |
+
+Every row is past visually lossless; 16 keeps 52 dB on text for 20% less than 14. Set `crf`
+lower for an archival master.
 
 HyperFrames' output options, measured on one ferry capture, four segments, the same final
 encode (text crop inside each cut-out against the source screencast frame, RGB):
@@ -391,18 +520,42 @@ encode (text crop inside each cut-out against the source screencast frame, RGB):
   mov) falls back to the slower capture path, hence the extra render time.
 - png-sequence is an alpha format: it makes the composition root and body transparent, and a
   frame comes out RGBA wherever a pixel is transparent (RGB only when every pixel is opaque:
-  0 of 840 ferry frames had alpha, 90 of 90 did with the `#bg` fill removed). `concat.sh`
+  0 of 840 ferry frames had alpha, 90 of 90 did with the `#bg` fill removed). The pack
   drops the alpha, so a transparent pixel becomes black. The invariant: every visible element of
   a template sits on an opaque layer; the full-bleed `#bg` child is that layer for the root.
-  `concat.sh` counts frames with an alpha channel and warns if there are any.
+  `render.sh` counts frames with an alpha channel and warns if there are any.
 - The PNGs carry sRGB colour, so `concat.sh` has no input matrix to guess: it converts once to
   BT.709 limited range with explicit tags.
 - The takes and retimed footage use a lossless H.264 profile that browsers cannot play;
   ffmpeg, this skill and the montage read them fine. Watch the final mp4.
-- `out/seg/` holds about 215 MB per minute at 720p30. It is scratch: delete it once the final
-  mp4 is good.
+- render.sh packs each segment's PNGs into a lossless RGB mp4 and deletes them: at 1440p60 the
+  ferry's PNGs were 3.3 GB for 30s of video (fares: 1011 MB of PNG, 141 MB packed, PSNR infinite
+  against every PNG checked). A keyframe every 30 frames keeps each still-check seek short: with
+  x264's default of 250 the ferry check took 45.7s, now 29.1s, for 20% more disk (fares 115 MB at
+  250). So `out/seg/` holds well under 1 GB per minute at the master, where PNGs would have been
+  6.6 GB. It is scratch: delete it once the final mp4 is good.
+  **Free disk while rendering**: before capturing, HyperFrames refuses unless free space on the
+  `out` filesystem is at least the raw RGBA size of the render's frames over 0.9 (width x height
+  x 4 bytes a frame: about 1 GB per second at the 1440p60 master, so the ferry's 13.3s chapter
+  asks for 13.1 GB and a 34s chapter would ask for 33 GB; about 0.12 GB per second at draft),
+  although the PNGs it writes are about a tenth of that. `--low-memory-mode` does not lift the
+  check (measured: a 40s 1440p60 render was refused the same with it on). So `hfrender.mjs`
+  measures the free space first and, when a segment would not fit, renders it in time chunks that
+  do, using 80% of what the check allows, and says so in one line, as in this ferry run forced
+  into chunks with `HF_CHUNK_FRAMES=300` (an override for testing, which the line also names):
+  `fares: 649 frames need 10.6 GB free for HyperFrames' disk check, 25.0 GB is free: rendering
+  3 chunks of up to 217 frames`.
+  Each chunk is a copy of the project re-timed to a window of its timeline; the packed chunks join
+  without re-encoding. A chunk matches the whole render as closely as two whole renders match
+  each other: at the master, forced into 300-frame chunks, the ferry's departures and fares came
+  out 552 of 799 and 506 of 649 frames bit-exact against the whole render, the rest at 77 dB or
+  better, and two whole draft renders of fares differ the same way (276 of 324 bit-exact, the
+  rest about 86 dB); the chunked film passed the still-check 5/5. A chunk costs about 5s of
+  start-up (draft fares, 3 chunks: 48s against 45s). What the render really used at its peak,
+  sampling free space every second through the ferry master: 3.1 GB, during the 13.3s chapter
+  HyperFrames asked 13.1 GB for.
 
-The gap to the ceiling is crf 14; what remains below the ceiling is the 4:2:0 conversion and
+At 720p the gap to the ceiling was crf 14; what remains below the ceiling is the 4:2:0 conversion and
 the full-to-limited range change, which any BT.709 4:2:0 delivery pays.
 
 ## Files
@@ -410,7 +563,10 @@ the full-to-limited range change, which any BT.709 4:2:0 delivery pays.
 - `scripts/config.mjs`: config load, defaults, font stacks, segment ordering.
 - `scripts/compose.mjs`: one standalone HyperFrames project per segment. Separate projects keep
   each render small and lint clean.
-- `scripts/render.sh`, `scripts/concat.sh`: render loop (PNG sequences) and the one final encode (see Encode chain); `concat.sh` then runs `audio.mjs`.
+- `scripts/hfrender.mjs`: one project to one lossless mp4, in time chunks when the disk is short.
+- `scripts/render.sh`, `scripts/concat.sh`: render loop (PNG sequences, packed losslessly) and
+  the seams plus the one final encode (see Encode chain). concat.sh also writes
+  `work/timeline.json`: where each segment starts in the final cut, with its seam.
 - `scripts/audio.mjs`: sound effects, music, narration timing (also imported by `compose.mjs`), mix,
   loudness check. `scripts/captions.mjs`: caption and chapter files, burned-in captions.
   `scripts/audio-check.mjs`: their timing logic on synthetic input.

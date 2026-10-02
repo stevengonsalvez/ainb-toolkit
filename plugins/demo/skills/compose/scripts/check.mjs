@@ -14,12 +14,15 @@
 //           -> DEFECT 2: a label never covers its own spotlight
 import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync, mkdirSync, rmSync, existsSync, readdirSync } from 'node:fs';
-import { loadConfig, segmentNames, r3, hexToRgb, grayFrames } from './config.mjs';
+import { loadConfig, segmentNames, screenRect, frameCount, r3, hexToRgb, grayFrames } from './config.mjs';
 
 const cfgPath = process.argv[2];
 if (!cfgPath) { console.error('usage: check.mjs <config.json> [chapter ...]'); process.exit(2); }
 const C = loadConfig(cfgPath);
-const W = C.width, H = C.height, K = C.check;
+// Measured in design px (C.dw x C.dh), the space compose lays out in: a rendered frame is cropped
+// to the footage's screen (inside the framed window, or the whole frame when full bleed) and
+// scaled to it, so every threshold below means the same thing at draft and at the 1440p master.
+const W = C.dw, H = C.dh, K = C.check, SCREEN = screenRect(C).canvas;
 
 // Captions on the contact tiles need drawtext (libfreetype), which some ffmpeg builds lack, a
 // Homebrew one included. They are for human eyes only: the verdict never depends on them.
@@ -27,13 +30,15 @@ const drawtext = / drawtext /.test(execFileSync(C.ffmpeg, ['-hide_banner', '-fil
 if (!drawtext) console.warn(`warn: ${C.ffmpeg} has no drawtext filter, so contact tiles carry no captions. For captions set FFMPEG (or "ffmpeg" in the config) to a full build, e.g. /usr/bin/ffmpeg.`);
 
 // One frame as luma: of a video at time t, or of an image when t is null.
-function grayFrame(file, t, w = W, h = H) {
-  const f = grayFrames(C.ffmpeg, file, { t, w, h });
+function grayFrame(file, t, w = W, h = H, crop) {
+  const f = grayFrames(C.ffmpeg, file, { t, w, h, crop });
   if (!f.n) throw new Error(`no frame at ${t}s of ${file}`);
   return f.at(0);
 }
-// A rendered segment is a directory of PNGs, frame_000001.png at time 0, C.fps per second.
-const segFrame = (seg, n, t) => `${seg}/frame_${String(Math.min(n, Math.round(t * C.fps) + 1)).padStart(6, '0')}.png`;
+// A rendered segment is a lossless mp4 (render.sh), frame k (0-based) at k / C.fps. The seek time
+// is 0.4 frame early: a seek returns the first frame at or after it, and container timestamps
+// round, so aiming at the frame's own nominal time can land on the next one.
+const segFrame = (n, t) => Math.max(0, (Math.min(n - 1, Math.round(t * C.fps)) - 0.4) / C.fps);
 
 // The source frame as the composition frames it: scaled by view.s, placed at view.x/y, and
 // `bg` where the footage does not reach. Identity when the output matches the footage.
@@ -76,8 +81,9 @@ function diff(a, b, [bx, by, bw, bh]) {
 }
 
 // A ring outside the box: four bands, each `pad` deep, offset `off` clear of the edge.
-// `off` must clear the spotlight's outer glow (3px spread + 22px blur), or the glow reads as
-// "not dimmed" and every mark fails. The label rect is excluded for the same reason.
+// `off` must clear the spotlight's outer glow (2px spread + 22px blur) and the feather of the
+// cut-out (spotlight.feather, at most 24px, so config.mjs caps it), or they read as "not dimmed"
+// and every mark fails. The label rect is excluded for the same reason.
 function ringMean(buf, [x, y, w, h], lab, off = 34, pad = 30) {
   const bands = [
     [x - off - pad, y, pad, h], [x + w + off, y, pad, h],
@@ -107,9 +113,9 @@ function checkChapter(name) {
   if (!existsSync(planPath)) throw new Error(`${name}: no plan, run compose.mjs first`);
   const plan = JSON.parse(readFileSync(planPath, 'utf8'));
   if (plan.kind === 'card') return [];
-  const seg = `${C.out}/out/seg/${name}`;
+  const seg = `${C.out}/out/seg/${name}.mp4`;
   if (!existsSync(seg)) throw new Error(`${name}: no rendered segment at ${seg}, run render.sh first`);
-  const nSeg = readdirSync(seg).filter((f) => /^frame_\d+\.png$/.test(f)).length;
+  const nSeg = frameCount(C, seg);
   const src = `${C.takes}/${name}.mp4`;
   const stillDir = `${C.out}/work/stills/${name}`;
   rmSync(stillDir, { recursive: true, force: true }); mkdirSync(stillDir, { recursive: true });
@@ -129,8 +135,11 @@ function checkChapter(name) {
     const atSrc = at.map((t) => r3(sourceAt(plan, s, t)));
     const why = [];
     if (short) why.push(`lit too briefly to check: fully lit at +${r3(need - 0.1)}s, fades out at +${r3(s.hold)}s`);
+    // Never read a still inside a transition: the window is still arriving (tilt, entrance)
+    // before settledFrom, and the seam into the next segment starts at tailFrom.
+    if (at[0] < (plan.settledFrom ?? 0) || at[1] > (plan.tailFrom ?? Infinity)) why.push(`still inside a transition (${at[0]}-${at[1]}s; window settles ${plan.settledFrom}s, seam ${plan.tailFrom}s)`);
 
-    const ren = at.map((t) => grayFrame(segFrame(seg, nSeg, t), null));
+    const ren = at.map((t) => grayFrame(seg, segFrame(nSeg, t), W, H, SCREEN));
     const sw = plan.srcW ?? W, sh = plan.srcH ?? H, view = s.view ?? { s: 1, x: 0, y: 0 };
     const raw = atSrc.map((t) => framed(grayFrame(src, t, sw, sh), sw, sh, view, bgLuma));
 
@@ -155,11 +164,12 @@ function checkChapter(name) {
       lit: r3(Math.min(...litR)), dim: r3(Math.max(...dimR)), sd: r3(sd), drift: r3(drift),
       ok: !why.length, why: why.join('; ') });
 
-    // contact tiles for eyeballing alongside the numbers, named 000.png, 001.png, ... in mark order
+    // contact tiles for eyeballing alongside the numbers, named 000.png, 001.png, ... in mark order,
+    // cropped to the screen like the readings, so a tile shows exactly the boxes the numbers measured
     for (const [k, t] of at.entries()) {
       const cap = drawtext ? `,drawtext=text='m${s.i} ${'ab'[k]} t=${t}':x=6:y=6:fontsize=18:fontcolor=cyan:box=1:boxcolor=black` : '';
-      execFileSync(C.ffmpeg, ['-nostdin', '-loglevel', 'error', '-y', '-i', segFrame(seg, nSeg, t), '-frames:v', '1',
-        '-vf', `scale=${W / 2}:${H / 2}${cap}`, '-update', '1', `${stillDir}/${String(2 * rows.length - 2 + k).padStart(3, '0')}.png`]);
+      execFileSync(C.ffmpeg, ['-nostdin', '-loglevel', 'error', '-y', '-ss', String(segFrame(nSeg, t)), '-i', seg, '-frames:v', '1',
+        '-vf', `crop=${SCREEN[2]}:${SCREEN[3]}:${SCREEN[0]}:${SCREEN[1]},scale=${W / 2}:${H / 2}${cap}`, '-update', '1', `${stillDir}/${String(2 * rows.length - 2 + k).padStart(3, '0')}.png`]);
     }
   }
   // An image2 sequence, not -pattern_type glob, which some builds do not support.
