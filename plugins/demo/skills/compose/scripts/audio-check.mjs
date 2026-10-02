@@ -2,7 +2,12 @@
 // audio-check.mjs: the sound layer's timing logic on synthetic input, no TTS, no render, a second.
 // node audio-check.mjs   (exit 1 on the first failure)
 import assert from 'node:assert/strict';
-import { parseLine, align, fitNarration, locateAnchor, fitGrid } from './audio.mjs';
+import { mkdtempSync, rmSync, readdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { parseLine, align, fitNarration, locateAnchor, fitGrid, audioSettings, narrationClips, loudness } from './audio.mjs';
+import { clipSpans } from './config.mjs';
+import { execFileSync } from 'node:child_process';
 import { vtt } from './captions.mjs';
 
 // 1. `{@name}` marks the word after it; without one the first word is the anchor.
@@ -89,5 +94,82 @@ const k = 3; let u = 0.05;
 for (const [q, [len, hz, amp]] of plan.slice(k).entries()) { syl(tail, u, len * (q ? 1 : 1.1), hz, amp); u += len * (q ? 1 : 1.1) + 0.04; }
 const truth = at[k], got = locateAnchor(line, tail, truth - 0.2);
 assert.ok(Math.abs(got.at - truth) <= 0.015 && got.r > 0.8, `anchor at ${got.at} (r ${got.r}), expected ${truth}`);
+
+// 6. Deepgram: its own default voice, no speed, an unknown engine refused, and without
+//    DEEPGRAM_API_KEY a run stops before any request, naming the variable.
+const dgC = (narration) => ({ audio: { narration }, configDir: '.', format: 'landscape' });
+assert.equal(audioSettings(dgC({ tts: 'deepgram' })).narration.voice, 'aura-2-thalia-en');
+assert.equal(audioSettings(dgC({})).narration.voice, 'af_heart');
+assert.throws(() => audioSettings(dgC({ tts: 'deepgram', speed: 1.2 })), /speed/);
+assert.throws(() => audioSettings(dgC({ tts: 'elevenlabs' })), /hyperframes" or "deepgram/);
+const out = mkdtempSync(join(tmpdir(), 'audio-check-')), key = process.env.DEEPGRAM_API_KEY, realFetch = globalThis.fetch;
+delete process.env.DEEPGRAM_API_KEY;
+globalThis.fetch = () => { throw new Error('a request was made'); };
+await assert.rejects(narrationClips({ ...dgC({ tts: 'deepgram' }), out, cards: {}, chapters: [{ name: 'c', narration: { marks: ['Hello there.'] } }] }), /DEEPGRAM_API_KEY/);
+globalThis.fetch = realFetch; rmSync(out, { recursive: true, force: true });
+assert.throws(() => audioSettings(dgC({ tts: 'deepgram', voice: 'af_heart' })), /not a Deepgram Aura voice/);
+
+// 7. Deepgram over a scripted network (no request leaves the machine): a 200 that is not a WAV is
+//    never cached; a dropped connection, a 429 with Retry-After and a listen 503 are retried; an
+//    anchor word the recogniser did not hear is warned about.
+process.env.DEEPGRAM_API_KEY = 'test-key'; process.env.DEMO_DG_BACKOFF_MS = '1';
+const wav = (() => {                                       // 0.6s of a 220Hz tone, 48kHz 16-bit mono
+  const n = 28800, b = Buffer.alloc(44 + 2 * n);
+  b.write('RIFF', 0); b.writeUInt32LE(36 + 2 * n, 4); b.write('WAVEfmt ', 8); b.writeUInt32LE(16, 16); b.writeUInt16LE(1, 20); b.writeUInt16LE(1, 22);
+  b.writeUInt32LE(48000, 24); b.writeUInt32LE(96000, 28); b.writeUInt16LE(2, 32); b.writeUInt16LE(16, 34); b.write('data', 36); b.writeUInt32LE(2 * n, 40);
+  for (let i = 0; i < n; i++) b.writeInt16LE(Math.round(8000 * Math.sin(2 * Math.PI * 220 * i / 48000)), 44 + 2 * i);
+  return b;
+})();
+const heardAll = [['only', 0.05], ['six', 0.2], ['cars', 0.32], ['left', 0.45]].map(([word, start]) => ({ word, start, end: start + 0.1 }));
+const reply = (status, body, type, headers = {}) => new Response(body, { status, headers: { 'content-type': type, ...headers } });
+const net = async (script) => {
+  const calls = [], dir = mkdtempSync(join(tmpdir(), 'audio-check-')), warns = [], warn = console.warn;
+  globalThis.fetch = async (url) => { calls.push(String(url).includes('/listen') ? 'listen' : 'speak'); const f = script.shift(); return f(); };
+  console.warn = (m) => warns.push(String(m));
+  try {
+    const r = await narrationClips({ ...dgC({ tts: 'deepgram' }), out: dir, ffmpeg: 'ffmpeg', ffprobe: 'ffprobe', cards: {}, chapters: [{ name: 'c', narration: { marks: ['Only six {@cars}cars left.'] } }] });
+    return { r, calls, warns, cached: readdirSync(`${dir}/work/audio/tts`) };
+  } catch (e) { return { e, calls, warns, cached: readdirSync(`${dir}/work/audio/tts`) }; }
+  finally { console.warn = warn; globalThis.fetch = realFetch; rmSync(dir, { recursive: true, force: true }); }
+};
+const html = () => reply(200, '<html>maintenance</html>', 'text/html');
+let run = await net([html, html, html, html]);
+assert.match(String(run.e), /not a WAV \(text\/html.*gave up after 4/, 'a 200 HTML body must be refused, not cached');
+assert.ok(!run.cached.some((f) => f.endsWith('.wav')), `an HTML body was cached: ${run.cached}`);
+run = await net([() => { throw new TypeError('fetch failed', { cause: { code: 'ECONNRESET' } }); }, () => reply(429, 'slow down', 'text/plain', { 'retry-after': '0' }),
+  () => reply(200, wav, 'audio/wav'), () => reply(503, 'busy', 'text/plain'), () => reply(200, JSON.stringify({ results: { channels: [{ alternatives: [{ words: heardAll }] }] } }), 'application/json')]);
+assert.ok(!run.e, `retries should have carried it: ${run.e}`);
+assert.deepEqual(run.calls, ['speak', 'speak', 'speak', 'listen', 'listen']);
+assert.equal(run.r.c.marks[0].anchor, 0.32);
+assert.ok(!run.warns.some((w) => /did not hear/.test(w)), 'a heard anchor must not be warned about');
+run = await net([() => reply(200, wav, 'audio/wav'), () => reply(200, JSON.stringify({ results: { channels: [{ alternatives: [{ words: [] }] }] } }), 'application/json')]);
+assert.ok(run.warns.some((w) => /did not hear the anchor word "cars"/.test(w)), `an unheard anchor must be warned about: ${run.warns}`);
+if (key) process.env.DEEPGRAM_API_KEY = key; else delete process.env.DEEPGRAM_API_KEY;
+
+// 8. Beat-paced clips laid back to back in whole frames: under HyperFrames' rule (shown while
+//    start <= t < start + duration, added in floating point) exactly one clip is on every frame
+//    around every cut, over 2000 random timelines at 30 and 60fps.
+{
+  let seed2 = 11, bad = 0, cuts = 0; const r2 = () => ((seed2 = (seed2 * 16807) % 2147483647) / 2147483647);
+  for (let n = 0; n < 2000; n++) {
+    const fps = r2() < 0.5 ? 30 : 60, spans = [];
+    let f = Math.round(2.5 * fps);
+    for (let k = 0; k < 6; k++) { const d = Math.ceil((1.5 + r2() * 4 + 0.6) * fps - 1e-6); spans.push([f, f + d]); f += d; }
+    const A = clipSpans(spans, fps).map((a) => ({ s: +a.start, d: +a.duration }));
+    for (let k = 1; k < spans.length; k++) {
+      cuts++;
+      for (const fr of [spans[k][0] - 1, spans[k][0]]) if (A.filter((a) => fr / fps >= a.s && fr / fps < a.s + a.d).length !== 1) { bad++; break; }
+    }
+  }
+  assert.equal(bad, 0, `${bad} of ${cuts} cuts have a frame with no clip or two`);
+}
+// 9. Silence measures -inf, which compares (a silent clip passes the ceiling), not NaN.
+{
+  const d = mkdtempSync(join(tmpdir(), 'audio-check-')), f = join(d, 'silent.wav');
+  execFileSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'anullsrc=r=48000:cl=stereo', '-t', '2', f]);
+  const L = loudness({ ffmpeg: process.env.FFMPEG || 'ffmpeg' }, f);
+  assert.ok(L.TP === -Infinity && L.TP <= -1, `silence read ${JSON.stringify(L)}`);
+  rmSync(d, { recursive: true, force: true });
+}
 
 console.log(`audio-check OK: anchors on spotlights, ${freezes.length} freezes in whole frames, located tail at ${got.at}s (truth ${truth.toFixed(3)}, r ${got.r.toFixed(3)})`);

@@ -129,6 +129,39 @@ export function loadConfig(path) {
     if (!(typeof v === 'number' && v >= 0 && v <= 1)) throw new Error(`config: transitions.${k} must be seconds between 0 and 1`);
   }
 
+  // cut "beats": one still per mark, held for its narration line plus beats.pad, jump cuts, silent
+  // cards of beats.cardHold, slide and split beats (chapters[].beats). "continuous" is the footage.
+  const cut = raw.cut ?? 'continuous';
+  if (!['continuous', 'beats'].includes(cut)) throw new Error(`config: cut must be "continuous" or "beats", not "${cut}"`);
+  const beats = { pad: 0.6, lead: 0, cardHold: 2.5, hold: 3, fade: 0, min: 3, max: 6, lineMax: 7, ...(raw.beats || {}) };
+  for (const [k, v] of Object.entries(beats)) {
+    if (!['pad', 'lead', 'cardHold', 'hold', 'fade', 'min', 'max', 'lineMax'].includes(k)) throw new Error(`config: beats.${k} is not a setting`);
+    if (!(typeof v === 'number' && Number.isFinite(v) && v >= 0)) throw new Error(`config: beats.${k} must be a number of seconds >= 0`);
+  }
+  if (!(Number.isInteger(beats.fade) && beats.fade <= 4)) throw new Error('config: beats.fade is a micro-fade in whole frames, 0 (hard cut) to 4');
+  const SLIDES = { title: ['title'], end: ['title'], tiles: ['tiles'], pricing: ['tiers'], steps: ['steps'], devices: [] };
+  const strs = (x) => Array.isArray(x) && x.length && x.every((v) => typeof v === 'string');
+  for (const ch of chapters) {
+    if (ch.beats && !(Array.isArray(ch.beats) && ch.beats.length)) throw new Error(`config: ${ch.name}: beats must be a list of at least one beat`);
+    for (const [i, b] of (ch.beats || []).entries()) {
+      const at = `config: ${ch.name} beat ${i}`;
+      const kinds = ['mark', 'index', 'slide', 'split'].filter((k) => b[k] != null);
+      if (kinds.length !== 1) throw new Error(`${at} needs exactly one of mark, index, slide or split`);
+      if (b.index != null && !(Number.isInteger(b.index) && b.index >= 0)) throw new Error(`${at}: index must be a whole number >= 0`);
+      if (b.split != null && !(Array.isArray(b.split) && b.split.length === 2)) throw new Error(`${at}: split takes two earlier beats, e.g. ["2.3", "2.4"]`);
+      if (b.slide == null) continue;
+      if (!SLIDES[b.slide]) throw new Error(`${at}: slide "${b.slide}" is not one of ${Object.keys(SLIDES).join(', ')}`);
+      for (const k of SLIDES[b.slide]) if (b[k] == null) throw new Error(`${at}: a ${b.slide} slide needs ${k}`);
+      if (b.slide === 'tiles' && !strs(b.tiles)) throw new Error(`${at}: tiles is a list of words`);
+      if (b.slide === 'steps' && !strs(b.steps)) throw new Error(`${at}: steps is a list of words`);
+      if (b.slide === 'pricing' && !(Array.isArray(b.tiers) && b.tiers.length && b.tiers.every((t) => typeof t?.name === 'string' && (t.points == null || strs(t.points)))))
+        throw new Error(`${at}: tiers is a list of { name, price, points: [...], highlight }`);
+      if (b.slide === 'devices' && !['phone', 'tablet', 'web'].some((k) => b[k] != null)) throw new Error(`${at}: a devices slide needs at least one of web, tablet, phone`);
+      for (const k of ['phone', 'tablet', 'web']) if (b[k] != null) { b[k] = abs(b[k]); if (!existsSync(b[k])) throw new Error(`${at}: ${k} image not found: ${b[k]}`); }
+    }
+  }
+  if (cut !== 'beats' && chapters.some((c) => c.beats)) throw new Error('config: chapters[].beats needs "cut": "beats"');
+
   // Proof windows always play at 1x: the spotlight timing and the still-check both assume it.
   const speed = { travel: 2, rampMs: 250, ...(raw.speed || {}) };
   for (const c of [speed, ...chapters.map((ch) => ch.speed || {})]) {
@@ -158,7 +191,9 @@ export function loadConfig(path) {
     // 4 measured 3.4x faster on 8 cores.
     workers: raw.workers ?? 4,
     crf: raw.crf ?? 16,
-    pace, speed,
+    pace, speed, cut, beats,
+    // each chapter also as its own mp4, own loudness pass (audio.mjs); on by default in beat mode
+    clips: raw.clips ?? cut === 'beats',
     targetDuration: raw.targetDuration,
     chapterCardDur: r3((raw.chapterCardDur ?? 2.0) * pace),
     defaultPersona: raw.defaultPersona || '',
@@ -166,7 +201,7 @@ export function loadConfig(path) {
     deadHold: raw.deadHold ?? 2.0,           // freezes longer than this get trimmed
     hold: Object.fromEntries(Object.entries({ min: 1.5, max: 2.2, ...(raw.hold || {}) }).map(([k, v]) => [k, v * pace])),
     layout: { safeMargin: 64, labelHeight: 48, labelGap: 14, maxLabelWords: 6, ...(raw.layout || {}) },
-    check: { litRatio: 0.80, dimRatio: 0.62, contentSd: 8, driftMax: 12, alignMax: 7, glideStep: 0.2, ...(raw.check || {}) },
+    check: { litRatio: 0.80, dimRatio: 0.62, contentSd: 8, driftMax: 12, alignMax: 7, glideStep: 0.2, calloutMin: 12, cutEdge: 0.9, ...(raw.check || {}) },
     theme, displayStack, bodyStack, fontFaces: faces, fontFiles: [...files],
     accentGlow: hexToRgba(theme.accent, 0.40),
     accentEdge: hexToRgba(theme.accent, 0.55),
@@ -174,6 +209,18 @@ export function loadConfig(path) {
     chapters, cards,
     audio: raw.audio ?? {}, configDir: dir,   // read by audio.mjs
   };
+}
+
+// HyperFrames shows a clip at time p when start <= p < start + duration. Back-to-back clips laid
+// out in whole frames [f0, f1) are written as start = f0/fps rounded DOWN to the microsecond and
+// duration ending 1us before f1/fps (also rounded down), so frame f1 (p = f1/fps) is at or past the
+// next clip's start and past this one's end even after start + duration is added in floating
+// point (7.866666 + 4.483334 came to 12.350000000000001, past p = 12.35): exactly one clip on every
+// frame. Rounding start and duration on their own (to the ms, one up, one down) left a blank frame
+// at about one hard cut in five. spans: [[f0, f1], ...] -> attributes.
+export function clipSpans(spans, fps) {
+  const us = (f) => Math.floor(f * 1e6 / fps + 1e-6);
+  return spans.map(([f0, f1]) => ({ start: (us(f0) / 1e6).toFixed(6), duration: ((us(f1) - us(f0) - 1) / 1e6).toFixed(6) }));
 }
 
 // Frames in a video, counted from its packets (exact for the packed segments).
