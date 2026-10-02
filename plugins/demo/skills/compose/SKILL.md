@@ -381,15 +381,23 @@ music file ──▶ hyperframes beats ─▶ card padding, every cut on a beat 
   lines, inside one 30fps frame. On the finished narrated ferry cut, burst against the spotlight
   being fully lit was -23ms to +8ms at all five anchors. A weak match (correlation under 0.8)
   falls back to the recogniser's time and says so.
-- **Deepgram voices** (`"tts": "deepgram"`): Aura-2 over HTTPS, one request per line, 48kHz WAV,
-  retried on 429 and 5xx. The key is read from `DEEPGRAM_API_KEY` only, never from a config file;
+- **Deepgram voices** (`"tts": "deepgram"`): Aura-2 over HTTPS, one request per line, 48kHz WAV.
+  Every request (speak and listen) gets up to 4 attempts of 60s each, retried on a dropped
+  connection, a 429 or a 5xx (waiting as long as Retry-After asks, at most 30s, else 1, 2, 4s),
+  and a clip is cached only once it is a WAV: a 200 carrying an HTML page or a cut-off body is
+  refused and retried, never kept as the line. The key is read from `DEEPGRAM_API_KEY` only, never from a config file;
   without it a run that has a line to speak stops before speaking anything and names the variable,
   and a run whose lines are all cached needs no key. Each clip is cached by sha256 of text, voice
   and rate (`work/audio/tts/dg-*.wav`), so a re-render, a re-timing or a new anchor never re-bills
-  a line. `voice` is any Aura-2 model; `speed` is refused (Aura-2 has its own pace). Word times
+  a line. `voice` is any Aura model (anything else, such as the local default `af_heart` left in,
+  is refused before a request); a `speed` other than 1 is refused (Aura-2 has its own pace). Word times
   come from Deepgram's recogniser (nova-3, `/v1/listen`, cached beside the clip), and the anchor
   is its word start: the tail match above needs the tail spoken as the line spoke it, and Aura-2
-  re-speaks it differently. Measured on 14 anchors (the ferry's five and nine more lines), each
+  re-speaks it differently. The recogniser listens in the voice's language (the `-en` of the
+  model), without smart formatting, so a number spelled out in the line is heard back as words.
+  An anchor word it did not hear has only an interpolated time, and compose warns: reword the
+  line or move the anchor. Compose speaks only the lines of the segments it was asked for, unless
+  their lengths decide other segments' timing (a music bed, `targetDuration`). Measured on 14 anchors (the ferry's five and nine more lines), each
   estimate read against the word's audible onset on a spectrogram: listen within about 20ms on
   13, the 14th ("the block", at the b's closure) 110ms early; `hyperframes transcribe` up to
   270ms early; the tail match under r 0.8 on 3 and on the wrong word on 3 (up to 390ms). The
