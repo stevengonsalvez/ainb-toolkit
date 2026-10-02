@@ -306,7 +306,9 @@ async function film({ base, state, out, viewport = { width: 1280, height: 720 },
         // A mark is the handoff to the compositor: what to point at, and when.
         if (step.mark) {
           lastMark = await rectOf(await find(step.mark.on, 'mark', name));
-          events.push({ t: rec.now(), kind: 'mark', label: step.mark.label, rect: lastMark, cam: rec.cam });
+          // `id` names the mark for compose (a beat-paced cut orders beats by it); kept as written.
+          events.push({ t: rec.now(), kind: 'mark', ...(step.mark.id != null && { id: String(step.mark.id) }),
+            label: step.mark.label, rect: lastMark, cam: rec.cam });
         }
         if (step.hold) await rec.hold(P(step.hold), lastMark);
         timing.push({ beat: name, ms: Date.now() - beatT0 });

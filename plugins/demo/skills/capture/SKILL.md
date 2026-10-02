@@ -212,7 +212,7 @@ A beat is an object; keys run in this fixed order within one beat:
 | `type` | `{into: target, text, cps=12}` | glide to the field, click it, type `text` key by key at `cps` characters per second (`type()`, never `fill()`, so the viewer sees it typed), then wait like a click: `ready`, else network quiet, then `settle` |
 | `zoom` | `{on: target, scale=2, ms=700}` | move the camera onto the element centre on a spring (see Motion); the beat goes on once it has settled. `ms: 0` is a cut |
 | `wide` | `true` or ms | camera back to full frame, same spring |
-| `mark` | `{label, on: target}` | push an event into events.json (after zoom/wide) |
+| `mark` | `{label, on: target, id}` | push an event into events.json (after zoom/wide). `id` (optional) is copied onto the event as a string, so compose can name the mark (`{ "mark": "4.2" }`) instead of counting it |
 | `hold` | ms | keep filming. Deterministic: the pointer parks just off the lower right corner of the mark made in this beat (inside the camera box) and stays still. Screencast: the pointer drifts, which keeps frames coming (fact 1) |
 
 Order: goto, click, wait (ready or network quiet), settle, expectPath, [filming starts here on beat 0], scroll, type, zoom, wide, mark, hold.
@@ -492,6 +492,7 @@ without them: treat all four as optional. A consumer that reads only marks filte
   at 30 bytes each, about 190 KB for a 5-minute take filmed at that rate (49 bytes each when they
   were indented like the rest). Screencast takes and takes filmed before it have none, and
   compose falls back to `cam` and the camera events.
+- `id`: the mark's `id` from the beats file, as a string; absent when the beat gave none.
 - `rect`: element box in page CSS px (layout viewport, `getBoundingClientRect`); unaffected by the camera.
 - `cam`: camera at that moment. `null` = full frame. Otherwise `{x, y, w, h}` visible region in CSS px and `s` scale.
 - Frame position of a rect: `screenX = (rect.x - cam.x) * cam.s`, `screenY = (rect.y - cam.y) * cam.s`, size `* cam.s`. With `cam: null` it is `rect` as-is. (Checked on the sample: `(655 - 360) * 2 = 590`, where the nav's top edge sits in the zoomed frame.)
