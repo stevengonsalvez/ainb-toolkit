@@ -20,7 +20,7 @@ const ROLE_OF = { A: 'link', BUTTON: 'button', SELECT: 'combobox', TEXTAREA: 'te
 
 export function toLocator(page, t) {
   if (typeof t === 'string') return page.locator(t);
-  const base = t.in ? toLocator(page, t.in).first() : page;
+  const base = t.in ? toLocator(page, t.in) : page;              // inside any element it matches
   if (t.role) return base.getByRole(t.role, t.name != null ? { name: t.name, exact: true } : {});
   if (t.testid) return base.getByTestId(t.testid);
   if (t.text) return base.getByText(t.text, { exact: true });
@@ -90,44 +90,50 @@ async function nearest(page, chain, k = 6) {
     .sort((a, b) => b.s - a.s).slice(0, k).map((c) => c.key);
 }
 
-// The element's role (its own role attribute, else the implicit one for its tag) and accessible
-// name from the accessibility tree, and its test id. Null role for a plain container.
-async function identify(loc) {
+// The element's role and accessible name as the accessibility tree has them (the first line of
+// its aria snapshot, so an input type=search is a searchbox and a button holding an img alt="Save"
+// is named Save), its test id, and the landmark around it. Role and name are null for a plain
+// container: its snapshot's first line is a child's, so the tag decides whether to read it.
+export async function identify(loc) {
   const el = await loc.evaluate((n, ROLE_OF) => {
-    const type = (n.getAttribute('type') || '').toLowerCase();
-    const role = n.getAttribute('role') || (n.tagName === 'A' && !n.hasAttribute('href') ? null : n.tagName === 'INPUT'
-      ? (['button', 'submit', 'reset'].includes(type) ? 'button' : ['checkbox', 'radio'].includes(type) ? type : 'textbox') : ROLE_OF[n.tagName] || null);
+    const own = !!(n.getAttribute('role') || n.tagName === 'INPUT' || (n.tagName === 'A' ? n.hasAttribute('href') : ROLE_OF[n.tagName]));
     // the nearest landmark around it, to scope a role and name that is not unique on the page
     const lm = n.parentElement?.closest('nav,header,main,footer,aside,form,[role=navigation],[role=banner],[role=main],[role=contentinfo],[role=complementary],[role=form]');
     const LM = { NAV: 'navigation', HEADER: 'banner', MAIN: 'main', FOOTER: 'contentinfo', ASIDE: 'complementary', FORM: 'form' };
-    return { role, testid: n.getAttribute('data-testid'), landmark: lm ? lm.getAttribute('role') || LM[lm.tagName] : null };
-  }, ROLE_OF);
-  if (el.role) {
-    const first = (await loc.ariaSnapshot({ timeout: 2000 }).catch(() => '')).split('\n')[0];
-    const m = first.match(/^\s*- ([a-z]+)(?: "((?:[^"\\]|\\.)*)")?/);
-    el.name = m && m[1] === el.role && m[2] ? m[2].replace(/\\"/g, '"') : null;
+    return { own, testid: n.getAttribute('data-testid'), landmark: lm ? lm.getAttribute('role') || LM[lm.tagName] : null };
+  }, ROLE_OF, { timeout: 2000 });
+  el.role = el.name = null;
+  if (el.own) {
+    const m = (await loc.ariaSnapshot({ timeout: 2000 }).catch(() => '')).split('\n')[0].match(/^\s*- ([a-z]+)(?: "((?:[^"\\]|\\.)*)")?/);
+    if (m) { el.role = m[1]; el.name = m[2] ? JSON.parse(`"${m[2]}"`) : null; }
   }
   return el;
 }
 
 // The steadiest single locator for a resolved element: role and name (inside its landmark when
-// the page has others like it), else test id, when that finds it alone; null when only a selector
-// will do.
-export async function better(page, loc) {
-  const el = await identify(loc);
-  const alone = async (t) => (await toLocator(page, t).filter({ visible: true }).count()) === 1;
-  if (el.role) {
-    const t = el.name ? { role: el.role, name: el.name } : { role: el.role };
-    if (await alone(t)) return t;
-    if (el.landmark) { const u = { ...t, in: { role: el.landmark } }; if (await alone(u)) return u; }
-  }
-  if (el.testid) { const t = { testid: el.testid }; if (await alone(t)) return t; }
-  return null;
+// the page has others like it), else test id, when that finds this very element and nothing else;
+// null when only a selector will do. Pass identify()'s result when it is already to hand.
+export async function better(page, loc, el = null) {
+  el ??= await identify(loc);
+  const handle = await loc.elementHandle({ timeout: 2000 });
+  const same = async (t) => {
+    const vis = toLocator(page, t).filter({ visible: true });
+    return (await vis.count()) === 1 && vis.evaluate((n, h) => n === h, handle);
+  };
+  try {
+    if (el.role) {
+      const t = el.name ? { role: el.role, name: el.name } : { role: el.role };
+      if (await same(t)) return t;
+      if (el.landmark) { const u = { ...t, in: { role: el.landmark } }; if (await same(u)) return u; }
+    }
+    if (el.testid) { const t = { testid: el.testid }; if (await same(t)) return t; }
+    return null;
+  } finally { await handle.dispose(); }
 }
 
 // A target as it is written in a beats file.
-export const source = (t) => (typeof t === 'string' ? `'${t.replace(/'/g, "\\'")}'`
-  : `{ ${Object.entries(t).map(([k, v]) => `${k}: ${typeof v === 'object' ? source(v) : `'${String(v).replace(/'/g, "\\'")}'`}`).join(', ')} }`);
+export const source = (t) => (typeof t === 'string' ? JSON.stringify(t)
+  : `{ ${Object.entries(t).map(([k, v]) => `${k}: ${typeof v === 'object' ? source(v) : JSON.stringify(String(v))}`).join(', ')} }`);
 
 // Lint: a selector (a lone string, or a chain that matched on a css entry) where a role or test id
 // would find the same element. Selectors break when markup or class names change; roles and test
@@ -140,7 +146,8 @@ export async function lintTarget(page, target, hit) {
 }
 
 // Everything on the page a beat might target: interactive elements, landmarks, headings, tables,
-// anything with an id or a test id. Each with its role, name, test id, id, rect (CSS px) and the
+// anything with an id or a test id. The top document only: open shadow roots and iframes are not
+// walked (target inside them with a selector, or `in:` an element that holds them). Each with its role, name, test id, id, rect (CSS px) and the
 // chain to use for it (steadiest first). For the authoring procedure in SKILL.md.
 export async function inventory(page) {
   const items = await page.evaluate((ROLE_OF) => {
@@ -159,7 +166,7 @@ export async function inventory(page) {
     const loc = page.locator(`[data-demo-inv="${it.i}"]`);
     const el = await identify(loc);
     const chain = [];
-    const b = await better(page, loc);
+    const b = await better(page, loc, el);
     if (b) chain.push(b);
     if (it.testid && !b?.testid) chain.push({ testid: it.testid });
     if (it.id) chain.push(`#${it.id}`);

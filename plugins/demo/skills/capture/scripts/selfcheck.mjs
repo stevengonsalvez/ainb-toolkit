@@ -28,6 +28,8 @@ const pages = {
   '/hide': `<body style="margin:0;background:${BG};height:100vh"><input id="h" placeholder="short" aria-label="Departure port for the outbound crossing you want" style="position:absolute;left:100px;top:100px" oninput="if (this.value === 'go') this.style.display = 'none'"></body>`,
   // A full-page modal that a seeded localStorage key removes, over the button a beat clicks.
   '/consent': `<body style="margin:0;background:${BG};height:100vh"><button id="go" style="margin:200px">go</button><div id="modal" style="position:fixed;inset:0;background:#000"></div><script>if (localStorage.getItem('consent') === 'yes') document.getElementById('modal').remove()</script></body>`,
+  // Two navigations with a link of the same name, and a search field beside a text field.
+  '/navs': `<body style="margin:0;background:${BG};height:100vh"><header><nav><a href="#h">Home</a></nav></header><input type="search" id="s" aria-label="Find"><input id="t" aria-label="Name"><footer><nav><a href="#f">Home</a></nav></footer></body>`,
   // Turns white once the input holds exactly the typed text: the last frame proves the type beat.
   '/type': `<body style="margin:0;background:${BG};height:100vh"><input id="q" style="margin:200px;font-size:30px" oninput="if (this.value === 'ferry times') document.body.style.background = '#fff'"></body>`,
   // A login form, and a home page that sends logged-out visitors to /welcome, not to /login.
@@ -339,6 +341,15 @@ try {
   fs.writeFileSync(consent, `export default ${JSON.stringify({ base, out: path.join(out, 'consent'), localStorage: { consent: 'yes' }, chapters: [{ name: 'c', beats: [{ goto: '/consent' }, { name: 'go', click: '#go' }] }] })};`);
   dr = await node([runMjs, consent, '--dry-run']);
   assert.ok(dr.status === 0, `dry run with a seeded consent key: exit ${dr.status}\n${dr.out}`);
+  //     The selector lint suggests only a locator that finds this very element: not the header's
+  //     Home link for the footer's, and searchbox (its real role) for a search field.
+  const navs = path.join(out, 'navs.beats.mjs');
+  fs.writeFileSync(navs, `export default ${JSON.stringify({ base, out: path.join(out, 'navs'), chapters: [{ name: 'c', beats: [{ goto: '/navs' },
+    { name: 'foot', mark: { label: 'home', on: 'footer a' } }, { name: 'find', mark: { label: 'find', on: '#s' } }] }] })};`);
+  dr = await node([runMjs, navs, '--dry-run']);
+  const lints = dr.out.split('\n').filter(l => /lint:/.test(l));
+  assert.ok(dr.status === 0 && !lints.some(l => /beat "foot"/.test(l)) && lints.some(l => /beat "find".*\{ role: "searchbox", name: "Find" \}/.test(l)) && !lints.some(l => /textbox/.test(l)),
+    `lint suggestions: ${JSON.stringify(lints)}`);
   dr = await node([runMjs, broken]);
   assert.ok(dr.status === 1 && !fs.existsSync(path.join(out, 'dry-broken')), `a broken file filmed: exit ${dr.status}\n${dr.out}`);
   //     And on the ferry example beside this skill, when it is there: green, in seconds.
