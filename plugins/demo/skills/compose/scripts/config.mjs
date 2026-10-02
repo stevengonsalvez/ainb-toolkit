@@ -192,10 +192,12 @@ export function seams(C) {
 }
 // Where the footage "screen" sits: inside the framed window (padded, scaled by ws) or full
 // bleed. Design px, plus the same rect in canvas px for reading rendered frames.
+// sw x sh is the screen's own size in design px (what compose lays spotlights and labels out in,
+// and check.mjs measures in), shown at ws inside the window.
 export function screenRect(C) {
   const pad = C.frame ? C.frame.padding : 0, ws = (C.dw - 2 * pad) / C.dw, padY = (C.dh - C.dh * ws) / 2;
   const z = C.zoom;
-  return { pad, padY, ws, canvas: [Math.round(pad * z), Math.round(padY * z), Math.round(C.dw * ws * z), Math.round(C.dh * ws * z)] };
+  return { pad, padY, ws, sw: C.dw, sh: C.dh, canvas: [Math.round(pad * z), Math.round(padY * z), Math.round(C.dw * ws * z), Math.round(C.dh * ws * z)] };
 }
 // Head and tail transitions of one segment.
 export function seamsOf(C, name) {

@@ -19,10 +19,10 @@ import { loadConfig, segmentNames, screenRect, frameCount, r3, hexToRgb, grayFra
 const cfgPath = process.argv[2];
 if (!cfgPath) { console.error('usage: check.mjs <config.json> [chapter ...]'); process.exit(2); }
 const C = loadConfig(cfgPath);
-// Measured in design px (C.dw x C.dh), the space compose lays out in: a rendered frame is cropped
+// Measured in the screen's design px, the space compose lays out in: a rendered frame is cropped
 // to the footage's screen (inside the framed window, or the whole frame when full bleed) and
 // scaled to it, so every threshold below means the same thing at draft and at the 1440p master.
-const W = C.dw, H = C.dh, K = C.check, SCREEN = screenRect(C).canvas;
+const SR = screenRect(C), W = SR.sw, H = SR.sh, K = C.check, SCREEN = SR.canvas;
 
 // Captions on the contact tiles need drawtext (libfreetype), which some ffmpeg builds lack, a
 // Homebrew one included. They are for human eyes only: the verdict never depends on them.

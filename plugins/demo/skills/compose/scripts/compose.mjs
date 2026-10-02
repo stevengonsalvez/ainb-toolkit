@@ -88,7 +88,7 @@ function keep(dur, cuts) {
 // #bg backdrop and grain (shared by every segment, so a crossfade between two segments only moves
 // content), then #content: cards, and the framed window holding the footage, spotlight and labels.
 const T = C.theme, FR = C.frame, Z = C.zoom;
-const SR = screenRect(C), WS = SR.ws, PAD = SR.pad, PADY = SR.padY;
+const SR = screenRect(C), WS = SR.ws, PAD = SR.pad, PADY = SR.padY, SCW = SR.sw, SCH = SR.sh;   // the screen, see config.mjs
 const BACK = FR ?? { backdrop: 'glow', grain: 0.045 };
 const faces = C.fontFaces.join('\n');
 const tint = (hex, a) => hexToRgba(hex, a);
@@ -109,7 +109,7 @@ function squircle(w, h, r, k = 10) {
   }
   return `polygon(${pts.map(([x, y]) => `${r3(x)}px ${r3(y)}px`).join(', ')})`;
 }
-const WW = W * WS, WH = H * WS, R = FR ? FR.radius : 0, SH = FR ? FR.shadow : 0;
+const WW = SCW * WS, WH = SCH * WS, R = FR ? FR.radius : 0, SH = FR ? FR.shadow : 0;
 const ink = (a) => tint(T.text, a);
 const shadow = SH ? `0 0 0 1px ${ink(0.08 * SH)}, 0 1px 2px ${ink(0.16 * SH)}, 0 10px 24px ${ink(0.14 * SH)}, 0 36px 80px ${ink(0.22 * SH)}` : 'none';
 const SP = C.spotlight, FE = SP.feather;
@@ -132,7 +132,7 @@ html, body { width: ${C.width}px; height: ${C.height}px; overflow: hidden; backg
 .win { position: absolute; inset: 0; ${R ? `clip-path: ${squircle(WW, WH, R)};` : ''} }
 /* zoom, not transform: scale(): under a scaled ancestor Chrome mirrors the spotlight's
    backdrop-filter at the unscaled bounds (whole words reflected at the edges, measured). */
-.screen { position: absolute; left: 0; top: 0; width: ${W}px; height: ${H}px; zoom: ${r3(WS)}; background: ${T.bg}; }
+.screen { position: absolute; left: 0; top: 0; width: ${SCW}px; height: ${SCH}px; zoom: ${r3(WS)}; background: ${T.bg}; }
 .cam { position: absolute; left: 0; top: 0; }
 .foot { position: absolute; inset: 0; width: 100%; height: 100%; }
 .sl { position: absolute; inset: 0; opacity: 0; visibility: hidden; pointer-events: none; --x: 0px; --y: 0px; --w: 0px; --h: 0px; }
@@ -460,13 +460,13 @@ function renderFootage(an, rt, out, scale) {
 // view {s, x, y}: footage scaled by s and placed at x, y, chosen so the spotlit rect fits with room
 // for its label. The view is still inside a window, so spotlights stay put; it eases between windows.
 function viewFor(an, fr) {
-  const sMin = Math.min(W / an.srcW, H / an.srcH), sMax = Math.max(W / an.srcW, H / an.srcH);
+  const sMin = Math.min(SCW / an.srcW, SCH / an.srcH), sMax = Math.max(SCW / an.srcW, SCH / an.srcH);
   if (sMax - sMin < 1e-6) return { s: sMin, x: 0, y: 0 };
   const LH = C.layout.labelHeight, GAP = C.layout.labelGap;
-  const s = Math.max(sMin, Math.min(sMax, (W - 2 * SAFE) / fr.w, (H - 2 * SAFE - LH - GAP) / fr.h));
+  const s = Math.max(sMin, Math.min(sMax, (SCW - 2 * SAFE) / fr.w, (SCH - 2 * SAFE - LH - GAP) / fr.h));
   const fw = an.srcW * s, fh = an.srcH * s, cx = fr.x + fr.w / 2, cy = fr.y + fr.h / 2;
-  const x = fw <= W ? (W - fw) / 2 : Math.min(0, Math.max(W - fw, W / 2 - cx * s));
-  const y = fh <= H ? (H - fh) / 2 : Math.min(0, Math.max(H - fh, H / 2 - cy * s));
+  const x = fw <= SCW ? (SCW - fw) / 2 : Math.min(0, Math.max(SCW - fw, SCW / 2 - cx * s));
+  const y = fh <= SCH ? (SCH - fh) / 2 : Math.min(0, Math.max(SCH - fh, SCH / 2 - cy * s));
   return { s: r3(s), x: r3(x), y: r3(y) };
 }
 
@@ -546,21 +546,21 @@ function chapter(an, sp) {
   const labels = an.spots.map((s) => {
     const fr = s.fr, v = s.view;
     let x = fr.x * v.s + v.x - 8, y = fr.y * v.s + v.y - 8, w = fr.w * v.s + 16, h = fr.h * v.s + 16;
-    const x2 = Math.min(W - 6, x + w), y2 = Math.min(H - 6, y + h);
+    const x2 = Math.min(SCW - 6, x + w), y2 = Math.min(SCH - 6, y + h);
     x = Math.max(6, x); y = Math.max(6, y); w = x2 - x; h = y2 - y;
     const lw = s.label.length * 12.2 + 44;
     // DEFECT 2 guard: a label must not cover its own spotlight. Try each side outside the
     // cut-out inside the safe margin; if nothing fits, crop the cut-out instead of overlapping.
     const cands = [
-      ['below', H - SAFE - (y + h + GAP) >= LH, { left: Math.min(Math.max(x, SAFE), W - SAFE - lw), top: y + h + GAP }],
-      ['above', y - GAP - LH >= SAFE, { left: Math.min(Math.max(x, SAFE), W - SAFE - lw), top: y - GAP - LH }],
-      ['right', W - SAFE - (x + w + GAP) >= lw, { left: x + w + GAP, top: Math.min(Math.max(y, SAFE), H - SAFE - LH) }],
-      ['left', x - GAP - lw >= SAFE, { left: x - GAP - lw, top: Math.min(Math.max(y, SAFE), H - SAFE - LH) }],
+      ['below', SCH - SAFE - (y + h + GAP) >= LH, { left: Math.min(Math.max(x, SAFE), SCW - SAFE - lw), top: y + h + GAP }],
+      ['above', y - GAP - LH >= SAFE, { left: Math.min(Math.max(x, SAFE), SCW - SAFE - lw), top: y - GAP - LH }],
+      ['right', SCW - SAFE - (x + w + GAP) >= lw, { left: x + w + GAP, top: Math.min(Math.max(y, SAFE), SCH - SAFE - LH) }],
+      ['left', x - GAP - lw >= SAFE, { left: x - GAP - lw, top: Math.min(Math.max(y, SAFE), SCH - SAFE - LH) }],
     ];
     let pick = cands.find((k) => k[1]);
     if (!pick) {
-      h = H - SAFE - LH - GAP - y;
-      pick = ['below-cropped', true, { left: Math.min(Math.max(x, SAFE), W - SAFE - lw), top: y + h + GAP }];
+      h = SCH - SAFE - LH - GAP - y;
+      pick = ['below-cropped', true, { left: Math.min(Math.max(x, SAFE), SCW - SAFE - lw), top: y + h + GAP }];
     }
     s.box = [x, y, w, h].map(r3); s.dir = pick[0];
     report.push({
