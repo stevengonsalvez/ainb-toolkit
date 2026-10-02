@@ -1,5 +1,5 @@
 {
-  "name": "agysw",
+  "name": "agytoggle",
   "version": "1.0.0",
   "description": "Multi-account session rotation and credential profile switcher for Google Antigravity CLI (agy)",
   "author": {
@@ -15,6 +15,7 @@
     "agy",
     "multi-account",
     "keyring",
-    "credential-switching"
+    "credential-switching",
+    "agytoggle"
   ]
 }
