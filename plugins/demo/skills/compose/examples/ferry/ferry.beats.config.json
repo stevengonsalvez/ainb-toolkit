@@ -1,0 +1,171 @@
+{
+  "name": "skerry-ferries-beats",
+  "takes": "./takes",
+  "out": "./compose-beats",
+  "theme": {
+    "bg": "#F4F1EA",
+    "surface": "#FFFFFF",
+    "accent": "#0B6E4F",
+    "highlight": "#C2410C",
+    "text": "#12241E",
+    "muted": "#5B6B63",
+    "fonts": {
+      "display": {
+        "file": "fonts/fraunces-700.woff2",
+        "family": "Fraunces",
+        "weight": "600 700"
+      },
+      "body": {
+        "file": "fonts/plex-500.woff2",
+        "family": "IBM Plex Sans",
+        "weight": "500 600"
+      }
+    }
+  },
+  "cut": "beats",
+  "chapters": [
+    {
+      "name": "open",
+      "title": "Skerry Ferries",
+      "card": false,
+      "beats": [
+        {
+          "slide": "title",
+          "kicker": "Service walkthrough",
+          "title": "Skerry Ferries, live board",
+          "note": "Example data"
+        },
+        {
+          "slide": "tiles",
+          "title": "Four questions at the pier",
+          "label": "Four questions",
+          "tiles": [
+            "Is it late?",
+            "Is there space?",
+            "What does it cost?",
+            "What proof?"
+          ]
+        },
+        {
+          "slide": "devices",
+          "label": "One board",
+          "web": "slides/web.png",
+          "tablet": "slides/tablet.png",
+          "phone": "slides/phone.png"
+        }
+      ],
+      "narration": {
+        "marks": [
+          "This is the Skerry Ferries live board.",
+          "Every passenger at the pier asks the same four questions.",
+          "One board answers them, on the web, a tablet and a phone."
+        ]
+      }
+    },
+    {
+      "name": "departures",
+      "title": "The live board",
+      "persona": "Foot passenger · Mairi",
+      "beats": [
+        {
+          "index": 0,
+          "id": "late"
+        },
+        {
+          "index": 1,
+          "id": "space"
+        },
+        {
+          "split": [
+            "late",
+            "space"
+          ]
+        },
+        {
+          "index": 2
+        }
+      ],
+      "narration": {
+        "marks": [
+          "The two twenty sailing is running twelve minutes late.",
+          "Only six cars can still get on board.",
+          "Lateness and space, side by side.",
+          "All four sailings, each with its current status."
+        ]
+      }
+    },
+    {
+      "name": "fares",
+      "title": "What it costs",
+      "persona": "Foot passenger · Mairi",
+      "labels": [
+        "Single and return per ticket",
+        "Resident fare needs proof"
+      ],
+      "narration": {
+        "marks": [
+          "Every ticket lists a single and a return fare.",
+          "The island resident fare needs proof of address."
+        ]
+      }
+    },
+    {
+      "name": "close",
+      "title": "Close",
+      "card": false,
+      "beats": [
+        {
+          "slide": "steps",
+          "title": "Getting started",
+          "label": "Three steps",
+          "steps": [
+            "Open the board",
+            "Pick a sailing",
+            "Check the fare"
+          ]
+        },
+        {
+          "slide": "pricing",
+          "title": "Fares",
+          "label": "Residents pay less",
+          "tiers": [
+            {
+              "name": "Single",
+              "price": "£4.80",
+              "points": [
+                "Foot passenger"
+              ]
+            },
+            {
+              "name": "Return",
+              "price": "£8.40",
+              "points": [
+                "Foot passenger"
+              ],
+              "highlight": true
+            },
+            {
+              "name": "Resident",
+              "price": "£2.10",
+              "points": [
+                "Proof of address"
+              ]
+            }
+          ]
+        },
+        {
+          "slide": "end",
+          "title": "Sail informed",
+          "url": "skerry-ferries.example"
+        }
+      ],
+      "narration": {
+        "marks": [
+          "Getting started takes three steps.",
+          "Residents pay less, with proof of address.",
+          "Sail informed, with Skerry Ferries."
+        ]
+      }
+    }
+  ]
+}
