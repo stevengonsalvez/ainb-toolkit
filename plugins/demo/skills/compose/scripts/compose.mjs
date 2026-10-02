@@ -744,9 +744,10 @@ function chapter(an, sp) {
       // mark's rect to this one's, and each frame draws that page rect where the capture camera
       // filmed it that frame (the per-frame poses in events.json), so a camera move carries the
       // hole with the content under it. An eased tween in frame space slid over the content
-      // while the camera moved (measured in SKILL.md). Progress follows the camera spring: how
-      // far the camera has come from its pose at the last mark to its pose at this one (centre
-      // distance plus log zoom), never going back. The camera often rests mid-glide, zoomed out
+      // while the camera moved (measured in SKILL.md). Progress follows the camera spring: the
+      // length of the camera's path so far (centre distance plus log zoom, frame to frame) over
+      // the whole path's, so it never jumps, also when the camera ends where it started (a zoom
+      // out and back between two marks). The camera often rests mid-glide, zoomed out
       // between two marks, and a hole tied to it alone stopped half way across two cards, so the
       // old power3 ease of time is a floor. A small correction, shrinking to nothing at each end,
       // keeps the two end boxes exactly the marks' own (a box can be cropped for a label).
@@ -757,17 +758,19 @@ function chapter(an, sp) {
       const lerp = (a, b, u) => ({ x: a.x + (b.x - a.x) * u, y: a.y + (b.y - a.y) * u, w: a.w + (b.w - a.w) * u, h: a.h + (b.h - a.h) * u });
       const at = (u, c) => boxOf(onFrame(lerp(p.m.rect, s.m.rect, u), c), s.view);
       const e0 = p.box.map((v, i) => v - at(0, cA)[i]), e1 = s.box.map((v, i) => v - at(1, cB)[i]);
-      const trace = [];
+      const trace = [], f0 = Math.ceil(g0 * C.fps), f1 = Math.floor(arrive * C.fps), path = [0];
+      for (let f = f0 + 1; f <= f1; f++) path.push(path.at(-1) + dist(camC((f - 1) / C.fps), camC(f / C.fps)));
+      const L = path.at(-1);
       let u = 0;
-      for (let f = Math.ceil(g0 * C.fps); f <= Math.floor(arrive * C.fps); f++) {
-        const t = f / C.fps, c = camC(t), dA = dist(c, cA), dB = dist(c, cB);
+      for (let f = f0; f <= f1; f++) {
+        const t = f / C.fps, c = camC(t), along = L > 1e-9 ? path[f - f0] / L : 0;
         const x = Math.min(1, Math.max(0, (t - g0) / Math.max(1e-6, arrive - g0)));
         const eased = x < 0.5 ? 4 * x ** 3 : 1 - (-2 * x + 2) ** 3 / 2; // power3.inOut, as the tween was
-        u = Math.max(u, eased, dA + dB > 1e-9 ? dA / (dA + dB) : 0);
+        u = Math.max(u, eased, along);
         const b = at(u, c).map((v, i) => r3(v + (1 - u) * e0[i] + u * e1[i]));
         // COMPOSE_TRACE=1 writes, per glide frame, this hole and the page rect it rides, and what
         // the old frame-space tween drew and the page rect at its progress, for SKILL.md's numbers
-        if (process.env.COMPOSE_TRACE) trace.push({ t: r3(t), u: r3(u), cam: r3(dA + dB > 1e-9 ? dA / (dA + dB) : 0), hole: b, content: at(u, c).map(r3), tween: p.box.map((v, i) => r3(v + (s.box[i] - v) * eased)), under: at(eased, c).map(r3) });
+        if (process.env.COMPOSE_TRACE) trace.push({ t: r3(t), u: r3(u), cam: r3(along), hole: b, content: at(u, c).map(r3), tween: p.box.map((v, i) => r3(v + (s.box[i] - v) * eased)), under: at(eased, c).map(r3) });
         // set a hair before the frame's own time, so float error never lands it a frame late
         lines.push(`tl.set(${sl}, { ${vars(b)} }, ${(t - 1e-4).toFixed(6)});`);
       }
