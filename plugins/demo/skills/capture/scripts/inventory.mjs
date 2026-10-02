@@ -35,7 +35,7 @@ if (/^https?:/.test(a)) {
   items = r.inventory; where = `${chapter} after beat ${ch.beats[k].name || `#${k}`}`;
 }
 if (json) { console.log(JSON.stringify(items, null, 1)); process.exit(0); }
-console.log(`${items.length} targets on ${where}`);
+console.log(`${items.length} targets on ${where}${items.skipped ? ` (skipped ${items.skipped} re-rendered node${items.skipped > 1 ? 's' : ''})` : ''}`);
 for (const it of items) {
   const what = `${it.role || it.tag}${it.name ? ` "${it.name}"` : ''}`, r = it.rect;
   console.log(`  ${what.slice(0, 44).padEnd(44)} ${`${r.x},${r.y} ${r.w}x${r.h}`.padEnd(18)} ${it.chain.length ? `[${it.chain.map(source).join(', ')}]` : `(text: ${it.text || 'none'})`}`);

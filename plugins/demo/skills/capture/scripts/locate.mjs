@@ -163,18 +163,27 @@ export async function inventory(page) {
     }).filter(Boolean);
   }, ROLE_OF);
   const out = [];
+  let skipped = 0;
   for (const it of items) {
     const loc = page.locator(`[data-demo-inv="${it.i}"]`);
-    // A node the app re-rendered since the walk above is gone; the fresh one is not a target yet.
-    const el = await identify(loc).catch(() => null);
-    if (!el) continue;
-    const chain = [];
-    const b = await better(page, loc, el);
-    if (b) chain.push(b);
-    if (it.testid && !b?.testid) chain.push({ testid: it.testid });
-    if (it.id) chain.push(`#${it.id}`);
-    out.push({ role: el.role, name: el.name, testid: it.testid, id: it.id, tag: it.tag, rect: it.rect, text: it.text, chain });
+    // A node the app re-rendered since the walk above is gone (or goes mid-way, timing out a
+    // locator call); the fresh one is not a target yet. Counting first keeps a page that swapped
+    // many nodes from costing a 2s timeout each. Any other error is real and propagates.
+    try {
+      if (!(await loc.count())) { skipped++; continue; }
+      const el = await identify(loc);
+      const chain = [];
+      const b = await better(page, loc, el);
+      if (b) chain.push(b);
+      if (it.testid && !b?.testid) chain.push({ testid: it.testid });
+      if (it.id) chain.push(`#${it.id}`);
+      out.push({ role: el.role, name: el.name, testid: it.testid, id: it.id, tag: it.tag, rect: it.rect, text: it.text, chain });
+    } catch (e) {
+      if (e?.name !== 'TimeoutError') throw e;
+      skipped++;
+    }
   }
+  out.skipped = skipped;
   await page.evaluate(() => document.querySelectorAll('[data-demo-inv]').forEach((n) => n.removeAttribute('data-demo-inv')));
   return out;
 }
