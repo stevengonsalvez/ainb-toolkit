@@ -6,6 +6,7 @@ import http from 'http'; import fs from 'fs'; import os from 'os'; import path f
 import assert from 'assert/strict'; import { execFileSync, execFile, spawn } from 'child_process'; import { fileURLToPath } from 'url';
 import { chromium } from '@playwright/test';
 import { capture, checkPath, ensureState, overlay } from './capture.mjs';
+import { inventory } from './locate.mjs';
 import { Camera, Cursor, spring1d, CAMERA, CURSOR, SNAPPY } from './motion.mjs';
 import { narrativeLint, composeFor } from './narrative.mjs';
 
@@ -18,6 +19,9 @@ const pages = {
   // Tall page with a white block (bigger than the 2x camera box) far below the fold: zooming on it after a scroll must film it.
   '/tall': `<body style="margin:0;background:${BG};height:3000px"><div id="w" style="position:absolute;top:2000px;left:290px;width:700px;height:400px;background:#fff"></div></body>`,
   '/news': `<body style="background:${BG}">news</body>`,
+  // Re-renders its buttons every 20ms, as a polling dashboard does: an inventory walk meets nodes
+  // that are gone by the time it asks about them.
+  '/swap': `<body style="margin:0;background:${BG};height:100vh"><div id="list"></div><script>const r = () => document.getElementById('list').innerHTML = Array.from({ length: 60 }, (_, i) => '<button>Item ' + i + '</button>').join(''); r(); setInterval(r, 20)</script></body>`,
   // Plain page with an invisible zoom target: the only white pixels in a frame are the cursor's.
   // #go fills the zoom target, so a click on it navigates while the camera is zoomed.
   '/plain': `<body style="margin:0;background:${BG};height:100vh"><div id="z" style="position:absolute;left:440px;top:260px;width:400px;height:200px"><a id="go" href="/plain2" style="position:absolute;inset:0"></a></div></body>`,
@@ -523,12 +527,29 @@ try {
   await assert.rejects(capture({ base, out, chapter: 'markid-num', capture: SC, beats: [{ goto: '/a' }, { mark: { id: 4.1, label: 'x', on: 'h1' } }] }), /must be a non-empty string/);
   await assert.rejects(capture({ base, out, chapter: 'markid-dup', capture: SC, beats: [{ goto: '/a' },
     { mark: { id: '1', label: 'x', on: 'h1' } }, { mark: { id: '1', label: 'y', on: 'h1' } }] }), /used twice/);
+  // 13. Inventory on a page that re-renders under it finishes, counting what it skipped instead of
+  //     timing out on a vanished node; and the beats form runs without --state.
+  let invSkipped;
+  { const b = await chromium.launch(); try {
+      const pg = await b.newPage(); await pg.goto(`${base}/swap`);
+      const t0 = Date.now(), items = await inventory(pg);
+      assert.ok(Date.now() - t0 < 60000, `inventory on /swap took ${Date.now() - t0}ms`);
+      assert.ok(items.skipped > 0, 'inventory on /swap skipped no re-rendered node (the page did not swap under it)');
+      invSkipped = `${items.length} kept, ${items.skipped} skipped`;
+    } finally { await b.close(); } }
+  const invBeats = path.join(out, 'inv.beats.mjs');
+  fs.writeFileSync(invBeats, `export default { base: '${base}', out: '${out}', chapters: [{ name: 'inv', beats: [{ goto: '/a' }] }] };`);
+  // Async: a sync child would block this process's own server, which the child needs.
+  const invOut = await new Promise((res, rej) => execFile(process.execPath, [path.join(import.meta.dirname, 'inventory.mjs'), invBeats, 'inv'],
+    (e, so, se) => (e ? rej(new Error(`inventory beats form failed: ${se || e.message}`)) : res(so))));
+  assert.match(invOut, /targets on inv after beat/, `inventory beats form without --state: ${invOut.slice(0, 200)}`);
 
   const f2 = v => v.toFixed(2);
   console.log(`selfcheck OK: springs ${JSON.stringify(springs)}; pre-aim holds the fixed point; retarget keeps velocity; settles exact; ms 0 cuts; click lands at ${press.toFixed(3)}s; shake 100ms`);
   console.log(`selfcheck OK: main ${r.frames} frames/${r.dur.toFixed(2)}s 2560x1440@60 mp4 ${n} frames luma head ${head} tail ${tail}; anim ${md5.length} frames 0 repeats; blur spans ${JSON.stringify(spans)} inside camera moves, up to ${bb.maxSamples} samples ${bb.maxGap}px apart, capped run filled ${capped.filled} frames`);
   console.log(`selfcheck OK: lazy import stays deterministic; SSE runs on under auto, falls back to ${fb.mode} under pause, one message each; screencast hold ${h.frames} frames; scroll-zoom luma ${zl.det}/${zl.sc}; guard threw`);
   console.log(`selfcheck OK: mark id carried as written, absent when not given; numeric and repeated ids refused`);
+  console.log(`selfcheck OK: inventory on a re-rendering page ${invSkipped}; beats form without --state runs`);
   console.log(`selfcheck OK: locator chain falls through to entry 2 and is recorded; a miss names the chain and nearest candidates and films nothing; dry run 0/1; ferry dry run ${ferryDry}`);
   console.log(`selfcheck OK: cursor under 2x zoom det ${cs.det.map(f2)} sc ${cs.sc.map(f2)} (zoomed, after nav); ring per click ${JSON.stringify(ripple)}; type det ${f2(ty.det[0])}s sc ${f2(ty.sc[0])}s; pace ${f2(p1.dur)}s -> ${f2(p2.dur)}s; loggedInSel re-mints; sandbox errors ${sandboxErrs}`);
 } finally {
