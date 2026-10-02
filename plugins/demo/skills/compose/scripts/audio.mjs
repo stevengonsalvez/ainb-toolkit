@@ -33,11 +33,24 @@ export function audioSettings(C) {
   return {
     sfx: a.sfx === false ? null : { level: 0, click: true, type: true, zoom: true, mark: true, ...(a.sfx || {}) },
     music,
-    narration: { voice: 'af_heart', speed: 1, model: 'medium.en', lead: 0.3, gap: 0.35, tail: 0.35, level: -16, ...(a.narration || {}) },
+    narration: narrationSettings(a.narration || {}),
     loudness: { target: -14, truePeak: -1, tolerance: 1, ...(a.loudness || {}) },
     // vertical burns its captions into the picture by default (compose.mjs); burn: false turns it off
     captions: { burn: C.format === 'vertical', maxWords: 7, ...(a.captions || {}) },
   };
+}
+
+// `tts`: "hyperframes" (default, local) or "deepgram" (Aura-2 over HTTPS, the key from
+// DEEPGRAM_API_KEY, never from a config file). Each voice's own default differs.
+const TTS = { hyperframes: { voice: 'af_heart' }, deepgram: { voice: 'aura-2-thalia-en' } };
+function narrationSettings(n) {
+  const tts = n.tts ?? 'hyperframes';
+  if (!TTS[tts]) throw new Error(`audio.narration.tts must be "hyperframes" or "deepgram", not "${tts}"`);
+  const N = { tts, speed: 1, model: 'medium.en', lead: 0.3, gap: 0.35, tail: 0.35, level: -16, ...TTS[tts], ...n };
+  // ponytail: Aura-2 speaks at its own pace; refuse a speed rather than resample the voice
+  if (tts === 'deepgram' && N.speed !== 1) throw new Error('audio.narration.speed is not supported with tts "deepgram" (leave it at 1)');
+  if (tts === 'deepgram' && !/^aura-/.test(N.voice)) throw new Error(`audio.narration.voice "${N.voice}" is not a Deepgram Aura voice (e.g. aura-2-thalia-en)`);
+  return N;
 }
 
 // ---------- narration ----------
@@ -66,7 +79,8 @@ export function align(script, heard, dur) {
   for (let i = 0, j = 0; i < a.length && j < b.length;) {
     if (a[i] && a[i] === b[j]) { at[i] = heard[j]; i++; j++; } else if (L[i + 1][j] >= L[i][j + 1]) i++; else j++;
   }
-  const out = script.map((text, i) => ({ text, start: at[i]?.start, end: at[i]?.end }));
+  // `heard`: the recogniser heard this word; the rest are interpolated
+  const out = script.map((text, i) => ({ text, start: at[i]?.start, end: at[i]?.end, ...(at[i] && { heard: true }) }));
   for (let i = 0; i < out.length;) {
     if (out[i].start != null) { i++; continue; }
     let k = i; while (k < out.length && out[k].start == null) k++;
@@ -90,10 +104,74 @@ function hf(args, cwd) {
   return j;
 }
 
-// One clip per narrated line, through `hyperframes tts`, and its word times through
-// `hyperframes transcribe`, both cached by text, voice and model. medium.en by default: on a
-// word with a known start small.en was 0.5s early and medium.en within 5ms.
-export function narrationClips(C) {
+// One Deepgram request: up to 4 attempts, 60s each, on a network failure, a 429 or 5xx, or a
+// response `accept` refuses (a 200 that is not what was asked for); the wait honours Retry-After
+// (capped at 30s), else 1, 2, 4s. `accept(response)` returns the result or throws.
+const backoff = () => +(process.env.DEMO_DG_BACKOFF_MS ?? 1000);   // the self-check shortens it
+async function dg(what, url, init, accept) {
+  for (let attempt = 1; ; attempt++) {
+    let why, wait = backoff() * 2 ** (attempt - 1);
+    try {
+      const r = await fetch(url, { ...init, headers: { Authorization: `Token ${process.env.DEEPGRAM_API_KEY}`, ...init.headers }, signal: AbortSignal.timeout(60e3) });
+      if (r.ok) {
+        try { return await accept(r); } catch (e) { why = `${what}: ${e.message}`; }
+      } else {
+        why = `${what} ${r.status}: ${(await r.text()).slice(0, 300)}`;
+        if (r.status !== 429 && r.status < 500) throw new Error(why);
+        const ra = r.headers.get('retry-after');
+        if (ra != null) wait = Math.min(30e3, Number.isFinite(+ra) ? +ra * 1000 : Math.max(0, Date.parse(ra) - Date.now()));
+      }
+    } catch (e) {
+      if (why && e.message === why) throw e;              // a refusal that retrying will not change
+      why = `${what}: ${e.name === 'TimeoutError' ? 'no answer in 60s' : e.cause?.code || e.message}`;
+    }
+    if (attempt === 4) throw new Error(`${why} (gave up after 4 attempts)`);
+    console.warn(`  warn: ${why}; retrying`);
+    await new Promise((res) => setTimeout(res, wait));
+  }
+}
+// Speak `text` into `out` (a wav). HyperFrames runs locally; Deepgram is one request per clip,
+// 48kHz 16-bit mono WAV, written to the cache only once it is one: a 200 carrying anything else
+// (an HTML error page, an empty or cut-off body) would otherwise be cached as the line for good.
+async function speak(N, text, out, dir) {
+  if (N.tts === 'hyperframes') {
+    writeFileSync(`${out}.txt`, text);
+    hf(['tts', '--text-file', `${out}.txt`, '-o', out, '-v', N.voice, '-s', String(N.speed), '--json'], dir);
+    return;
+  }
+  const url = `https://api.deepgram.com/v1/speak?model=${encodeURIComponent(N.voice)}&encoding=linear16&sample_rate=${SR}&container=wav`;
+  const buf = await dg(`Deepgram speak (voice ${N.voice})`, url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) }, async (r) => {
+    const type = r.headers.get('content-type') || '', b = Buffer.from(await r.arrayBuffer());
+    if (!type.startsWith('audio/') || b.length <= 44 || b.toString('ascii', 0, 4) !== 'RIFF' || b.toString('ascii', 8, 12) !== 'WAVE')
+      throw new Error(`not a WAV (${type || 'no content-type'}, ${b.length} bytes)`);
+    return b;
+  });
+  writeFileSync(`${out}.part`, buf); renameSync(`${out}.part`, out);
+}
+// Word times for a Deepgram clip from Deepgram's own recogniser (nova-3, in the voice's language),
+// as { text, start, end }. No smart_format: lines written for a voice spell numbers out ("two
+// twenty"), and smart_format would hear them back as digits ("2:20").
+async function listen(file, voice) {
+  const lang = voice.split('-').at(-1);
+  return dg(`Deepgram listen (${basename(file)})`, `https://api.deepgram.com/v1/listen?model=nova-3&language=${encodeURIComponent(lang)}`,
+    { method: 'POST', headers: { 'Content-Type': 'audio/wav' }, body: readFileSync(file) }, async (r) => {
+      const j = await r.json(), words = j?.results?.channels?.[0]?.alternatives?.[0]?.words;
+      if (!Array.isArray(words)) throw new Error(`no word list in the answer: ${JSON.stringify(j).slice(0, 200)}`);
+      return words.map((w) => ({ text: w.word, start: w.start, end: w.end }));
+    });
+}
+// The file a line is spoken into. HyperFrames keys keep their old recipe (text, voice, speed and
+// the recogniser model), so existing caches stay valid; a Deepgram clip is keyed by what it is
+// made of only (text, voice, rate), sha256, so changing the recogniser never re-bills a line.
+const clipKey = (N, text) => N.tts === 'hyperframes'
+  ? createHash('sha1').update(JSON.stringify([text, N.voice, N.speed, N.model])).digest('hex').slice(0, 16)
+  : `dg-${createHash('sha256').update(JSON.stringify(['deepgram', text, N.voice, SR])).digest('hex').slice(0, 24)}`;
+
+// One clip per narrated line and its word times, both cached: `hyperframes tts` and `hyperframes
+// transcribe` (medium.en by default: on a word with a known start small.en was 0.5s early and
+// medium.en within 5ms), or Deepgram speak and listen. `only`: the segments whose lines are
+// needed (all when unset).
+export async function narrationClips(C, only = null) {
   const A = audioSettings(C);
   if (!A) return {};
   const N = A.narration, lines = [];
@@ -104,19 +182,19 @@ export function narrationClips(C) {
     if (ch.narration.intro) lines.push({ seg: ch.name, slot: 'intro', ...parseLine(ch.narration.intro) });
     (ch.narration.marks || []).forEach((t, i) => t && lines.push({ seg: ch.name, slot: i, ...parseLine(t) }));
   }
+  if (only) lines.splice(0, lines.length, ...lines.filter((l) => only.includes(l.seg)));
   if (!lines.length) return {};
   const dir = `${C.out}/work/audio/tts`;
   mkdirSync(dir, { recursive: true });
-  for (const l of lines) {
-    l.key = createHash('sha1').update(JSON.stringify([l.text, N.voice, N.speed, N.model])).digest('hex').slice(0, 16);
-    l.file = `${dir}/${l.key}.wav`;
-    if (existsSync(l.file)) continue;
-    writeFileSync(`${dir}/${l.key}.txt`, l.text);
-    hf(['tts', '--text-file', `${dir}/${l.key}.txt`, '-o', l.file, '-v', N.voice, '-s', String(N.speed), '--json'], dir);
-  }
+  for (const l of lines) { l.key = clipKey(N, l.text); l.file = `${dir}/${l.key}.wav`; }
+  // before anything is spoken: a line not in the cache needs the key
+  if (N.tts === 'deepgram' && !process.env.DEEPGRAM_API_KEY && lines.some((l) => !existsSync(l.file) || !existsSync(`${dir}/${l.key}.words.json`)))
+    throw new Error('audio.narration.tts "deepgram" needs the DEEPGRAM_API_KEY environment variable (it is never read from the config)');
+  for (const l of lines) if (!existsSync(l.file)) await speak(N, l.text, l.file, dir);
   for (const l of lines) {
     const words = `${dir}/${l.key}.words.json`;
     if (existsSync(words)) continue;
+    if (N.tts === 'deepgram') { writeFileSync(words, JSON.stringify(await listen(l.file, N.voice))); continue; }
     // One clip per run: transcribing several clips laid end to end put words 0.3s out.
     const job = `${dir}/${l.key}`;
     mkdirSync(job, { recursive: true });
@@ -129,7 +207,7 @@ export function narrationClips(C) {
     const dur = probe(C, l.file);
     const words = align(l.words, JSON.parse(readFileSync(`${dir}/${l.key}.words.json`, 'utf8')), dur);
     (out[l.seg] ??= { marks: [] });
-    const clip = { file: l.file, dur: r3(dur), words, anchor: anchorTime(C, l, words, dir), text: l.text };
+    const clip = { file: l.file, dur: r3(dur), words, anchor: await anchorTime(C, l, words, dir), text: l.text };
     if (typeof l.slot === 'number') out[l.seg].marks[l.slot] = clip; else out[l.seg][l.slot] = clip;
   }
   return out;
@@ -173,15 +251,23 @@ export function locateAnchor(full, tail, guess) {
   }
   return best;
 }
-function anchorTime(C, l, words, dir) {
+async function anchorTime(C, l, words, dir) {
+  // Deepgram: its recogniser's own word start. The tail match below needs the tail spoken the way
+  // the line spoke it, and Aura-2 does not: on 14 anchors it matched below r 0.8 on 3 and locked
+  // onto the wrong word on 3 (up to 390ms out), where listen's starts sat on the word's audible
+  // onset within about 20ms on 13 (SKILL.md). A word it did not hear has only an interpolated
+  // time, which the spotlight would light on: said, never silent.
+  if (l.anchor && audioSettings(C).narration.tts === 'deepgram') {
+    if (!words[l.anchor].heard) console.warn(`  warn: "${l.text}": the recogniser did not hear the anchor word "${words[l.anchor].text}"; its time (${words[l.anchor].start}s) is interpolated, so the spotlight may light off it. Reword the line or move the anchor`);
+    return r3(words[l.anchor].start);
+  }
   const full = decode(C, ['-i', l.file], 1);
   if (!l.anchor) return r3(onsetOf(full));
   // The spoken line (l.key) does not change when the anchor moves to another word; its timing does.
   const k = `${dir}/${l.key}.a${l.anchor}`, cache = `${k}.json`;
   if (existsSync(cache)) return JSON.parse(readFileSync(cache, 'utf8')).at;
   const N = audioSettings(C).narration, tail = `${k}.tail.wav`;
-  writeFileSync(`${k}.tail.txt`, l.words.slice(l.anchor).join(' '));
-  hf(['tts', '--text-file', `${k}.tail.txt`, '-o', tail, '-v', N.voice, '-s', String(N.speed), '--json'], dir);
+  if (!existsSync(tail)) await speak(N, l.words.slice(l.anchor).join(' '), tail, dir);
   const guess = words[l.anchor].start, best = locateAnchor(full, decode(C, ['-i', tail], 1), guess);
   // ponytail: a weak match keeps the recogniser's guess and says so; 0.8 sits well under the 13 measured (0.93 to 0.99)
   const res = best.r >= 0.8 ? { at: r3(best.at), r: r3(best.r), heard: guess } : { at: guess, r: r3(best.r), heard: guess, fallback: true };

@@ -120,7 +120,9 @@ Only `takes` and `chapters` are required. Everything below shows the default whe
     "sfx":       { "level": 0, "click": true, "type": true, "zoom": true, "mark": true },  // or false
     "music":     { "file": "bed.mp3", "level": -18, "duck": 11, "fadeIn": 1.5, "fadeOut": 2.5,
                    "start": 0, "snap": true },          // no file, no music
-    "narration": { "voice": "af_heart", "speed": 1, "model": "medium.en",
+    "narration": { "tts": "hyperframes", // or "deepgram" (Aura-2; key from DEEPGRAM_API_KEY)
+                   "voice": "af_heart",   // deepgram default "aura-2-thalia-en"
+                   "speed": 1, "model": "medium.en",
                    "lead": 0.3, "gap": 0.35, "tail": 0.35, "level": -16 },
     "loudness":  { "target": -14, "truePeak": -1, "tolerance": 1 },
     "captions":  { "burn": false, "maxWords": 7 }   // burn: true by default for vertical (in the picture)
@@ -318,6 +320,7 @@ Everything is timed from what capture recorded, not inferred from the picture:
 ```
 events.json ─▶ compose.mjs ─▶ plan.json cues (click, type, camera) + spots ──────┐
 narration ───▶ hyperframes tts ─▶ transcribe ─▶ anchor match ─▶ freezes ────────┼─▶ audio.mjs ─▶ <name>.mp4
+          └──▶ deepgram speak ─▶ deepgram listen ─▶ anchor word start ──┘
 music file ──▶ hyperframes beats ─▶ card padding, every cut on a beat ──────────┘    captions.vtt, chapters.vtt
 ```
 
@@ -360,7 +363,7 @@ music file ──▶ hyperframes beats ─▶ card padding, every cut on a beat 
   Duck depth measured 11.00 dB.
 - **Narration**, only when lines are configured: `narration` on a card (spoken over it; the card
   stays up until the line ends) and on a chapter (`intro` over the chapter card, `marks` one line
-  per mark, `null` to skip one). `hyperframes tts` (Kokoro, local) speaks each line once and caches
+  per mark, `null` to skip one). `hyperframes tts` (Kokoro, local; or Deepgram, below) speaks each line once and caches
   it under `work/audio/tts` by text, voice and model. Every narrated beat **holds until its line has
   finished**: where a line would outlast its spotlight or start before the previous one ends, the
   footage freezes on a still frame for whole frames until it fits: at the end of the previous hold
@@ -378,6 +381,31 @@ music file ──▶ hyperframes beats ─▶ card padding, every cut on a beat 
   lines, inside one 30fps frame. On the finished narrated ferry cut, burst against the spotlight
   being fully lit was -23ms to +8ms at all five anchors. A weak match (correlation under 0.8)
   falls back to the recogniser's time and says so.
+- **Deepgram voices** (`"tts": "deepgram"`): Aura-2 over HTTPS, one request per line, 48kHz WAV.
+  Every request (speak and listen) gets up to 4 attempts of 60s each, retried on a dropped
+  connection, a 429 or a 5xx (waiting as long as Retry-After asks, at most 30s, else 1, 2, 4s),
+  and a clip is cached only once it is a WAV: a 200 carrying an HTML page or a cut-off body is
+  refused and retried, never kept as the line. The key is read from `DEEPGRAM_API_KEY` only, never from a config file;
+  without it a run that has a line to speak stops before speaking anything and names the variable,
+  and a run whose lines are all cached needs no key. Each clip is cached by sha256 of text, voice
+  and rate (`work/audio/tts/dg-*.wav`), so a re-render, a re-timing or a new anchor never re-bills
+  a line. `voice` is any Aura model (anything else, such as the local default `af_heart` left in,
+  is refused before a request); a `speed` other than 1 is refused (Aura-2 has its own pace). Word times
+  come from Deepgram's recogniser (nova-3, `/v1/listen`, cached beside the clip), and the anchor
+  is its word start: the tail match above needs the tail spoken as the line spoke it, and Aura-2
+  re-speaks it differently. The recogniser listens in the voice's language (the `-en` of the
+  model), without smart formatting, so a number spelled out in the line is heard back as words.
+  An anchor word it did not hear has only an interpolated time, and compose warns: reword the
+  line or move the anchor. Compose speaks only the lines of the segments it was asked for, unless
+  their lengths decide other segments' timing (a music bed, `targetDuration`). Measured on 14 anchors (the ferry's five and nine more lines), each
+  estimate read against the word's audible onset on a spectrogram: listen within about 20ms on
+  13, the 14th ("the block", at the b's closure) 110ms early; `hyperframes transcribe` up to
+  270ms early; the tail match under r 0.8 on 3 and on the wrong word on 3 (up to 390ms). The
+  ferry narrated cut with `"tts": "deepgram"`: 5/5, -14.1 LUFS, -1.9 dBTP, anchors placed at the
+  spotlight's lit time. Four voices auditioned on one 13-word line (crude autocorrelation pitch,
+  pauses over 150ms): thalia (default) 5.2s, f0 216Hz, 9.5 semitones of range, a short comma
+  pause; apollo 6.6s, 150Hz, 10.5, the slowest; draco (British) 5.7s, 109Hz, 7.6, the flattest;
+  pandora (British) 5.4s, 198Hz, 8.9, the longest comma pause. Pick by ear: it is a config value.
 - **Loudness**: a mix with narration or music is mastered to `loudness.target` (-14 LUFS
   integrated) by measured gain plus a limiter 1 dB under `truePeak` (-1 dBTP), corrected once,
   then measured again on the AAC in the final file. `audio.mjs` exits 1, failing `concat.sh`, when
