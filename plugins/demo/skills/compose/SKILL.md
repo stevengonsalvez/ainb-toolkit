@@ -389,10 +389,23 @@ Measured on a 5:36 ten-chapter demo, 47 marks. Change them in config, not in cod
   2px blur, `spotlight.blur`), through a cut-out feathered over 18px outside the rect, with a thin
   accent edge and glow. It irises in (from 6% larger, expo out over 0.5s) with one light sweep
   across the lit rect (`spotlight.sweep`). When the next mark lights within `spotlight.glide`
-  (2.5s) of this hold ending and the square view does not change between them, the cut-out does
-  not fade out: it glides, moving and reshaping onto the next rect over the gap with the camera
-  move, arriving when the next spotlight's fade-in would have finished (so a narration anchor
-  timed to that moment still lands on it). A glide lasts at least 0.35s: if the next mark lights
+  (2.5s) of this hold ending and the square view does not change between them, the
+  cut-out does not fade out: it glides, moving and reshaping onto the next rect over the gap with
+  the camera move, arriving when the next spotlight's fade-in would have finished (so a narration
+  anchor timed to that moment still lands on it). The glide rides the filmed camera: the cut-out
+  travels across the page, from one mark's rect to the next, and each frame draws that page rect
+  where the capture camera had it on that frame (`poses` in events.json), so the content under
+  the hole never slides. Its progress is how far the camera has come from the one mark's pose to
+  the next (centre distance plus log zoom, never going back), with the old power3 ease of time as
+  a floor: the camera often rests zoomed out between two marks, and a hole tied to the camera
+  alone parked half way across two cards for 1s. Measured on ferry (three glides, design px of
+  the 1280-wide screen): the eased frame-space tween it replaces slid over the content by up to
+  252px (mean 106) on one glide and 113 and 191px on the others; now 0 by construction (the
+  correction that keeps the end boxes exact came to 0px), and the traced box drawn over a frame
+  rendered mid-glide sits on the hole's edge within 1px. When the camera is 99% of the way to the next
+  mark the hole is 1.7, 3.7 and 8.1px from its final box, where the tween was 42.4, 7.1 and
+  121.5px off: it arrives with the content, not after it. `COMPOSE_TRACE=1` writes the per-frame
+  trace (`work/<chapter>-glide-m<i>.json`). A take without `poses` keeps the eased tween. A glide lasts at least 0.35s: if the next mark lights
   sooner (pace above 1, or a spotlight waiting for the camera), this hold ends early to make room
   and its label leaves as the glide starts; if that would leave the hold under 0.7s, too short
   for the two stills, or cut into the mark's narration line, it fades instead. Across a square re-frame the camera moves under the cut-out, so there it always fades

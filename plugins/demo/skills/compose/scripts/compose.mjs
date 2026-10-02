@@ -328,8 +328,24 @@ function analyze(cfg) {
   const kept = keep(dur - 0.03, cuts);
   const vp = ev.viewport || { width: 1280, height: 720 };
   return { cfg, name, mp4, dur, spots, moves, kept, srcW: vp.width, srcH: vp.height, fps: ev.fps ?? 30, dpr: ev.dpr ?? 1, CARD: cfg.cardDur ?? C.chapterCardDur,
+    poses: ev.poses || null,
     cues: ev.events.filter((e) => ['click', 'type', 'camera'].includes(e.kind)).map((e) => (e.kind === 'camera' ? { ...e, dur: e.t1 - e.t0 } : e)) };
 }
+
+// ---------- the capture camera ----------
+// demo:capture logs the in-browser camera's pose on each frame it changed ([frame, x, y, s],
+// `poses` in events.json; takes filmed before that have none). camAt is the pose on the frame
+// showing source time t, a page rect's frame rect under it is (rect - cam) * s, and a camera at
+// scale 1 is no camera, as in capture.
+function camAt(an, t) {
+  const P = an.poses, k = Math.round(t * an.fps);
+  let lo = 0, hi = P.length - 1;
+  if (k < P[0][0]) return { x: 0, y: 0, s: 1 };
+  while (lo < hi) { const m = (lo + hi + 1) >> 1; if (P[m][0] <= k) lo = m; else hi = m - 1; }
+  const [, x, y, s] = P[lo];
+  return s > 1 + 1e-6 ? { x, y, s } : { x: 0, y: 0, s: 1 };
+}
+const onFrame = (r, c) => ({ x: (r.x - c.x) * c.s, y: (r.y - c.y) * c.s, w: r.w * c.s, h: r.h * c.s });
 
 // ---------- speed ramp ----------
 // Footage time is re-mapped in two steps: source t -> kept time u (cuts removed) -> output time.
@@ -483,6 +499,8 @@ function chapter(an, sp) {
   // With a bed, total is whole frames ending on a beat; the chapter card takes up the difference.
   const total = an.CARD + footDur + pad, CARD = total - footDur;
   const toComp = (t) => CARD + rt.toOut(t);
+  // and back: the source time on screen at composition time t (the latest that has played by t)
+  const fromComp = (t) => { let lo = 0, hi = an.dur; for (let i = 0; i < 40; i++) { const m = (lo + hi) / 2; if (toComp(m) <= t) lo = m; else hi = m; } return lo; };
   TOTALS[name] = total;
   const seam = seamsOf(C, name);
   const idx = C.chapters.findIndex((c) => c.name === name) + 1;
@@ -543,11 +561,13 @@ function chapter(an, sp) {
 
   const LH = C.layout.labelHeight, GAP = C.layout.labelGap;
   const report = [];
+  // the cut-out for a frame rect under view v: 8px of air, kept 6px inside the frame
+  const boxOf = (fr, v) => {
+    const x = Math.max(6, fr.x * v.s + v.x - 8), y = Math.max(6, fr.y * v.s + v.y - 8);
+    return [x, y, Math.min(SCW - 6, fr.x * v.s + v.x + fr.w * v.s + 8) - x, Math.min(SCH - 6, fr.y * v.s + v.y + fr.h * v.s + 8) - y];
+  };
   const labels = an.spots.map((s) => {
-    const fr = s.fr, v = s.view;
-    let x = fr.x * v.s + v.x - 8, y = fr.y * v.s + v.y - 8, w = fr.w * v.s + 16, h = fr.h * v.s + 16;
-    const x2 = Math.min(SCW - 6, x + w), y2 = Math.min(SCH - 6, y + h);
-    x = Math.max(6, x); y = Math.max(6, y); w = x2 - x; h = y2 - y;
+    let [x, y, w, h] = boxOf(s.fr, s.view);
     const lw = s.label.length * 12.2 + 44;
     // DEFECT 2 guard: a label must not cover its own spotlight. Try each side outside the
     // cut-out inside the safe margin; if nothing fits, crop the cut-out instead of overlapping.
@@ -567,7 +587,7 @@ function chapter(an, sp) {
       i: s.i, label: s.label, srcT: r3(s.m.t), shift: s.shift || 0, compT: r3(s.ct), litFrom: r3(s.cf),
       fadeIn: F(0.25), glided: !!s.glided, hold: r3(s.hold), srcHold: r3(s.srcHold),
       place: pick[0], box: [x, y, w, h].map(Math.round),
-      labBox: [pick[2].left, pick[2].top, lw, LH].map(Math.round), view: v,
+      labBox: [pick[2].left, pick[2].top, lw, LH].map(Math.round), view: s.view,
     });
     return `<div id="${name}-l${s.i}" class="lab" style="left:${r3(pick[2].left)}px;top:${r3(pick[2].top)}px">${esc(s.label)}</div>`;
   }).join('\n');
@@ -617,7 +637,42 @@ function chapter(an, sp) {
   const iris = (b) => { const dx = b[2] * 0.06 + 6, dy = b[3] * 0.06 + 6; return [b[0] - dx, b[1] - dy, b[2] + 2 * dx, b[3] + 2 * dy].map(r3); };
   for (const [k, s] of an.spots.entries()) {
     const end = r3(s.ct + s.hold), sl = q(`sl${s.run}`);
-    if (s.glided) {
+    if (s.glided && an.poses) {
+      // The glide travels with the content: the cut-out moves across the PAGE, from the last
+      // mark's rect to this one's, and each frame draws that page rect where the capture camera
+      // filmed it that frame (the per-frame poses in events.json), so a camera move carries the
+      // hole with the content under it. An eased tween in frame space slid over the content
+      // while the camera moved (measured in SKILL.md). Progress follows the camera spring: how
+      // far the camera has come from its pose at the last mark to its pose at this one (centre
+      // distance plus log zoom), never going back. The camera often rests mid-glide, zoomed out
+      // between two marks, and a hole tied to it alone stopped half way across two cards, so the
+      // old power3 ease of time is a floor. A small correction, shrinking to nothing at each end,
+      // keeps the two end boxes exactly the marks' own (a box can be cropped for a label).
+      const p = an.spots[k - 1], g0 = p.ct + p.hold, arrive = s.cf + F(0.25);
+      const camC = (t) => camAt(an, fromComp(t)), cA = camC(g0), cB = camC(arrive);
+      const centre = (c) => [c.x + an.srcW / c.s / 2, c.y + an.srcH / c.s / 2];
+      const dist = (a, b) => { const [ax, ay] = centre(a), [bx, by] = centre(b); return Math.hypot((ax - bx) / an.srcW, (ay - by) / an.srcH) + Math.abs(Math.log(a.s / b.s)); };
+      const lerp = (a, b, u) => ({ x: a.x + (b.x - a.x) * u, y: a.y + (b.y - a.y) * u, w: a.w + (b.w - a.w) * u, h: a.h + (b.h - a.h) * u });
+      const at = (u, c) => boxOf(onFrame(lerp(p.m.rect, s.m.rect, u), c), s.view);
+      const e0 = p.box.map((v, i) => v - at(0, cA)[i]), e1 = s.box.map((v, i) => v - at(1, cB)[i]);
+      const trace = [];
+      let u = 0;
+      for (let f = Math.ceil(g0 * C.fps); f <= Math.floor(arrive * C.fps); f++) {
+        const t = f / C.fps, c = camC(t), dA = dist(c, cA), dB = dist(c, cB);
+        const x = Math.min(1, Math.max(0, (t - g0) / Math.max(1e-6, arrive - g0)));
+        const eased = x < 0.5 ? 4 * x ** 3 : 1 - (-2 * x + 2) ** 3 / 2; // power3.inOut, as the tween was
+        u = Math.max(u, eased, dA + dB > 1e-9 ? dA / (dA + dB) : 0);
+        const b = at(u, c).map((v, i) => r3(v + (1 - u) * e0[i] + u * e1[i]));
+        // COMPOSE_TRACE=1 writes, per glide frame, this hole and the page rect it rides, and what
+        // the old frame-space tween drew and the page rect at its progress, for SKILL.md's numbers
+        if (process.env.COMPOSE_TRACE) trace.push({ t: r3(t), u: r3(u), cam: r3(dA + dB > 1e-9 ? dA / (dA + dB) : 0), hole: b, content: at(u, c).map(r3), tween: p.box.map((v, i) => r3(v + (s.box[i] - v) * eased)), under: at(eased, c).map(r3) });
+        // set a hair before the frame's own time, so float error never lands it a frame late
+        lines.push(`tl.set(${sl}, { ${vars(b)} }, ${(t - 1e-4).toFixed(6)});`);
+      }
+      lines.push(`tl.set(${sl}, { ${vars(s.box)} }, ${r3(arrive)});`);
+      if (trace.length) writeFileSync(`${C.out}/work/${name}-glide-m${s.i}.json`, JSON.stringify(trace));
+    } else if (s.glided) {
+      // no camera poses in this take (filmed before they were logged): an eased tween
       const p = an.spots[k - 1], pe = p.ct + p.hold, arrive = s.cf + F(0.25), d = Math.max(1 / C.fps, arrive - pe);
       lines.push(`tl.fromTo(${sl}, { ${vars(p.box)} }, { ${vars(s.box)}, duration: ${r3(d)}, ease: "power3.inOut", immediateRender: false }, ${r3(arrive - d)});`);
     } else {
