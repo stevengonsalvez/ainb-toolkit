@@ -12,7 +12,7 @@
 // synthesised here rather than shipped as files: no asset to licence, and the same on every
 // ffmpeg build.
 import { execFileSync, spawnSync } from 'node:child_process';
-import { readFileSync, writeFileSync, mkdirSync, existsSync, copyFileSync, statSync, renameSync, rmSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, copyFileSync, renameSync, rmSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { resolve, isAbsolute, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -236,7 +236,13 @@ export function beatGrid(C) {
   if (!A?.music || !A.music.snap) return null;
   const dir = `${C.out}/work/audio/beats`, name = basename(A.music.file);
   const json = `${dir}/beats/${name}.json`, fitted = `${dir}/grid.json`;
-  if (!existsSync(fitted) || statSync(fitted).mtimeMs < statSync(A.music.file).mtimeMs) {
+  // The grid is cached by the bed's content, not its name or mtime: a bed replaced under the same
+  // name with an older mtime (cp -p, a checkout, an unzip) kept the old bed's grid and put cuts
+  // 200ms off the new beat (measured, 100 then 120 BPM). sha256 costs 20ms for a 17 MB bed and
+  // 135ms for 120 MB.
+  const key = createHash('sha256').update(readFileSync(A.music.file)).digest('hex');
+  const cached = existsSync(fitted) ? JSON.parse(readFileSync(fitted, 'utf8')) : null;
+  if (cached?.key !== key) {
     rmSync(dir, { recursive: true, force: true }); mkdirSync(dir, { recursive: true });
     copyFileSync(A.music.file, `${dir}/${name}`);
     writeFileSync(`${dir}/index.html`, `<!doctype html><html><head><meta charset="UTF-8"></head><body>
@@ -249,7 +255,7 @@ export function beatGrid(C) {
       const beats = JSON.parse(readFileSync(json, 'utf8')).beats.map((b) => b.time);
       grid = fitGrid(onsetEnvelope(decode(C, ['-i', A.music.file], 1)), beats);
     } catch (e) { grid = { error: String(e.message).split('\n')[0] }; }
-    writeFileSync(fitted, JSON.stringify(grid));
+    writeFileSync(fitted, JSON.stringify({ ...grid, key }));
   }
   const g = JSON.parse(readFileSync(fitted, 'utf8'));
   if (g.error || !(g.contrast >= MIN_CONTRAST)) {

@@ -301,7 +301,10 @@ music file ──▶ hyperframes beats ─▶ card padding, every cut on a beat 
   within half a frame, 16.7ms at 30fps). `hyperframes beats` only seeds the tempo: on a 100 BPM
   tick bed it reported 101.4 BPM, which walked its beats 0.8s off the ticks within a minute. The
   grid is a steady period and phase fitted to the bed's own onsets, and a bed with no beat steady
-  enough (fit contrast under 2.5) gets a warning and unsnapped cuts rather than a failure. Every
+  enough (fit contrast under 2.5) gets a warning and unsnapped cuts rather than a failure. The
+  fitted grid is cached under `work/audio/beats` by the bed's content (sha256: 20ms for a 17 MB
+  bed), so a bed replaced under the same name is fitted again (keyed by name and mtime, a 120 BPM
+  bed copied over a 100 BPM one with an older mtime kept the old grid, 200ms off the beat). Every
   segment is whole frames (a duration that is not renders one frame too many), and starts are
   counted in frames, so a fresh compose lands its cuts on the first run. Re-cutting one chapter
   moves every later start, so with a bed `compose.mjs` also composes again each later segment
