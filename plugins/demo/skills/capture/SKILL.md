@@ -43,6 +43,8 @@ node scripts/inventory.mjs <url>                # what a beat can target on a pa
 
 - Browsers: Playwright reads `PLAYWRIGHT_BROWSERS_PATH` when it is set and otherwise uses its own default (`~/.cache/ms-playwright` on Linux). Export `PLAYWRIGHT_BROWSERS_PATH="$PW"` in the shell that runs the rig and keep that directory stable; the scripts never set it for you. The installed revision must match `node_modules/playwright-core/browsers.json` (1.62.0 wants chromium 1234). On mismatch: `PLAYWRIGHT_BROWSERS_PATH="$PW" npx playwright install chromium`. Prefer a directory you control over `~/.cache/ms-playwright`, which other tooling clears: measured wiped twice on one machine with 34G free, so not disk pressure.
 - Write beats files and `out` under a scratch dir, never in a project repo.
+- Narration (composing a demo whose config has `narration`) runs `hyperframes tts`, which reads
+  `HYPERFRAMES_PYTHON`: point it at a venv with `kokoro-onnx` and `soundfile` installed.
 - After every take: open the montage. Check head is not blank/black, tail is not a splash, zoom frames are sharp.
 - `run.mjs` prints each chapter's mode, fps, density and wall time, e.g.
   `fares: deterministic 60fps x2, 659 frames, 11.0s, 2 marks, filmed in 210s`. A chapter that fell back
@@ -231,9 +233,11 @@ mark: { label: 'Resident fare needs proof', on: [{ role: 'cell', name: 'Island r
 | `{ testid }` | `getByTestId` |
 | `{ text }`, `{ label }`, `{ placeholder }` | the exact `getBy*` |
 | `{ css }` | a selector inside a chain |
-| any of them plus `in: <target>` | the same, inside that element |
+| any of them plus `in: <target>` | the same, inside any element `in` finds |
 
-A chain entry matches when it finds exactly one visible element, and the first that does wins;
+A chain entry matches when it finds exactly one visible element, and the first that does wins
+(for `ready` too: a chain `ready` waits for exactly one visible match; a lone selector string
+waits for its first match to be visible, as before);
 `events.json` records which (`targets`). A target that finds nothing within 5s (on the take's
 clock) fails the take at once with every entry tried, how many visible elements each found, and
 the nearest names on the page from its accessibility tree, e.g.:
@@ -245,7 +249,9 @@ beat "bad": click target matched no single visible element after 5000ms. Tried r
 
 Prefer role and name, then test id (Playwright's locator order): they survive a restyle that
 breaks a class or a DOM path. Put the selector last, as the fallback. The dry run lints a
-selector that a role or test id would find alone and prints the replacement.
+selector when a role and name (or the same scoped to its landmark) or a test id finds that very
+element and nothing else, and prints the replacement; `capture: { lint: true }` in a beats file
+prints the same lints while filming.
 
 ## Dry run
 
@@ -254,7 +260,16 @@ skips it). The same beat loop drives a plain page with no frames: every target a
 resolves, clicks and typing happen, every wait that exists for the viewer (hold, settle, glides,
 the gap between keys) is cut to at most 20ms. It prints a table per chapter (beat, use, the
 locator that matched and which chain entry, ms per beat), the selector lints and the narrative
-lint, and exits 1 on any miss, before a frame is filmed. Run it in CI, and after every UI change.
+lint, and exits 1 before a frame is filmed on any `MISS` (a target the page does not have) or
+`FAIL` (anything else: a goto that fails, an `expectPath` that does not hold), each said in one
+line. After a clean dry run with `login`, the session is checked again before filming.
+
+**The dry run really clicks and types.** Everything a beat does happens twice, once in the dry
+run and once on film: a form submits twice, a cart fills twice, an invite goes out twice, a
+sign-out ends the session. Write beats that can run twice (land on pages, open and close, type
+into search, not submit what cannot be undone), or pass `--no-dry-run` for a chapter that cannot.
+Run it after every UI change and in CI, but in CI only against an environment of its own (a
+preview or a seeded local app), never a shared one other people use.
 
 Ferry: both chapters, 14 targets, 1.3s (1.8s inside `npm run check`, starting the app included).
 
@@ -273,6 +288,9 @@ goal + URL ──▶ inventory.mjs ──▶ beats.mjs + narration ──▶ run
    point at (role, name, test id, rect) with the chain to write for it. For a state you reach by
    clicking (a modal, a later page), write the beats that get there and run
    `node scripts/inventory.mjs <beats.mjs> <chapter> <beat>`: it replays them and lists that page.
+   A logged-in app: `--state <session-state.json>` with a URL (the beats file's `state`, which
+   `run.mjs` mints), or the beats form, which logs in itself. It walks the top document only; an
+   element inside an iframe or a shadow root needs a selector or an `in:` around it.
 2. **Shape the story before the beats.** One idea per chapter, at most 5 chapters; each chapter's
    first mark on screen inside 3s (land with no hold, act, zoom, mark); each proof is a zoom plus a
    `mark` with a label of at most 6 words, held 1.5 to 2s; end on a `wide`.
@@ -287,6 +305,9 @@ goal + URL ──▶ inventory.mjs ──▶ beats.mjs + narration ──▶ run
    selector lint unless the element truly has no role. Fix narrative warnings by holding longer or
    saying less.
 6. **Film** (`run.mjs`, which dry-runs again first), compose, and check, as in the compose skill.
+   Narration is spoken by `hyperframes tts`, which needs a Python with `kokoro-onnx` and
+   `soundfile`: make a venv with them and export `HYPERFRAMES_PYTHON=<venv>/bin/python` before
+   `compose.mjs`, or it stops with "The kokoro-onnx package is not installed".
 
 `examples/ferry-draft/` is this procedure run on the ferry example app for that goal, from scratch:
 two chapters (the late sailing on the card and on its board row; the Fares link, then the
@@ -446,9 +467,10 @@ element (the field, for a type), and `cam`, the camera box in force, in the same
 mark's, so a consumer can point at what was clicked or typed into. A click's rect is taken as the
 press lands; a type cue's after the typing, so a field that widens as it fills is measured as it
 ends up. `rect` is `null` when the target has no box (display:none, zero size). They also carry `name`,
-the target's accessible name (aria-label, else its label or text, else placeholder or title;
-trimmed, cut at a word under 40 characters) and `role` (`link`, `button`, `textbox`, ... or the
-element's own `role`), each `null` when there is none. Takes filmed before these have cues
+the target's accessible name and `role` as the browser's accessibility tree has them (the same
+source the lint and inventory use: a button holding an image with `alt="Save"` is `button` "Save",
+an `<input type=search>` is `searchbox`), the name cut at a word under 40 characters; each `null`
+when there is none. Takes filmed before these have cues
 without them: treat all four as optional. A consumer that reads only marks filters on `kind`. A `camera` event is one zoom or wide glide: `t0` and `t1` its
   start and end, `cam` the box it ends on (`null` for a wide). demo:compose plays
   every camera move at 1x and fades a spotlight in only once the move into it has settled.
