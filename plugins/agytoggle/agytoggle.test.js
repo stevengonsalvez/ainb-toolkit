@@ -7,19 +7,19 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const AGYSW_BIN = join(__dirname, 'agysw.js');
+const AGYTOGGLE_BIN = join(__dirname, 'agytoggle.js');
 
 function makeTempHarness() {
-  const tempDir = mkdtempSync(join(tmpdir(), 'agysw-test-'));
+  const tempDir = mkdtempSync(join(tmpdir(), 'agytoggle-test-'));
   const accountsPath = join(tempDir, 'antigravity-accounts.json');
   const tokenPath = join(tempDir, 'antigravity-oauth-token');
 
   const run = (args, options = {}) => {
-    return execFileSync(process.execPath, [AGYSW_BIN, ...args], {
+    return execFileSync(process.execPath, [AGYTOGGLE_BIN, ...args], {
       env: {
         ...process.env,
-        AGYSW_ACCOUNTS_PATH: accountsPath,
-        AGYSW_TOKEN_PATH: tokenPath,
+        AGYTOGGLE_ACCOUNTS_PATH: accountsPath,
+        AGYTOGGLE_TOKEN_PATH: tokenPath,
         PATH: process.env.PATH
       },
       encoding: 'utf8',
@@ -34,19 +34,19 @@ function makeTempHarness() {
   return { tempDir, accountsPath, tokenPath, run, cleanup };
 }
 
-test('agysw help output', () => {
+test('agytoggle help output', () => {
   const { run, cleanup } = makeTempHarness();
   try {
     const out = run(['help']);
-    assert.match(out, /Antigravity CLI Multi-Account Switcher/);
-    assert.match(out, /agysw import/);
-    assert.match(out, /agysw rotate/);
+    assert.match(out, /Antigravity CLI Multi-Account Switcher \(agytoggle\)/);
+    assert.match(out, /agytoggle import/);
+    assert.match(out, /agytoggle rotate/);
   } finally {
     cleanup();
   }
 });
 
-test('agysw import and list active profile', () => {
+test('agytoggle import and list active profile', () => {
   const { run, tokenPath, accountsPath, cleanup } = makeTempHarness();
   try {
     const fakeToken = {
@@ -78,7 +78,7 @@ test('agysw import and list active profile', () => {
   }
 });
 
-test('agysw strategy management', () => {
+test('agytoggle strategy management', () => {
   const { run, accountsPath, cleanup } = makeTempHarness();
   try {
     writeFileSync(accountsPath, JSON.stringify({ accounts: [{ email: 'u1@test.com', refreshToken: 'tok' }], activeIndex: 0 }));
@@ -97,7 +97,7 @@ test('agysw strategy management', () => {
   }
 });
 
-test('agysw remove profile', () => {
+test('agytoggle remove profile', () => {
   const { run, accountsPath, cleanup } = makeTempHarness();
   try {
     writeFileSync(accountsPath, JSON.stringify({
@@ -119,7 +119,7 @@ test('agysw remove profile', () => {
   }
 });
 
-test('agysw cooldown marks account with cooldownUntil', () => {
+test('agytoggle cooldown marks account with cooldownUntil', () => {
   const { run, accountsPath, cleanup } = makeTempHarness();
   try {
     writeFileSync(accountsPath, JSON.stringify({
