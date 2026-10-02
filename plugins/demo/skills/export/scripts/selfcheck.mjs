@@ -83,9 +83,10 @@ try {
     { t: 5, kind: 'click' },
     { t: 6, kind: 'camera', cam: { x: 320, y: 180, s: 2 } },
     mark(6.5, 'capture label two', { x: 400, y: 200, w: 100, h: 50 }, { x: 320, y: 180, s: 2 }),
-    // a type beat: the click into the field, then the typing, both with its rect and their own cam
+    // a type beat: the click into the field, then the typing (the field widened as it filled),
+    // both with their own cam
     { t: 7, kind: 'click', rect: { x: 100, y: 100, w: 50, h: 20 }, cam: null },
-    { t: 7.1, kind: 'type', dur: 1, chars: 5, rect: { x: 100, y: 100, w: 50, h: 20 }, cam: null }, ...extra] });
+    { t: 7.1, kind: 'type', dur: 1, chars: 5, rect: { x: 100, y: 100, w: 90, h: 20 }, cam: null }, ...extra] });
   w(join(root, 'takes/one/events.json'), events());
 
   const run = (...args) => spawnSync(process.execPath, [join(SKILL, 'scripts/export.mjs'), ...args], { cwd: root, encoding: 'utf8' });
@@ -142,7 +143,8 @@ try {
   if (r.status === 0) {
     const out = join(root, 'compose/export/interactive'), st = JSON.parse(readFileSync(join(out, 'steps.json'), 'utf8'));
     ok(st.steps.length === 4 && /no target rect/.test(r.stderr), `4 steps (2 marks, a click, a type); the click without a rect is skipped and said: ${st.steps.map((x) => x.label)}`);
-    // The type cue's own cam (wide) wins over the zoom in force since 6 s: (100, 100) x dpr 2.
+    // The type cue's own cam (wide) wins over the zoom in force since 6 s: (100, 100) x dpr 2, at
+    // the click's rect (the field before it widened).
     const ty = st.steps[3];
     ok(ty.label === 'Type here' && ty.box.x === 200 && ty.box.y === 200 && ty.box.w === 100 && ty.box.h === 40, `click + type on one field is one step at the cue's own cam: ${JSON.stringify(ty)}`);
     ok(!existsSync(join(out, 'step-09.webp')) && !readdirSync(out).some((f) => f.startsWith('.step-')), 'a step image left from an earlier run, and the decode temps, are gone');

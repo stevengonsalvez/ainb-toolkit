@@ -125,17 +125,19 @@ export function shortLabel(s, max = 59) {
 
 // Interactive steps, in demo order: every mark (it has a rect and a label), plus every click or
 // type cue that carries a `rect` (takes filmed before demo:capture recorded one have none; those
-// are counted and skipped). A type beat's click into the field and its typing are one step, at
-// the click's frame. Each step points at the take frame that first shows it and the camera box in
+// are counted and skipped). A type beat is filmed as a click into the field
+// then the type cue: one step, at the click's frame and rect (the field before it widened or hid
+// while typing). Each step points at the take frame that first shows it and the camera box in
 // force there (the cue's own `cam` when it has one).
 export function steps(C, tl) {
   const out = []; let skipped = 0;
   for (const ch of tl.chapters) {
     const ev = JSON.parse(readFileSync(eventsPath(C.takes, ch.name), 'utf8'));
     const dpr = ev.dpr ?? 1, fps = ev.fps ?? 30, vp = ev.viewport || { width: 1280, height: 720 };
-    let cam = null, mark = 0;
+    let cam = null, mark = 0, click = null;      // click: the step the cue just before made, if a click
     const said = (i) => ch.narration.find((l) => l.slot === i)?.text;
     for (const e of [...ev.events].sort((x, y) => x.t - y.t)) {
+      const after = click; click = null;
       if (e.kind === 'camera') { cam = e.cam; continue; }
       if (e.kind === 'mark') {
         // narration, else compose's label for this spotlight (config `labels` override the
@@ -143,13 +145,11 @@ export function steps(C, tl) {
         out.push({ chapter: ch.name, title: ch.title, kind: 'mark', t: e.t, frame: Math.round(e.t * fps), rect: e.rect, cam: e.cam, dpr, fps, vp,
           text: said(mark) || ch.spots.find((s) => s.i === mark)?.label || e.label, mark: mark++ });
       } else if (e.kind === 'click' || e.kind === 'type') {
+        if (e.kind === 'type' && after && e.t - after.t < 1) { Object.assign(after, { kind: 'type', text: e.label || 'Type here' }); continue; }
         if (!e.rect) { skipped++; continue; }
-        const prev = out.at(-1), same = (a, b) => a && b && ['x', 'y', 'w', 'h'].every((k) => a[k] === b[k]);
-        if (e.kind === 'type' && prev?.kind === 'click' && prev.chapter === ch.name && same(prev.rect, e.rect)) {
-          Object.assign(prev, { kind: 'type', text: e.label || 'Type here' }); continue;
-        }
         out.push({ chapter: ch.name, title: ch.title, kind: e.kind, t: e.t, frame: Math.max(0, Math.round(e.t * fps) - 1), rect: e.rect,
           cam: e.cam !== undefined ? e.cam : cam, dpr, fps, vp, text: e.label || (e.kind === 'type' ? 'Type here' : 'Click here') });
+        if (e.kind === 'click') click = out.at(-1);
       }
     }
   }
