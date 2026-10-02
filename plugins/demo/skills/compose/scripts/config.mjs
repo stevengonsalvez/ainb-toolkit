@@ -166,7 +166,7 @@ export function loadConfig(path) {
     deadHold: raw.deadHold ?? 2.0,           // freezes longer than this get trimmed
     hold: Object.fromEntries(Object.entries({ min: 1.5, max: 2.2, ...(raw.hold || {}) }).map(([k, v]) => [k, v * pace])),
     layout: { safeMargin: 64, labelHeight: 48, labelGap: 14, maxLabelWords: 6, ...(raw.layout || {}) },
-    check: { litRatio: 0.80, dimRatio: 0.62, contentSd: 8, driftMax: 12, alignMax: 7, ...(raw.check || {}) },
+    check: { litRatio: 0.80, dimRatio: 0.62, contentSd: 8, driftMax: 12, alignMax: 7, glideStep: 0.2, ...(raw.check || {}) },
     theme, displayStack, bodyStack, fontFaces: faces, fontFiles: [...files],
     accentGlow: hexToRgba(theme.accent, 0.40),
     accentEdge: hexToRgba(theme.accent, 0.55),

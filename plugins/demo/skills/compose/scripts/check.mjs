@@ -167,11 +167,26 @@ function checkChapter(name) {
     const align = Math.max(...[0, 1].map((k) => diff(ren[k], raw[k], box)));
     if (!short && align > K.alignMax) why.push(`cut-out off its footage ${r3(align)}`);
 
+    // A gliding cut-out: no frame of it may cover more than glideStep of its path, or 1.5x the
+    // steepest frame of the power3 ease over that many frames on a short glide (a jump reads as a
+    // snap, not a glide), and mid-glide the render must show it lit where the plan put it.
+    let glide;
+    if (s.glide?.t != null) {
+      const lim = Math.max(K.glideStep, 4.5 / Math.max(1, s.glide.frames - 1));
+      if (s.glide.step > lim) why.push(`glide jumps ${s.glide.step} of its path in one frame (limit ${r3(lim)})`);
+      const gb = [s.glide.box[0] + 6, s.glide.box[1] + 6, s.glide.box[2] - 12, s.glide.box[3] - 12];
+      const gr = grayFrame(seg, segFrame(nSeg, s.glide.t), W, H, SCREEN), gs = framed(grayFrame(src, s.glide.src, sw, sh), sw, sh, view, bgLuma);
+      const gl = stats(gr, gb).mean / Math.max(1, stats(gs, gb).mean), gd = ringMean(gr, s.glide.box) / Math.max(1, ringMean(gs, s.glide.box));
+      const ga = diff(gr, gs, gb);
+      glide = { t: s.glide.t, step: s.glide.step, lit: r3(gl), dim: r3(gd), align: r3(ga) };
+      if (gl < K.litRatio || gd > K.dimRatio || ga > K.alignMax) why.push(`mid-glide cut-out not where planned (lit ${r3(gl)}, dim ${r3(gd)}, align ${r3(ga)} at ${s.glide.t}s)`);
+    }
+
     // label clear of its own spotlight
     if (overlaps(s.labBox, s.box)) why.push('label covers spotlight');
 
     rows.push({ name, i: s.i, label: s.label, compT: s.compT, hold: s.hold, place: s.place,
-      lit: r3(Math.min(...litR)), dim: r3(Math.max(...dimR)), sd: r3(sd), drift: r3(drift), align: r3(align),
+      lit: r3(Math.min(...litR)), dim: r3(Math.max(...dimR)), sd: r3(sd), drift: r3(drift), align: r3(align), ...(glide && { glide }),
       ok: !why.length, why: why.join('; ') });
 
     // contact tiles for eyeballing alongside the numbers, named 000.png, 001.png, ... in mark order,

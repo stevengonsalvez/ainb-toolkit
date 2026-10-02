@@ -761,13 +761,16 @@ function chapter(an, sp) {
       const trace = [], f0 = Math.ceil(g0 * C.fps), f1 = Math.floor(arrive * C.fps), path = [0];
       for (let f = f0 + 1; f <= f1; f++) path.push(path.at(-1) + dist(camC((f - 1) / C.fps), camC(f / C.fps)));
       const L = path.at(-1);
-      let u = 0;
+      let u = 0, step = 0;
+      const mid = Math.round((f0 + f1) / 2), probe = {};
       for (let f = f0; f <= f1; f++) {
         const t = f / C.fps, c = camC(t), along = L > 1e-9 ? path[f - f0] / L : 0;
         const x = Math.min(1, Math.max(0, (t - g0) / Math.max(1e-6, arrive - g0)));
         const eased = x < 0.5 ? 4 * x ** 3 : 1 - (-2 * x + 2) ** 3 / 2; // power3.inOut, as the tween was
+        step = Math.max(step, Math.max(u, eased, along) - u);
         u = Math.max(u, eased, along);
         const b = at(u, c).map((v, i) => r3(v + (1 - u) * e0[i] + u * e1[i]));
+        if (f === mid) Object.assign(probe, { t: r3(t), box: b.map(Math.round), src: r3((shownFrame(t) - 0.4) / an.fps) });
         // COMPOSE_TRACE=1 writes, per glide frame, this hole and the page rect it rides, and what
         // the old frame-space tween drew and the page rect at its progress, for SKILL.md's numbers
         if (process.env.COMPOSE_TRACE) trace.push({ t: r3(t), u: r3(u), cam: r3(along), hole: b, content: at(u, c).map(r3), tween: p.box.map((v, i) => r3(v + (s.box[i] - v) * eased)), under: at(eased, c).map(r3) });
@@ -776,6 +779,8 @@ function chapter(an, sp) {
       }
       lines.push(`tl.set(${sl}, { ${vars(s.box)} }, ${r3(arrive)});`);
       if (trace.length) writeFileSync(`${C.out}/work/${name}-glide-m${s.i}.json`, JSON.stringify(trace));
+      // for check.mjs: the largest share of the path covered in one frame, and the hole mid-glide
+      report.find((r) => r.i === s.i).glide = { step: r3(step), frames: f1 - f0 + 1, ...probe };
     } else if (s.glided) {
       // no camera poses in this take (filmed before they were logged): an eased tween
       const p = an.spots[k - 1], pe = p.ct + p.hold, arrive = s.cf + F(0.25), d = Math.max(1 / C.fps, arrive - pe);
