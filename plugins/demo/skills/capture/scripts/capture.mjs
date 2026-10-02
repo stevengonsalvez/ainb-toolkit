@@ -299,8 +299,10 @@ async function film({ base, state, out, viewport = { width: 1280, height: 720 },
     const capInfo = { mode: cap.mode, ...(cap.fallback && { requested: 'deterministic', fallback: cap.fallback }),
       ...(det && { network: cap.netNote ? 'advance' : cap.network === 'advance' ? 'advance' : 'pause', ...(cap.netNote && { networkNote: cap.netNote }) }),
       ...(det && { blur: cap.blur && { ...cap.blur, spans: r.blurSpans, ...r.blurStats } }) };
-    fs.writeFileSync(path.join(dir, 'events.json'), JSON.stringify({ chapter, viewport, dpr: r.dpr, fps: r.fps,
-      capture: capInfo, dur: r.dur, frames: r.frames, events, ...(r.poses && { poses: r.poses }) }, null, 1));
+    // poses go last, one [frame, x, y, s] per line: indented like the rest they cost one line per number
+    const body = JSON.stringify({ chapter, viewport, dpr: r.dpr, fps: r.fps, capture: capInfo, dur: r.dur, frames: r.frames, events }, null, 1);
+    fs.writeFileSync(path.join(dir, 'events.json'), r.poses?.length
+      ? `${body.slice(0, -2)},\n "poses": [\n${r.poses.map((p) => `  ${JSON.stringify(p)}`).join(',\n')}\n ]\n}` : body);
     return { frames: r.frames, dur: r.dur, events: events.filter(e => e.kind === 'mark').length, dir, mode: cap.mode, fps: r.fps, dpr: r.dpr };
   } finally { await rec.close(); }
 }

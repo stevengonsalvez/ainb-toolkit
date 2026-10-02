@@ -331,7 +331,11 @@ One per chapter, written next to the frames at `<out>/<chapter>/events.json`; `<
     { "t": 3.4, "kind": "click",
       "rect": { "x": 1012, "y": 668, "w": 96, "h": 40 }, "cam": null }
   ],
-  "poses": [[0, 0, 0, 1], [75, 0, 1.4984, 1.0106], [76, 0, 5.3117, 1.0385]]
+  "poses": [
+  [0,0,0,1],
+  [75,0,1.4984,1.0106],
+  [76,0,5.3117,1.0385]
+ ]
 }
 ```
 
@@ -353,10 +357,14 @@ before this have cues without either field: treat both as optional. A consumer t
   and compose keeps the older zoom timing for them. Fields below describe a `mark`.
 - `poses` (deterministic takes only): the camera on every frame it changed, `[frame, x, y, s]`, the
   frame's index in the mp4, the visible region's top left in CSS px and the scale (a frame not
-  listed keeps the pose before it; `s` 1 is full frame). Read at the frame's own time (a blurred
-  frame's first sub-frame). demo:compose moves a gliding spotlight and the vertical crop with the
-  content through it. The ferry departures take (753 frames) logs 268. Screencast takes and takes
-  filmed before it have none, and compose falls back to `cam` and the camera events.
+  listed keeps the pose before it; `s` 1 is full frame). Read at the frame's own time: a blurred
+  frame averages renders from there across the shutter (`capture.blur.shutter`, half a frame
+  interval by default), so on a moving camera its smear centres about a quarter frame later than
+  the logged pose. demo:compose moves a gliding spotlight and the vertical crop with the content
+  through it. One pose per line, last in the file: the ferry departures take (753 frames) logs 268
+  at 30 bytes each, about 190 KB for a 5-minute take filmed at that rate (49 bytes each when they
+  were indented like the rest). Screencast takes and takes filmed before it have none, and
+  compose falls back to `cam` and the camera events.
 - `rect`: element box in page CSS px (layout viewport, `getBoundingClientRect`); unaffected by the camera.
 - `cam`: camera at that moment. `null` = full frame. Otherwise `{x, y, w, h}` visible region in CSS px and `s` scale.
 - Frame position of a rect: `screenX = (rect.x - cam.x) * cam.s`, `screenY = (rect.y - cam.y) * cam.s`, size `* cam.s`. With `cam: null` it is `rect` as-is. (Checked on the sample: `(655 - 360) * 2 = 590`, where the nav's top edge sits in the zoomed frame.)
