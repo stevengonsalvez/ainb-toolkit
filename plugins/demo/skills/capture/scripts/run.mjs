@@ -7,6 +7,7 @@
 //   --no-dry-run  film without it
 import path from 'path'; import { pathToFileURL, fileURLToPath } from 'url'; import { execFileSync } from 'child_process';
 import { capture, ensureState } from './capture.mjs';
+import { narrativeLint, composeFor } from './narrative.mjs';
 
 const argv = process.argv.slice(2), flags = argv.filter(a => a.startsWith('--')), [file, ...only] = argv.filter(a => !a.startsWith('--'));
 const bad = flags.find(f => !['--dry-run', '--no-dry-run'].includes(f));
@@ -42,6 +43,9 @@ if (!flags.includes('--no-dry-run')) {
       console.log(`${ch.name}\n  MISS ${e.message}`);
     }
   }
+  // Pacing, from the beats themselves (and the narration, when the beats file names its compose
+  // config): warnings, never a failure.
+  for (const w of narrativeLint({ ...cfg, chapters }, composeFor(cfg, path.resolve(file)))) console.log(`narrative: ${w}`);
   console.log(`dry run: ${chapters.length} chapter(s), ${n} target(s) resolved, ${misses} miss(es), ${((Date.now() - t0) / 1000).toFixed(1)}s`);
   if (misses) process.exit(1);
   if (flags.includes('--dry-run')) process.exit(0);

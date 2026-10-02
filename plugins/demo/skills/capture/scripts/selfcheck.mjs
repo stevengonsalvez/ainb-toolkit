@@ -7,6 +7,7 @@ import assert from 'assert/strict'; import { execFileSync, execFile, spawn } fro
 import { chromium } from '@playwright/test';
 import { capture, checkPath, ensureState, overlay } from './capture.mjs';
 import { Camera, Cursor, spring1d, CAMERA, CURSOR, SNAPPY } from './motion.mjs';
+import { narrativeLint } from './narrative.mjs';
 
 const BG = '#3a6ea5';                             // luma ~100: neither blank white nor splash black
 const nav = `<nav class="fixed bottom-0" style="position:fixed;bottom:0;left:0;right:0;height:64px;background:#222;display:flex;gap:40px;justify-content:center;align-items:center">
@@ -144,6 +145,20 @@ try {
   const sh = new Cursor(0, 0, 1280, 720);
   assert.deepEqual([sh.aim(0, 10, 10), sh.aim(0.05, 5, 5), sh.aim(0.3, 0, 0)], [true, false, true], 'shake window is not 100ms');
   sh.aim(1, 10, 10); assert.ok(sh.click(1.05, 5, 5) > 1.05, 'a click reversing a tiny move was dropped as shake');
+
+  // 2b. Narrative lint, on the timeline the beats will film (no browser): a still hold over 2s with
+  //     no mark, a first mark after 3s, narration over 160 wpm until the next mark, and more than
+  //     5 chapters each warn; a tight chapter does not.
+  const slow = { name: 'slow', beats: [{ goto: '/', hold: 2500 }, { click: 'x' }, { zoom: { on: 'y', ms: 800 }, mark: { label: 'Late', on: 'y' }, hold: 1500 },
+    { zoom: { on: 'z' }, mark: { label: 'Cars', on: 'z' } }] };
+  const tight = { name: 'tight', beats: [{ goto: '/' }, { zoom: { on: 'y' }, mark: { label: 'Late', on: 'y' }, hold: 1500 }] };
+  const said = { chapters: [{ name: 'slow', narration: { marks: ['one two three four five six seven eight nine ten {@x}eleven twelve', null] } },
+    { name: 'tight', narration: { marks: ['the next sailing is late'] } }] };
+  const nl = narrativeLint({ chapters: [slow, tight] }, said);
+  for (const re of [/slow: beat "#0" holds 2.5s with no mark/, /slow: first mark \("Late"\) at about 4.2s/, /slow: narration for "Late" runs 327 wpm over the 2.2s/])
+    assert.ok(nl.some(w => re.test(w)), `narrative lint missed ${re}: ${JSON.stringify(nl)}`);
+  assert.ok(!nl.some(w => /^tight:/.test(w)), `narrative lint flagged a tight chapter: ${JSON.stringify(nl)}`);
+  assert.ok(narrativeLint({ chapters: Array.from({ length: 6 }, (_, i) => ({ ...tight, name: `c${i}` })) }).some(w => /^6 chapters/.test(w)), 'six chapters not flagged');
 
   // 3. Main take (deterministic, the default): zoom, marks, scoped click, wait out the splash.
   const r = await capture({ base, out, chapter: 'main', beats: [
