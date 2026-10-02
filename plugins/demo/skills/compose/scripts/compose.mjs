@@ -6,7 +6,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync, mkdirSync, copyFileSync, existsSync } from 'node:fs';
 import { dirname, resolve, basename, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadConfig, segmentNames, seams, seamsOf, screenRect, VERTICAL, eventsPath, r3, esc, grayFrames, mad, hexToRgba, clipSpans } from './config.mjs';
+import { loadConfig, segmentNames, seams, seamsOf, screenRect, VERTICAL, eventsPath, r3, esc, grayFrames, mad, hexToRgba, clipSpans, frameCount } from './config.mjs';
 import { audioSettings, narrationClips, fitNarration, beatGrid } from './audio.mjs';
 import { cues as captionCues } from './captions.mjs';
 
@@ -947,10 +947,21 @@ function beatItems(cfg, an) {
   }
   return items;
 }
-// The settled frame of a mark, scaled once (lanczos) to the size it is shown at.
+// The take frame a filmed beat shows: the mark's own frame (m.t, not the spot's T, which
+// continuous pacing pushes later when two marks sit close), or once a camera move into it has
+// settled if that is later, kept inside the take (a mark in its last half frame rounded past it).
+function stillFrame(an, s) {
+  const t = s.m.t, mv = an.moves.filter(([a]) => a < t).at(-1);
+  const at = mv && mv[1] > t - 0.3 ? Math.max(t, settledAt(an.mp4, mv[1], an.name, an.fps)) : t;
+  an.frames ??= frameCount(C, an.mp4);
+  return Math.min(an.frames - 1, Math.round(at * an.fps));
+}
+// Frame k of a take, scaled once (lanczos) to the size it is shown at. The seek sits 0.4 frame
+// early (a seek returns the first frame at or after it), as check.mjs reads it.
 function stillPng(an, k, out, scale) {
-  execFileSync(C.ffmpeg, ['-nostdin', '-loglevel', 'error', '-y', '-ss', String(Math.max(0, (k - 0.25) / an.fps)), '-i', an.mp4, '-frames:v', '1',
+  execFileSync(C.ffmpeg, ['-nostdin', '-loglevel', 'error', '-y', '-ss', String(Math.max(0, (k - 0.4) / an.fps)), '-i', an.mp4, '-frames:v', '1',
     '-vf', `scale=${Math.round(an.srcW * scale)}:${Math.round(an.srcH * scale)}:flags=lanczos`, out]);
+  if (!existsSync(out)) throw new Error(`${an.name}: no frame ${k} in ${an.mp4} for a beat's still`);
 }
 function slideHtml(b, id) {
   const items = (xs) => xs.map(esc);
@@ -1046,8 +1057,8 @@ function beatChapter(cfg) {
       inner = beatWindow(id, b, an);
       if (lit > b.start) lines.push(...windowArrival(`#${id}-ww`, b.start, ENT));
       light(id, b.box, `#${id}-l`, b.dir);
-      const k = Math.round(b.spot.T * an.fps);
-      report.push({ i: b.i, id: b.id, label: b.label, still: true, srcT: r3(b.spot.T), seek: r3((k - 0.4) / an.fps), frame: k,
+      const k = b.k = stillFrame(an, b.spot);
+      report.push({ i: b.i, id: b.id, label: b.label, still: true, srcT: r3(k / an.fps), seek: r3((k - 0.4) / an.fps), frame: k,
         compT: lit, litFrom: lit, fadeIn: F(0.25), glided: false, ...(SP.sweep && { sweepTo: r3(lit + F(0.9)) }),
         hold: r3((b.i === items.length - 1 ? total - tail : b.end) - lit), srcHold: 0, place: b.dir, box: b.box.map(Math.round), labBox: b.labBox, view: b.view });
     } else if (b.parts) {
@@ -1083,7 +1094,7 @@ function beatChapter(cfg) {
   mkdirSync(`${d}/assets/stills`, { recursive: true }); mkdirSync(`${d}/assets/slides`, { recursive: true });
   // one file per window that shows it (a split reuses two beats' stills): the same image twice in
   // one project is a duplicate-media lint warning
-  const still = (p, file) => stillPng(an, Math.round(p.spot.T * an.fps), `${d}/assets/stills/${file}.png`, Math.min(an.dpr, Z * WS * Math.max(1, p.view.s)));
+  const still = (p, file) => stillPng(an, p.k ?? stillFrame(an, p.spot), `${d}/assets/stills/${file}.png`, Math.min(an.dpr, Z * WS * Math.max(1, p.view.s)));
   for (const b of items) {
     if (b.spot) still(b, `${name}-b${b.i}`);
     for (const [k, p] of (b.parts || []).entries()) still(p, `${name}-b${b.i}-p${k}`);
