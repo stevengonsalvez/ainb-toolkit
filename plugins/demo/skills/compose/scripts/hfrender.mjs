@@ -9,7 +9,7 @@
 // about a tenth of that. --low-memory-mode does not lift the check (measured: refused the same).
 // So when a project would not fit, it is rendered in time chunks that do, each its own copy of the
 // project re-timed to a window of the timeline, packed, and joined losslessly.
-import { spawnSync, execFileSync } from 'node:child_process';
+import { spawn, spawnSync, execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync, mkdirSync, rmSync, readdirSync, statfsSync, renameSync, openSync, readSync, closeSync, cpSync } from 'node:fs';
 import { dirname, basename, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -77,13 +77,16 @@ export function renderToMp4(C, dir, out, log) {
       writeFileSync(`${pdir}/index.html`, windowed(html, f0 / C.fps, want / C.fps, C.fps));
     }
     rmSync(png, { recursive: true, force: true });
-    // the timeout scales with the chunk and its pixel rate (PER: seconds per second, 10 at 720p30)
-    const r = spawnSync('npx', ['--yes', 'hyperframes@0.8.40', 'render', '--fps', String(C.fps), '--workers', workers,
+    // the timeout scales with the chunk and its pixel rate (PER: seconds per second, 10 at 720p30);
+    // HF_TIMEOUT_S overrides it, for testing. The render runs under watch() below.
+    const secs = +process.env.HF_TIMEOUT_S || 120 + PER * Math.ceil(want / C.fps);
+    const r = spawnSync(process.execPath, [fileURLToPath(import.meta.url), '--watch', String(secs), pdir, '--',
+      'npx', '--yes', 'hyperframes@0.8.40', 'render', '--fps', String(C.fps), '--workers', workers,
       '--format', 'png-sequence', '--video-frame-format', 'png', '--output', resolve(png)],
-      { cwd: pdir, encoding: 'utf8', maxBuffer: 1 << 28, timeout: (120 + PER * Math.ceil(want / C.fps)) * 1000 });
+      { encoding: 'utf8', maxBuffer: 1 << 28, stdio: ['ignore', 'pipe', 'pipe'] });
     logText += `${r.stdout}\n${r.stderr}\n`;
     writeFileSync(log, logText);
-    if (r.status !== 0) throw new Error(`${basename(dir)}: render failed${r.error ? ` (${r.error.code})` : ''}${n > 1 ? ` in chunk ${k + 1} of ${n}` : ''}, see ${log}`);
+    if (r.status !== 0) throw new Error(`${basename(dir)}: render ${r.status === 124 ? `timed out after ${secs}s` : 'failed'}${n > 1 ? ` in chunk ${k + 1} of ${n}` : ''}, see ${log}`);
     // A segment must hold its planned length in frames: concat and check.mjs turn frames into time.
     const got = readdirSync(png).filter((f) => /^frame_\d+\.png$/.test(f)).length;
     if (got !== want) throw new Error(`${basename(dir)}: ${got} frames${n > 1 ? ` in chunk ${k + 1}` : ''}, wanted ${want}`);
@@ -109,7 +112,49 @@ export function renderToMp4(C, dir, out, log) {
   return { frames, chunks: n };
 }
 
+// Runs one command with a time limit and leaves nothing behind. HyperFrames' Chrome browsers are
+// launched in process groups of their own, so killing the command (or its group) on a timeout
+// orphaned them (measured: two browsers and their renderers still running 48s after a timed-out
+// render). So every process seen under the command, polled each second, is killed with it: on
+// timeout, and any survivor once it exits. stdin is never a terminal: a render reading or
+// writing one from a background group stops on SIGTTIN/SIGTTOU (main's render.sh under timeout
+// sat stopped for 47 minutes that way). Exit code 124 means timed out, as timeout(1).
+function watch(secs, cwd, cmd) {
+  const child = spawn(cmd[0], cmd.slice(1), { cwd, stdio: ['ignore', 'inherit', 'inherit'] });
+  const seen = new Set([child.pid]);
+  const scan = () => {
+    const kids = new Map(), all = new Set();
+    for (const line of execFileSync('ps', ['-A', '-o', 'pid=,ppid=']).toString().trim().split('\n')) {
+      const [pid, ppid] = line.trim().split(/\s+/).map(Number);
+      all.add(pid);
+      if (!kids.has(ppid)) kids.set(ppid, []);
+      kids.get(ppid).push(pid);
+    }
+    // a pid that has gone is dropped at once, so a reused number is never mistaken for ours
+    for (const p of seen) if (!all.has(p)) seen.delete(p);
+    const alive = new Set(), todo = [...seen];
+    while (todo.length) { const p = todo.pop(); if (alive.has(p)) continue; alive.add(p); todo.push(...(kids.get(p) || [])); }
+    for (const p of alive) seen.add(p);
+    return alive;
+  };
+  const kill = (sig) => { for (const p of scan()) if (p !== process.pid) try { process.kill(p, sig); } catch {} };
+  const poll = setInterval(scan, 1000);
+  let timedOut = false;
+  const limit = setTimeout(() => { timedOut = true; kill('SIGTERM'); setTimeout(() => kill('SIGKILL'), 3000).unref(); }, secs * 1000);
+  child.on('exit', (code) => {
+    clearInterval(poll); clearTimeout(limit);
+    seen.delete(child.pid);
+    const left = [...scan()].filter((p) => p !== child.pid);
+    for (const p of left) try { process.kill(p, 'SIGKILL'); } catch {}
+    if (left.length) console.error(`hfrender: killed ${left.length} process(es) left behind by the render`);
+    process.exit(timedOut ? 124 : code ?? 1);
+  });
+}
+
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const [cfg, dir, out, log] = process.argv.slice(2);
-  try { renderToMp4(loadConfig(cfg), dir, out, log); } catch (e) { console.error(e.message); process.exit(1); }
+  if (process.argv[2] === '--watch') watch(+process.argv[3], process.argv[4], process.argv.slice(6));
+  else {
+    const [cfg, dir, out, log] = process.argv.slice(2);
+    try { renderToMp4(loadConfig(cfg), dir, out, log); } catch (e) { console.error(e.message); process.exit(1); }
+  }
 }
