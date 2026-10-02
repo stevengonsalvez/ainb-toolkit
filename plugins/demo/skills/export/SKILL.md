@@ -148,8 +148,10 @@ Home, End. Visible focus ring on every control (`:focus-visible`). Works from 39
 **Lint** (warnings, not failures): fewer than 9 or more than 12 steps (Arcade: 9 to 12 finish
 most often), and a payoff after step 7 (most viewers have left by then).
 
-Measured on the ferry example: 5 steps (3 departures marks, 2 fares marks; 1 click skipped),
-images inlined, `index.html` 0.417 MB, 1.4 to 2.2 s. Checked with Playwright at 1280 and 390
+Measured on the ferry example, filmed with the current demo:capture: 6 steps (3 departures
+marks; in fares the click on the Fares nav link, then 2 marks), images inlined (0.401 MB),
+`index.html` 0.542 MB, 2.4 s. Takes filmed before click targets were recorded give 5 steps and
+warn about the skipped click (0.417 MB, 1.4 to 2.2 s). Checked with Playwright at 1280 and 390
 wide: every hotspot and label inside its step image (also with a hotspot as tall as the frame,
 and one 8% tall at the top), stepped through by hotspot clicks and Right alternately; Left,
 Home, End, Start over and Enter on a focused control all land on the right step, focus stays on
