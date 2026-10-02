@@ -180,6 +180,17 @@ function checkMarkIds(beats, chapter) {
   }
 }
 
+// ffmpeg arguments averaging a blurred frame's N sub-frames (sub/00.png ...) into `out`, with the
+// gap `fill` appended. Each sub-frame is its own input, normalised to rgb24, then mixed. A CDP
+// screenshot can come back with alpha (a 1px unpainted seam mid-scroll, on the transparent default
+// background); as one image2 stream that format change rebuilt the graph, tmix restarted its count,
+// select=eq(n,N-1) never fired and ffmpeg exited 0 having written no frame.
+export function blurArgs(sub, N, fill, out) {
+  const ins = [], fmt = [], mix = [];
+  for (let k = 0; k < N; k++) { ins.push('-i', path.join(sub, `${String(k).padStart(2, '0')}.png`)); fmt.push(`[${k}]format=rgb24[a${k}]`); mix.push(`[a${k}]`); }
+  return ['-v', 'error', '-y', ...ins, '-filter_complex', `${fmt.join(';')};${mix.join('')}mix=inputs=${N}${fill}`, '-update', '1', out];
+}
+
 export async function capture(opts) {
   checkMarkIds(opts.beats, opts.chapter);
   const cap = { mode: 'deterministic', dpr: 2, fps: 60, blur: {}, network: 'auto', unstickMs: 1500, stallMs: 10000, timeoutMs: 600000,
@@ -691,8 +702,7 @@ async function deterministic({ W, H, cap, dir, state, overlayArgs }) {
   // camera events' boxes: compose moves its spotlight and crop with the content it films.
   const poses = [];
   // ffmpeg averages each blurred frame in the background while capture goes on, two at a time:
-  // tmix over its N sub-frames, then only the last of tmix's N outputs (the full average) goes
-  // on to the gap fill (filling all N and keeping the last cost 3x the time, identical output).
+  // mix over its N sub-frames (blurArgs), then the gap fill on that one average.
   // Every job settles; a failure stops the take at once through `abort` (filming on at 40x
   // real time after ffmpeg has failed wastes the wait), and its sub-frames are removed either way.
   // A take that falls back is re-filmed into the same directory, so close() kills and awaits every
@@ -711,8 +721,7 @@ async function deterministic({ W, H, cap, dir, state, overlayArgs }) {
       const { sub, N, out, fill, bytes } = queue.shift();
       let kid;
       const job = new Promise(res => {
-        kid = execFile(ffbin('ffmpeg'), ['-v', 'error', '-y', '-i', `${sub.replace(/%/g, '%%')}/%02d.png`,
-          '-filter_complex', `tmix=frames=${N},select=eq(n\\,${N - 1})${fill}`, '-update', '1', out], e => {
+        kid = execFile(ffbin('ffmpeg'), blurArgs(sub, N, fill, out), e => {
           kids.delete(kid);
           let err = null;
           if (!cancelled) {

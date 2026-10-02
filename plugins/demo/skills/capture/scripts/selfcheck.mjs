@@ -5,7 +5,7 @@
 import http from 'http'; import fs from 'fs'; import os from 'os'; import path from 'path';
 import assert from 'assert/strict'; import { execFileSync, execFile, spawn } from 'child_process'; import { fileURLToPath } from 'url';
 import { chromium } from '@playwright/test';
-import { capture, checkPath, ensureState, overlay } from './capture.mjs';
+import { capture, checkPath, ensureState, overlay, blurArgs } from './capture.mjs';
 import { inventory } from './locate.mjs';
 import { Camera, Cursor, spring1d, CAMERA, CURSOR, SNAPPY } from './motion.mjs';
 import { narrativeLint, composeFor } from './narrative.mjs';
@@ -96,13 +96,13 @@ const yavg = (img, vf = '') => Number(execFileSync(FFMPEG, ['-v', 'error', '-i',
 const luma = img => yavg(img);
 const probe = mp4 => JSON.parse(execFileSync(FFPROBE, ['-v', 'error', '-count_frames', '-select_streams', 'v:0',
   '-show_entries', 'stream=width,height,avg_frame_rate,nb_read_frames', '-of', 'json', mp4]).toString()).streams[0];
-// An ffmpeg stand-in for capture's blur jobs (the only calls with tmix): every other call, and
+// An ffmpeg stand-in for capture's blur jobs (the only calls with mix=inputs): every other call, and
 // every job after the first, runs the real ffmpeg. For the first job, `nowrite` exits 0 without
 // writing its frame; `stall` marks `started`, waits, then marks `finished` and runs.
 const ffStandIn = (mode, marks) => {
   const f = path.join(marks, `ffmpeg-${mode}.sh`);
   fs.writeFileSync(f, `#!/bin/sh
-case "$*" in *tmix=*) ;; *) exec "${FFMPEG}" "$@";; esac
+case "$*" in *mix=inputs=*) ;; *) exec "${FFMPEG}" "$@";; esac
 if mkdir "${marks}/first" 2>/dev/null; then
   ${mode === 'nowrite' ? 'exit 0' : `touch "${marks}/started"; sleep 8; touch "${marks}/finished"`}
 fi
@@ -552,12 +552,25 @@ try {
     (e, so, se) => (e ? rej(new Error(`inventory beats form failed: ${se || e.message}`)) : res(so))));
   assert.match(invOut, /targets on inv after beat/, `inventory beats form without --state: ${invOut.slice(0, 200)}`);
 
+  // 15. Blur averaging survives a sub-frame with alpha among opaque ones (rig backlog R8): the
+  //     averaged frame is written, opaque and the right size. As one tmix stream it was not.
+  const bsub = path.join(out, 'blur-rgba'); fs.mkdirSync(bsub, { recursive: true });
+  for (let k = 0; k < 6; k++) execFileSync(FFMPEG, ['-v', 'error', '-y', '-f', 'lavfi', '-i', `color=c=0x${(0x202020 + k * 0x101010).toString(16)}:s=64x40`,
+    '-frames:v', '1', ...(k === 4 ? ['-vf', 'format=rgba,geq=r=r(X\\,Y):g=g(X\\,Y):b=b(X\\,Y):a=if(eq(Y\\,10)\\,128\\,255)', '-pix_fmt', 'rgba'] : ['-pix_fmt', 'rgb24']),
+    path.join(bsub, `${String(k).padStart(2, '0')}.png`)]);
+  const bout = path.join(out, 'blur-rgba.png');
+  execFileSync(FFMPEG, blurArgs(bsub, 6, '', bout));
+  assert.ok(fs.existsSync(bout), 'blur averaging wrote no frame for a sub-frame set with one rgba among rgb24');
+  const bprobe = JSON.parse(execFileSync(FFPROBE, ['-v', 'error', '-show_entries', 'stream=width,height,pix_fmt', '-of', 'json', bout]).toString()).streams[0];
+  assert.deepEqual([bprobe.width, bprobe.height, bprobe.pix_fmt], [64, 40, 'rgb24'], `blur average ${JSON.stringify(bprobe)}`);
+
   const f2 = v => v.toFixed(2);
   console.log(`selfcheck OK: springs ${JSON.stringify(springs)}; pre-aim holds the fixed point; retarget keeps velocity; settles exact; ms 0 cuts; click lands at ${press.toFixed(3)}s; shake 100ms`);
   console.log(`selfcheck OK: main ${r.frames} frames/${r.dur.toFixed(2)}s 2560x1440@60 mp4 ${n} frames luma head ${head} tail ${tail}; anim ${md5.length} frames 0 repeats; blur spans ${JSON.stringify(spans)} inside camera moves, up to ${bb.maxSamples} samples ${bb.maxGap}px apart, capped run filled ${capped.filled} frames`);
   console.log(`selfcheck OK: lazy import stays deterministic; SSE runs on under auto, falls back to ${fb.mode} under pause, one message each; screencast hold ${h.frames} frames; scroll-zoom luma ${zl.det}/${zl.sc}; guard threw`);
   console.log(`selfcheck OK: mark id carried as written, absent when not given; numeric and repeated ids refused`);
   console.log(`selfcheck OK: inventory on a re-rendering page ${invSkipped}; beats form without --state runs`);
+  console.log(`selfcheck OK: blur averaging writes an opaque frame from one rgba sub-frame among rgb24 ones`);
   console.log(`selfcheck OK: locator chain falls through to entry 2 and is recorded; a miss names the chain and nearest candidates and films nothing; dry run 0/1; ferry dry run ${ferryDry}`);
   console.log(`selfcheck OK: cursor under 2x zoom det ${cs.det.map(f2)} sc ${cs.sc.map(f2)} (zoomed, after nav); ring per click ${JSON.stringify(ripple)}; type det ${f2(ty.det[0])}s sc ${f2(ty.sc[0])}s; pace ${f2(p1.dur)}s -> ${f2(p2.dur)}s; loggedInSel re-mints; sandbox errors ${sandboxErrs}`);
 } finally {
