@@ -178,6 +178,12 @@ try {
   for (const re of [/slow: beat "#0" holds 2.5s with no mark/, /slow: first mark \("Late"\) at about 4.2s/, /slow: narration for "Late" runs 327 wpm over the 2.2s/])
     assert.ok(nl.some(w => re.test(w)), `narrative lint missed ${re}: ${JSON.stringify(nl)}`);
   assert.ok(!nl.some(w => /^tight:/.test(w)), `narrative lint flagged a tight chapter: ${JSON.stringify(nl)}`);
+  //     Typing on screen fills a sparse line's window: 4 words over the 4s before the next mark
+  //     warn as slow, but not when that window is mostly typing.
+  const sparse = (typed) => narrativeLint({ chapters: [{ name: 's', beats: [{ goto: '/' }, { zoom: { on: 'y' }, mark: { label: 'A', on: 'y' }, hold: 1000 },
+    typed ? { type: { into: 'q', text: 'ferry times to the island', cps: 12 } } : { hold: 2500 }, { mark: { label: 'B', on: 'z' } }] }] },
+    { chapters: [{ name: 's', narration: { marks: ['one two three four', null] } }] }).filter(w => /runs \d+ wpm/.test(w));
+  assert.ok(sparse(false).length === 1 && sparse(true).length === 0, `slow narration rule with/without typing: ${JSON.stringify([sparse(false), sparse(true)])}`);
   //     A compose config the beats file names but that is not there, or not JSON, is said, with its path.
   assert.throws(() => composeFor({ compose: './nope.json' }, path.join(out, 'b.mjs')), /compose: \.\/nope\.json \(from the beats file\) is not there/);
   fs.writeFileSync(path.join(out, 'bad.json'), '{ nope');
