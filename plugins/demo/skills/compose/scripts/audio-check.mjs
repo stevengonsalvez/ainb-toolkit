@@ -185,6 +185,9 @@ if (key) process.env.DEEPGRAM_API_KEY = key; else delete process.env.DEEPGRAM_AP
   items[2].spot.label = 'relabelled';
   assert.equal(resolveBeats({ name: 'coach' }, spotsOf)[0].spot.label, 'coach 0', "a label set on a borrowed beat must not reach that take's own chapter");
   assert.throws(() => resolveBeats({ name: 'athlete', beats: [{ take: 'coach', mark: '5.2' }] }, spotsOf), /no mark "5.2" in take coach \(marks 0-0 by index, ids 5.4\)/);
+  // ids are unique per take, so a borrowed one can match this take's own: refused, not resolved by order
+  assert.throws(() => resolveBeats({ name: 'coach', beats: [{ mark: '5.4' }, { take: 'athlete', mark: '5.2' }, { take: 'other', index: 0 }] },
+    (n) => (n === 'other' ? [{ i: 0, m: { id: '5.4' } }] : spotsOf(n))), /two beats have id 5.4; give one its own "id"/);
 }
 
 console.log(`audio-check OK: anchors on spotlights, ${freezes.length} freezes in whole frames, located tail at ${got.at}s (truth ${truth.toFixed(3)}, r ${got.r.toFixed(3)})`);

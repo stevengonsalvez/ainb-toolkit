@@ -148,7 +148,7 @@ export function loadConfig(path) {
       const kinds = ['mark', 'index', 'slide', 'split'].filter((k) => b[k] != null);
       if (kinds.length !== 1) throw new Error(`${at} needs exactly one of mark, index, slide or split`);
       if (b.index != null && !(Number.isInteger(b.index) && b.index >= 0)) throw new Error(`${at}: index must be a whole number >= 0`);
-      if (b.take != null && !(typeof b.take === 'string' && b.take && (b.mark != null || b.index != null))) throw new Error(`${at}: take names another chapter's take, with the mark or index to show from it`);
+      if (b.take != null && !(typeof b.take === 'string' && b.take && (b.mark != null || b.index != null))) throw new Error(`${at}: take names another take in takes, with the mark or index to show from it`);
       if (b.split != null && !(Array.isArray(b.split) && b.split.length === 2)) throw new Error(`${at}: split takes two earlier beats, e.g. ["2.3", "2.4"]`);
       if (b.slide == null) continue;
       if (!SLIDES[b.slide]) throw new Error(`${at}: slide "${b.slide}" is not one of ${Object.keys(SLIDES).join(', ')}`);
@@ -245,6 +245,10 @@ export function resolveBeats(cfg, spotsOf) {
     b.spot = { ...spot };
   }
   for (const b of items) b.id = String(b.id ?? (b.spot ? b.spot.m.id ?? (b.take ? `${b.take}:${b.spot.i}` : b.spot.i) : `b${b.i}`));
+  // ids are unique per take, not per chapter: a borrowed mark can share one with this take's own,
+  // and a split naming it would take whichever came first
+  const ids = items.map((b) => b.id), twice = ids.filter((x, i) => ids.indexOf(x) !== i);
+  if (twice.length) throw new Error(`${cfg.name}: two beats have id ${[...new Set(twice)].join(', ')}; give one its own "id"`);
   for (const b of items) if (b.split) {
     b.parts = b.split.map((ref) => items.find((x) => x.id === String(ref) && x.i < b.i && x.spot));
     if (b.parts.some((x) => !x)) throw new Error(`${cfg.name} beat ${b.i}: split ${JSON.stringify(b.split)} must name two earlier filmed beats`);
