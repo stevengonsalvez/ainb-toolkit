@@ -114,8 +114,13 @@ the motion weight (0.5) costs such a loop 3 to 12 points against 10 per spotligh
 | `--out` | `<out>/export/interactive` | |
 
 **Steps.** One per mark in demo order (every mark has a rect and a label), plus each click or
-type cue that carries a `rect`. demo:capture records only the time of clicks and types today, so
-those are counted, skipped and named in a warning. The label is the narration line for that
+type cue with a target (demo:capture records the clicked or typed-into element's rect and the
+camera box on each). A type beat is filmed as a click into the field then the type cue; the two
+make one step, "Type here", at the click's frame and rect (the field before it widened or hid).
+Click steps read "Click here". Cues that point at nothing are not steps, each case said in a
+warning: no `rect` at all (the take predates demo:capture recording targets: re-film it),
+`rect: null` (the target had no box when filmed: display:none or zero size), or a rect wholly
+outside its frame (below the fold, outside the camera box). The label is the narration line for that
 mark when the demo has narration, else compose's label for that spotlight (so the config's
 `labels` overrides apply), else the capture's, cut at a word to under 60 characters
 (longer hotspot copy loses about 12% completion in Arcade's benchmarks).
@@ -129,7 +134,8 @@ of PNG. Each run first removes the step images, page and `steps.json` an earlier
 
 **Hotspots**: the mark rect in page CSS px, through the camera box in force at the mark
 (zoom `s`, origin `x`,`y`), times the take's density, fitted to the frame's real size from its
-PNG header and clipped to it. A target wholly outside its frame fails the export.
+PNG header and clipped to it. A mark wholly outside its frame fails the export (a mark is
+what the demo is about); a click or type is dropped instead, as above.
 
 **The page**: one HTML file, no network. Hotspot with a pulsing ring (still under
 `prefers-reduced-motion`); its label sits below it, else above, else inside its lower edge
@@ -142,8 +148,10 @@ Home, End. Visible focus ring on every control (`:focus-visible`). Works from 39
 **Lint** (warnings, not failures): fewer than 9 or more than 12 steps (Arcade: 9 to 12 finish
 most often), and a payoff after step 7 (most viewers have left by then).
 
-Measured on the ferry example: 5 steps (3 departures marks, 2 fares marks; 1 click skipped),
-images inlined, `index.html` 0.417 MB, 1.4 to 2.2 s. Checked with Playwright at 1280 and 390
+Measured on the ferry example, filmed with the current demo:capture: 6 steps (3 departures
+marks; in fares the click on the Fares nav link, then 2 marks), images inlined (0.401 MB),
+`index.html` 0.542 MB, 2.4 s. Takes filmed before click targets were recorded give 5 steps and
+warn about the skipped click (0.417 MB, 1.4 to 2.2 s). Checked with Playwright at 1280 and 390
 wide: every hotspot and label inside its step image (also with a hotspot as tall as the frame,
 and one 8% tall at the top), stepped through by hotspot clicks and Right alternately; Left,
 Home, End, Start over and Enter on a focused control all land on the right step, focus stays on
@@ -173,8 +181,8 @@ matching check goes red.
 
 - demo:export reads demo:compose's config loader from `../compose/scripts/`, so it runs from
   the plugin's `skills/` directory with compose beside it, as the plugin installs it.
-- Click and type cues carry no target rect yet, so walkthroughs step through marks only.
-  Recording `rect` on those events in demo:capture makes them steps with no change here.
+- Click and type steps have generic labels ("Click here", "Type here"): the cues carry no
+  copy of their own. Put a mark on anything that needs words.
 - The loop stays inside one chapter; a demo whose chapters are all shorter than 8 s gets a
   shorter loop and a warning.
 - Hotspots are rectangles; a rotated or clipped element shows its bounding box.

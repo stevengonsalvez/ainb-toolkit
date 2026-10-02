@@ -327,7 +327,9 @@ One per chapter, written next to the frames at `<out>/<chapter>/events.json`; `<
       "rect": { "x": 0, "y": 655, "w": 1265, "h": 65 },
       "cam":  { "x": 312.5, "y": 360, "w": 640, "h": 360, "s": 2 } },
     { "t": 1.29, "kind": "camera", "t0": 1.29, "t1": 1.884,
-      "cam":  { "x": 312.5, "y": 360, "w": 640, "h": 360, "s": 2 } }
+      "cam":  { "x": 312.5, "y": 360, "w": 640, "h": 360, "s": 2 } },
+    { "t": 3.4, "kind": "click",
+      "rect": { "x": 1012, "y": 668, "w": 96, "h": 40 }, "cam": null }
   ]
 }
 ```
@@ -337,7 +339,12 @@ One per chapter, written next to the frames at `<out>/<chapter>/events.json`; `<
 - `dur`: seconds, first to last frame. Deterministic: the mp4 has exactly `dur * fps + 1` frames, one per rendered frame. Screencast: it has `ceil(dur * 30) + 1` frames: capture.mjs resamples to 30fps itself (frame k shows the last frame captured at or before k/30) and writes `cfr/` as hard links, which `encode.sh` encodes as a plain image sequence. It used to hand ffmpeg a concat list of per-frame durations instead; measured on a 4.4s take with zoom glides, that ran 0.17s short on ffmpeg 6.1 and 0.73s short on ffmpeg 8.1 (an 11.1s ferry take came out 8.9s long), putting marks late by growing amounts. `npm run check` now asserts the mp4 length matches the take.
 - `frames`: frames filmed. Deterministic: the mp4's frame count. Screencast: captured JPEGs (variable rate; the mp4 is resampled to 30fps).
 - `t`: seconds from the first frame, which is mp4 time 0. Deterministic: the time of the first frame that shows the event. Screencast: taken from the wall clock, because the last delivered frame lagged the screen by ~1s late in a 50s take.
-- `kind`: `"mark"`, `"camera"`, or a sound cue: `"click"` (as the press lands, from a `click` beat or the click a `type` beat starts with; clicks before filming starts are not recorded) and `"type"` (`t` first key, `dur` seconds of typing, `chars` count). A consumer that reads only marks filters on `kind`. A `camera` event is one zoom or wide glide: `t0` and `t1` its
+- `kind`: `"mark"`, `"camera"`, or a sound cue: `"click"` (as the press lands, from a `click` beat or the click a `type` beat starts with; clicks before filming starts are not recorded) and `"type"` (`t` first key, `dur` seconds of typing, `chars` count). Both carry `rect`, the target
+element (the field, for a type), and `cam`, the camera box in force, in the same CSS px as a
+mark's, so a consumer can point at what was clicked or typed into. A click's rect is taken as the
+press lands; a type cue's after the typing, so a field that widens as it fills is measured as it
+ends up. `rect` is `null` when the target has no box (display:none, zero size). Takes filmed
+before this have cues without either field: treat both as optional. A consumer that reads only marks filters on `kind`. A `camera` event is one zoom or wide glide: `t0` and `t1` its
   start and end, `cam` the box it ends on (`null` for a wide). demo:compose plays
   every camera move at 1x and fades a spotlight in only once the move into it has settled.
   Deterministic: `t1` is the frame the spring settled on, exactly. Screencast: the last pose

@@ -124,16 +124,21 @@ export function shortLabel(s, max = 59) {
 }
 
 // Interactive steps, in demo order: every mark (it has a rect and a label), plus every click or
-// type cue that carries a `rect` (demo:capture's cues do not yet; those are counted and skipped).
-// Each step points at the take frame that first shows it and the camera box in force there.
+// type cue with a target. Cues from takes filmed before demo:capture recorded targets have no
+// `rect` (counted in `skipped`); a cue whose target had no box when filmed (display:none, zero
+// size) has `rect: null` (counted in `hidden`). A type beat is filmed as a click into the field
+// then the type cue: one step, at the click's frame and rect (the field before it widened or hid
+// while typing). Each step points at the take frame that first shows it and the camera box in
+// force there (the cue's own `cam` when it has one).
 export function steps(C, tl) {
-  const out = []; let skipped = 0;
+  const out = []; let skipped = 0, hidden = 0;
   for (const ch of tl.chapters) {
     const ev = JSON.parse(readFileSync(eventsPath(C.takes, ch.name), 'utf8'));
     const dpr = ev.dpr ?? 1, fps = ev.fps ?? 30, vp = ev.viewport || { width: 1280, height: 720 };
-    let cam = null, mark = 0;
+    let cam = null, mark = 0, click = null;      // click: the step the cue just before made, if a click
     const said = (i) => ch.narration.find((l) => l.slot === i)?.text;
     for (const e of [...ev.events].sort((x, y) => x.t - y.t)) {
+      const after = click; click = null;
       if (e.kind === 'camera') { cam = e.cam; continue; }
       if (e.kind === 'mark') {
         // narration, else compose's label for this spotlight (config `labels` override the
@@ -141,13 +146,16 @@ export function steps(C, tl) {
         out.push({ chapter: ch.name, title: ch.title, kind: 'mark', t: e.t, frame: Math.round(e.t * fps), rect: e.rect, cam: e.cam, dpr, fps, vp,
           text: said(mark) || ch.spots.find((s) => s.i === mark)?.label || e.label, mark: mark++ });
       } else if (e.kind === 'click' || e.kind === 'type') {
-        if (!e.rect) { skipped++; continue; }
-        out.push({ chapter: ch.name, title: ch.title, kind: e.kind, t: e.t, frame: Math.max(0, Math.round(e.t * fps) - 1), rect: e.rect, cam, dpr, fps, vp,
-          text: e.label || (e.kind === 'type' ? 'Type here' : 'Click here') });
+        if (e.kind === 'type' && after && e.t - after.t < 1) { Object.assign(after, { kind: 'type', text: e.label || 'Type here' }); continue; }
+        if (e.rect === undefined) { skipped++; continue; }
+        if (e.rect === null) { hidden++; continue; }
+        out.push({ chapter: ch.name, title: ch.title, kind: e.kind, t: e.t, frame: Math.max(0, Math.round(e.t * fps) - 1), rect: e.rect,
+          cam: e.cam !== undefined ? e.cam : cam, dpr, fps, vp, text: e.label || (e.kind === 'type' ? 'Type here' : 'Click here') });
+        if (e.kind === 'click') click = out.at(-1);
       }
     }
   }
-  return { steps: out, skipped };
+  return { steps: out, skipped, hidden };
 }
 
 // Arcade's benchmarks: 9-12 steps finish most often; past step 7 viewers drop off, so the payoff

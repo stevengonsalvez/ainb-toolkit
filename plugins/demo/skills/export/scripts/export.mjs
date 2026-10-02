@@ -135,15 +135,16 @@ function gifEncode(frames, work, gif, { fps, quality, width, srcWidth }) {
 function interactive() {
   const out = opt.out ?? `${C.out}/export/interactive`;
   mkdirSync(out, { recursive: true });
-  const { steps: S, skipped } = steps(C, tl);
-  if (!S.length) throw new Error('no marks in the takes: nothing to build steps from');
-  if (skipped) console.warn(`warn: ${skipped} click/type cues carry no target rect, so they are not steps (demo:capture records only their time)`);
+  const { steps: all, skipped, hidden } = steps(C, tl);
+  if (!all.length) throw new Error('no marks in the takes: nothing to build steps from');
+  if (skipped) console.warn(`warn: ${skipped} click/type cues carry no target rect, so they are not steps (the take predates demo:capture recording click and type targets; re-film it to include them)`);
+  if (hidden) console.warn(`warn: ${hidden} click/type cues had no target on screen when filmed (display:none or zero size), so they are not steps`);
   // This run's files only: step images, page and steps.json from an earlier run must not linger.
   for (const f of readdirSync(out)) if (/^(\.?step-\d+\.(webp|png)|index\.html|steps\.json)$/.test(f)) rmSync(join(out, f));
   const webpBy = hasEncoder('libwebp') ? 'ffmpeg' : which('cwebp') ? 'cwebp' : null;
   if (!webpBy) console.warn(`warn: no WebP encoder (${FFMPEG()} has no libwebp, cwebp is not installed): step images are PNG, about 2.7x the size. Install the webp package for cwebp`);
-  const imgs = [], hot = [];
-  for (const [k, s] of S.entries()) {
+  const S = [], imgs = [], hot = [];
+  for (const [k, s] of all.entries()) {
     const png = `${C.takes}/${s.chapter}/cfr/${String(s.frame).padStart(5, '0')}.png`;
     // The lossless take at its own density, never the lossy final: from the PNG frame when the
     // take keeps them, else decoded from the take's lossless mp4 (seeking half a frame early:
@@ -157,16 +158,20 @@ function interactive() {
       const ihdr = readFileSync(raw).subarray(16, 24), W = ihdr.readUInt32BE(0), H = ihdr.readUInt32BE(4);
       const fit = W / (s.vp.width * s.dpr);
       const box = clipTo(onFrame(s.rect, s.cam, s.dpr * fit), W, H);
-      if (!box) throw new Error(`step ${k + 1} (${s.chapter} "${s.text}"): its target is entirely outside the frame`);
-      const stem = join(out, `step-${String(k + 1).padStart(2, '0')}`);
+      // A mark points at what the demo is about, so one off frame is a broken take. A click or type
+      // target can be off frame for real (below the fold until Playwright scrolls it in, outside
+      // the camera box): that cue is dropped, said, and the rest still export.
+      if (!box && s.kind === 'mark') throw new Error(`mark "${s.text}" (${s.chapter}): its target is entirely outside the frame`);
+      if (!box) { console.warn(`warn: the ${s.kind} at ${r3(s.t)}s in ${s.chapter} points at nothing in its frame (target off screen or outside the camera box), so it is not a step`); continue; }
+      const stem = join(out, `step-${String(S.length + 1).padStart(2, '0')}`);
       let file = `${stem}.webp`;
       if (webpBy === 'ffmpeg') ff(['-i', raw, '-frames:v', '1', '-c:v', 'libwebp', '-lossless', '0', '-q:v', '90', '-update', '1', file]);
       else if (webpBy === 'cwebp') execFileSync('cwebp', ['-quiet', '-q', '90', raw, '-o', file]);
       else { file = `${stem}.png`; ff(['-i', raw, '-frames:v', '1', '-update', '1', file]); }
-      hot.push({ ...box, W, H });
-      imgs.push(file);
+      S.push(s); hot.push({ ...box, W, H }); imgs.push(file);
     } finally { if (raw !== png) rmSync(raw, { force: true }); }
   }
+  if (!S.length) throw new Error('no step points at anything in its frame: nothing to build a walkthrough from');
   const total = imgs.reduce((a, f) => a + statSync(f).size, 0) / 1e6;
   const inline = opt.inline === 'yes' || (opt.inline !== 'no' && total <= 12);
   const payoff = opt.payoff ? S.findIndex((s) => s.text.startsWith(opt.payoff)) : S.length - 1;

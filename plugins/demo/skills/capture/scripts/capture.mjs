@@ -200,6 +200,12 @@ async function film({ base, state, out, viewport = { width: 1280, height: 720 },
         if (!(await el.count())) throw new Error(`beat "${beat}": selector ${sel} matched nothing`);
         return el.evaluate(n => { const r = n.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; });
       };
+      // A click or type cue's target, in the same CSS px as a mark's rect, or null when it has no
+      // box (display:none, zero size): a consumer then has nothing to point at.
+      const cueRect = async sel => {
+        const r = await page.locator(sel).first().evaluate(n => { const b = n.getBoundingClientRect(); return { x: b.x, y: b.y, w: b.width, h: b.height }; }).catch(() => null);
+        return r && r.w > 0 && r.h > 0 ? r : null;
+      };
       const boxFor = (r, s) => {
         const vw = W / s, vh = H / s;
         return { x: clamp(r.x + r.w / 2 - vw / 2, 0, Math.max(0, W - vw)),
@@ -228,8 +234,9 @@ async function film({ base, state, out, viewport = { width: 1280, height: 720 },
           if (!(await el.count())) throw new Error(`beat "${name}": selector ${step.click} matched nothing`);
           const r = await el.boundingBox();
           if (r) await rec.glideTo(r.x + r.width / 2, r.y + r.height / 2, P(300), true);
-          // Sound cue for compose, as the press lands. Clicks before filming starts are not recorded.
-          if (rec.filming) events.push({ t: rec.now(), kind: 'click' });
+          // Sound cue for compose, as the press lands, with its target's rect and the camera box
+          // in force (as a mark has them). Clicks before filming starts are not recorded.
+          if (rec.filming) { const t = rec.now(); events.push({ t, kind: 'click', rect: await cueRect(step.click), cam: rec.cam }); }
           await el.click({ timeout: rec.T(8000) });
         }
         if (step.goto || step.click) {
@@ -251,11 +258,13 @@ async function film({ base, state, out, viewport = { width: 1280, height: 720 },
           const r = await el.boundingBox();
           if (r) await rec.glideTo(r.x + r.width / 2, r.y + r.height / 2, P(300), true);
           const typed = step.ready ? null : networkQuiet(page, { cap: step.readyCap }, clock);
-          events.push({ t: rec.now(), kind: 'click' });
+          const tc = rec.now(), cam = rec.cam;
+          events.push({ t: tc, kind: 'click', rect: await cueRect(into), cam });
           await el.click({ timeout: rec.T(8000) });
           const t0 = rec.now();
           for (const ch of String(text)) { await page.keyboard.type(ch); await rec.sleep(1000 / cps); }
-          events.push({ t: t0, kind: 'type', dur: rec.now() - t0, chars: String(text).length });
+          // measured after the typing: a field that widens on focus or input is pointed at as it ends up
+          events.push({ t: t0, kind: 'type', dur: rec.now() - t0, chars: String(text).length, rect: await cueRect(into), cam: rec.cam });
           if (step.ready) await ready(step.ready, step.readyCap ?? 15000, name);
           else await typed();
           await rec.sleep(P(step.settle ?? 400));

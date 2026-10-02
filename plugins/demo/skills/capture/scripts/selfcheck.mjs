@@ -22,6 +22,9 @@ const pages = {
   '/plain': `<body style="margin:0;background:${BG};height:100vh"><div id="z" style="position:absolute;left:440px;top:260px;width:400px;height:200px"><a id="go" href="/plain2" style="position:absolute;inset:0"></a></div></body>`,
   '/plain2': `<body style="margin:0;background:${BG};height:100vh"></body>`,
   '/frame': `<body style="margin:0;background:${BG};height:100vh"><iframe src="/news" width="400" height="200"></iframe></body>`,
+  // Fields for the type cue's rect: one widens as it fills, one hides once it holds "go".
+  '/grow': `<body style="margin:0;background:${BG};height:100vh"><input id="g" style="position:absolute;left:100px;top:100px;width:100px;box-sizing:border-box" oninput="this.style.width = (100 + this.value.length * 20) + 'px'"></body>`,
+  '/hide': `<body style="margin:0;background:${BG};height:100vh"><input id="h" style="position:absolute;left:100px;top:100px" oninput="if (this.value === 'go') this.style.display = 'none'"></body>`,
   // Turns white once the input holds exactly the typed text: the last frame proves the type beat.
   '/type': `<body style="margin:0;background:${BG};height:100vh"><input id="q" style="margin:200px;font-size:30px" oninput="if (this.value === 'ferry times') document.body.style.background = '#fff'"></body>`,
   // A login form, and a home page that sends logged-out visitors to /welcome, not to /login.
@@ -162,6 +165,11 @@ try {
   // A sound cue per click, timed inside the take.
   const clicks = e.events.filter(m => m.kind === 'click');
   assert.ok(clicks.length === 1 && clicks[0].t > moves[1].t1 && clicks[0].t <= e.dur, `click cues ${JSON.stringify(clicks)}`);
+  //    It carries its target's rect (CSS px, as a mark's) and the camera box (wide here): the
+  //    REPORTS link, inside the nav the first mark measured.
+  const nav = e.events.find(m => m.label === 'nav').rect, cr = clicks[0].rect;
+  assert.ok(cr && cr.w > 0 && cr.h > 0 && cr.x >= nav.x && cr.y >= nav.y && cr.x + cr.w <= nav.x + nav.w && cr.y + cr.h <= nav.y + nav.h && 'cam' in clicks[0] && clicks[0].cam === null,
+    `click rect ${JSON.stringify(clicks[0])} not inside the nav ${JSON.stringify(nav)}`);
   for (const m of moves) assert.ok(m.t1 - m.t0 >= 0.3, `camera event span ${m.t0}..${m.t1} too short for a 500ms spring`);
   assert.ok(moves[0].t1 <= z.t, 'zoom ended after the mark that follows it');
   assert.equal(z.cam.s, 2, 'zoom did not reach scale 2');
@@ -322,10 +330,26 @@ try {
     ty[m] = [t.dur, luma(last(t))];
     const cue = ev(t).events.find(x => x.kind === 'type');
     assert.ok(cue && cue.chars === 11 && cue.dur > 1.0, `${m}: type cue ${JSON.stringify(cue)}`);
+    //  The field is at margin 200px: the type cue and the click it starts with carry its rect.
+    const into = ev(t).events.find(x => x.kind === 'click');
+    for (const c of [cue, into]) assert.ok(c.rect && c.rect.x === 200 && c.rect.y === 200 && c.rect.w > 0 && c.rect.h > 0 && 'cam' in c, `${m}: ${c.kind} rect ${JSON.stringify(c)}`);
     assert.ok(ty[m][1] > 200, `${m}: typed text did not land (luma ${ty[m][1]})`);
     assert.ok(t.dur > 1.0 + 1.5, `${m}: type beat too fast for 11 chars at 10 cps (${t.dur.toFixed(2)}s)`);
     assert.ok(t.frames >= 30, `${m}: hidden-cursor take produced only ${t.frames} frames`);
   }
+  //  The type cue's rect is measured after the typing: a field that widens as it fills is pointed
+  //  at as it ends up, and one that hides gets rect null (nothing to point at), not a stale box.
+  const cues = async (pg, sel, text) => ev(await capture({ base, out, chapter: `cue-${pg.slice(1)}`, capture: SC, cursor: { hidden: true },
+    beats: [{ goto: pg }, { type: { into: sel, text, cps: 20 } }, { hold: 200 }] })).events.filter(x => x.kind === 'click' || x.kind === 'type');
+  const [gc, gt] = await cues('/grow', '#g', 'ferry'), [hc, ht] = await cues('/hide', '#h', 'go');
+  assert.ok(gc.rect.w === 100 && gt.rect.w === 200, `widening field: click ${JSON.stringify(gc.rect)}, type ${JSON.stringify(gt.rect)}`);
+  assert.ok(hc.rect && hc.rect.w > 0 && ht.rect === null, `hiding field: click ${JSON.stringify(hc.rect)}, type ${JSON.stringify(ht.rect)}`);
+  //  A click while zoomed in screencast mode records its rect in the frame the camera box is in
+  //  (CSS px from the scroll the zoom started at): #w at top 2000 after a 1700 scroll is at 300.
+  const zc = ev(await capture({ base, out, chapter: 'zoom-click-sc', capture: SC, cursor: { hidden: true },
+    beats: [{ goto: '/tall' }, { scroll: 1700 }, { zoom: { on: '#w', scale: 2, ms: 400 } }, { click: '#w' }, { hold: 200 }] })).events;
+  const zck = zc.find(x => x.kind === 'click');
+  assert.ok(zck && zck.cam?.s === 2 && JSON.stringify(zck.rect) === JSON.stringify({ x: 290, y: 300, w: 700, h: 400 }), `zoomed screencast click ${JSON.stringify(zck)}`);
 
   // 12. pace scales holds: the same 1s hold at pace 2 films about twice as long.
   const p1 = await capture({ base, out, chapter: 'pace1', beats: [{ goto: '/a', hold: 1000 }] });
