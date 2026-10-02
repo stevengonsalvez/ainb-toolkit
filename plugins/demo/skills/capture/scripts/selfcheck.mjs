@@ -22,6 +22,9 @@ const pages = {
   '/plain': `<body style="margin:0;background:${BG};height:100vh"><div id="z" style="position:absolute;left:440px;top:260px;width:400px;height:200px"><a id="go" href="/plain2" style="position:absolute;inset:0"></a></div></body>`,
   '/plain2': `<body style="margin:0;background:${BG};height:100vh"></body>`,
   '/frame': `<body style="margin:0;background:${BG};height:100vh"><iframe src="/news" width="400" height="200"></iframe></body>`,
+  // Fields for the type cue's rect: one widens as it fills, one hides once it holds "go".
+  '/grow': `<body style="margin:0;background:${BG};height:100vh"><input id="g" style="position:absolute;left:100px;top:100px;width:100px;box-sizing:border-box" oninput="this.style.width = (100 + this.value.length * 20) + 'px'"></body>`,
+  '/hide': `<body style="margin:0;background:${BG};height:100vh"><input id="h" style="position:absolute;left:100px;top:100px" oninput="if (this.value === 'go') this.style.display = 'none'"></body>`,
   // Turns white once the input holds exactly the typed text: the last frame proves the type beat.
   '/type': `<body style="margin:0;background:${BG};height:100vh"><input id="q" style="margin:200px;font-size:30px" oninput="if (this.value === 'ferry times') document.body.style.background = '#fff'"></body>`,
   // A login form, and a home page that sends logged-out visitors to /welcome, not to /login.
@@ -334,6 +337,13 @@ try {
     assert.ok(t.dur > 1.0 + 1.5, `${m}: type beat too fast for 11 chars at 10 cps (${t.dur.toFixed(2)}s)`);
     assert.ok(t.frames >= 30, `${m}: hidden-cursor take produced only ${t.frames} frames`);
   }
+  //  The type cue's rect is measured after the typing: a field that widens as it fills is pointed
+  //  at as it ends up, and one that hides gets rect null (nothing to point at), not a stale box.
+  const cues = async (pg, sel, text) => ev(await capture({ base, out, chapter: `cue-${pg.slice(1)}`, capture: SC, cursor: { hidden: true },
+    beats: [{ goto: pg }, { type: { into: sel, text, cps: 20 } }, { hold: 200 }] })).events.filter(x => x.kind === 'click' || x.kind === 'type');
+  const [gc, gt] = await cues('/grow', '#g', 'ferry'), [hc, ht] = await cues('/hide', '#h', 'go');
+  assert.ok(gc.rect.w === 100 && gt.rect.w === 200, `widening field: click ${JSON.stringify(gc.rect)}, type ${JSON.stringify(gt.rect)}`);
+  assert.ok(hc.rect && hc.rect.w > 0 && ht.rect === null, `hiding field: click ${JSON.stringify(hc.rect)}, type ${JSON.stringify(ht.rect)}`);
 
   // 12. pace scales holds: the same 1s hold at pace 2 films about twice as long.
   const p1 = await capture({ base, out, chapter: 'pace1', beats: [{ goto: '/a', hold: 1000 }] });
