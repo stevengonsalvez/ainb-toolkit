@@ -129,7 +129,8 @@ async function dg(what, url, init, accept) {
   }
 }
 // Speak `text` into `out` (a wav). HyperFrames runs locally; Deepgram is one request per clip,
-// 48kHz 16-bit mono WAV.
+// 48kHz 16-bit mono WAV, written to the cache only once it is one: a 200 carrying anything else
+// (an HTML error page, an empty or cut-off body) would otherwise be cached as the line for good.
 async function speak(N, text, out, dir) {
   if (N.tts === 'hyperframes') {
     writeFileSync(`${out}.txt`, text);
@@ -138,7 +139,10 @@ async function speak(N, text, out, dir) {
   }
   const url = `https://api.deepgram.com/v1/speak?model=${encodeURIComponent(N.voice)}&encoding=linear16&sample_rate=${SR}&container=wav`;
   const buf = await dg(`Deepgram speak (voice ${N.voice})`, url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) }, async (r) => {
-    return Buffer.from(await r.arrayBuffer());
+    const type = r.headers.get('content-type') || '', b = Buffer.from(await r.arrayBuffer());
+    if (!type.startsWith('audio/') || b.length <= 44 || b.toString('ascii', 0, 4) !== 'RIFF' || b.toString('ascii', 8, 12) !== 'WAVE')
+      throw new Error(`not a WAV (${type || 'no content-type'}, ${b.length} bytes)`);
+    return b;
   });
   writeFileSync(`${out}.part`, buf); renameSync(`${out}.part`, out);
 }
