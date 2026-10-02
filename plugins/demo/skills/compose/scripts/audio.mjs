@@ -169,8 +169,9 @@ const clipKey = (N, text) => N.tts === 'hyperframes'
 
 // One clip per narrated line and its word times, both cached: `hyperframes tts` and `hyperframes
 // transcribe` (medium.en by default: on a word with a known start small.en was 0.5s early and
-// medium.en within 5ms), or Deepgram speak and listen.
-export async function narrationClips(C) {
+// medium.en within 5ms), or Deepgram speak and listen. `only`: the segments whose lines are
+// needed (all when unset).
+export async function narrationClips(C, only = null) {
   const A = audioSettings(C);
   if (!A) return {};
   const N = A.narration, lines = [];
@@ -181,6 +182,7 @@ export async function narrationClips(C) {
     if (ch.narration.intro) lines.push({ seg: ch.name, slot: 'intro', ...parseLine(ch.narration.intro) });
     (ch.narration.marks || []).forEach((t, i) => t && lines.push({ seg: ch.name, slot: i, ...parseLine(t) }));
   }
+  if (only) lines.splice(0, lines.length, ...lines.filter((l) => only.includes(l.seg)));
   if (!lines.length) return {};
   const dir = `${C.out}/work/audio/tts`;
   mkdirSync(dir, { recursive: true });
