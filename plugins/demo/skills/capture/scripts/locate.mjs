@@ -1,6 +1,6 @@
 // ABOUTME: Beat targets: a CSS/Playwright selector string (as before), or a locator chain tried
 // in order, plus what the authoring tools need around them: a miss that names the nearest
-// candidates and a lint for CSS where a role or test id would do.
+// candidates, a lint for CSS where a role or test id would do, and an inventory of a page.
 //
 // A target is a string, an object, or an array of them (a chain):
 //   'header nav >> text=Fares'                     a selector (a single string keeps the old
@@ -137,4 +137,34 @@ export async function lintTarget(page, target, hit) {
   if (typeof t !== 'string' && !t.css) return null;
   const b = await better(page, hit.loc).catch(() => null);
   return b && `${describe(t)} is a selector; ${source(b)} finds the same element and survives a restyle`;
+}
+
+// Everything on the page a beat might target: interactive elements, landmarks, headings, tables,
+// anything with an id or a test id. Each with its role, name, test id, id, rect (CSS px) and the
+// chain to use for it (steadiest first). For the authoring procedure in SKILL.md.
+export async function inventory(page) {
+  const items = await page.evaluate((ROLE_OF) => {
+    const sel = 'a[href],button,input,select,textarea,summary,[role],[data-testid],[id],h1,h2,h3,h4,table,tr,nav,main,dialog,[tabindex]';
+    return [...document.querySelectorAll(sel)].map((n, i) => {
+      const b = n.getBoundingClientRect(), cs = getComputedStyle(n);
+      if (!(b.width > 0 && b.height > 0) || cs.visibility === 'hidden' || n.closest('#__cur,#__ring')) return null;
+      n.setAttribute('data-demo-inv', String(i));
+      return { i, tag: n.tagName.toLowerCase(), id: n.id || null, testid: n.getAttribute('data-testid'),
+        rect: { x: Math.round(b.x), y: Math.round(b.y), w: Math.round(b.width), h: Math.round(b.height) },
+        text: (n.innerText || n.getAttribute('placeholder') || n.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim().slice(0, 60) };
+    }).filter(Boolean);
+  }, ROLE_OF);
+  const out = [];
+  for (const it of items) {
+    const loc = page.locator(`[data-demo-inv="${it.i}"]`);
+    const el = await identify(loc);
+    const chain = [];
+    const b = await better(page, loc);
+    if (b) chain.push(b);
+    if (it.testid && !b?.testid) chain.push({ testid: it.testid });
+    if (it.id) chain.push(`#${it.id}`);
+    out.push({ role: el.role, name: el.name, testid: it.testid, id: it.id, tag: it.tag, rect: it.rect, text: it.text, chain });
+  }
+  await page.evaluate(() => document.querySelectorAll('[data-demo-inv]').forEach((n) => n.removeAttribute('data-demo-inv')));
+  return out;
 }

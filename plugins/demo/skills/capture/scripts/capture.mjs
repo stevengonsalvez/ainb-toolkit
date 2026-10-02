@@ -21,7 +21,7 @@ import fs from 'fs'; import path from 'path'; import { execFile } from 'child_pr
 // Browsers come from $PLAYWRIGHT_BROWSERS_PATH when set, else Playwright's own default.
 import { chromium } from '@playwright/test';
 import { Camera, Cursor, tilt, CAMERA_REF_MS, CLICK_LEAD_MS } from './motion.mjs';
-import { resolve, lintTarget } from './locate.mjs';
+import { resolve, lintTarget, inventory } from './locate.mjs';
 
 const smoothstep = p => p * p * (3 - 2 * p);
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -311,7 +311,8 @@ async function film({ base, state, out, viewport = { width: 1280, height: 720 },
     })();
     run.catch(() => {});                       // a stall rejects `rec.failed` first; this one then dies with the browser
     await Promise.race([run, rec.failed]);
-    if (dry) return { dry: true, chapter, targets, lints, timing };
+    // cap.inventory: what a beat could target on the page the beats ended on (inventory.mjs)
+    if (dry) return { dry: true, chapter, targets, lints, timing, ...(cap.inventory && { inventory: await inventory(page) }) };
     const r = await rec.stop();
     const capInfo = { mode: cap.mode, ...(cap.fallback && { requested: 'deterministic', fallback: cap.fallback }),
       ...(det && { network: cap.netNote ? 'advance' : cap.network === 'advance' ? 'advance' : 'pause', ...(cap.netNote && { networkNote: cap.netNote }) }),
