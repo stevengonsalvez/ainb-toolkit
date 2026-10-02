@@ -86,7 +86,10 @@ try {
     // a type beat: the click into the field, then the typing (the field widened as it filled),
     // both with their own cam
     { t: 7, kind: 'click', rect: { x: 100, y: 100, w: 50, h: 20 }, cam: null },
-    { t: 7.1, kind: 'type', dur: 1, chars: 5, rect: { x: 100, y: 100, w: 90, h: 20 }, cam: null }, ...extra] });
+    { t: 7.1, kind: 'type', dur: 1, chars: 5, rect: { x: 100, y: 100, w: 90, h: 20 }, cam: null },
+    // a click whose target is off frame (below the fold), and one whose target had no box
+    { t: 7.5, kind: 'click', rect: { x: 100, y: 5000, w: 50, h: 20 }, cam: null },
+    { t: 7.8, kind: 'click', rect: null, cam: null }, ...extra] });
   w(join(root, 'takes/one/events.json'), events());
 
   const run = (...args) => spawnSync(process.execPath, [join(SKILL, 'scripts/export.mjs'), ...args], { cwd: root, encoding: 'utf8' });
@@ -147,6 +150,8 @@ try {
     // the click's rect (the field before it widened).
     const ty = st.steps[3];
     ok(ty.label === 'Type here' && ty.box.x === 200 && ty.box.y === 200 && ty.box.w === 100 && ty.box.h === 40, `click + type on one field is one step at the cue's own cam: ${JSON.stringify(ty)}`);
+    ok(/the click at 7.5s in one points at nothing/.test(r.stderr) && /1 click\/type cues had no target on screen/.test(r.stderr),
+      'a click off frame and a click with no target are dropped and said, and the export still succeeds');
     ok(!existsSync(join(out, 'step-09.webp')) && !readdirSync(out).some((f) => f.startsWith('.step-')), 'a step image left from an earlier run, and the decode temps, are gone');
     ok(st.steps[0].label === 'First proof' && st.steps[2].label === 'Second proof', `step labels are compose's spotlight labels, not the capture's: ${st.steps.map((x) => x.label)}`);
     let bad = 0;
