@@ -218,6 +218,21 @@ function checkChapter(name) {
     if (b.line.end > b.cut + 1e-3) BEATS.push(`${name} beat ${b.id}: line ends ${r3(b.line.end)}s, after its cut at ${b.cut}s`);
     else if (short < -0.5 / C.fps) BEATS.push(`${name} beat ${b.id}: held ${r3(b.cut - b.line.end)}s past its line, under the ${plan.pad}s pad`);
   }
+  // Every cut shows a beat on both its frames: the last of the one before and the first of the
+  // next. A frame with only the backdrop on it has almost no edges (mean luma step between
+  // neighbouring pixels at 320x180: blank cut frames read 0.54 to 0.61, the sparsest slide 1.2+).
+  for (const b of plan.beats || []) {
+    const f0 = Math.round(b.start * C.fps);
+    for (const f of [f0 - 1, f0]) {
+      if (f < 0 || f >= nSeg || (b.i === 0 && f < f0)) continue;
+      const g = grayFrames(C.ffmpeg, seg, { t: segFrame(nSeg, f / C.fps), w: 320, h: 180 }).at(0);
+      let e = 0;
+      for (let y = 0; y < 180; y++) for (let x = 0; x < 320; x++) { const v = g[y * 320 + x]; if (x < 319) e += Math.abs(v - g[y * 320 + x + 1]); if (y < 179) e += Math.abs(v - g[(y + 1) * 320 + x]); }
+      const edge = r3(e / g.length);
+      CUTS.push({ name, beat: b.id, frame: f, edge });
+      if (edge < K.cutEdge) BEATS.push(`${name} beat ${b.id}: frame ${f} at its cut shows only the backdrop (edge ${edge})`);
+    }
+  }
   BEATN += (plan.beats || []).length;
   // An image2 sequence, not -pattern_type glob, which some builds do not support.
   const tiles = readdirSync(stillDir).length;
@@ -227,7 +242,7 @@ function checkChapter(name) {
   return rows;
 }
 
-const BEATS = []; let BEATN = 0;
+const BEATS = [], CUTS = []; let BEATN = 0;
 const want = process.argv.slice(3);
 const names = want.length ? want : segmentNames(C).filter((n) => !C.cards[n]);
 const all = names.flatMap(checkChapter);
@@ -238,5 +253,6 @@ for (const r of all) {
 const miss = all.filter((r) => !r.ok);
 writeFileSync(`${C.out}/work/check.json`, JSON.stringify(all, null, 1));
 console.log(`\n${all.length - miss.length}/${all.length} marks hit. Sheets: ${C.out}/work/stills-<chapter>.png`);
-if (BEATN) console.log(`${BEATN - BEATS.length}/${BEATN} beats hold their lines to the cut${BEATS.length ? `:\n  ${BEATS.join('\n  ')}` : ''}`);
+if (process.env.CHECK_CUTS) console.error(JSON.stringify(CUTS));
+if (BEATN) console.log(`${BEATN - BEATS.length}/${BEATN} beats pass: each line ends a pad before its cut, and no cut frame is blank${BEATS.length ? `:\n  ${BEATS.join('\n  ')}` : ''}`);
 process.exit(miss.length || BEATS.length ? 1 : 0);
