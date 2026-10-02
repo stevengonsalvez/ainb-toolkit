@@ -118,7 +118,7 @@ Only `takes` and `chapters` are required. Everything below shows the default whe
   "fadeLead": 0.25,                   // spotlight fades in this long before the mark (or once the zoom settles)
   "deadHold": 2.0,                    // freezes longer than this get trimmed
   "layout": { "safeMargin": 64, "labelHeight": 48, "labelGap": 14, "maxLabelWords": 6 },
-  "check":  { "litRatio": 0.80, "dimRatio": 0.62, "contentSd": 8, "driftMax": 12, "alignMax": 7, "glideStep": 0.2, "calloutMin": 12 },
+  "check":  { "litRatio": 0.80, "dimRatio": 0.62, "contentSd": 8, "driftMax": 12, "alignMax": 7, "glideStep": 0.2, "calloutMin": 12, "cutEdge": 0.9 },
   "audio": {                          // optional; "audio": false turns the sound layer off
     "sfx":       { "level": 0, "click": true, "type": true, "zoom": true, "mark": true },  // or false
     "music":     { "file": "bed.mp3", "level": -18, "duck": 11, "fadeIn": 1.5, "fadeOut": 2.5,
@@ -258,22 +258,31 @@ lines spoken and measured first ─▶ beat = lead + line + pad (whole frames) �
 chapter card (cardHold, silent) ─▶ beat ─▶ beat ─▶ ... ─▶ seam into the next chapter
 ```
 
-- **A filmed beat** is the still of its mark's settled frame (the frame at the mark, extracted
-  once at the size it is shown, lanczos), in the framed window, with its spotlight irising in and
-  its callout (the mark's label) popping in at the cut. It holds for its narration line plus
-  `beats.pad` (0.6s), the line starting `beats.lead` (0) after the cut; a beat with no line holds
-  `beats.hold` (3s). Nothing is sped up and nothing travels on screen: beats meet in hard cuts, or
+- **A filmed beat** is the still of its mark's own frame (the mark's `t`, or once a camera move
+  into it has settled if that is later, kept inside the take; extracted once at the size it is
+  shown, lanczos), in the framed window, with its spotlight irising in and its callout (the mark's
+  label) popping in at the cut. It holds for its narration line plus `beats.pad` (0.6s), the line
+  starting `beats.lead` (0) after the cut; a beat with no line holds `beats.hold` (3s). A line's
+  `{@anchor}` does nothing here: the spotlight is up from the cut and the line starts at `lead`. Nothing is sped up and nothing travels on screen: beats meet in hard cuts, or
   a `beats.fade` micro-fade of 1 to 4 frames. The first filmed beat after a chapter card brings
   the window in (tilted, eased flat over 0.6s) and lights after it. Compose warns when a beat
   falls outside `beats.min`-`beats.max` (3-6s) and when a line runs over `beats.lineMax` (7s):
   split it. The last beat holds through the seam into the next segment, so its pad stays clear
   of the transition; with a music bed the card takes the beat pad, or with no card the last beat.
+  The whole chapter is laid out in whole frames and each beat written as a clip that starts on
+  its first frame and ends a microsecond before the next one's (`clipSpans`): rounding the start
+  and the length on their own left a frame with no beat on it, only the backdrop, at 2148 of
+  8000 random cuts (a probe at 30fps with lines of 2.31, 3.02 and 1.87s rendered frame 272
+  blank), and none since. A slide's parts start part-way in on the cut frame itself and settle
+  over 0.5s, so its first frame is never empty.
 - **A chapter card** holds `beats.cardHold` (2.5s) with no narration (`narration.intro` is not
   spoken, and compose says so); `"card": false` on a chapter leaves it out.
 - **`chapters[].beats`** orders a chapter's beats; without it each filmed mark is one beat, in
   order. Each entry is one of:
-  - `{ "mark": 2 }` or `{ "mark": "4.2" }`: a filmed mark, by index or by the mark's `id` in
-    events.json, with an optional `label` overriding the callout;
+  - `{ "mark": "4.2" }` (the mark's `id` in events.json) or `{ "index": 2 }`: a filmed mark,
+    with an optional `label` overriding the callout. A bare number (`"mark": 2`) is an index only
+    in a take whose marks have no ids, where it cannot be taken for one; a take with two marks of
+    one id is refused, and a miss lists the indices and the ids separately;
   - `{ "split": ["2.3", "2.4"] }`: two earlier filmed beats side by side, each callout under its
     window (a half-size pane drops the scrim's backdrop blur, see compose.mjs);
   - `{ "slide": ... }`: a screen with no app, styled from the theme like the cards, with an
@@ -286,12 +295,18 @@ chapter card (cardHold, silent) ─▶ beat ─▶ beat ─▶ ... ─▶ seam i
 - **Clips**: `"clips": true` (the default here) also writes each chapter as its own mp4 in
   `out/clips/`: its segment's lossless render given the one lossy encode the film gets, and its
   slice of the film's stems (the music faded over 0.3s at the clip's ends), mastered on its own to
-  the same loudness target and checked the same way (a clip off target fails audio.mjs).
+  the same loudness target and checked the same way (a clip off target fails audio.mjs). A clip
+  with no narration or music in it (a slides-only chapter with no lines) keeps its own level and
+  only its ceiling is checked: silence measures -inf, which passes, where it read NaN and failed
+  the whole film.
 - **The still-check** reads every filmed beat like a mark (lit, dim, align, with the still's own
   source frame for both stills), checks its callout is drawn (`callout`: mean luma difference
   under the label against the source dimmed by that still's scrim ratio, gate `check.calloutMin`
-  12), and checks every beat's line ends at least `pad` before its cut. Slides and splits are
-  gated on timing only.
+  12), checks every beat's line, measured from the spoken file itself, ends at least `pad` before
+  its cut, and reads both frames of every cut: a frame with only the backdrop on it has almost no
+  edges (mean luma step between neighbouring pixels at 320x180, gate `check.cutEdge` 0.9; blank
+  cut frames read 0.54 to 0.61, the sparsest slide 1.37, filmed beats 2 to 7). Slides and splits
+  are gated on timing and on their cut frames.
 
 Measured on `examples/ferry/ferry.beats.config.json` (four chapters, 12 beats: three slides, a
 split, five filmed, three more slides; HyperFrames' local voice), 720p30 draft: 43.9s, render
@@ -299,9 +314,10 @@ split, five filmed, three more slides; HyperFrames' local voice), 720p30 draft: 
 -14.0 to -14.1 LUFS. The 1440p60 master (fresh clone): 43.7s, render 1174s (26.9s per output
 second, under load; four segments of 251-374s, a slide segment costing about what a filmed one
 does), 460 MB of `out/seg/`, 13 MB final, clips 2.3 to 3.9 MB, still-check 5/5 and 12/12, -14.1
-LUFS and every clip -14.0 to -14.1. With a music bed every cut sits on a beat (0ms) and the bed
-ducks under all 12 lines. Falsified: the callout hidden reads 1.1 and 1.5 where drawn ones read 111 to 125, both
-miss; a beat cut 0.2s before its line ends misses ("line ends 8.595s, after its cut at 8.4s").
+LUFS and every clip -14.0 to -14.1. With a music bed every segment start sits on a beat (0ms) and
+the bed ducks under all 12 lines; the cuts inside a chapter follow its lines, not the bed. Falsified: the callout hidden reads 1.1 and 1.5 where drawn ones read 111 to 125, both
+miss; a beat cut 0.2s before its line ends misses ("line ends 8.595s, after its cut at 8.4s");
+the probe's blank frame 272 misses ("shows only the backdrop (edge 0.609)") and passes since.
 Looked at: every slide kind, the split, a filmed beat after a card, a 3-frame micro-fade.
 
 ## The look
