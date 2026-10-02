@@ -195,6 +195,18 @@ export function loadConfig(path) {
   };
 }
 
+// HyperFrames shows a clip at time p when start <= p < start + duration. Back-to-back clips laid
+// out in whole frames [f0, f1) are written as start = f0/fps rounded DOWN to the microsecond and
+// duration ending 1us before f1/fps (also rounded down), so frame f1 (p = f1/fps) is at or past the
+// next clip's start and past this one's end even after start + duration is added in floating
+// point (7.866666 + 4.483334 came to 12.350000000000001, past p = 12.35): exactly one clip on every
+// frame. Rounding start and duration on their own (to the ms, one up, one down) left a blank frame
+// at about one hard cut in five. spans: [[f0, f1], ...] -> attributes.
+export function clipSpans(spans, fps) {
+  const us = (f) => Math.floor(f * 1e6 / fps + 1e-6);
+  return spans.map(([f0, f1]) => ({ start: (us(f0) / 1e6).toFixed(6), duration: ((us(f1) - us(f0) - 1) / 1e6).toFixed(6) }));
+}
+
 // Frames in a video, counted from its packets (exact for the packed segments).
 export function frameCount(C, file) {
   return +execFileSync(C.ffprobe, ['-v', 'error', '-count_packets', '-select_streams', 'v:0', '-show_entries', 'stream=nb_read_packets', '-of', 'csv=p=0', file]).toString();

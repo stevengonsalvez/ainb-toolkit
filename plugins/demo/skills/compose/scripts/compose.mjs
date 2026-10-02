@@ -6,7 +6,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync, mkdirSync, copyFileSync, existsSync } from 'node:fs';
 import { dirname, resolve, basename, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadConfig, segmentNames, seams, seamsOf, screenRect, VERTICAL, eventsPath, r3, esc, grayFrames, mad, hexToRgba } from './config.mjs';
+import { loadConfig, segmentNames, seams, seamsOf, screenRect, VERTICAL, eventsPath, r3, esc, grayFrames, mad, hexToRgba, clipSpans } from './config.mjs';
 import { audioSettings, narrationClips, fitNarration, beatGrid } from './audio.mjs';
 import { cues as captionCues } from './captions.mjs';
 
@@ -932,7 +932,7 @@ ${labels}
 // lines are spoken and measured before any of this (narrationClips), and the timeline is built
 // to them. A chapter card holds beats.cardHold, silent. Slides (no app screen) and splits (two
 // earlier beats side by side) come from chapters[].beats.
-const wholeFrames = (d) => Math.ceil(d * C.fps - 1e-6) / C.fps;
+const upFrames = (d) => Math.ceil(d * C.fps - 1e-6);   // seconds to whole frames, never shorter
 function beatItems(cfg, an) {
   const spots = an?.spots || [];
   const items = (cfg.beats || spots.map((s) => ({ mark: s.i }))).map((b, i) => ({ ...b, i, id: String(b.id ?? b.mark ?? `b${i}`) }));
@@ -1003,33 +1003,34 @@ function beatChapter(cfg) {
     Object.assign(b, { box: [x, y, w, h].map(r3), lab: pick[2], dir: pick[0], labBox: [pick[2].left, pick[2].top, lw, C.layout.labelHeight].map(Math.round) });
     b.spot.label = b.label;
   }
-  // timing: each beat holds its line plus pad, in whole frames; the first beat waits out the seam
-  // when there is no card, and the last holds through the tail seam so its pad stays clear of it
+  // timing, all in whole frames (clipSpans): each beat holds its line plus pad; the first beat
+  // waits out the seam when there is no card, and the last holds through the tail seam so its pad
+  // stays clear of it
   const hasCard = cfg.card !== false;
-  let CARD = hasCard ? BT.cardHold : 0;
+  let cardF = hasCard ? Math.round(BT.cardHold * C.fps) : 0;
   for (const b of items) {
     const c = clips[b.i];
     b.lead = BT.lead + (!hasCard && b.i === 0 ? seam.in.dur : 0);
-    b.dur = wholeFrames(c ? b.lead + c.dur + BT.pad : b.lead + BT.hold);
+    b.frames = upFrames(c ? b.lead + c.dur + BT.pad : b.lead + BT.hold);
     if (c && c.dur > BT.lineMax) console.warn(`  warn ${name} beat ${b.id}: line runs ${r3(c.dur)}s, over ${BT.lineMax}s: split it`);
-    if (b.dur < BT.min || b.dur > BT.max) console.warn(`  warn ${name} beat ${b.id}: holds ${r3(b.dur)}s, outside ${BT.min}-${BT.max}s`);
+    if (b.frames / C.fps < BT.min || b.frames / C.fps > BT.max) console.warn(`  warn ${name} beat ${b.id}: holds ${r3(b.frames / C.fps)}s, outside ${BT.min}-${BT.max}s`);
   }
-  items.at(-1).dur = wholeFrames(items.at(-1).dur + tail);
+  items.at(-1).frames += Math.round(tail * C.fps);
   // with a music bed the segment ends on a beat: the card takes the pad, or with no card the last
   // beat holds a little longer (a pad before the first beat would show an empty frame)
-  const pad = padToBeat(name, CARD + items.reduce((a, b) => a + b.dur, 0));
-  if (hasCard) CARD = r3(CARD + pad); else items.at(-1).dur += pad;
-  const total = r3(CARD + items.reduce((a, b) => a + b.dur, 0));
+  const padF = Math.round(padToBeat(name, (cardF + items.reduce((a, b) => a + b.frames, 0)) / C.fps) * C.fps);
+  if (hasCard) cardF += padF; else items.at(-1).frames += padF;
+  let f = cardF;
+  for (const b of items) { b.f0 = f; f += b.frames; b.f1 = f; b.start = r3(b.f0 / C.fps); b.end = r3(b.f1 / C.fps); }
+  const CARD = cardF / C.fps, total = f / C.fps;
   TOTALS[name] = total;
-  let t = CARD;
-  for (const b of items) { b.start = r3(t); t += b.dur; b.end = r3(t); }
 
   const html = [], lines = [], report = [], placed = [], q = (x) => `"#${x}"`;
   const ENT = F(0.6), cardEnd = r3(CARD + F(0.25));
   if (hasCard) { const cc = chapterCard(name, cfg, CARD, cardEnd); html.push(cc.html); lines.push(...cc.lines); }
   const fadeF = BT.fade / C.fps;
   for (const b of items) {
-    const id = `${name}-b${b.i}`, extra = b.i < items.length - 1 && fadeF ? fadeF : 0;
+    const id = `${name}-b${b.i}`, extraF = b.i < items.length - 1 ? BT.fade : 0;
     let inner = '';
     // spotlight and label come in once the window is in (the first beat after a card) or at the cut
     const lit = r3(b.start + (hasCard && b.i === items.findIndex((x) => x.spot || x.parts) && (b.spot || b.parts) ? ENT : 0));
@@ -1064,7 +1065,8 @@ function beatChapter(cfg) {
       lines.push(`tl.fromTo("#${id} .slab, #${id} .stitle, #${id} .tile, #${id} .step, #${id} .dev, #${id} .cbox > *, #${id} .note", { opacity: 0, y: 18 }, { opacity: 1, y: 0, duration: ${F(0.5)}, ease: "power3.out", stagger: ${F(0.08)}, immediateRender: false }, ${r3(b.start + F(0.05))});`);
       if (b.slide === 'steps') lines.push(`tl.fromTo("#${id}-ln", { scaleX: 0 }, { scaleX: 1, duration: ${F(0.9)}, ease: "power2.inOut", immediateRender: false }, ${r3(b.start + F(0.2))});`);
     }
-    html.push(`<section id="${id}" class="beat clip" data-start="${fdur(b.start)}" data-duration="${fdur(b.dur + extra)}" data-track-index="1"><div class="bin" id="${id}-in">${inner}</div></section>`);
+    const span = clipSpans([[b.f0, b.f1 + extraF]], C.fps)[0];
+    html.push(`<section id="${id}" class="beat clip" data-start="${span.start}" data-duration="${span.duration}" data-track-index="1"><div class="bin" id="${id}-in">${inner}</div></section>`);
     if (fadeF && b.i > 0) lines.push(`tl.fromTo("#${id}-in", { opacity: 0 }, { opacity: 1, duration: ${r3(fadeF)}, ease: "none", immediateRender: false }, ${b.start});`);
     const c = clips[b.i];
     if (c) placed.push({ slot: b.i, at: r3(b.start + b.lead), lit, dur: c.dur, file: c.file, text: c.text, anchor: c.anchor, words: c.words });
@@ -1084,7 +1086,7 @@ function beatChapter(cfg) {
   }
   for (const b of items) for (const k of ['phone', 'tablet', 'web']) if (b[k]) copyFileSync(b[k], `${d}/assets/slides/${name}-b${b.i}-${k}${extname(b[k])}`);
   const firstWin = items.find((x) => x.spot || x.parts);
-  const meta = { name, kind: 'chapter', mode: 'beats', start: startOf(name), total, cardDur: CARD, srcW: an?.srcW, srcH: an?.srcH,
+  const meta = { name, kind: 'chapter', mode: 'beats', start: startOf(name), total: GRID ? total : r3(total), cardDur: r3(CARD), srcW: an?.srcW, srcH: an?.srcH,
     settledFrom: firstWin && hasCard ? r3(firstWin.start + ENT) : 0, tailFrom: r3(total - tail), spots: report,
     beats: items.map((b) => ({ i: b.i, id: b.id, kind: b.spot ? 'mark' : b.parts ? 'split' : `slide:${b.slide}`, start: b.start, end: b.end,
       cut: r3(b.i === items.length - 1 ? total - tail : b.end), ...(clips[b.i] && { line: { at: r3(b.start + b.lead), end: r3(b.start + b.lead + clips[b.i].dur) } }) })),
