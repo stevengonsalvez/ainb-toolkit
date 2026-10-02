@@ -109,13 +109,16 @@ Only `takes` and `chapters` are required. Everything below shows the default whe
         "marks": ["The {@next}next sailing runs late.", null] } }  // one per mark, null = none
   ],
   "speed":  { "travel": 2, "rampMs": 250 },
+  "cut": "continuous",                // or "beats": one still per mark, held for its line; see Beat-paced cut
+  "beats":  { "pad": 0.6, "lead": 0, "cardHold": 2.5, "hold": 3, "fade": 0, "min": 3, "max": 6, "lineMax": 7 },
+  "clips": false,                     // each chapter also as its own mp4 (default true with "cut": "beats")
   "pace": 1,
   "targetDuration": 45,               // optional, seconds, whole video
   "hold":   { "min": 1.5, "max": 2.2 },
   "fadeLead": 0.25,                   // spotlight fades in this long before the mark (or once the zoom settles)
   "deadHold": 2.0,                    // freezes longer than this get trimmed
   "layout": { "safeMargin": 64, "labelHeight": 48, "labelGap": 14, "maxLabelWords": 6 },
-  "check":  { "litRatio": 0.80, "dimRatio": 0.62, "contentSd": 8, "driftMax": 12, "alignMax": 7, "glideStep": 0.2 },
+  "check":  { "litRatio": 0.80, "dimRatio": 0.62, "contentSd": 8, "driftMax": 12, "alignMax": 7, "glideStep": 0.2, "calloutMin": 12 },
   "audio": {                          // optional; "audio": false turns the sound layer off
     "sfx":       { "level": 0, "click": true, "type": true, "zoom": true, "mark": true },  // or false
     "music":     { "file": "bed.mp3", "level": -18, "duck": 11, "fadeIn": 1.5, "fadeOut": 2.5,
@@ -242,6 +245,59 @@ window duplicate then drop a frame. The spacing it keeps clear is the take's own
 60fps take lands two source frames per output frame at 1x, and assuming 30 put one of each pair on the half
 (measured on ferry, a source-index marker per frame: 1 duplicate-and-drop pair per chapter inside
 1x windows, 0 once the take's fps is used).
+
+## Beat-paced cut
+
+`"cut": "beats"` paces the film one line per screen instead of playing the footage. One beat is
+one screen, one callout and one line:
+
+```
+lines spoken and measured first ─▶ beat = lead + line + pad (whole frames) ─▶ jump cut ─▶ next beat
+chapter card (cardHold, silent) ─▶ beat ─▶ beat ─▶ ... ─▶ seam into the next chapter
+```
+
+- **A filmed beat** is the still of its mark's settled frame (the frame at the mark, extracted
+  once at the size it is shown, lanczos), in the framed window, with its spotlight irising in and
+  its callout (the mark's label) popping in at the cut. It holds for its narration line plus
+  `beats.pad` (0.6s), the line starting `beats.lead` (0) after the cut; a beat with no line holds
+  `beats.hold` (3s). Nothing is sped up and nothing travels on screen: beats meet in hard cuts, or
+  a `beats.fade` micro-fade of 1 to 4 frames. The first filmed beat after a chapter card brings
+  the window in (tilted, eased flat over 0.6s) and lights after it. Compose warns when a beat
+  falls outside `beats.min`-`beats.max` (3-6s) and when a line runs over `beats.lineMax` (7s):
+  split it. The last beat holds through the seam into the next segment, so its pad stays clear
+  of the transition; with a music bed the card takes the beat pad, or with no card the last beat.
+- **A chapter card** holds `beats.cardHold` (2.5s) with no narration (`narration.intro` is not
+  spoken, and compose says so); `"card": false` on a chapter leaves it out.
+- **`chapters[].beats`** orders a chapter's beats; without it each filmed mark is one beat, in
+  order. Each entry is one of:
+  - `{ "mark": 2 }` or `{ "mark": "4.2" }`: a filmed mark, by index or by the mark's `id` in
+    events.json, with an optional `label` overriding the callout;
+  - `{ "split": ["2.3", "2.4"] }`: two earlier filmed beats side by side, each callout under its
+    window (a half-size pane drops the scrim's backdrop blur, see compose.mjs);
+  - `{ "slide": ... }`: a screen with no app, styled from the theme like the cards, with an
+    optional `label` callout and `title`:
+    `"title"` (`kicker`, `title`, `sub`, a `note` such as "Example data"), `"tiles"` (`tiles`: a
+    word or two each), `"devices"` (`web`, `tablet`, `phone`: image files shown in a browser
+    window, a tablet and a phone), `"pricing"` (`tiers`: `name`, `price`, `points`, `highlight`),
+    `"steps"` (`steps`: numbered, joined by a line drawn in), `"end"` (`title`, `url`, `sub`).
+  A chapter of slides only needs no footage. `narration.marks[i]` is the line of beat `i`.
+- **Clips**: `"clips": true` (the default here) also writes each chapter as its own mp4 in
+  `out/clips/`: its segment's lossless render given the one lossy encode the film gets, and its
+  slice of the film's stems (the music faded over 0.3s at the clip's ends), mastered on its own to
+  the same loudness target and checked the same way (a clip off target fails audio.mjs).
+- **The still-check** reads every filmed beat like a mark (lit, dim, align, with the still's own
+  source frame for both stills), checks its callout is drawn (`callout`: mean luma difference
+  under the label against the source dimmed by that still's scrim ratio, gate `check.calloutMin`
+  12), and checks every beat's line ends at least `pad` before its cut. Slides and splits are
+  gated on timing only.
+
+Measured on `examples/ferry/ferry.beats.config.json` (four chapters, 12 beats: three slides, a
+split, five filmed, three more slides; HyperFrames' local voice), 720p30 draft: 43.9s, render
+155s (3.4s per output second), still-check 5/5 marks and 12/12 beats, -14.0 LUFS, four clips at
+-14.0 to -14.1 LUFS. With a music bed every cut sits on a beat (0ms) and the bed ducks under all
+12 lines. Falsified: the callout hidden reads 1.1 and 1.5 where drawn ones read 111 to 125, both
+miss; a beat cut 0.2s before its line ends misses ("line ends 8.595s, after its cut at 8.4s").
+Looked at: every slide kind, the split, a filmed beat after a card, a 3-frame micro-fade.
 
 ## The look
 
@@ -659,6 +715,8 @@ the full-to-limited range change, which any BT.709 4:2:0 delivery pays.
 - `render.sh` and `concat.sh` are `#!/bin/bash`, which is bash 3.2 on macOS: they use no bash-4
   features (no `mapfile`, associative arrays or case-changing expansions). The sound layer is
   Node, and needs no `timeout` binary.
+- `examples/ferry/ferry.beats.config.json`, `examples/ferry/slides/`: the ferry in beat mode, with
+  one slide of each kind (the device images are the ferry app at web, tablet and phone sizes).
 - `scripts/check.mjs`: the gate. For square and vertical output it frames the source frame with
   the same view as the composition before comparing.
 - `assets/template/`: `hyperframes.json`, `package.json`, and a vendored `gsap.min.js` so a
