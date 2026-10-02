@@ -5,7 +5,9 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { parseLine, align, fitNarration, locateAnchor, fitGrid, audioSettings, narrationClips } from './audio.mjs';
+import { parseLine, align, fitNarration, locateAnchor, fitGrid, audioSettings, narrationClips, loudness } from './audio.mjs';
+import { clipSpans } from './config.mjs';
+import { execFileSync } from 'node:child_process';
 import { vtt } from './captions.mjs';
 
 // 1. `{@name}` marks the word after it; without one the first word is the anchor.
@@ -143,5 +145,31 @@ assert.ok(!run.warns.some((w) => /did not hear/.test(w)), 'a heard anchor must n
 run = await net([() => reply(200, wav, 'audio/wav'), () => reply(200, JSON.stringify({ results: { channels: [{ alternatives: [{ words: [] }] }] } }), 'application/json')]);
 assert.ok(run.warns.some((w) => /did not hear the anchor word "cars"/.test(w)), `an unheard anchor must be warned about: ${run.warns}`);
 if (key) process.env.DEEPGRAM_API_KEY = key; else delete process.env.DEEPGRAM_API_KEY;
+
+// 8. Beat-paced clips laid back to back in whole frames: under HyperFrames' rule (shown while
+//    start <= t < start + duration, added in floating point) exactly one clip is on every frame
+//    around every cut, over 2000 random timelines at 30 and 60fps.
+{
+  let seed2 = 11, bad = 0, cuts = 0; const r2 = () => ((seed2 = (seed2 * 16807) % 2147483647) / 2147483647);
+  for (let n = 0; n < 2000; n++) {
+    const fps = r2() < 0.5 ? 30 : 60, spans = [];
+    let f = Math.round(2.5 * fps);
+    for (let k = 0; k < 6; k++) { const d = Math.ceil((1.5 + r2() * 4 + 0.6) * fps - 1e-6); spans.push([f, f + d]); f += d; }
+    const A = clipSpans(spans, fps).map((a) => ({ s: +a.start, d: +a.duration }));
+    for (let k = 1; k < spans.length; k++) {
+      cuts++;
+      for (const fr of [spans[k][0] - 1, spans[k][0]]) if (A.filter((a) => fr / fps >= a.s && fr / fps < a.s + a.d).length !== 1) { bad++; break; }
+    }
+  }
+  assert.equal(bad, 0, `${bad} of ${cuts} cuts have a frame with no clip or two`);
+}
+// 9. Silence measures -inf, which compares (a silent clip passes the ceiling), not NaN.
+{
+  const d = mkdtempSync(join(tmpdir(), 'audio-check-')), f = join(d, 'silent.wav');
+  execFileSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'anullsrc=r=48000:cl=stereo', '-t', '2', f]);
+  const L = loudness({ ffmpeg: process.env.FFMPEG || 'ffmpeg' }, f);
+  assert.ok(L.TP === -Infinity && L.TP <= -1, `silence read ${JSON.stringify(L)}`);
+  rmSync(d, { recursive: true, force: true });
+}
 
 console.log(`audio-check OK: anchors on spotlights, ${freezes.length} freezes in whole frames, located tail at ${got.at}s (truth ${truth.toFixed(3)}, r ${got.r.toFixed(3)})`);
