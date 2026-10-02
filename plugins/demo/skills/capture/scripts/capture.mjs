@@ -281,7 +281,27 @@ async function film({ base, state, out, viewport = { width: 1280, height: 720 },
         // Start filming only once the first page is ready: starting before paint
         // put a white about:blank frame plus ~85 black splash frames at the head.
         if (!rec.filming) await rec.start();
-        if (step.scroll) { await page.evaluate(y => window.scrollBy({ top: y, behavior: 'smooth' }), step.scroll); await rec.sleep(700); }
+        // A number (or a numeric string, as before) scrolls the window by that many px. A target
+        // scrolls whatever contains it (a dialog or panel the window cannot move) into view, and
+        // nothing moves when it is already fully in view.
+        const px = typeof step.scroll === 'number' ? step.scroll : /^-?\d+$/.test(String(step.scroll ?? '')) ? Number(step.scroll) : null;
+        if (px != null) { await page.evaluate(y => window.scrollBy({ top: y, behavior: 'smooth' }), px); await rec.sleep(700); }
+        else if (step.scroll) {
+          const loc = await find(step.scroll, 'scroll', name);
+          const moved = await loc.evaluate(n => {
+            const r = n.getBoundingClientRect();
+            if (r.top >= 0 && r.left >= 0 && r.bottom <= innerHeight && r.right <= innerWidth) return false;
+            n.scrollIntoView({ block: r.height > innerHeight ? 'start' : 'center', behavior: 'smooth' });
+            return true;
+          });
+          // Smooth scrolling takes longer the further it goes (measured 342ms for 400px, 1125ms for
+          // 4600px), so wait until the target holds still for two checks, at most 3s.
+          for (let last = null, still = 0, t0 = rec.ms(); moved && still < 2 && rec.ms() - t0 < 3000;) {
+            await rec.sleep(50);
+            const y = await loc.evaluate(n => Math.round(n.getBoundingClientRect().top));
+            still = y === last ? still + 1 : 0; last = y;
+          }
+        }
         // Typed key by key so the viewer sees it being entered; fill() would paste it in one frame.
         // Typing can fetch (search-as-you-type), so it waits like a click: ready, else network quiet, then settle.
         if (step.type) {
