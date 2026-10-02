@@ -112,9 +112,9 @@ components:
     - workflow
 
   plugins:
-    - name: agysw
+    - name: agytoggle
       skills:
-        - agysw
+        - agytoggle
     - name: demo
       skills:
         - brag
