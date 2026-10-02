@@ -78,7 +78,8 @@ export function align(script, heard, dur) {
   for (let i = 0, j = 0; i < a.length && j < b.length;) {
     if (a[i] && a[i] === b[j]) { at[i] = heard[j]; i++; j++; } else if (L[i + 1][j] >= L[i][j + 1]) i++; else j++;
   }
-  const out = script.map((text, i) => ({ text, start: at[i]?.start, end: at[i]?.end }));
+  // `heard`: the recogniser heard this word; the rest are interpolated
+  const out = script.map((text, i) => ({ text, start: at[i]?.start, end: at[i]?.end, ...(at[i] && { heard: true }) }));
   for (let i = 0; i < out.length;) {
     if (out[i].start != null) { i++; continue; }
     let k = i; while (k < out.length && out[k].start == null) k++;
@@ -146,9 +147,12 @@ async function speak(N, text, out, dir) {
   });
   writeFileSync(`${out}.part`, buf); renameSync(`${out}.part`, out);
 }
-// Word times for a Deepgram clip from Deepgram's own recogniser (nova-3), as { text, start, end }.
-async function listen(file) {
-  return dg(`Deepgram listen (${basename(file)})`, 'https://api.deepgram.com/v1/listen?model=nova-3',
+// Word times for a Deepgram clip from Deepgram's own recogniser (nova-3, in the voice's language),
+// as { text, start, end }. No smart_format: lines written for a voice spell numbers out ("two
+// twenty"), and smart_format would hear them back as digits ("2:20").
+async function listen(file, voice) {
+  const lang = voice.split('-').at(-1);
+  return dg(`Deepgram listen (${basename(file)})`, `https://api.deepgram.com/v1/listen?model=nova-3&language=${encodeURIComponent(lang)}`,
     { method: 'POST', headers: { 'Content-Type': 'audio/wav' }, body: readFileSync(file) }, async (r) => {
       const j = await r.json(), words = j?.results?.channels?.[0]?.alternatives?.[0]?.words;
       if (!Array.isArray(words)) throw new Error(`no word list in the answer: ${JSON.stringify(j).slice(0, 200)}`);
@@ -187,7 +191,7 @@ export async function narrationClips(C) {
   for (const l of lines) {
     const words = `${dir}/${l.key}.words.json`;
     if (existsSync(words)) continue;
-    if (N.tts === 'deepgram') { writeFileSync(words, JSON.stringify(await listen(l.file))); continue; }
+    if (N.tts === 'deepgram') { writeFileSync(words, JSON.stringify(await listen(l.file, N.voice))); continue; }
     // One clip per run: transcribing several clips laid end to end put words 0.3s out.
     const job = `${dir}/${l.key}`;
     mkdirSync(job, { recursive: true });
@@ -245,13 +249,17 @@ export function locateAnchor(full, tail, guess) {
   return best;
 }
 async function anchorTime(C, l, words, dir) {
-  const full = decode(C, ['-i', l.file], 1);
-  if (!l.anchor) return r3(onsetOf(full));
-  // Deepgram: its recogniser's own word start. The tail match above needs the tail spoken the way
+  // Deepgram: its recogniser's own word start. The tail match below needs the tail spoken the way
   // the line spoke it, and Aura-2 does not: on 14 anchors it matched below r 0.8 on 3 and locked
   // onto the wrong word on 3 (up to 390ms out), where listen's starts sat on the word's audible
-  // onset within about 20ms on 13 (SKILL.md).
-  if (audioSettings(C).narration.tts === 'deepgram') return r3(words[l.anchor].start);
+  // onset within about 20ms on 13 (SKILL.md). A word it did not hear has only an interpolated
+  // time, which the spotlight would light on: said, never silent.
+  if (l.anchor && audioSettings(C).narration.tts === 'deepgram') {
+    if (!words[l.anchor].heard) console.warn(`  warn: "${l.text}": the recogniser did not hear the anchor word "${words[l.anchor].text}"; its time (${words[l.anchor].start}s) is interpolated, so the spotlight may light off it. Reword the line or move the anchor`);
+    return r3(words[l.anchor].start);
+  }
+  const full = decode(C, ['-i', l.file], 1);
+  if (!l.anchor) return r3(onsetOf(full));
   // The spoken line (l.key) does not change when the anchor moves to another word; its timing does.
   const k = `${dir}/${l.key}.a${l.anchor}`, cache = `${k}.json`;
   if (existsSync(cache)) return JSON.parse(readFileSync(cache, 'utf8')).at;
