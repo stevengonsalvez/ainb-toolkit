@@ -208,7 +208,7 @@ A beat is an object; keys run in this fixed order within one beat:
 | `readyCap` | ms | cap for `ready`, or for network-quiet fallback (8000) |
 | `settle` | ms | extra wait after ready/quiet, default 400 |
 | `expectPath` | string path or RegExp | assert pathname; throws and fails the take. A string matches that path or anything below it: `/reports` accepts `/reports/7`, never `/reports-archive` |
-| `scroll` | px, or a target | px: smooth window `scrollBy`. A target: smooth `scrollIntoView` to mid-viewport, which also moves a scrolling dialog or panel the window cannot |
+| `scroll` | px, or a target | px (a number, or a numeric string): smooth window `scrollBy`. A target: smooth `scrollIntoView` to mid-viewport (top, if taller than the viewport), which also moves a scrolling dialog or panel the window cannot; it waits until the target holds still (at most 3s) and does nothing when the target is already fully in view. Compose delays a spotlight only for camera moves, so scroll in its own beat and hold before the beat that marks |
 | `type` | `{into: target, text, cps=12}` | glide to the field, click it, type `text` key by key at `cps` characters per second (`type()`, never `fill()`, so the viewer sees it typed), then wait like a click: `ready`, else network quiet, then `settle` |
 | `zoom` | `{on: target, scale=2, ms=700}` | move the camera onto the element centre on a spring (see Motion); the beat goes on once it has settled. `ms: 0` is a cut |
 | `wide` | `true` or ms | camera back to full frame, same spring |

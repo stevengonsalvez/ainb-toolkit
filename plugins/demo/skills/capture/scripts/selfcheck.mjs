@@ -337,6 +337,14 @@ try {
     assert.ok(zl[m] > 200, `${m}: zoom after scroll missed the target (luma ${zl[m]})`);
   }
 
+  // 8b. Scroll to a target: it ends inside the viewport (a dialog's content the window cannot reach
+  //     works the same way), and a target already fully in view is not scrolled at all.
+  const markRect = async (chapter, beats) => ev(await capture({ base, out, chapter, capture: SC, beats })).events.find(e => e.kind === 'mark').rect;
+  const far = await markRect('scrollto', [{ goto: '/tall' }, { scroll: '#w' }, { mark: { label: 'w', on: '#w' } }]);
+  assert.ok(far.y >= 0 && far.y + far.h <= 720, `scroll to #w left it outside the viewport (y ${far.y}, h ${far.h})`);
+  const near = await markRect('scrollto-visible', [{ goto: '/tall' }, { scroll: 1700 }, { scroll: '#w' }, { mark: { label: 'w', on: '#w' } }]);
+  assert.equal(Math.round(near.y), 300, `scroll to an already visible #w moved the page (y ${near.y}, expected 300)`);
+
   // 9. A bare-text mis-click must fail the take (and never falls back: it is not a capture problem).
   await assert.rejects(capture({ base, out, chapter: 'wrong', beats: [
     { goto: '/a' }, { name: 'bare', click: 'text=REPORTS', expectPath: '/b' }] }), /expected path \/b, got \/news/);
