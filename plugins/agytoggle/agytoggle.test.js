@@ -40,6 +40,7 @@ test('agytoggle help output', () => {
     const out = run(['help']);
     assert.match(out, /Antigravity CLI Multi-Account Switcher \(agytoggle\)/);
     assert.match(out, /agytoggle import/);
+    assert.match(out, /agytoggle login/);
     assert.match(out, /agytoggle rotate/);
   } finally {
     cleanup();
@@ -130,8 +131,6 @@ test('agytoggle cooldown marks account with cooldownUntil', () => {
       activeIndex: 0
     }));
 
-    // Calling cooldown on u1 should mark cooldownUntil and attempt rotate to u2
-    // Note: token refresh will fail on fake token, so test expects rejection or failure handled
     try {
       run(['cooldown', '2']);
     } catch (err) {
@@ -140,6 +139,17 @@ test('agytoggle cooldown marks account with cooldownUntil', () => {
 
     const accountsData = JSON.parse(readFileSync(accountsPath, 'utf8'));
     assert.ok(accountsData.accounts[0].cooldownUntil > Date.now());
+  } finally {
+    cleanup();
+  }
+});
+
+test('agytoggle add validates token against Google OAuth API', () => {
+  const { run, cleanup } = makeTempHarness();
+  try {
+    assert.throws(() => {
+      run(['add', 'bad@test.com', 'invalid_token']);
+    });
   } finally {
     cleanup();
   }
