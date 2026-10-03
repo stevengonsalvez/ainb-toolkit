@@ -154,3 +154,30 @@ test('agytoggle add validates token against Google OAuth API', () => {
     cleanup();
   }
 });
+
+test('agytoggle auth-url prints single-line OAuth URL', () => {
+  const { run, cleanup } = makeTempHarness();
+  try {
+    const urlOut = run(['auth-url', '8085']).trim();
+    assert.match(urlOut, /^https:\/\/accounts\.google\.com\/o\/oauth2\/v2\/auth\?/);
+    assert.match(urlOut, /redirect_uri=http%3A%2F%2Flocalhost%3A8085%2Fauth%2Fcallback/);
+    assert.doesNotMatch(urlOut, /\s/);
+  } finally {
+    cleanup();
+  }
+});
+
+test('agytoggle code validates input and handles errors', () => {
+  const { run, cleanup } = makeTempHarness();
+  try {
+    assert.throws(() => {
+      run(['code']);
+    });
+    assert.throws(() => {
+      run(['code', 'http://localhost:8085/auth/callback?code=bad_test_code']);
+    });
+  } finally {
+    cleanup();
+  }
+});
+
