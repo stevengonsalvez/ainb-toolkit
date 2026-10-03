@@ -514,6 +514,14 @@ try {
   assert.equal(await ensureState({ base, state, login: { ...login, loggedInSel: '#me' } }), 'minted');
   assert.equal(await ensureState({ base, state, login: { ...login, loggedInSel: '#me' } }), 'reused');
 
+  //     A take that signs out and then falls back re-films from a live session, not the one it
+  //     revoked: the hard timeout trips after /logout2, and the screencast re-film still finds #me.
+  const reState = path.join(out, 'refilm-state.json'), reLogin = { ...login, loginPath: '/login2', loggedInSel: '#me' };
+  await ensureState({ base, state: reState, login: reLogin, probe: '/home2' });
+  const refilm = ev(await capture({ base, out, chapter: 'refilm', state: reState, login: reLogin, probe: '/home2', capture: { timeoutMs: 4000, blur: false },
+    beats: [{ goto: '/home2', ready: '#me' }, { goto: '/logout2', hold: 8000 }] }));
+  assert.match(refilm.capture.fallback ?? '', /hard timeout/, `refilm take did not fall back: ${JSON.stringify(refilm.capture)}`);
+
   // 14. The cursor keeps its size under a zoom: white pixels (only the cursor is white on /plain)
   //     in a zoomed hold vs an unzoomed one. Screencast measured 1.00-1.34 with the counter-scale,
   //     5.14 without. And still after a click navigates while zoomed: the new page's overlay reads

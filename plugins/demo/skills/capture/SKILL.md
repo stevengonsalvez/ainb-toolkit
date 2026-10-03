@@ -90,7 +90,9 @@ capture.mode
   wall time, frames come back at the wrong size, or `network: 'pause'` meets a request that never
   finishes. The rig prints one line naming the cause, re-films the
   chapter in screencast mode and records both in `events.json` (`capture.mode`,
-  `capture.requested`, `capture.fallback`). It never hands over a broken take. Set
+  `capture.requested`, `capture.fallback`). With a `login`, it checks the session again first
+  (and re-mints it): the failed take ran its beats, and one that signs out revoked it. It never
+  hands over a broken take. Set
   `capture: { mode: 'screencast' }` to choose it outright.
 - **Websockets do not stall it** (measured: a page receiving a frame every 200ms of wall time
   filmed a 2s hold deterministically, and a real SPA holding a Supabase realtime websocket and a
