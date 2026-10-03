@@ -44,15 +44,18 @@ function grayFrame(file, t, w = W, h = H, crop) {
 const segFrame = (n, t) => Math.max(0, (Math.min(n - 1, Math.round(t * C.fps)) - 0.4) / C.fps);
 
 // The source frame as the composition frames it: scaled by view.s, placed at view.x/y, and
-// `bg` where the footage does not reach. Identity when the output matches the footage.
+// `bg` where the footage does not reach. Identity when the output matches the footage. Each output
+// pixel takes the source pixel under its centre: flooring the corner instead read one pixel off
+// whenever a view's offset has a fraction over .5 (a y of -39.883 sampled row y+39, the renderer
+// shows y+40), which on dense small text alone read align 7.17 for a cut-out that is exact (2.99).
 function framed(src, sw, sh, v, bg) {
   if (v.s === 1 && v.x === 0 && v.y === 0 && sw === W && sh === H) return src;
   const out = Buffer.alloc(W * H, bg);
   for (let y = 0; y < H; y++) {
-    const sy = Math.floor((y - v.y) / v.s);
+    const sy = Math.floor((y + 0.5 - v.y) / v.s);
     if (sy < 0 || sy >= sh) continue;
     for (let x = 0; x < W; x++) {
-      const sx = Math.floor((x - v.x) / v.s);
+      const sx = Math.floor((x + 0.5 - v.x) / v.s);
       if (sx >= 0 && sx < sw) out[y * W + x] = src[sy * sw + sx];
     }
   }
