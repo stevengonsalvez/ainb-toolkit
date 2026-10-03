@@ -290,6 +290,8 @@ Usage:
   agytoggle import                              - Import current active agy CLI session into pool
   agytoggle login                               - Authenticate new account via Google OAuth web flow
   agytoggle auth-url                            - Print clean single-line OAuth authorization URL
+  agytoggle copy-url                            - Copy OAuth authorization URL directly to clipboard
+  agytoggle open                                - Open OAuth URL directly in Orca browser tab
   agytoggle code <code|url>                     - Submit authorization code or redirect URL
   agytoggle add <email> <refreshToken>          - Add account with refresh token to pool
   agytoggle remove <index|email>                - Remove account from pool
@@ -303,6 +305,52 @@ Usage:
     const port = parseInt(args[1], 10) || 8085;
     const { authUrl } = buildAuthUrl(port);
     console.log(authUrl);
+    process.exit(0);
+  }
+
+  if (command === 'copy-url') {
+    const port = parseInt(args[1], 10) || 8085;
+    const { authUrl } = buildAuthUrl(port);
+    const b64 = Buffer.from(authUrl).toString('base64');
+    const seq = process.env.TMUX
+      ? `\x1bPtmux;\x1b\x1b]52;c;${b64}\x07\x1b\\`
+      : `\x1b]52;c;${b64}\x07`;
+
+    process.stdout.write(seq);
+
+    console.log('\n[Success] Copied OAuth URL to clipboard via OSC 52!');
+    console.log('You can now paste it directly into your browser.');
+    process.exit(0);
+  }
+
+  if (command === 'open') {
+    const port = parseInt(args[1], 10) || 8085;
+    const { authUrl } = buildAuthUrl(port);
+    let opened = false;
+    if (hasCommand('orca')) {
+      try {
+        execSync(`orca tab create --url "${authUrl}"`, { stdio: 'ignore' });
+        console.log('[Success] Opened Google OAuth sign-in tab in Orca!');
+        opened = true;
+      } catch {}
+    }
+    if (!opened && hasCommand('xdg-open')) {
+      try {
+        execSync(`xdg-open "${authUrl}"`, { stdio: 'ignore' });
+        console.log('[Success] Opened Google OAuth sign-in via xdg-open!');
+        opened = true;
+      } catch {}
+    }
+    if (!opened && hasCommand('open')) {
+      try {
+        execSync(`open "${authUrl}"`, { stdio: 'ignore' });
+        console.log('[Success] Opened Google OAuth sign-in via open!');
+        opened = true;
+      } catch {}
+    }
+    if (!opened) {
+      console.log(`Could not automatically launch browser. Use: agytoggle copy-url`);
+    }
     process.exit(0);
   }
 
