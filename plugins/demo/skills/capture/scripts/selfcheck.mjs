@@ -5,7 +5,7 @@
 import http from 'http'; import fs from 'fs'; import os from 'os'; import path from 'path';
 import assert from 'assert/strict'; import { execFileSync, execFile, spawn } from 'child_process'; import { fileURLToPath } from 'url';
 import { chromium } from '@playwright/test';
-import { capture, checkPath, ensureState, overlay, blurArgs, poser } from './capture.mjs';
+import { capture, checkPath, ensureState, overlay, blurArgs, poser, timeoutFor } from './capture.mjs';
 import { inventory } from './locate.mjs';
 import { Camera, Cursor, spring1d, CAMERA, CURSOR, SNAPPY } from './motion.mjs';
 import { narrativeLint, composeFor } from './narrative.mjs';
@@ -533,6 +533,11 @@ try {
         { zoom: { on: '#z', scale: 2, ms: 300 } }, { name: 'go', click: '#go', expectPath: '/plain2', hold: 700 }] }))];
     for (const v of cs[m]) assert.ok(v > 0.6 && v < 1.6, `${m}: cursor ${v.toFixed(2)}x its unzoomed size under a 2x zoom (want ~1): ${cs[m]}`);
   }
+
+  //     The default wall-time cap: 10 minutes for a short chapter, 120x the estimated footage for a long one.
+  assert.equal(timeoutFor([{ goto: '/a', hold: 2000 }]), 600000, 'short chapter cap');
+  assert.equal(timeoutFor([{ goto: '/a', hold: 19500 }]), 2400000, 'long chapter cap (20s of footage)');
+  assert.equal(timeoutFor([{ goto: '/a', hold: 9500 }], 2), 2400000, 'cap follows pace');
 
   // 14. A mark's id lands on its event as written and is absent where the beat gave none; a
   //     numeric or repeated id fails before anything is filmed.
