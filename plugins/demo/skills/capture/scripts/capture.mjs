@@ -356,7 +356,8 @@ async function film({ base, state, out, viewport = { width: 1280, height: 720 },
           await rec.glide(to, P(step.zoom.ms ?? 700));
           events.push({ t: t0, kind: 'camera', t0, t1: rec.now(), cam: to });
         }
-        if (step.wide) {
+        // `wide: 0` is a cut back to the full view, not "no wide".
+        if (step.wide != null && step.wide !== false) {
           const t0 = rec.now();
           await rec.glide({ x: 0, y: 0, w: W, h: H, s: 1 }, P(step.wide === true ? 700 : step.wide));
           events.push({ t: t0, kind: 'camera', t0, t1: rec.now(), cam: null });
