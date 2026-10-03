@@ -200,6 +200,9 @@ export async function capture(opts) {
   try { return await film({ ...opts, cap }); } catch (e) {
     if (!(e instanceof Fallback)) throw e;
     console.warn(`chapter "${opts.chapter}": deterministic capture stopped (${e.message}); re-filming it in screencast mode (viewport-size JPEG, 30fps).`);
+    // The failed take really ran its beats: one that signs out has revoked the session it was
+    // given, so check it again (and re-mint it) before the re-film starts from it.
+    if (opts.login && opts.state) console.warn(`chapter "${opts.chapter}": session for the re-film: ${await ensureState(opts)}`);
     return film({ ...opts, cap: { ...cap, mode: 'screencast', fallback: e.message } });
   }
 }
