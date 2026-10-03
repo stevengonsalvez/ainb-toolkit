@@ -15,6 +15,7 @@ agytoggle rotate --force                      # advance even if only one healthy
 agytoggle strategy [round-robin|random|sticky|least-used]  # view or set default strategy
 agytoggle cooldown [hours=4]                  # mark current exhausted, rotate to next
 agytoggle import                              # import active session into pool
+agytoggle login                               # authenticate new account via browser OAuth
 agytoggle add <email> <refreshToken>          # add account with refresh token to pool
 agytoggle remove <index|email>                # remove account from pool
 ```
