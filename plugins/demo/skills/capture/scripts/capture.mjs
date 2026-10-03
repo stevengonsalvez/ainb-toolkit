@@ -294,14 +294,19 @@ async function film({ base, state, out, viewport = { width: 1280, height: 720 },
         if (!rec.filming) await rec.start();
         // A number (or a numeric string, as before) scrolls the window by that many px. A target
         // scrolls whatever contains it (a dialog or panel the window cannot move) into view, and
-        // nothing moves when it is already fully in view.
+        // nothing moves when it is already fully in view and not covered.
         const px = typeof step.scroll === 'number' ? step.scroll : /^-?\d+$/.test(String(step.scroll ?? '')) ? Number(step.scroll) : null;
         if (px != null) { await page.evaluate(y => window.scrollBy({ top: y, behavior: 'smooth' }), px); await rec.sleep(700); }
         else if (step.scroll) {
           const loc = await find(step.scroll, 'scroll', name);
           const moved = await loc.evaluate(n => {
             const r = n.getBoundingClientRect();
-            if (r.top >= 0 && r.left >= 0 && r.bottom <= innerHeight && r.right <= innerWidth) return false;
+            // In view means inside the window AND not covered: a fixed or sticky bar (an app's bottom
+            // nav) over the target's top or bottom edge means it still has to move.
+            const hit = (x, y) => { const e = document.elementFromPoint(x, y); return !!e && (e === n || n.contains(e)); };
+            const cx = r.left + r.width / 2, inset = Math.min(4, r.height / 4);
+            const clear = hit(cx, r.top + inset) && hit(cx, r.bottom - inset);
+            if (clear && r.top >= 0 && r.left >= 0 && r.bottom <= innerHeight && r.right <= innerWidth) return false;
             n.scrollIntoView({ block: r.height > innerHeight ? 'start' : 'center', behavior: 'smooth' });
             return true;
           });

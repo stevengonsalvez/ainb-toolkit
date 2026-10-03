@@ -19,6 +19,8 @@ const pages = {
   // Tall page with a white block (bigger than the 2x camera box) far below the fold: zooming on it after a scroll must film it.
   '/tall': `<body style="margin:0;background:${BG};height:3000px"><div id="w" style="position:absolute;top:2000px;left:290px;width:700px;height:400px;background:#fff"></div></body>`,
   '/news': `<body style="background:${BG}">news</body>`,
+  // A target inside the window but under a fixed bottom bar, as an app's bottom nav covers content.
+  '/covered': `<body style="margin:0;background:${BG};height:2000px"><div id="t" style="position:absolute;top:600px;left:290px;width:700px;height:80px;background:#fff"></div><div style="position:fixed;bottom:0;left:0;right:0;height:140px;background:#333"></div></body>`,
   // Re-renders its buttons every 20ms, as a polling dashboard does: an inventory walk meets nodes
   // that are gone by the time it asks about them.
   '/swap': `<body style="margin:0;background:${BG};height:100vh"><div id="list"></div><script>const r = () => document.getElementById('list').innerHTML = Array.from({ length: 60 }, (_, i) => '<button>Item ' + i + '</button>').join(''); r(); setInterval(r, 20)</script></body>`,
@@ -348,6 +350,9 @@ try {
   assert.ok(far.y >= 0 && far.y + far.h <= 720, `scroll to #w left it outside the viewport (y ${far.y}, h ${far.h})`);
   const near = await markRect('scrollto-visible', [{ goto: '/tall' }, { scroll: 1700 }, { scroll: '#w' }, { mark: { label: 'w', on: '#w' } }]);
   assert.equal(Math.round(near.y), 300, `scroll to an already visible #w moved the page (y ${near.y}, expected 300)`);
+  // A target inside the window but under a fixed bar counts as covered and is scrolled clear of it.
+  const cov = await markRect('scrollto-covered', [{ goto: '/covered' }, { scroll: '#t' }, { mark: { label: 't', on: '#t' } }]);
+  assert.ok(cov.y + cov.h <= 720 - 140, `scroll to #t left it under the fixed bar (y ${cov.y}, h ${cov.h}; the bar starts at 580)`);
 
   // 9. A bare-text mis-click must fail the take (and never falls back: it is not a capture problem).
   await assert.rejects(capture({ base, out, chapter: 'wrong', beats: [
