@@ -64,6 +64,8 @@ agycool() {
 | `agytoggle import` | Import current active session from `antigravity-oauth-token` |
 | `agytoggle login` | Authenticate additional Google account via interactive OAuth |
 | `agytoggle auth-url [port]` | Print clean single-line OAuth authorization URL |
+| `agytoggle copy-url [port]` | Copy OAuth authorization URL to clipboard via OSC 52 |
+| `agytoggle open [port]` | Open OAuth authorization URL directly in Orca browser tab |
 | `agytoggle code <code\|url>` | Exchange auth code or redirect URL directly without local server |
 | `agytoggle add <email> <token>` | Add account with refresh token to pool |
 | `agytoggle remove <n\|email>` | Remove account from pool |
