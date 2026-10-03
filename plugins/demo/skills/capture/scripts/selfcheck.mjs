@@ -57,6 +57,8 @@ const pages = {
   // Holds an SSE stream open for good, like a live-updates channel.
   '/sse': `<body style="margin:0;background:${BG};height:100vh"><script>new EventSource('/stream')</script></body>`,
   // A lazy-loaded module, like a code-split route: turns white once it has loaded.
+  // A target taller than the window, under a fixed bottom bar: only its top part is on screen and clear.
+  '/tallbar': `<body style="margin:0;background:${BG};height:2000px"><div id="t" style="position:absolute;top:100px;left:290px;width:700px;height:900px;background:#fff"></div><div style="position:fixed;bottom:0;left:0;right:0;height:140px;background:#333"></div></body>`,
   '/lazy': `<body style="margin:0;background:${BG};height:100vh"><button id="go" style="margin:200px" onclick="import('/mod.js').then(m => document.body.style.background = m.c)">go</button></body>`,
 };
 const sessions = new Set();
@@ -540,6 +542,12 @@ try {
   await assert.rejects(capture({ base, out, chapter: 'markid-num', capture: SC, beats: [{ goto: '/a' }, { mark: { id: 4.1, label: 'x', on: 'h1' } }] }), /must be a non-empty string/);
   await assert.rejects(capture({ base, out, chapter: 'markid-dup', capture: SC, beats: [{ goto: '/a' },
     { mark: { id: '1', label: 'x', on: 'h1' } }, { mark: { id: '1', label: 'y', on: 'h1' } }] }), /used twice/);
+  //     A mark taller than the open area is boxed to the part on screen and clear of the fixed bar
+  //     (top 100 to the bar at 580), flagged on its event, and named in a lint.
+  const tall = ev(await capture({ base, out, chapter: 'markclip', capture: SC, beats: [{ goto: '/tallbar' }, { mark: { label: 't', on: '#t' } }] }))
+    .events.find(e => e.kind === 'mark');
+  assert.ok(tall.rect.y >= 100 && tall.rect.y + tall.rect.h <= 580, `tall mark not boxed to the open area: ${JSON.stringify(tall.rect)}`);
+  assert.deepEqual(tall.clipped && tall.clipped.h, 900, `tall mark not flagged clipped: ${JSON.stringify(tall.clipped)}`);
   // 13. Inventory on a page that re-renders under it finishes, counting what it skipped instead of
   //     timing out on a vanished node; and the beats form runs without --state.
   let invSkipped;
@@ -588,7 +596,7 @@ try {
   console.log(`selfcheck OK: springs ${JSON.stringify(springs)}; pre-aim holds the fixed point; retarget keeps velocity; settles exact; ms 0 cuts; click lands at ${press.toFixed(3)}s; shake 100ms`);
   console.log(`selfcheck OK: main ${r.frames} frames/${r.dur.toFixed(2)}s 2560x1440@60 mp4 ${n} frames luma head ${head} tail ${tail}; anim ${md5.length} frames 0 repeats; blur spans ${JSON.stringify(spans)} inside camera moves, up to ${bb.maxSamples} samples ${bb.maxGap}px apart, capped run filled ${capped.filled} frames`);
   console.log(`selfcheck OK: lazy import stays deterministic; SSE runs on under auto, falls back to ${fb.mode} under pause, one message each; screencast hold ${h.frames} frames; scroll-zoom luma ${zl.det}/${zl.sc}; guard threw`);
-  console.log(`selfcheck OK: mark id carried as written, absent when not given; numeric and repeated ids refused`);
+  console.log(`selfcheck OK: mark id carried as written, absent when not given; numeric and repeated ids refused; a mark taller than the open area boxed to it (${Math.round(tall.rect.h)} of 900px) and flagged`);
   console.log(`selfcheck OK: inventory on a re-rendering page ${invSkipped}; beats form without --state runs`);
   console.log(`selfcheck OK: blur averaging writes an opaque frame from one rgba sub-frame among rgb24 ones`);
   console.log(`selfcheck OK: overlapping poses are serialised: one init script left, no double removal`);
