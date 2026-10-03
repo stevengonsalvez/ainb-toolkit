@@ -355,10 +355,31 @@ async function film({ base, state, out, viewport = { width: 1280, height: 720 },
         }
         // A mark is the handoff to the compositor: what to point at, and when.
         if (step.mark) {
-          lastMark = await rectOf(await find(step.mark.on, 'mark', name));
+          const on = await find(step.mark.on, 'mark', name);
+          lastMark = await rectOf(on);
+          // A mark boxes only what is on screen: the longest run of its height inside the window and
+          // not under a fixed or sticky bar (an app's bottom nav), sampled down its middle every 4px.
+          // One taller than that run is boxed to it, flagged `clipped` and named in a lint, rather
+          // than drawn on through the bar. Mark a smaller element, or scroll or zoom out, to clear it.
+          const open = await on.evaluate(n => {
+            const r = n.getBoundingClientRect(), cx = r.left + r.width / 2, a = Math.max(0, r.top), b = Math.min(innerHeight, r.bottom);
+            let best = null, from = null;
+            for (let y = a; y <= b; y += 4) {
+              const e = y < b ? document.elementFromPoint(cx, y) : null, hit = !!e && (e === n || n.contains(e));
+              if (hit && from == null) from = y;
+              if ((!hit || y + 4 > b) && from != null) { const to = hit ? b : y; if (!best || to - from > best.to - best.from) best = { from, to }; from = null; }
+            }
+            return best;
+          });
+          let clipped;
+          if (open && (open.from > lastMark.y + 4 || open.to < lastMark.y + lastMark.h - 4)) {
+            clipped = { h: Math.round(lastMark.h), open: Math.round(open.to - open.from) };
+            lastMark = { ...lastMark, y: open.from, h: open.to - open.from };
+            lints.push(`beat "${name}": mark is ${clipped.h}px tall but only ${clipped.open}px of it is on screen and clear of fixed bars; boxed to that part`);
+          }
           // `id` names the mark for compose (a beat-paced cut orders beats by it); kept as written.
           events.push({ t: rec.now(), kind: 'mark', ...(step.mark.id != null && { id: step.mark.id }),
-            label: step.mark.label, rect: lastMark, cam: rec.cam });
+            label: step.mark.label, rect: lastMark, ...(clipped && { clipped }), cam: rec.cam });
         }
         if (step.hold) await rec.hold(P(step.hold), lastMark);
         timing.push({ beat: name, ms: Date.now() - beatT0 });
