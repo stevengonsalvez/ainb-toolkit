@@ -108,7 +108,7 @@ capture: {
   network: 'auto',        // or 'pause' / 'advance': requests that hold page time, see above
   unstickMs: 1500,        // wall ms a frame waits on the network before 'auto' forces it
   stallMs: 10000,         // wall ms before falling back: page time stuck, or any wait under 'pause'
-  timeoutMs: 600000,      // wall ms a chapter may take before falling back
+  timeoutMs: 600000,      // wall ms a chapter may take before falling back; by default 120x its estimated footage when that is longer
 }
 ```
 

@@ -22,6 +22,7 @@ import fs from 'fs'; import path from 'path'; import { execFile } from 'child_pr
 import { chromium } from '@playwright/test';
 import { Camera, Cursor, tilt, CAMERA_REF_MS, CLICK_LEAD_MS } from './motion.mjs';
 import { resolve, lintTarget, inventory, identify, describeChain, LocatorMiss } from './locate.mjs';
+import { estimate } from './narrative.mjs';
 
 const smoothstep = p => p * p * (3 - 2 * p);
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -191,10 +192,14 @@ export function blurArgs(sub, N, fill, out) {
   return ['-v', 'error', '-y', ...ins, '-filter_complex', `${fmt.join(';')};${mix.join('')}mix=inputs=${N}${fill}`, '-update', '1', out];
 }
 
+// The default wall-time cap scales with the footage: deterministic capture with blur ran 35x to
+// 61x real time on a heavy app (its waits for data are not in the estimate), so 120x, 10 min at least.
+export const timeoutFor = (beats, pace = 1) => Math.max(600000, Math.round(estimate(beats, pace).dur * 120000));
+
 export async function capture(opts) {
   checkMarkIds(opts.beats, opts.chapter);
-  const cap = { mode: 'deterministic', dpr: 2, fps: 60, blur: {}, network: 'auto', unstickMs: 1500, stallMs: 10000, timeoutMs: 600000,
-    ...opts.capture, chapter: opts.chapter };
+  const cap = { mode: 'deterministic', dpr: 2, fps: 60, blur: {}, network: 'auto', unstickMs: 1500, stallMs: 10000,
+    timeoutMs: timeoutFor(opts.beats, opts.pace), ...opts.capture, chapter: opts.chapter };
   if (cap.blur !== false) cap.blur = { samples: 4, max: 64, spacing: 1.5, shutter: 0.5, threshold: 2, ...cap.blur };
   if (cap.mode !== 'deterministic') return film({ ...opts, cap });
   try { return await film({ ...opts, cap }); } catch (e) {
@@ -782,7 +787,7 @@ async function deterministic({ W, H, cap, dir, state, overlayArgs }) {
   const name = k => `${String(k).padStart(5, '0')}.png`;
   const pump = (async () => {
     while (pumping) {
-      if (Date.now() - started > cap.timeoutMs) throw new Fallback(`hard timeout: the chapter took over ${cap.timeoutMs / 1000}s of wall time`);
+      if (Date.now() - started > cap.timeoutMs) throw new Fallback(`hard timeout: the chapter took over ${cap.timeoutMs / 1000}s of wall time (raise capture.timeoutMs)`);
       // On the frame grid, not vt + FI: a blurred frame's sub-frames carry vt part way into the
       // next interval, and stepping from there drifted page time half a frame ahead per blurred frame.
       const t = tNext; tNext += FI;
