@@ -5,7 +5,7 @@
 import http from 'http'; import fs from 'fs'; import os from 'os'; import path from 'path';
 import assert from 'assert/strict'; import { execFileSync, execFile, spawn } from 'child_process'; import { fileURLToPath } from 'url';
 import { chromium } from '@playwright/test';
-import { capture, checkPath, ensureState, overlay, blurArgs } from './capture.mjs';
+import { capture, checkPath, ensureState, overlay, blurArgs, poser } from './capture.mjs';
 import { inventory } from './locate.mjs';
 import { Camera, Cursor, spring1d, CAMERA, CURSOR, SNAPPY } from './motion.mjs';
 import { narrativeLint, composeFor } from './narrative.mjs';
@@ -564,6 +564,21 @@ try {
   const bprobe = JSON.parse(execFileSync(FFPROBE, ['-v', 'error', '-show_entries', 'stream=width,height,pix_fmt', '-of', 'json', bout]).toString()).streams[0];
   assert.deepEqual([bprobe.width, bprobe.height, bprobe.pix_fmt], [64, 40, 'rgb24'], `blur average ${JSON.stringify(bprobe)}`);
 
+  // 16. Overlapping poses never remove the same init script twice: a stand-in CDP that, like Chrome,
+  //     fails "Script not found" on a second removal, and replies after a delay so calls overlap.
+  { const scripts = new Set(); let next = 1;
+    const cdp = { send: async (m, p) => {
+      await new Promise(r => setTimeout(r, 5));
+      if (m === 'Page.addScriptToEvaluateOnNewDocument') { scripts.add(next); return { identifier: next++ }; }
+      if (m === 'Page.removeScriptToEvaluateOnNewDocument') { if (!scripts.delete(p.identifier)) throw new Error('Protocol error (Page.removeScriptToEvaluateOnNewDocument): Script not found'); return {}; }
+      return {};
+    } };
+    const pose = poser(cdp);
+    await pose({ x: 0, y: 0, cs: 1 }, true);                                   // one registered, as after a first frame
+    await Promise.all([2, 3, 4].map(i => pose({ x: i, y: i, cs: i }, true)));     // then a navigation and frames overlap
+    assert.equal(scripts.size, 1, `overlapping poses left ${scripts.size} init scripts registered (want 1)`);
+  }
+
   const f2 = v => v.toFixed(2);
   console.log(`selfcheck OK: springs ${JSON.stringify(springs)}; pre-aim holds the fixed point; retarget keeps velocity; settles exact; ms 0 cuts; click lands at ${press.toFixed(3)}s; shake 100ms`);
   console.log(`selfcheck OK: main ${r.frames} frames/${r.dur.toFixed(2)}s 2560x1440@60 mp4 ${n} frames luma head ${head} tail ${tail}; anim ${md5.length} frames 0 repeats; blur spans ${JSON.stringify(spans)} inside camera moves, up to ${bb.maxSamples} samples ${bb.maxGap}px apart, capped run filled ${capped.filled} frames`);
@@ -571,6 +586,7 @@ try {
   console.log(`selfcheck OK: mark id carried as written, absent when not given; numeric and repeated ids refused`);
   console.log(`selfcheck OK: inventory on a re-rendering page ${invSkipped}; beats form without --state runs`);
   console.log(`selfcheck OK: blur averaging writes an opaque frame from one rgba sub-frame among rgb24 ones`);
+  console.log(`selfcheck OK: overlapping poses are serialised: one init script left, no double removal`);
   console.log(`selfcheck OK: locator chain falls through to entry 2 and is recorded; a miss names the chain and nearest candidates and films nothing; dry run 0/1; ferry dry run ${ferryDry}`);
   console.log(`selfcheck OK: cursor under 2x zoom det ${cs.det.map(f2)} sc ${cs.sc.map(f2)} (zoomed, after nav); ring per click ${JSON.stringify(ripple)}; type det ${f2(ty.det[0])}s sc ${f2(ty.sc[0])}s; pace ${f2(p1.dur)}s -> ${f2(p2.dur)}s; loggedInSel re-mints; sandbox errors ${sandboxErrs}`);
 } finally {

@@ -382,9 +382,13 @@ async function film({ base, state, out, viewport = { width: 1280, height: 720 },
 // 1.5), so each pose sets the pointer's counter-scale and position in the current document (one
 // Runtime.evaluate), and the init script the next document reads at mount is re-registered only
 // when it matters: the counter-scale changed, or `register` (a navigation is under way).
-function poser(cdp) {
-  let id = null, cs = null;
-  return async (pose, register = false) => {
+//
+// Calls are serialised: the frame loop and a navigation can pose at once, and two overlapping calls
+// read the same previous script id, so both removed it and the second removal failed "Script not
+// found", which ended the take (seen on single-persona chapters with several navigations).
+export function poser(cdp) {
+  let id = null, cs = null, tail = Promise.resolve();
+  return (pose, register = false) => (tail = tail.catch(() => {}).then(async () => {
     if (register || pose.cs !== cs) {
       cs = pose.cs;
       const prev = id;
@@ -392,7 +396,7 @@ function poser(cdp) {
       if (prev) await cdp.send('Page.removeScriptToEvaluateOnNewDocument', { identifier: prev });
     }
     await cdp.send('Runtime.evaluate', { expression: `window.__demoSet?.(${pose.x}, ${pose.y}, ${pose.cs}, ${pose.rot || 0})` }).catch(() => {});
-  };
+  }));
 }
 
 // ---------- dry run: the beats at speed, no frames ----------
