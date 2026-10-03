@@ -181,3 +181,14 @@ test('agytoggle code validates input and handles errors', () => {
   }
 });
 
+test('agytoggle copy-url outputs success and escape sequence', () => {
+  const { run, cleanup } = makeTempHarness();
+  try {
+    const out = run(['copy-url', '8085']);
+    assert.match(out, /Copied OAuth URL to clipboard/);
+  } finally {
+    cleanup();
+  }
+});
+
+
