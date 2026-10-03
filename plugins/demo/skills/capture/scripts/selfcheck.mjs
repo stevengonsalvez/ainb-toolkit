@@ -314,6 +314,10 @@ try {
   const be = ev(bl), spans = be.capture.blur.spans, mv = be.events.filter(m => m.kind === 'camera').map(m => [m.t0 * 60, m.t1 * 60]);
   assert.ok(spans.length >= 2, `expected blur on both camera moves, got ${JSON.stringify(spans)}`);
   for (const [a, b] of spans) assert.ok(mv.some(([u, v]) => a >= u - 1 && b <= v + 1), `blurred frames ${a}-${b} outside the camera moves ${JSON.stringify(mv)}`);
+  //    A hidden pointer that moves (parking by a mark through its hold) blurs nothing.
+  const hidBlur = ev(await capture({ base, out, chapter: 'blur-hidden', cursor: { hidden: true },
+    beats: [{ goto: '/plain', hold: 300 }, { mark: { label: 'z', on: '#z' }, hold: 500 }] })).capture.blur;
+  assert.deepEqual(hidBlur.spans, [], `a hidden pointer was blurred: ${JSON.stringify(hidBlur)}`);
   //    The sample count follows the motion over the shutter: neighbouring samples never sit more
   //    than `spacing` (1.5) output px apart, and every camera frame gets the gap fill. Capped at 6
   //    samples, the same move has wider gaps, still filled.

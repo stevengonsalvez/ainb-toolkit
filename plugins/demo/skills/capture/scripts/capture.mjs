@@ -660,12 +660,13 @@ async function deterministic({ W, H, cap, dir, state, overlayArgs }) {
   };
   // How far anything on screen moves over this frame's shutter, in output (device) px: the camera
   // (the frame corner that moves most) or the pointer, whichever is further. Taken from the
-  // solver stepped ahead on copies, so it is the motion the samples will really span.
+  // solver stepped ahead on copies, so it is the motion the samples will really span. A hidden
+  // pointer still moves (it parks by each mark), but nothing of it is on screen to smear.
   const shutterMotion = () => {
     const a = screen(), cam = camera.clone(), cur = cursor.clone(), dt = blur.shutter * FI / 1000;
     cam.step(dt); cur.step(st / 1000, dt);
     const b = screen(cam, cur);
-    let d = Math.hypot(b.x - a.x, b.y - a.y);
+    let d = overlayArgs.hidden ? 0 : Math.hypot(b.x - a.x, b.y - a.y);
     for (const [fx, fy] of [[0, 0], [1, 0], [0, 1], [1, 1]]) {
       const px = b.b.x + fx * b.b.w, py = b.b.y + fy * b.b.h;            // page point at the later corner
       d = Math.max(d, Math.hypot(fx * W - (px - a.b.x) * a.b.s, fy * H - (py - a.b.y) * a.b.s));
