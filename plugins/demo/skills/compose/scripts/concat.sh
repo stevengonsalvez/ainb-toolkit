@@ -53,7 +53,9 @@ OUT=$R/out/$NAME.mp4
   -c:v libx264 -preset slow -crf "$CRF" -tune animation -movflags +faststart "$OUT"
 DUR=$("$FFPROBE" -v error -show_entries format=duration -of csv=p=0 "$OUT")
 "$FFMPEG" -loglevel error -y -i "$OUT" -vf "fps=12/${DUR%.*},scale=320:-1,tile=4x3" -frames:v 1 -update 1 "$R/out/$NAME-montage.png"
-echo "$OUT  ${DUR}s  $(du -h "$OUT" | cut -f1)"
+echo "$OUT  ${DUR}s"
 echo "$R/out/$NAME-montage.png"
 # Sound, captions and the loudness check (audio.mjs); exits non-zero when the mix misses its target.
 node "$D/audio.mjs" "$CFG"
+# the size once the sound is in: read before the mix, it was the picture alone (9.7M for a 13M film)
+echo "$OUT  $(du -h "$OUT" | cut -f1)"
