@@ -101,6 +101,24 @@ async function refreshAccessToken(refreshToken) {
   return res.json();
 }
 
+async function exchangeAuthCode(code, redirectUri) {
+  const res = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "authorization_code",
+      code: code,
+      client_id: CLIENT_ID,
+      client_secret: CLIENT_SECRET,
+      redirect_uri: redirectUri
+    }),
+  });
+  if (!res.ok) {
+    throw new Error(`Google OAuth code exchange failed: ${await res.text()}`);
+  }
+  return res.json();
+}
+
 function hasCommand(cmd) {
   try {
     execSync(`command -v ${cmd} >/dev/null 2>&1`);
@@ -230,6 +248,7 @@ Usage:
                                                 - View or set default rotation strategy
   agytoggle cooldown [hours=4]                  - Mark current exhausted, rotate to next
   agytoggle import                              - Import current active agy CLI session into pool
+  agytoggle login                               - Authenticate new account via Google OAuth web flow
   agytoggle add <email> <refreshToken>          - Add account with refresh token to pool
   agytoggle remove <index|email>                - Remove account from pool
     `);
@@ -237,6 +256,134 @@ Usage:
   }
 
   const storage = await readAccountsStorage();
+
+  if (command === 'login') {
+    const http = await import('http');
+    const readline = await import('readline');
+
+    const scopes = [
+      "email",
+      "profile",
+      "openid",
+      "https://www.googleapis.com/auth/userinfo.email",
+      "https://www.googleapis.com/auth/userinfo.profile",
+      "https://www.googleapis.com/auth/aicode",
+      "https://www.googleapis.com/auth/cclog",
+      "https://www.googleapis.com/auth/cloud-platform",
+      "https://www.googleapis.com/auth/experimentsandconfigs"
+    ].join(" ");
+
+    const server = http.createServer();
+    await new Promise((resolve) => {
+      server.listen(0, '127.0.0.1', () => resolve());
+    });
+    const port = server.address().port;
+    const redirectUri = `http://localhost:${port}/auth/callback`;
+
+    const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?` + new URLSearchParams({
+      client_id: CLIENT_ID,
+      redirect_uri: redirectUri,
+      response_type: "code",
+      scope: scopes,
+      access_type: "offline",
+      prompt: "consent select_account"
+    });
+
+    console.log(`\n=== Antigravity Multi-Account Login ===`);
+    console.log(`1. Open this URL in your browser to authenticate:`);
+    console.log(`\n${authUrl}\n`);
+    console.log(`2. Sign in with the Google account you wish to add.`);
+    console.log(`Listening for local callback on port ${port}...`);
+    console.log(`(If running in headless remote session, paste the authorization code or redirect URL below:)\n`);
+
+    const handleCode = async (code) => {
+      try {
+        console.log(`Exchanging authorization code for OAuth tokens...`);
+        const tokenData = await exchangeAuthCode(code, redirectUri);
+        const refreshToken = tokenData.refresh_token;
+        if (!refreshToken) {
+          console.error(`[Error] No refresh token returned. Grant offline consent during login.`);
+          server.close();
+          process.exit(1);
+        }
+
+        let email = decodeJwtEmail(tokenData.id_token);
+        if (!email && tokenData.access_token) {
+          email = await fetchEmailFromAccessToken(tokenData.access_token);
+        }
+        if (!email) {
+          email = `account-${storage.accounts.length + 1}@google.com`;
+        }
+
+        const existingIdx = storage.accounts.findIndex(a => a.email === email);
+        if (existingIdx >= 0) {
+          storage.accounts[existingIdx].refreshToken = refreshToken;
+          storage.accounts[existingIdx].lastUsed = Date.now();
+          delete storage.accounts[existingIdx].cooldownUntil;
+          console.log(`[Success] Updated existing account in pool: ${email} (Profile #${existingIdx + 1})`);
+        } else {
+          storage.accounts.push({
+            email,
+            refreshToken,
+            addedAt: Date.now(),
+            lastUsed: Date.now()
+          });
+          console.log(`[Success] Added new account to pool: ${email} (Profile #${storage.accounts.length})`);
+        }
+
+        await writeAccountsStorage(storage);
+        const targetIdx = existingIdx >= 0 ? existingIdx : storage.accounts.length - 1;
+        await doSwitch(targetIdx, storage);
+        server.close();
+        process.exit(0);
+      } catch (err) {
+        console.error(`[Error] Login failed: ${err.message}`);
+        server.close();
+        process.exit(1);
+      }
+    };
+
+    server.on('request', async (req, res) => {
+      const reqUrl = new URL(req.url, `http://localhost:${port}`);
+      if (reqUrl.pathname === '/auth/callback') {
+        const code = reqUrl.searchParams.get('code');
+        const error = reqUrl.searchParams.get('error');
+        if (error) {
+          res.writeHead(400, { 'Content-Type': 'text/html' });
+          res.end(`<h1>Login Failed</h1><p>${error}</p>`);
+          console.error(`[Error] Google OAuth returned error: ${error}`);
+          server.close();
+          process.exit(1);
+        }
+        if (code) {
+          res.writeHead(200, { 'Content-Type': 'text/html' });
+          res.end(`<h1>Authentication Successful</h1><p>You can close this tab and return to the terminal.</p>`);
+          await handleCode(code);
+        }
+      } else {
+        res.writeHead(404);
+        res.end();
+      }
+    });
+
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    rl.on('line', async (line) => {
+      const trimmed = line.trim();
+      if (!trimmed) return;
+      rl.close();
+      let code = trimmed;
+      if (trimmed.includes('code=')) {
+        try {
+          const parsed = new URL(trimmed.startsWith('http') ? trimmed : `http://dummy?${trimmed}`);
+          code = parsed.searchParams.get('code') || trimmed;
+        } catch {
+          code = trimmed.split('code=')[1].split('&')[0];
+        }
+      }
+      await handleCode(code);
+    });
+    return;
+  }
 
   if (command === 'import') {
     console.log(`Reading active session from ${TOKEN_PATH}...`);
@@ -362,7 +509,7 @@ Usage:
 
   if (storage.accounts.length === 0) {
     console.log("No accounts found in your pool.");
-    console.log("Tip: Run 'agytoggle import' to import your active session, or 'agytoggle add <email> <token>'.");
+    console.log("Tip: Run 'agytoggle import', 'agytoggle login', or 'agytoggle add <email> <token>'.");
     process.exit(1);
   }
 
