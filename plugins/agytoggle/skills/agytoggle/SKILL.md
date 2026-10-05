@@ -15,6 +15,11 @@ agytoggle rotate --force                      # advance even if only one healthy
 agytoggle strategy [round-robin|random|sticky|least-used]  # view or set default strategy
 agytoggle cooldown [hours=4]                  # mark current exhausted, rotate to next
 agytoggle import                              # import active session into pool
+agytoggle login                               # authenticate new account via browser OAuth
+agytoggle auth-url [port=8085]                # print clean single-line OAuth authorization URL
+agytoggle copy-url [port=8085]                # copy OAuth URL to clipboard via OSC 52
+agytoggle open [port=8085]                    # open OAuth URL directly in Orca browser tab
+agytoggle code <code|url>                     # exchange auth code or redirect URL directly
 agytoggle add <email> <refreshToken>          # add account with refresh token to pool
 agytoggle remove <index|email>                # remove account from pool
 ```

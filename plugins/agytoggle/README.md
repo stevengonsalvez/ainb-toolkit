@@ -27,9 +27,10 @@ ln -sf "$(pwd)/plugins/agytoggle/agytoggle.js" ~/.local/bin/agysw
 chmod +x plugins/agytoggle/agytoggle.js
 ```
 
-**Import your active session:**
+**Import existing session or log in with new accounts:**
 ```bash
-agytoggle import
+agytoggle import    # import currently active session from ~/.gemini/antigravity-cli/antigravity-oauth-token
+agytoggle login     # log in with another Google account via interactive browser OAuth
 ```
 
 **Recommended shell wrapper** (add to `~/.zshrc` or `~/.bashrc`):
@@ -61,6 +62,11 @@ agycool() {
 | `agytoggle cooldown [hours]` | Mark current account exhausted for N hours, then rotate |
 | `agytoggle strategy [name]` | View or set default rotation strategy |
 | `agytoggle import` | Import current active session from `antigravity-oauth-token` |
+| `agytoggle login` | Authenticate additional Google account via interactive OAuth |
+| `agytoggle auth-url [port]` | Print clean single-line OAuth authorization URL |
+| `agytoggle copy-url [port]` | Copy OAuth authorization URL to clipboard via OSC 52 |
+| `agytoggle open [port]` | Open OAuth authorization URL directly in Orca browser tab |
+| `agytoggle code <code\|url>` | Exchange auth code or redirect URL directly without local server |
 | `agytoggle add <email> <token>` | Add account with refresh token to pool |
 | `agytoggle remove <n\|email>` | Remove account from pool |
 
@@ -85,7 +91,7 @@ agytoggle rotate --force               # advance even if only one healthy accoun
 
 ---
 
-## Handling quota exhaustion
+## Handling quota exhaustion (agycool)
 
 When `agy` returns `Individual quota reached`:
 
@@ -94,7 +100,10 @@ agycool        # marks current account exhausted for 4h, switches to next health
 agycool 2      # same but 2h cooldown
 ```
 
-Cooldowns are stored in the accounts database and respected by all rotate strategies.
+`agycool` is a shorthand for `agytoggle cooldown [hours=4]`. It:
+1. Marks the exhausted account on cooldown for N hours.
+2. Rotates active credentials to the next healthy account in the pool.
+3. Automatically refreshes OAuth tokens and writes to `antigravity-oauth-token`.
 
 ---
 

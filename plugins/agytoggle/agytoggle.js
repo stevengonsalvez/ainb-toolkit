@@ -101,6 +101,64 @@ async function refreshAccessToken(refreshToken) {
   return res.json();
 }
 
+async function exchangeAuthCode(code, redirectUri) {
+  const res = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "authorization_code",
+      code: code,
+      client_id: CLIENT_ID,
+      client_secret: CLIENT_SECRET,
+      redirect_uri: redirectUri
+    }),
+  });
+  if (!res.ok) {
+    throw new Error(`Google OAuth code exchange failed: ${await res.text()}`);
+  }
+  return res.json();
+}
+
+function extractCode(inputStr) {
+  if (!inputStr || typeof inputStr !== 'string') return '';
+  let clean = inputStr.replace(/[\r\n\t]/g, '').trim();
+  if (clean.includes('code=')) {
+    const match = clean.match(/code=([^&]+)/);
+    if (match) {
+      clean = match[1];
+    }
+  }
+  clean = decodeURIComponent(clean).replace(/\s+/g, '').trim();
+  return clean;
+}
+
+function buildAuthUrl(port = 8085) {
+  const scopes = [
+    "email",
+    "profile",
+    "openid",
+    "https://www.googleapis.com/auth/userinfo.email",
+    "https://www.googleapis.com/auth/userinfo.profile",
+    "https://www.googleapis.com/auth/aicode",
+    "https://www.googleapis.com/auth/cclog",
+    "https://www.googleapis.com/auth/cloud-platform",
+    "https://www.googleapis.com/auth/experimentsandconfigs"
+  ].join(" ");
+
+  const redirectUri = `http://localhost:${port}/auth/callback`;
+  return {
+    redirectUri,
+    authUrl: `https://accounts.google.com/o/oauth2/v2/auth?` + new URLSearchParams({
+      client_id: CLIENT_ID,
+      redirect_uri: redirectUri,
+      response_type: "code",
+      scope: scopes,
+      access_type: "offline",
+      prompt: "consent select_account"
+    })
+  };
+}
+
 function hasCommand(cmd) {
   try {
     execSync(`command -v ${cmd} >/dev/null 2>&1`);
@@ -230,6 +288,11 @@ Usage:
                                                 - View or set default rotation strategy
   agytoggle cooldown [hours=4]                  - Mark current exhausted, rotate to next
   agytoggle import                              - Import current active agy CLI session into pool
+  agytoggle login                               - Authenticate new account via Google OAuth web flow
+  agytoggle auth-url                            - Print clean single-line OAuth authorization URL
+  agytoggle copy-url                            - Copy OAuth authorization URL directly to clipboard
+  agytoggle open                                - Open OAuth URL directly in Orca browser tab
+  agytoggle code <code|url>                     - Submit authorization code or redirect URL
   agytoggle add <email> <refreshToken>          - Add account with refresh token to pool
   agytoggle remove <index|email>                - Remove account from pool
     `);
@@ -237,6 +300,244 @@ Usage:
   }
 
   const storage = await readAccountsStorage();
+
+  if (command === 'auth-url') {
+    const port = parseInt(args[1], 10) || 8085;
+    const { authUrl } = buildAuthUrl(port);
+    console.log(authUrl);
+    process.exit(0);
+  }
+
+  if (command === 'copy-url') {
+    const port = parseInt(args[1], 10) || 8085;
+    const { authUrl } = buildAuthUrl(port);
+    const b64 = Buffer.from(authUrl).toString('base64');
+    const seq = process.env.TMUX
+      ? `\x1bPtmux;\x1b\x1b]52;c;${b64}\x07\x1b\\`
+      : `\x1b]52;c;${b64}\x07`;
+
+    process.stdout.write(seq);
+
+    console.log('\n[Success] Copied OAuth URL to clipboard via OSC 52!');
+    console.log('You can now paste it directly into your browser.');
+    process.exit(0);
+  }
+
+  if (command === 'open') {
+    const port = parseInt(args[1], 10) || 8085;
+    const { authUrl } = buildAuthUrl(port);
+    let opened = false;
+    if (hasCommand('orca')) {
+      try {
+        execSync(`orca tab create --url "${authUrl}"`, { stdio: 'ignore' });
+        console.log('[Success] Opened Google OAuth sign-in tab in Orca!');
+        opened = true;
+      } catch {}
+    }
+    if (!opened && hasCommand('xdg-open')) {
+      try {
+        execSync(`xdg-open "${authUrl}"`, { stdio: 'ignore' });
+        console.log('[Success] Opened Google OAuth sign-in via xdg-open!');
+        opened = true;
+      } catch {}
+    }
+    if (!opened && hasCommand('open')) {
+      try {
+        execSync(`open "${authUrl}"`, { stdio: 'ignore' });
+        console.log('[Success] Opened Google OAuth sign-in via open!');
+        opened = true;
+      } catch {}
+    }
+    if (!opened) {
+      console.log(`Could not automatically launch browser. Use: agytoggle copy-url`);
+    }
+    process.exit(0);
+  }
+
+  if (command === 'code') {
+    const rawInput = args.slice(1).join(' ');
+    if (!rawInput) {
+      console.error("Usage: agytoggle code <authorization_code_or_redirect_url>");
+      process.exit(1);
+    }
+    const code = extractCode(rawInput);
+    if (!code) {
+      console.error("[Error] Could not extract authorization code from input.");
+      process.exit(1);
+    }
+    const port = parseInt(process.env.AGYTOGGLE_PORT, 10) || 8085;
+    const redirectUri = `http://localhost:${port}/auth/callback`;
+
+    console.log(`Exchanging authorization code for OAuth tokens...`);
+    let tokenData;
+    try {
+      tokenData = await exchangeAuthCode(code, redirectUri);
+    } catch (err) {
+      console.error(`[Error] Exchange failed: ${err.message}`);
+      process.exit(1);
+    }
+
+    const refreshToken = tokenData.refresh_token;
+    if (!refreshToken) {
+      console.error("[Error] No refresh token returned. Ensure you granted offline access (consent).");
+      process.exit(1);
+    }
+
+    let email = decodeJwtEmail(tokenData.id_token);
+    if (!email && tokenData.access_token) {
+      email = await fetchEmailFromAccessToken(tokenData.access_token);
+    }
+    if (!email) {
+      email = `account-${storage.accounts.length + 1}@google.com`;
+    }
+
+    const existingIdx = storage.accounts.findIndex(a => a.email === email);
+    if (existingIdx >= 0) {
+      storage.accounts[existingIdx].refreshToken = refreshToken;
+      storage.accounts[existingIdx].lastUsed = Date.now();
+      delete storage.accounts[existingIdx].cooldownUntil;
+      console.log(`[Success] Updated existing account in pool: ${email} (Profile #${existingIdx + 1})`);
+    } else {
+      storage.accounts.push({
+        email,
+        refreshToken,
+        addedAt: Date.now(),
+        lastUsed: Date.now()
+      });
+      console.log(`[Success] Added new account to pool: ${email} (Profile #${storage.accounts.length})`);
+    }
+
+    await writeAccountsStorage(storage);
+    const targetIdx = existingIdx >= 0 ? existingIdx : storage.accounts.length - 1;
+    await doSwitch(targetIdx, storage);
+    process.exit(0);
+  }
+
+  if (command === 'login') {
+    const http = await import('http');
+    const readline = await import('readline');
+
+    let port = 8085;
+    const server = http.createServer();
+    await new Promise((resolve) => {
+      server.once('error', () => {
+        const fallbackServer = http.createServer();
+        fallbackServer.listen(0, '127.0.0.1', () => {
+          port = fallbackServer.address().port;
+          resolve();
+        });
+      });
+      server.listen(8085, '127.0.0.1', () => {
+        port = 8085;
+        resolve();
+      });
+    });
+
+    const { authUrl, redirectUri } = buildAuthUrl(port);
+
+    const urlFilePath = join(os.homedir(), '.gemini', 'antigravity-cli', 'login-url.txt');
+    const htmlFilePath = join(os.homedir(), '.gemini', 'antigravity-cli', 'login.html');
+    try {
+      await fs.writeFile(urlFilePath, authUrl + '\n', { mode: 0o600 });
+      await fs.writeFile(htmlFilePath, `<!DOCTYPE html>
+<html>
+<head><meta http-equiv="refresh" content="0; url=${authUrl}"></head>
+<body><p>Redirecting to Google Sign-In... <a href="${authUrl}">Click here if not redirected</a>.</p></body>
+</html>`, { mode: 0o600 });
+    } catch {
+      // ignore
+    }
+
+    console.log(`\n=== Antigravity Multi-Account Login ===`);
+    console.log(`1. Open this URL in your browser to authenticate:`);
+    console.log(`\n${authUrl}\n`);
+    console.log(`Single-line URL saved to (no terminal wrapping): ${urlFilePath}`);
+    console.log(`HTML launcher saved to: ${htmlFilePath}\n`);
+    console.log(`2. Sign in with the Google account you wish to add.`);
+    console.log(`Listening for local callback on port ${port}...`);
+    console.log(`(If running in remote SSH or browser cannot reach localhost, paste the redirect URL or code below:)\n`);
+
+    const handleCode = async (rawCode) => {
+      const code = extractCode(rawCode);
+      if (!code) return;
+      try {
+        console.log(`Exchanging authorization code for OAuth tokens...`);
+        const tokenData = await exchangeAuthCode(code, redirectUri);
+        const refreshToken = tokenData.refresh_token;
+        if (!refreshToken) {
+          console.error(`[Error] No refresh token returned. Grant offline consent during login.`);
+          server.close();
+          process.exit(1);
+        }
+
+        let email = decodeJwtEmail(tokenData.id_token);
+        if (!email && tokenData.access_token) {
+          email = await fetchEmailFromAccessToken(tokenData.access_token);
+        }
+        if (!email) {
+          email = `account-${storage.accounts.length + 1}@google.com`;
+        }
+
+        const existingIdx = storage.accounts.findIndex(a => a.email === email);
+        if (existingIdx >= 0) {
+          storage.accounts[existingIdx].refreshToken = refreshToken;
+          storage.accounts[existingIdx].lastUsed = Date.now();
+          delete storage.accounts[existingIdx].cooldownUntil;
+          console.log(`[Success] Updated existing account in pool: ${email} (Profile #${existingIdx + 1})`);
+        } else {
+          storage.accounts.push({
+            email,
+            refreshToken,
+            addedAt: Date.now(),
+            lastUsed: Date.now()
+          });
+          console.log(`[Success] Added new account to pool: ${email} (Profile #${storage.accounts.length})`);
+        }
+
+        await writeAccountsStorage(storage);
+        const targetIdx = existingIdx >= 0 ? existingIdx : storage.accounts.length - 1;
+        await doSwitch(targetIdx, storage);
+        server.close();
+        process.exit(0);
+      } catch (err) {
+        console.error(`[Error] Login failed: ${err.message}`);
+        server.close();
+        process.exit(1);
+      }
+    };
+
+    server.on('request', async (req, res) => {
+      const reqUrl = new URL(req.url, `http://localhost:${port}`);
+      if (reqUrl.pathname === '/auth/callback') {
+        const code = reqUrl.searchParams.get('code');
+        const error = reqUrl.searchParams.get('error');
+        if (error) {
+          res.writeHead(400, { 'Content-Type': 'text/html' });
+          res.end(`<h1>Login Failed</h1><p>${error}</p>`);
+          console.error(`[Error] Google OAuth returned error: ${error}`);
+          server.close();
+          process.exit(1);
+        }
+        if (code) {
+          res.writeHead(200, { 'Content-Type': 'text/html' });
+          res.end(`<h1>Authentication Successful</h1><p>You can close this tab and return to the terminal.</p>`);
+          await handleCode(code);
+        }
+      } else {
+        res.writeHead(404);
+        res.end();
+      }
+    });
+
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    rl.on('line', async (line) => {
+      const trimmed = line.trim();
+      if (!trimmed) return;
+      rl.close();
+      await handleCode(trimmed);
+    });
+    return;
+  }
 
   if (command === 'import') {
     console.log(`Reading active session from ${TOKEN_PATH}...`);
@@ -362,7 +663,7 @@ Usage:
 
   if (storage.accounts.length === 0) {
     console.log("No accounts found in your pool.");
-    console.log("Tip: Run 'agytoggle import' to import your active session, or 'agytoggle add <email> <token>'.");
+    console.log("Tip: Run 'agytoggle import', 'agytoggle login', or 'agytoggle add <email> <token>'.");
     process.exit(1);
   }
 

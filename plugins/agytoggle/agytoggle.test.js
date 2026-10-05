@@ -40,6 +40,7 @@ test('agytoggle help output', () => {
     const out = run(['help']);
     assert.match(out, /Antigravity CLI Multi-Account Switcher \(agytoggle\)/);
     assert.match(out, /agytoggle import/);
+    assert.match(out, /agytoggle login/);
     assert.match(out, /agytoggle rotate/);
   } finally {
     cleanup();
@@ -130,8 +131,6 @@ test('agytoggle cooldown marks account with cooldownUntil', () => {
       activeIndex: 0
     }));
 
-    // Calling cooldown on u1 should mark cooldownUntil and attempt rotate to u2
-    // Note: token refresh will fail on fake token, so test expects rejection or failure handled
     try {
       run(['cooldown', '2']);
     } catch (err) {
@@ -144,3 +143,52 @@ test('agytoggle cooldown marks account with cooldownUntil', () => {
     cleanup();
   }
 });
+
+test('agytoggle add validates token against Google OAuth API', () => {
+  const { run, cleanup } = makeTempHarness();
+  try {
+    assert.throws(() => {
+      run(['add', 'bad@test.com', 'invalid_token']);
+    });
+  } finally {
+    cleanup();
+  }
+});
+
+test('agytoggle auth-url prints single-line OAuth URL', () => {
+  const { run, cleanup } = makeTempHarness();
+  try {
+    const urlOut = run(['auth-url', '8085']).trim();
+    assert.match(urlOut, /^https:\/\/accounts\.google\.com\/o\/oauth2\/v2\/auth\?/);
+    assert.match(urlOut, /redirect_uri=http%3A%2F%2Flocalhost%3A8085%2Fauth%2Fcallback/);
+    assert.doesNotMatch(urlOut, /\s/);
+  } finally {
+    cleanup();
+  }
+});
+
+test('agytoggle code validates input and handles errors', () => {
+  const { run, cleanup } = makeTempHarness();
+  try {
+    assert.throws(() => {
+      run(['code']);
+    });
+    assert.throws(() => {
+      run(['code', 'http://localhost:8085/auth/callback?code=bad_test_code']);
+    });
+  } finally {
+    cleanup();
+  }
+});
+
+test('agytoggle copy-url outputs success and escape sequence', () => {
+  const { run, cleanup } = makeTempHarness();
+  try {
+    const out = run(['copy-url', '8085']);
+    assert.match(out, /Copied OAuth URL to clipboard/);
+  } finally {
+    cleanup();
+  }
+});
+
+
