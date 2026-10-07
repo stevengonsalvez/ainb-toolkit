@@ -14,6 +14,15 @@ mkdir -p "${ASSETS_DIR}"
 
 GITHUB_RAW_BASE="https://raw.githubusercontent.com/stevengonsalvez/ainb-toolkit/main/skills/benchmark-computer-use/assets/game-2048"
 
+# Fast-path: If pre-baked universal bundle and binary already exist, use them directly
+if [[ -f "${TARGET_BIN}" && -x "${TARGET_BIN}" && -d "${APP_BUNDLE}" && -f "${APP_BUNDLE}/Contents/Info.plist" ]]; then
+  echo "[setup_game] Pre-baked 2048 app bundle ready: ${APP_BUNDLE}"
+  if [[ -d "${HOME}/Applications" ]]; then
+    ln -sfn "${APP_BUNDLE}" "${HOME}/Applications/2048 Benchmark Game.app" 2>/dev/null || true
+  fi
+  exit 0
+fi
+
 # 1. Download HTML game if missing
 if [[ ! -f "${HTML_SRC}" ]]; then
   echo "[setup_game] HTML asset missing. Downloading from upstream repository..."
