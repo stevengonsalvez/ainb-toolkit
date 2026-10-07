@@ -21,6 +21,7 @@ components:
     - ats-resume-matcher
     - attach-agent-worktree
     - autonomous-loops
+    - benchmark-computer-use
     - brainstorm
     - browser-verify
     - claude-langfuse
@@ -120,6 +121,7 @@ components:
         - brag
         - capture
         - compose
+        - export
     - name: godmode
       skills:
         - godmode
@@ -164,7 +166,6 @@ components:
 
   utilities:
     hooks:
-      - README
       - bash_auto_background
       - compile-statusline
       - cost_tracker
@@ -173,6 +174,7 @@ components:
       - post_tool_use
       - pre_compact
       - pre_tool_use
+      - README
       - run_with_profile
       - session_start
       - statusline
