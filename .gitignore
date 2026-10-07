@@ -20,3 +20,4 @@ apm-audit.sarif
 
 # Benchmark execution output
 benchmark-results/
+*.app/

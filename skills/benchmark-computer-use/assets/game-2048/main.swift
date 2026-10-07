@@ -24,8 +24,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         webView = WKWebView(frame: NSRect(x: 0, y: 0, width: width, height: height), configuration: config)
         webView.autoresizingMask = [.width, .height]
         
-        let htmlPath = CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : 
-            URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("index.html").path
+        let htmlPath: String
+        if CommandLine.arguments.count > 1 {
+            htmlPath = CommandLine.arguments[1]
+        } else if let resPath = Bundle.main.path(forResource: "index", ofType: "html") {
+            htmlPath = resPath
+        } else {
+            htmlPath = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("index.html").path
+        }
         
         let url = URL(fileURLWithPath: htmlPath)
         webView.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
