@@ -33,6 +33,17 @@ Benchmark and visually compare computer use speed across AI models and tool stac
 
 ---
 
+## Game Specification & Auto-Setup
+
+- **Target Game**: 2048 macOS Desktop Game (Native Cocoa WebKit host).
+- **Host Window**: Title `2048 Benchmark Game`, standard frame `(x: 40, y: 40, width: 520, height: 750)`.
+- **Game Mechanics**: 4x4 dynamic tile grid, score/moves/best tile indicators, "New Game" AXButton reset element.
+- **Preflight & Auto-Download**:
+  - `preflight.sh` automatically checks if the game binary (`assets/game-2048/2048-app`) and assets exist.
+  - If missing on a fresh machine, `build_game.sh` automatically downloads `index.html` and `main.swift` from the upstream GitHub repo and compiles the native binary via `swiftc`. Zero manual download needed.
+
+---
+
 ## Quick Start: Single Command Execution
 
 Run all three standard arms for 30 moves:
