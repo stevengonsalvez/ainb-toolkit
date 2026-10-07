@@ -96,7 +96,7 @@ if [[ -n "$TRANSFER" ]]; then
   REMOTE_DIR="${TRANSFER#*:}"
   
   ssh ${SSH_OPT} -o StrictHostKeyChecking=no "${REMOTE_HOST}" "mkdir -p '${REMOTE_DIR}'"
-  scp ${SSH_OPT} "${OUT_DIR}"/*.mp4 "${OUT_DIR}"/BENCHMARK_REPORT.md "${TRANSFER}/"
+  scp ${SSH_OPT} "${OUT_DIR}"/*.mp4 "${OUT_DIR}"/BENCHMARK_REPORT.md "${OUT_DIR}"/summary.json "${OUT_DIR}"/*_trace.jsonl "${TRANSFER}/" 2>/dev/null || scp ${SSH_OPT} "${OUT_DIR}"/*.mp4 "${OUT_DIR}"/BENCHMARK_REPORT.md "${TRANSFER}/"
   echo "[run] Transfer complete."
 else
   echo ""

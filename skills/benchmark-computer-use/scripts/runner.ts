@@ -11,8 +11,19 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const SKILL_ROOT = path.resolve(__dirname, "..");
 
-// Environment configuration
-const TYPESAFE_API_KEY = process.env.TYPESAFE_API_KEY || "";
+function getTypeSafeKey(): string {
+  if (process.env.TYPESAFE_API_KEY) return process.env.TYPESAFE_API_KEY;
+  try {
+    const key = execSync(
+      'BW_SESSION=$(bw unlock --raw "$(cat ~/.secrets/bw-master)" 2>/dev/null) && bw get item "TYPESAFE_API_KEY" --session "$BW_SESSION" 2>/dev/null | jq -r \'.fields[] | select(.name=="KEY") | .value\'',
+      { encoding: "utf8" }
+    ).trim();
+    if (key && key.startsWith("apikey_")) return key;
+  } catch {}
+  return "";
+}
+
+const TYPESAFE_API_KEY = getTypeSafeKey();
 
 let cachedGithubToken: string | null = process.env.GITHUB_TOKEN || null;
 function getGithubToken(): string | null {
