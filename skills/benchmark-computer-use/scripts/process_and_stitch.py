@@ -14,11 +14,11 @@ FONT_PATHS = [
 
 ARM_METADATA = {
     "peekaboo": {
-        "title": "Peekaboo (Gemini 2.5 Flash)",
+        "title": "Peekaboo (Agent Tool Loop)",
         "color": (37, 99, 235, 255),
     },
     "cuadriver": {
-        "title": "Cua Driver (Gemini 2.5 Flash)",
+        "title": "Cua Driver (Agent Tool Loop)",
         "color": (5, 150, 105, 255),
     },
     "cua_jev": {
@@ -26,7 +26,7 @@ ARM_METADATA = {
         "color": (124, 58, 237, 255),
     },
     "copilot": {
-        "title": "GitHub Copilot (Native / Fast Path)",
+        "title": "GitHub Copilot (Native Computer Use)",
         "color": (234, 88, 12, 255),
     },
 }

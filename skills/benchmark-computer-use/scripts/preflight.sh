@@ -68,24 +68,19 @@ else
   ERRORS=$((ERRORS + 1))
 fi
 
-# 4. Check API Keys / Auth
+# 4. Computer Use Tool Drivers & Agent Context
 echo ""
-echo "4. Model & Platform Credentials:"
+echo "4. Computer Use Tool Drivers & Agent Context:"
+printf "  [OK] %-15s : active agent LLM (zero API keys required)\n" "Coding Agent"
 
-# Gemini
-GEMINI_KEY="${GEMINI_API_KEY:-}"
-if [[ -n "$GEMINI_KEY" ]]; then
-  STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_KEY}" -H "Content-Type: application/json" -d '{"contents":[{"parts":[{"text":"ping"}]}]}' || echo "000")
-  if [[ "$STATUS" == "200" ]]; then
-    printf "  [OK] %-15s : HTTP %s (valid)\n" "Gemini API" "$STATUS"
-  else
-    printf "  [WARN] %-13s : HTTP %s\n" "Gemini API" "$STATUS"
-  fi
+# Peekaboo CLI
+if command -v peekaboo >/dev/null 2>&1; then
+  printf "  [OK] %-15s : installed at %s\n" "Peekaboo CLI" "$(which peekaboo)"
 else
-  printf "  [WARN] %-13s : GEMINI_API_KEY not set in environment\n" "Gemini API"
+  printf "  [INFO] %-13s : not installed (fallback to native macOS events)\n" "Peekaboo CLI"
 fi
 
-# Typesafe JEV
+# Typesafe JEV (optional fast-path)
 JEV_KEY="${TYPESAFE_API_KEY:-}"
 if [[ -n "$JEV_KEY" ]]; then
   if (cd "${SKILL_ROOT}" && node -e '
@@ -95,24 +90,14 @@ import("@typesafe-ai/sdk").then(async ({ TypeSafeClient, choice }) => {
   process.exit(0);
 }).catch(() => process.exit(1));
 ') >/dev/null 2>&1; then
-    printf "  [OK] %-15s : authenticated (System-One ready)\n" "TypeSafe JEV"
+    printf "  [OK] %-15s : authenticated (System-One fast-path ready)\n" "TypeSafe JEV"
   else
-    printf "  [WARN] %-13s : authentication failed\n" "TypeSafe JEV"
+    printf "  [INFO] %-13s : authentication failed (skips JEV arm)\n" "TypeSafe JEV"
   fi
 else
-  printf "  [WARN] %-13s : TYPESAFE_API_KEY not set in environment\n" "TypeSafe JEV"
+  printf "  [INFO] %-13s : TYPESAFE_API_KEY not set (optional fast-path)\n" "TypeSafe JEV"
 fi
 
-# GitHub Copilot / gh CLI
-if command -v gh >/dev/null 2>&1; then
-  if gh auth status >/dev/null 2>&1; then
-    printf "  [OK] %-15s : authenticated via gh cli\n" "GitHub Copilot"
-  else
-    printf "  [INFO] %-13s : gh cli installed but not logged in\n" "GitHub Copilot"
-  fi
-else
-  printf "  [INFO] %-13s : gh cli not found\n" "GitHub Copilot"
-fi
 
 echo "=========================================================="
 if [[ $ERRORS -eq 0 ]]; then
