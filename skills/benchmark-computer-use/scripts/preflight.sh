@@ -82,6 +82,12 @@ fi
 
 # Typesafe JEV (optional fast-path)
 JEV_KEY="${TYPESAFE_API_KEY:-}"
+if [[ -z "$JEV_KEY" && -f ~/.secrets/bw-master ]]; then
+  BW_S=$(bw unlock --raw "$(cat ~/.secrets/bw-master)" 2>/dev/null || true)
+  if [[ -n "$BW_S" ]]; then
+    JEV_KEY=$(bw get item "TYPESAFE_API_KEY" --session "$BW_S" 2>/dev/null | jq -r '.fields[] | select(.name=="KEY") | .value' 2>/dev/null || true)
+  fi
+fi
 if [[ -n "$JEV_KEY" ]]; then
   if (cd "${SKILL_ROOT}" && node -e '
 import("@typesafe-ai/sdk").then(async ({ TypeSafeClient, choice }) => {
