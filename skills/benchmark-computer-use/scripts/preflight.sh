@@ -51,13 +51,21 @@ fi
 
 # 3. Check Game App
 echo ""
-echo "3. Desktop 2048 Game Target:"
+echo "3. Desktop Game Target (2048 macOS Cocoa App):"
 GAME_BIN="${SKILL_ROOT}/assets/game-2048/2048-app"
-if [[ -x "$GAME_BIN" ]]; then
-  printf "  [OK] %-15s : compiled binary ready\n" "2048-app"
-else
-  echo "  [WARN] 2048-app binary not found, running build_game.sh..."
+HTML_SRC="${SKILL_ROOT}/assets/game-2048/index.html"
+SWIFT_SRC="${SKILL_ROOT}/assets/game-2048/main.swift"
+
+if [[ ! -f "$HTML_SRC" || ! -f "$SWIFT_SRC" || ! -x "$GAME_BIN" ]]; then
+  echo "  [INFO] Target game asset(s) missing or uncompiled. Running auto-download & build..."
   bash "${SCRIPT_DIR}/build_game.sh"
+fi
+
+if [[ -x "$GAME_BIN" && -f "$HTML_SRC" ]]; then
+  printf "  [OK] %-15s : 2048 macOS Desktop Game ready (%s)\n" "Game Target" "$GAME_BIN"
+else
+  printf "  [FAIL] %-13s : failed to build or download 2048 app\n" "Game Target"
+  ERRORS=$((ERRORS + 1))
 fi
 
 # 4. Check API Keys / Auth
