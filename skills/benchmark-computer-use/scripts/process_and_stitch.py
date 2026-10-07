@@ -14,11 +14,11 @@ FONT_PATHS = [
 
 ARM_METADATA = {
     "peekaboo": {
-        "title": "Peekaboo (Agent Tool Loop)",
+        "title": "Peekaboo (Gemini 3.8 Flash Low)",
         "color": (37, 99, 235, 255),
     },
     "cuadriver": {
-        "title": "Cua Driver (Agent Tool Loop)",
+        "title": "Cua Driver (Gemini 3.8 Flash Low)",
         "color": (5, 150, 105, 255),
     },
     "cua_jev": {

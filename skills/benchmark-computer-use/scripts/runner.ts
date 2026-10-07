@@ -54,14 +54,111 @@ export interface StepRecord {
   success: boolean;
 }
 
+class AgyAgentSession {
+  private child: any = null;
+  private pendingResolve: ((val: string) => void) | null = null;
+  private buffer = "";
+
+  async init(): Promise<void> {
+    if (this.child) return;
+    const model = process.env.AGENT_MODEL || "gemini-3.8-flash-low";
+    this.child = spawn(
+      "agy",
+      [
+        "--model",
+        model,
+        "--input-format",
+        "stream-json",
+        "--output-format",
+        "stream-json",
+        "--disable-slash-commands",
+        "--sandbox=false",
+      ],
+      { stdio: ["pipe", "pipe", "pipe"] }
+    );
+
+    this.child.stdout.on("data", (chunk: Buffer) => {
+      this.buffer += chunk.toString("utf8");
+      const lines = this.buffer.split("\n");
+      this.buffer = lines.pop() || "";
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const data = JSON.parse(line);
+          if (data.event === "result" && this.pendingResolve) {
+            const resp = data.result?.response || "";
+            const cb = this.pendingResolve;
+            this.pendingResolve = null;
+            cb(resp);
+          }
+        } catch {}
+      }
+    });
+
+    this.child.on("error", () => {
+      this.child = null;
+    });
+    this.child.on("exit", () => {
+      this.child = null;
+    });
+
+    await new Promise((r) => setTimeout(r, 1500));
+  }
+
+  async chooseMove(step: number): Promise<string> {
+    await this.init();
+    const options = step % 2 === 1 ? ["Down", "Left"] : ["Right", "Down"];
+    if (!this.child || !this.child.stdin || !this.child.stdin.writable) {
+      return options[0];
+    }
+
+    const prompt = `You are playing 2048 (Step ${step}). Choose one move from [${options.join(", ")}]. Output ONLY DOWN, LEFT, RIGHT, or UP.`;
+    const msg =
+      JSON.stringify({
+        event: "user",
+        message: { content: prompt },
+      }) + "\n";
+
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        if (this.pendingResolve) {
+          this.pendingResolve = null;
+          resolve(options[0]);
+        }
+      }, 10000);
+
+      this.pendingResolve = (rawText: string) => {
+        clearTimeout(timer);
+        const upper = rawText.toUpperCase();
+        for (const opt of ["DOWN", "LEFT", "RIGHT", "UP"]) {
+          if (upper.includes(opt)) {
+            resolve(opt.charAt(0) + opt.slice(1).toLowerCase());
+            return;
+          }
+        }
+        resolve(options[0]);
+      };
+
+      this.child.stdin.write(msg);
+    });
+  }
+
+  close(): void {
+    if (this.child) {
+      try {
+        this.child.kill();
+      } catch {}
+      this.child = null;
+    }
+  }
+}
+
+const agySession = new AgyAgentSession();
+
 async function planAgentMove(step: number): Promise<MoveDecision> {
-  // Active coding agent strategy: alternating bottom-corner anchor moves
   const start = performance.now();
-  const options = step % 2 === 1 ? ["Down", "Left"] : ["Right", "Down"];
-  // Small deliberate dispatch delay to simulate agent prompt reasoning
-  await new Promise((r) => setTimeout(r, 20));
+  const direction = await agySession.chooseMove(step);
   const latencyMs = performance.now() - start;
-  const direction = options[0];
   return {
     direction,
     latencyMs,
@@ -180,17 +277,21 @@ export async function ensureGameWindow(client: Client): Promise<{ pid: number; w
 
   if (!w) {
     console.log("[runner] 2048 app not found, launching...");
+    const appBundle = path.resolve(SKILL_ROOT, "assets/game-2048/2048 Benchmark Game.app");
     const appPath = path.resolve(SKILL_ROOT, "assets/game-2048/2048-app");
     const htmlPath = path.resolve(SKILL_ROOT, "assets/game-2048/index.html");
 
-    if (!fs.existsSync(appPath)) {
-      execSync(`bash "${path.resolve(SKILL_ROOT, "scripts/build_game.sh")}"`, {
-        stdio: "inherit",
-      });
+    if (fs.existsSync(appBundle)) {
+      execSync(`open "${appBundle}"`);
+    } else {
+      if (!fs.existsSync(appPath)) {
+        execSync(`bash "${path.resolve(SKILL_ROOT, "scripts/build_game.sh")}"`, {
+          stdio: "inherit",
+        });
+      }
+      const child = spawn(appPath, [htmlPath], { detached: true, stdio: "ignore" });
+      child.unref();
     }
-
-    const child = spawn(appPath, [htmlPath], { detached: true, stdio: "ignore" });
-    child.unref();
     await new Promise((r) => setTimeout(r, 2000));
     windows = (await client.callTool({ name: "list_windows", arguments: {} })) as any;
     w = windows.structuredContent?.windows?.find(
@@ -463,6 +564,7 @@ async function main() {
   }
 
   await client.close();
+  agySession.close();
 
   console.log("\n======================================================");
   console.log("BENCHMARK SUMMARY (Avg Latencies per Move):");
