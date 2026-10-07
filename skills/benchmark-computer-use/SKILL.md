@@ -26,12 +26,12 @@ Benchmark and visually compare computer use speed across AI models and tool stac
 
 | Arm ID | Decision Engine | Perception / Action Stack | Primary Focus |
 | :--- | :--- | :--- | :--- |
-| `peekaboo` | Active Coding Agent | Cua Window State + Peekaboo CLI (`/usr/local/bin/peekaboo press`) | Fast CLI keypress baseline |
-| `cuadriver` | Active Coding Agent | Cua Window State + CuaDriver MCP (`press_key`) | Full Accessibility tree / MCP |
+| `peekaboo` | Gemini 3.8 Flash (Low) via Coding Agent | Cua Window State + Peekaboo CLI (`/usr/local/bin/peekaboo press`) | Fast CLI keypress baseline |
+| `cuadriver` | Gemini 3.8 Flash (Low) via Coding Agent | Cua Window State + CuaDriver MCP (`press_key`) | Full Accessibility tree / MCP |
 | `cua_jev` | TypeSafe JEV System-One | Cua Window State + CuaDriver MCP (`press_key`) | Ultra-low latency decision loop (<250ms) |
 | `copilot` | GitHub Copilot Native | Cua Window State + CuaDriver MCP / Native Key | Copilot latency and native computer use |
 
-> The coding agent running this skill uses its own active LLM context. Computer use tools are the benchmark targets. Zero external model API keys required.
+> The coding agent running this skill uses Gemini 3.8 Flash (Low) via its native CLI stream. Computer use tools are the benchmark targets. Zero external model API keys required.
 
 ---
 

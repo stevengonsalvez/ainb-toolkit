@@ -71,7 +71,7 @@ fi
 # 4. Computer Use Tool Drivers & Agent Context
 echo ""
 echo "4. Computer Use Tool Drivers & Agent Context:"
-printf "  [OK] %-15s : active agent LLM (zero API keys required)\n" "Coding Agent"
+printf "  [OK] %-15s : active agent LLM (gemini-3.8-flash-low, zero API keys required)\n" "Coding Agent"
 
 # Peekaboo CLI
 if command -v peekaboo >/dev/null 2>&1; then
