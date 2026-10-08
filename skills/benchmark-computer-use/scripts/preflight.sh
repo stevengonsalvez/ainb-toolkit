@@ -71,7 +71,7 @@ fi
 # 4. Computer Use Tool Drivers & Agent Context
 echo ""
 echo "4. Computer Use Tool Drivers & Agent Context:"
-printf "  [OK] %-15s : active agent LLM (gemini-3.8-flash-low, zero API keys required)\n" "Coding Agent"
+printf "  [INFO] %-13s : moves come from the built-in policy; MOVE_POLICY=agent uses agy (gemini-3.8-flash-low)\n" "Move policy"
 
 # Peekaboo CLI
 if command -v peekaboo >/dev/null 2>&1; then
@@ -91,7 +91,7 @@ fi
 if [[ -n "$JEV_KEY" ]]; then
   if (cd "${SKILL_ROOT}" && node -e '
 import("@typesafe-ai/sdk").then(async ({ TypeSafeClient, choice }) => {
-  const c = new TypeSafeClient({ apiKey: process.env.TYPESAFE_API_KEY || "'"${JEV_KEY}"'", baseURL: "https://api.typesafe.ai" });
+  const c = new TypeSafeClient({ apiKey: process.env.TYPESAFE_API_KEY, baseURL: "https://api.typesafe.ai" });
   await c.systemOne({ model: "jev-latest", state: {}, questions: { q: choice("ping", { a: "1", b: "2" }) } });
   process.exit(0);
 }).catch(() => process.exit(1));
@@ -104,10 +104,20 @@ else
   printf "  [INFO] %-13s : TYPESAFE_API_KEY not set (optional fast-path)\n" "TypeSafe JEV"
 fi
 
+# GitHub CLI only; this does not authenticate native Copilot computer use.
+if command -v gh >/dev/null 2>&1; then
+  if gh auth status >/dev/null 2>&1; then
+    printf "  [OK] %-15s : authenticated via gh cli\n" "GitHub CLI"
+  else
+    printf "  [INFO] %-13s : gh cli installed but not logged in\n" "GitHub CLI"
+  fi
+else
+  printf "  [INFO] %-13s : gh cli not found\n" "GitHub CLI"
+fi
 
 echo "=========================================================="
 if [[ $ERRORS -eq 0 ]]; then
-  echo " PREFLIGHT PASSED: All requirements satisfied."
+  echo " STATIC PREFLIGHT PASSED: Verify live permissions, capture, and one move per arm."
   echo "=========================================================="
   exit 0
 else
