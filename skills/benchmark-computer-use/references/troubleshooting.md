@@ -1,55 +1,22 @@
-# Computer Use Benchmark: Troubleshooting and Edge Cases
+# Computer Use Benchmark: Troubleshooting
 
-## 1. Empty Wallpaper / Blank Capture Bug (macOS Sequoia)
+## Wallpaper or blank capture
 
-### Symptom
-Captured frames show only the macOS wallpaper background, with no window contents, even though the application is visible on screen.
+If a frame shows only desktop wallpaper, confirm the selected capture process has Screen Recording permission, target the current game window, capture again, and inspect the pixels. Cua Driver `get_window_state` is one capture path, not a guarantee. Do not include a blank frame as evidence.
 
-### Root Cause
-Under macOS Sequoia (15.x), non-interactive subshells and CLI child processes spawned by background workers lack the direct `TCC: kTCCServiceScreenCapture` permission entitlement. Calling `/usr/sbin/screencapture` returns empty desktop wallpaper bytes.
+## Permission dialog or blocked action
 
-### Solution
-Always use `CuaDriver.app` MCP tool `get_window_state` with argument `screenshot_out_file: "/path/to/frame.png"`. Because `CuaDriver.app` is an installed macOS application bundle with verified Screen Recording and Accessibility permissions, ScreenCaptureKit renders real window pixels.
+Check the live Accessibility and Screen Recording prompts for the exact app doing capture or control. Grant access in macOS settings, then repeat a one-move preflight. Repositioning the game window cannot grant permission or bypass a system dialog.
 
----
+## Directional stalls
 
-## 2. macOS System Modal Dialogs (TCC and ScreenCaptureKit)
+A requested direction can be a no-op even if the tool call succeeds. Reobserve the board and move counter after every action. Generate only legal directions from the current board and count only +1 counter changes. Do not use fixed odd/even directions for Jev; give it the current board and bounded legal choices.
 
-### Symptom
-Simulated mouse clicks or keyboard events fail to dismiss permission dialogs or click buttons.
+## Stale PID or AX element token
 
-### Root Cause
-macOS kernel blocks synthetic CoreGraphics and Accessibility events targeting system dialogs (`CoreServicesUIAgent` or system authorization sheets) to protect against UI spoofing.
+Resolve PID and window ID from the current `com.ainb.benchmark2048` instance. AX element tokens belong to a particular observation. After reset, app restart, stale-token error, or intervening UI change, capture fresh state and rebuild candidate actions.
 
-### Solution
-Position the target application window at `(x: 40, y: 40, width: 520, height: 750)`. macOS system dialogs center themselves on screen (`x: ~700, y: ~450`), keeping the target window and its buttons ("New Game", tiles) completely outside the collision zone.
+## Video encoder lacks drawtext
 
----
+If FFmpeg lacks `drawtext`, annotate frames using the existing Pillow postprocessor, then encode with FFmpeg. Validate frame contents and labels before publishing. Replay duration is not wall-clock benchmark time.
 
-## 3. Directional Stalling in 2048
-
-### Symptom
-Model chooses "Down" 30 times in a row, score stops increasing after move 4 because tiles cannot slide further down.
-
-### Root Cause
-Without axis rotation heuristics, greedy prompts anchor tiles at the bottom wall and produce no-op actions.
-
-### Solution
-Alternate candidate move options across turns:
-- Odd steps: Choose between `Down` and `Left`
-- Even steps: Choose between `Right` and `Down`
-
-This packs tiles toward the bottom-right corner while forcing horizontal and vertical merges on alternating frames.
-
----
-
-## 4. FFmpeg drawtext / libfreetype Filter Missing
-
-### Symptom
-`ffmpeg -vf "drawtext=..."` fails with error: `No such filter: 'drawtext'`.
-
-### Root Cause
-Default Homebrew or macOS builds of FFmpeg often omit `libfreetype` and fontconfig dependencies.
-
-### Solution
-Use `process_and_stitch.py` which annotates frames using Python's Pillow library (`PIL.ImageDraw`), then invokes FFmpeg only for scaling, `hstack`, and `libx264` encoding.

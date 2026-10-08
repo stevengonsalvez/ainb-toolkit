@@ -12,18 +12,25 @@ FONT_PATHS = [
     "/System/Library/Fonts/Supplemental/Arial.ttf",
 ]
 
+# Matches runner.ts: MOVE_POLICY=agent means agy picked the moves for these two arms.
+_POLICY = "Gemini 3.8 Flash Low" if os.environ.get("MOVE_POLICY") == "agent" else "built-in policy"
+
 ARM_METADATA = {
     "peekaboo": {
-        "title": "Peekaboo (Gemini 3.8 Flash Low)",
+        "title": f"Peekaboo ({_POLICY})",
         "color": (37, 99, 235, 255),
     },
     "cuadriver": {
-        "title": "Cua Driver (Gemini 3.8 Flash Low)",
+        "title": f"Cua Driver ({_POLICY})",
         "color": (5, 150, 105, 255),
     },
     "cua_jev": {
         "title": "Cua Driver + JEV System-One",
         "color": (124, 58, 237, 255),
+    },
+    "codex_cua": {
+        "title": "Codex Computer Use (native input)",
+        "color": (17, 94, 89, 255),
     },
     "copilot": {
         "title": "GitHub Copilot (Native Computer Use)",
@@ -181,7 +188,8 @@ def generate_report(results_dir, active_arms):
 
     report_md = "# Computer Use Speed Benchmark Report\n\n"
     report_md += "## Environment & Test Specification\n"
-    report_md += "- **Task**: 2048 macOS Desktop Game (sequential moves)\n"
+    report_md += "- **Task**: `com.ainb.benchmark2048` (sequential moves)\n"
+    report_md += "- **Decision**: Built-in alternating-axis policy except JEV arm\n"
     report_md += "- **Host**: Apple Silicon M-series (macOS Sequoia)\n"
     report_md += "- **Perception**: Direct Window State API (No Sequoia wallpaper blanking)\n"
     report_md += "- **Side-by-side Video**: `benchmark_side_by_side.mp4`\n\n"
