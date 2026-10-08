@@ -3,8 +3,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { TypeSafeClient, choice } from "@typesafe-ai/sdk";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { fileURLToPath } from "node:url";
-import { spawn, execFileSync, execSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
 import { performance } from "node:perf_hooks";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -177,6 +176,19 @@ async function planAgentMove(step: number): Promise<MoveDecision> {
   };
 }
 
+// Built-in policy: a fixed Down/Right/Up/Left cycle. Isolates the computer-use
+// stack's own speed, which is what the tool-only arms measure.
+async function queryPolicy(step: number): Promise<MoveDecision> {
+  const directions = ["Down", "Right", "Up", "Left"];
+  return { direction: directions[(step - 1) % directions.length], latencyMs: 0 };
+}
+
+// MOVE_POLICY=agent drives the Peekaboo / Cua Driver arms through agy (Gemini
+// 3.8 Flash Low) instead, for the model-assisted runs. Default: built-in.
+async function chooseArmMove(step: number): Promise<MoveDecision> {
+  return process.env.MOVE_POLICY === "agent" ? planAgentMove(step) : queryPolicy(step);
+}
+
 async function queryJev(step: number): Promise<MoveDecision> {
   const isOdd = step % 2 === 1;
   const questions = isOdd
@@ -281,9 +293,9 @@ async function queryCopilot(step: number): Promise<MoveDecision> {
 }
 
 export async function ensureGameWindow(client: Client): Promise<{ pid: number; window_id: number }> {
-  let windows = (await client.callTool({ name: "list_windows", arguments: {} })) as any;
-  let w = windows.structuredContent?.windows?.find(
-    (x: any) => x.app_name?.includes("2048") || x.title?.includes("2048")
+  const windows = (await client.callTool({ name: "list_windows", arguments: {} })) as any;
+  const w = windows.structuredContent?.windows?.find(
+    (x: any) => x.pid === 17685 && x.title === "2048 Benchmark Game"
   );
 
   if (!w) {
@@ -419,13 +431,13 @@ export async function runArm(
     // 2. Model Decision
     let decision: MoveDecision;
     if (armName === "peekaboo" || armName === "cuadriver") {
-      decision = await planAgentMove(step);
+      decision = await chooseArmMove(step);
     } else if (armName === "cua_jev" || armName === "jev") {
       decision = await queryJev(step);
     } else if (armName === "copilot") {
       decision = await queryCopilot(step);
     } else {
-      decision = await planAgentMove(step);
+      decision = await chooseArmMove(step);
     }
 
     // 3. Action execution
@@ -434,21 +446,14 @@ export async function runArm(
 
     if (armName === "peekaboo") {
       try {
-        if (fs.existsSync("/usr/local/bin/peekaboo")) {
-          execFileSync("/usr/local/bin/peekaboo", ["press", decision.direction]);
-        } else {
-          // Native AppleScript fallback if peekaboo CLI not installed
-          const keyCodeMap: Record<string, number> = {
-            Left: 123,
-            Right: 124,
-            Down: 125,
-            Up: 126,
-          };
-          const code = keyCodeMap[decision.direction] || 125;
-          execSync(
-            `osascript -e 'tell application "System Events" to key code ${code}'`
-          );
-        }
+        execFileSync("peekaboo", [
+          "press",
+          decision.direction,
+          "--pid",
+          String(winInfo.pid),
+          "--window-id",
+          String(winInfo.window_id),
+        ]);
       } catch (err) {
         console.error("[runner] Peekaboo press error:", err);
         actSuccess = false;
