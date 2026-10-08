@@ -3,7 +3,8 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { TypeSafeClient, choice } from "@typesafe-ai/sdk";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { execFileSync, execSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { spawn, execFileSync, execSync } from "node:child_process";
 import { performance } from "node:perf_hooks";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -293,8 +294,8 @@ async function queryCopilot(step: number): Promise<MoveDecision> {
 }
 
 export async function ensureGameWindow(client: Client): Promise<{ pid: number; window_id: number }> {
-  const windows = (await client.callTool({ name: "list_windows", arguments: {} })) as any;
-  const w = windows.structuredContent?.windows?.find(
+  let windows = (await client.callTool({ name: "list_windows", arguments: {} })) as any;
+  let w = windows.structuredContent?.windows?.find(
     (x: any) => x.pid === 17685 && x.title === "2048 Benchmark Game"
   );
 
