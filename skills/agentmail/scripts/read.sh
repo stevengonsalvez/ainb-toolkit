@@ -28,12 +28,12 @@ MSG=$(fetch_messages "$STATE" | jq -c --arg id "$ID" --argjson i "$INDEX" \
 case "$EXTRACT" in
   raw) echo "$MSG" ;;
   verification)
-    CODE=$(jq -r '.subject, .text' <<<"$MSG" \
+    CODE=$(jq -r "$JQ_PLAIN"'plain(.subject), plain(.text)' <<<"$MSG" \
       | grep -oE '(^|[^0-9])[0-9]{6}([^0-9]|$)' | tr -cd '0-9\n' | head -1 || true)
     [ -n "$CODE" ] || die "no verification code found"
     echo "$CODE" ;;
   magic-link)
-    LINK=$(jq -r '.text, .html' <<<"$MSG" | grep -oE 'https://[^[:space:]"<>'"'"')]+' | head -1 || true)
+    LINK=$(jq -r "$JQ_PLAIN"'plain(.text), .html' <<<"$MSG" | grep -oE 'https://[^[:space:]"<>'"'"')]+' | head -1 || true)
     [ -n "$LINK" ] || die "no https link found"
     echo "$LINK" ;;
   *) usage_err "--extract must be raw, verification or magic-link" ;;

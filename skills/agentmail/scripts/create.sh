@@ -16,7 +16,7 @@ while [ $# -gt 0 ]; do
 done
 
 STATE=$(state_file "$SLUG")
-if [ -f "$STATE" ] && [ "$FORCE" = 0 ]; then
+if [ -f "$STATE" ] && [ "$FORCE" = 0 ] && known_provider "$STATE"; then
   jq -r '.address' "$STATE"
   exit 0
 fi
@@ -33,6 +33,8 @@ fi
 IFS=$'\t' read -r ADDRESS LOCAL <<<"$MINTED" || true
 
 mkdir -p "$(inbox_dir)"
+# Open-tier addresses are readable by anyone holding them: never commit state.
+[ -f "$(state_dir)/.gitignore" ] || echo '*' > "$(state_dir)/.gitignore"
 jq -n --arg slug "$SLUG" --arg provider "$PROVIDER" --arg address "$ADDRESS" \
   --arg local "$LOCAL" --arg purpose "$PURPOSE" --arg created_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   '{slug: $slug, provider: $provider, address: $address, local: $local, purpose: $purpose, created_at: $created_at}' \

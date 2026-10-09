@@ -8,9 +8,14 @@
 #                 One persistent mailbox per machine, shared by every slug.
 #
 # Every provider is normalised to a JSON array, newest first, of
-#   {id, from, from_name, subject, text, html, received_at, trust_level}
+#   {id, from, from_name, subject, text, html, received_at, trust_level, marker}
 # `from` is the bare sender address, so --from filters cannot be satisfied by a
 # spoofed display name. trust_level is InboxAPI's sender verdict (null on agents-inbox).
+# marker: InboxAPI "datamarks" untrusted subject/text by replacing spaces with
+# this string, a prompt-injection defence. It stays marked in output; matching
+# and extraction read through the jq `plain` def below.
+JQ_PLAIN='def plain(f): (.marker // "") as $m | (f // "") | if $m == "" then . else split($m) | join(" ") end;'
+
 
 set -euo pipefail
 
@@ -44,10 +49,14 @@ state_file() {
   echo "$(inbox_dir)/$1.json"
 }
 
-# Print the state file for slug $1, or die if create.sh never ran.
+# True when state file $1 names a current provider (pre-2026-10 files do not).
+known_provider() { jq -e '.provider == "agents-inbox" or .provider == "inboxapi"' "$1" >/dev/null 2>&1; }
+
+# Print the state file for slug $1, or die if it is missing or from an old provider.
 require_state() {
   local f; f=$(state_file "$1") || exit 2
   [ -f "$f" ] || die "no inbox '$1' (run create.sh $1 first)"
+  known_provider "$f" || die "inbox '$1' uses a retired provider (run create.sh $1 --force)"
   echo "$f"
 }
 
@@ -91,7 +100,9 @@ new_address() {
 fetch_messages() {
   provider_messages "$1" | jq -c 'map(
     .html |= gsub("&amp;"; "&")
-    | .text = (if .text != "" then .text else (.html | gsub("<[^>]*>"; " ")) end | gsub("&amp;"; "&")))'
+    | .text = (if .text != "" then .text
+               else .html | gsub("<(style|script)[^>]*>.*?</(style|script)>"; " "; "gip") | gsub("<[^>]*>"; " ")
+               end | gsub("&amp;"; "&")))'
 }
 
 provider_messages() {
@@ -108,13 +119,13 @@ provider_messages() {
           text: (.textBody // ""),
           html: (.htmlBody // ""),
           received_at: (.receivedAt / 1000 | floor | todate),
-          trust_level: null
+          trust_level: null,
+          marker: ""
         }) | sort_by(.received_at) | reverse'
       ;;
     inboxapi)
       # The mailbox is shared, so only mail received after create.sh belongs to
-      # this slug. InboxAPI "datamarks" untrusted fields by swapping spaces for
-      # a marker string; swap them back so codes and links parse.
+      # this slug.
       "$(inboxapi_bin)" get-emails --limit 100 | jq -c --arg since "$(jq -r '.created_at' "$state")" '
         (.spotlight.marker // "") as $m
         | def unmark: if $m == "" then (. // "") else ((. // "") | split($m) | join(" ")) end;
@@ -122,13 +133,15 @@ provider_messages() {
         | map(select((.direction // "inbound") == "inbound"))
         | map({
             id: .message_id,
-            from: (.from | unmark | (capture("<(?<a>[^>]+)>").a // .) | ascii_downcase),
+            # Last <addr> wins: a fake "<addr>" in the display name comes first.
+            from: ((.from | unmark) as $f | ([$f | scan("<([^<>]+)>")] | last | .[0]?) // $f | ascii_downcase),
             from_name: "",
-            subject: (.subject | unmark),
-            text: (.body | unmark),
+            subject: (.subject // ""),
+            text: (.body // ""),
             html: "",
             received_at: ((.date // "")[0:19] + "Z"),
-            trust_level: (.trust_level // null)
+            trust_level: (.trust_level // null),
+            marker: $m
           })
         | map(select(.received_at >= $since)) | sort_by(.received_at) | reverse'
       ;;

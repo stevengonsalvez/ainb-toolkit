@@ -23,14 +23,16 @@ done
 require_int "$TIMEOUT" --timeout; require_int "$INTERVAL" --interval; require_int "$MIN_COUNT" --min-count
 
 STATE=$(require_state "$SLUG")
+# Fail fast on a missing CLI so it exits 1, not 124 after the full timeout.
+[ "$(jq -r .provider "$STATE")" = inboxapi ] && inboxapi_bin >/dev/null
 DELAY="$INTERVAL"
 while [ "$SECONDS" -lt "$TIMEOUT" ]; do
   if MESSAGES=$(fetch_messages "$STATE"); then
     DELAY="$INTERVAL"
-    MATCH=$(jq -c --arg from "$FROM" --arg subject "$SUBJECT" --argjson min "$MIN_COUNT" '
+    MATCH=$(jq -c --arg from "$FROM" --arg subject "$SUBJECT" --argjson min "$MIN_COUNT" "$JQ_PLAIN"'
       select(length > $min)
       | map(select((.from | ascii_downcase | contains($from | ascii_downcase))
-               and (.subject | ascii_downcase | contains($subject | ascii_downcase)))) | .[0] // empty' <<<"$MESSAGES")
+               and (plain(.subject) | ascii_downcase | contains($subject | ascii_downcase)))) | .[0] // empty' <<<"$MESSAGES")
     [ -n "$MATCH" ] && { echo "$MATCH"; exit 0; }
   else
     # ponytail: any fetch failure (network, 429, 5xx) backs off to 30s; no status parsing.
