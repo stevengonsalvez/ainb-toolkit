@@ -50,14 +50,17 @@ belongs with that source rather than with the vendored copy.
 
 ## Not proven here
 
-A Copilot live run. The Copilot CLI (1.0.94) on this machine refuses every
-model in the pack's allow-list:
+A Copilot live run. The Copilot CLI (1.0.94) on the machine this proof was
+taken on refuses every model in the pack's allow-list:
 
 ```console
 $ copilot -p 'Reply with the single word OK.' --model gpt-4.1 --allow-all-tools
 Error: Access denied by policy settings
 ```
 
-The same refusal comes back for `gpt-5.4-mini` and `claude-sonnet-4.6`, so this
-is an organisation policy or subscription limit rather than anything about the
-pack. It needs a person with Copilot administration access, not a code change.
+The same refusal comes back for `gpt-5.4-mini` and `claude-sonnet-4.6`.
+
+That is one machine's result and not a verdict on the pack or on Copilot:
+the CLI authenticates and offers models on other hosts, so a live smoke is
+being taken elsewhere and will be recorded here when it lands. Until then this
+section says only that it has not been run yet.
