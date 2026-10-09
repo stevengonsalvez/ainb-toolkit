@@ -33,11 +33,29 @@ Targets are pinned to `copilot` and `claude`. Install for one of them with
 
 ## The score
 
-`eval-gate-report.json` in this directory, once published, is the output of the
-wololo-evals QE gate, written by the gate itself and committed unedited. It
-records the mutation kill rate and the seeded-defect catch rate this pack
-scored against a fixture service, next to what the same model scored on the
-same cases with no skill installed.
+`eval-gate-report.json` in this directory is the output of the wololo-evals QE
+gate, written by the gate itself and committed unedited.
 
-Read it as what it is: one benchmark, one fixture, one run, and
-`subject.commit` says which commit of this pack was measured.
+**Read the verdict precisely. It says this pack did not make things worse, not
+that it made them better.** The gate's `pass` is a no-regression verdict. On
+the run recorded here the benchmark-score delta against the same model with no
+skill installed was `+0.0003`, with a 95% confidence interval of
+`[-0.0102, +0.0105]`. That interval contains zero, so there is no demonstrated
+improvement. The mechanical signals moved the same small amount: mutation kill
+rate 0.3103 to 0.3201, seeded defects caught 0.4318 to 0.4545.
+
+Two things are worth knowing before anyone quotes those numbers.
+
+The skill never activated. Across eleven treatment cases the model wrote the
+tests itself and never invoked the skill, in either arm. The cases ask for
+pytest tests over a small, conventional Python service, and a capable model
+does not need help with that. This benchmark cannot currently show a
+test-authoring skill beating a model that already knows how to write tests;
+a case set the no-skill arm actually fails on would be needed for that.
+
+Both arms ran against the same fixture, same model, same twelve cases, with the
+CLI pinned to project settings so neither arm could see the operator's own
+installed skills. `subject.commit` names the commit of this pack that was
+measured.
+
+Licensed MIT.
