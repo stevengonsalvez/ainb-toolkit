@@ -33,29 +33,62 @@ Targets are pinned to `copilot` and `claude`. Install for one of them with
 
 ## The score
 
-`eval-gate-report.json` in this directory is the output of the wololo-evals QE
-gate, written by the gate itself and committed unedited.
+Two runs are recorded here, because a single candidate arm cannot separate what
+this pack contains from whether a model ever reaches for it.
 
-**Read the verdict precisely. It says this pack did not make things worse, not
-that it made them better.** The gate's `pass` is a no-regression verdict. On
-the run recorded here the benchmark-score delta against the same model with no
-skill installed was `+0.0003`, with a 95% confidence interval of
-`[-0.0102, +0.0105]`. That interval contains zero, so there is no demonstrated
-improvement. The mechanical signals moved the same small amount: mutation kill
-rate 0.3103 to 0.3201, seeded defects caught 0.4318 to 0.4545.
+`eval-gate-report.json` is the gate's own output for the normal arm, committed
+unedited. `eval-gate-report-forced.json` is the same thing for an arm told to
+use the skill. Both were measured at the pack commit named in their `subject`.
 
-Two things are worth knowing before anyone quotes those numbers.
+### Routing: does the model reach for it
 
-The skill never activated. Across eleven treatment cases the model wrote the
-tests itself and never invoked the skill, in either arm. The cases ask for
-pytest tests over a small, conventional Python service, and a capable model
-does not need help with that. This benchmark cannot currently show a
-test-authoring skill beating a model that already knows how to write tests;
-a case set the no-skill arm actually fails on would be needed for that.
+| Arm | Fired on the 11 testing cases | Stayed silent on the distractor |
+|---|---|---|
+| Normal | 0 of 11 | yes, correctly |
+| Told to use it | 11 of 11 | yes, correctly |
 
-Both arms ran against the same fixture, same model, same twelve cases, with the
-CLI pinned to project settings so neither arm could see the operator's own
-installed skills. `subject.commit` names the commit of this pack that was
-measured.
+Routing precision on this casebook is **0.00**. Left to itself the model never
+invoked the skill once. The cases ask for pytest tests over a small,
+conventional Python service, and a capable model writes those unaided. The
+distractor result is the one good sign: even when told to use the skill, the
+run correctly stayed silent on a question that was about licensing rather than
+testing.
+
+### Content: do the instructions make the tests better
+
+No, on this fixture. With the skill forced to run, every mechanical quality
+signal moved slightly the wrong way against the same model with no skill
+installed:
+
+| Signal | No skill | Skill forced | Delta |
+|---|---:|---:|---:|
+| mutation kill rate | 0.3103 | 0.2916 | -0.0187 |
+| seeded defects caught | 0.4318 | 0.4250 | -0.0068 |
+| assertion strength | 0.9223 | 0.9164 | -0.0059 |
+| changed-line coverage | 0.7895 | 0.7847 | -0.0048 |
+
+The gate's verdict on that arm is **regression**, on the guarded signals
+`mutation_kill_rate` and `seeded_defects_caught`.
+
+The forced arm's *composite* score rose a long way, 0.5641 to 0.8351, and that
+rise is worth distrusting: it comes almost entirely from the activation slot
+the benchmark scores, not from better tests. A composite that can be moved that
+far by invoking a skill, while every quality measure falls, is measuring the
+wrong thing.
+
+The normal arm's verdict is `pass`, which in this gate means no regression
+rather than a demonstrated gain: delta `+0.0003`, 95% CI `[-0.0102, +0.0105]`,
+an interval containing zero.
+
+### What would settle it
+
+A casebook whose no-skill arm actually fails. This fixture is too easy to
+separate a testing skill from a model that already tests well, in either
+direction. Until that exists, this pack has an honest record of being measured
+and no evidence of making anything better.
+
+Both arms ran against the same fixture, the same model and the same twelve
+cases, with the CLI pinned to project settings so neither could see the
+operator's own installed skills.
 
 Licensed MIT.
