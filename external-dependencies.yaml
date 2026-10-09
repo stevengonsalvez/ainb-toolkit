@@ -69,9 +69,9 @@ bundled-skills:
 
   - name: agentmail
     path: skills/agentmail
-    purpose: "Disposable email inboxes via myagentinbox.com for tests, signup/OTP/magic-link capture (REST-first, no MCP)"
+    purpose: "Disposable email inboxes via agents-inbox.com (inboxapi.ai fallback) for signup, OTP and magic-link capture"
     features:
-      - 24h-lifetime disposable inboxes via plain REST
+      - No-signup REST inboxes, InboxAPI CLI fallback
       - Polling helpers with timeout
       - Verification-code and magic-link extractors
       - Tool-neutral state file under .agents/agentmail/
