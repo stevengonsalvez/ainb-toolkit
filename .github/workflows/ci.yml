@@ -40,7 +40,8 @@ jobs:
         run: |
           scripts/check-agentskills-conformance \
             skills \
-            packages/qe-agent-pack/.apm/skills
+            packages/qe-agent-pack/.apm/skills \
+            packages/test-writer-pack/.apm/skills
 
       - name: Prove the check fails on a broken fixture
         run: |
