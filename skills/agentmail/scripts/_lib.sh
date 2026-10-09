@@ -127,19 +127,27 @@ provider_messages() {
       # The mailbox is shared, so only mail received after create.sh belongs to
       # this slug.
       "$(inboxapi_bin)" get-emails --limit 100 | jq -c --arg since "$(jq -r '.created_at' "$state")" '
+        # ISO 8601 with any offset to UTC "YYYY-MM-DDTHH:MM:SSZ".
+        def utc: sub("\\.[0-9]+"; "")
+          | capture("^(?<b>.{19})(Z|(?<s>[+-])(?<h>[0-9]{2}):?(?<m>[0-9]{2}))?$") as $c
+          | ($c.b + "Z" | fromdateiso8601)
+            - (if $c.s == null then 0 else (if $c.s == "+" then 1 else -1 end) * (($c.h | tonumber) * 3600 + ($c.m | tonumber) * 60) end)
+          | todate;
         (.spotlight.marker // "") as $m
         | def unmark: if $m == "" then (. // "") else ((. // "") | split($m) | join(" ")) end;
         (if type == "array" then . else (.emails // []) end)
         | map(select((.direction // "inbound") == "inbound"))
         | map({
             id: .message_id,
-            # Last <addr> wins: a fake "<addr>" in the display name comes first.
-            from: ((.from | unmark) as $f | ([$f | scan("<([^<>]+)>")] | last | .[0]?) // $f | ascii_downcase),
+            # Drop (comments), then last <addr> wins: a fake "<addr>" in the
+            # display name or a comment cannot become the sender.
+            from: ((.from | unmark | gsub("\\([^()]*\\)"; "")) as $f
+                   | ([$f | scan("<([^<>]+)>")] | last | .[0]?) // $f | gsub("\\s"; "") | ascii_downcase),
             from_name: "",
             subject: (.subject // ""),
             text: (.body // ""),
             html: "",
-            received_at: ((.date // "")[0:19] + "Z"),
+            received_at: ((.date // "") | try utc catch ""),
             trust_level: (.trust_level // null),
             marker: $m
           })

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Poll until a matching message arrives; print it as JSON.
 # Usage: wait.sh <slug> [--timeout 120] [--interval 5] [--from text] [--subject text] [--min-count N]
-#   --from: case-insensitive substring of the sender address (not display name).
+#   --from: case-insensitive substring of the sender address (not display name);
+#           a value starting with "@" must match the address domain exactly.
 #   --subject: case-insensitive substring match.
 #   --min-count N: only succeed once the inbox holds more than N messages (next OTP).
 # Exit: 0 found, 124 timeout, 1 error, 2 bad args.
@@ -31,7 +32,8 @@ while [ "$SECONDS" -lt "$TIMEOUT" ]; do
     DELAY="$INTERVAL"
     MATCH=$(jq -c --arg from "$FROM" --arg subject "$SUBJECT" --argjson min "$MIN_COUNT" "$JQ_PLAIN"'
       select(length > $min)
-      | map(select((.from | ascii_downcase | contains($from | ascii_downcase))
+      | ($from | ascii_downcase) as $f
+      | map(select((if ($f | startswith("@")) then (.from | ascii_downcase | endswith($f)) else (.from | ascii_downcase | contains($f)) end)
                and (plain(.subject) | ascii_downcase | contains($subject | ascii_downcase)))) | .[0] // empty' <<<"$MESSAGES")
     [ -n "$MATCH" ] && { echo "$MATCH"; exit 0; }
   else

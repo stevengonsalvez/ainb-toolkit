@@ -25,7 +25,7 @@ case "$1" in
   whoami) echo "Email: test-agent@inboxapi.test" ;;
   get-emails) cat <<'JSON'
 {"spotlight":{"marker":"~~"},"emails":[
- {"message_id":"new","from":"\"<firebase@example.test>\" <evil@attacker.test>","subject":"Verify~~email","body":"Your~~code~~is~~123456~~https://example.test/link","direction":"inbound","date":"2099-01-01T00:00:00+00:00"},
+ {"message_id":"new","from":"\"<firebase@example.test>\" <evil@attacker.test> (<firebase@example.test>)","subject":"Verify~~email","body":"Your~~code~~is~~123456~~https://example.test/link","direction":"inbound","date":"2099-01-01T00:00:00.123456-07:00"},
  {"message_id":"old","from":"firebase@example.test","subject":"Old","body":"code~~999999","direction":"inbound","date":"2000-01-01T00:00:00+00:00"}]}
 JSON
   ;;
@@ -55,7 +55,10 @@ check "spoofed name loses" "$("$HERE/read.sh" fb | jq -r .from)" "evil@attacker.
 echo '{"slug":"old","address":"x@retired.test"}' > "$TMP/state/inboxes/old.json"
 check "legacy state blocked" "$("$HERE/read.sh" old 2>&1 >/dev/null | grep -c retired)" "1"
 check "legacy state re-minted" "$("$HERE/create.sh" old | sed 's/.*@//')" "agents-inbox.com"
-check "state gitignored" "$(cat "$TMP/state/.gitignore")" "*"
+check "state gitignored" "$(cat "$TMP/state/inboxes/.gitignore")" "*"
+check "offset to utc" "$("$HERE/read.sh" fb | jq -r .received_at)" "2099-01-01T07:00:00Z"
+check "@domain is exact" "$("$HERE/wait.sh" fb --timeout 2 --interval 1 --from @attacker.test.evil 2>/dev/null || echo none)" "none"
+check "@domain matches" "$("$HERE/wait.sh" fb --timeout 5 --from @attacker.test | jq -r .id)" "new"
 check "list count" "$("$HERE/list.sh" --json | jq length)" "3"
 "$HERE/expire.sh" fb >/dev/null
 check "expire" "$("$HERE/address.sh" fb 2>/dev/null || echo gone)" "gone"

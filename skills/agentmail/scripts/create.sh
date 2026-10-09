@@ -34,7 +34,7 @@ IFS=$'\t' read -r ADDRESS LOCAL <<<"$MINTED" || true
 
 mkdir -p "$(inbox_dir)"
 # Open-tier addresses are readable by anyone holding them: never commit state.
-[ -f "$(state_dir)/.gitignore" ] || echo '*' > "$(state_dir)/.gitignore"
+[ -f "$(inbox_dir)/.gitignore" ] || echo '*' > "$(inbox_dir)/.gitignore"
 jq -n --arg slug "$SLUG" --arg provider "$PROVIDER" --arg address "$ADDRESS" \
   --arg local "$LOCAL" --arg purpose "$PURPOSE" --arg created_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   '{slug: $slug, provider: $provider, address: $address, local: $local, purpose: $purpose, created_at: $created_at}' \
