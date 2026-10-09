@@ -8,7 +8,9 @@
 #                 One persistent mailbox per machine, shared by every slug.
 #
 # Every provider is normalised to a JSON array, newest first, of
-#   {id, from, subject, text, html, received_at}
+#   {id, from, from_name, subject, text, html, received_at, trust_level}
+# `from` is the bare sender address, so --from filters cannot be satisfied by a
+# spoofed display name. trust_level is InboxAPI's sender verdict (null on agents-inbox).
 
 set -euo pipefail
 
@@ -100,11 +102,13 @@ provider_messages() {
       agents_inbox_get "$(jq -r '.local' "$state")" | jq -c '
         map({
           id: ._id,
-          from: (if (.fromName // "") != "" then "\(.fromName) <\(.fromAddress)>" else .fromAddress end),
+          from: (.fromAddress // ""),
+          from_name: (.fromName // ""),
           subject: (.subject // ""),
           text: (.textBody // ""),
           html: (.htmlBody // ""),
-          received_at: (.receivedAt / 1000 | floor | todate)
+          received_at: (.receivedAt / 1000 | floor | todate),
+          trust_level: null
         }) | sort_by(.received_at) | reverse'
       ;;
     inboxapi)
@@ -118,11 +122,13 @@ provider_messages() {
         | map(select((.direction // "inbound") == "inbound"))
         | map({
             id: .message_id,
-            from: (.from | unmark),
+            from: (.from | unmark | (capture("<(?<a>[^>]+)>").a // .) | ascii_downcase),
+            from_name: "",
             subject: (.subject | unmark),
             text: (.body | unmark),
             html: "",
-            received_at: ((.date // "")[0:19] + "Z")
+            received_at: ((.date // "")[0:19] + "Z"),
+            trust_level: (.trust_level // null)
           })
         | map(select(.received_at >= $since)) | sort_by(.received_at) | reverse'
       ;;

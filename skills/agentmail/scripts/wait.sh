@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Poll until a matching message arrives; print it as JSON.
 # Usage: wait.sh <slug> [--timeout 120] [--interval 5] [--from text] [--subject text] [--min-count N]
-#   --from/--subject: case-insensitive substring match.
+#   --from: case-insensitive substring of the sender address (not display name).
+#   --subject: case-insensitive substring match.
 #   --min-count N: only succeed once the inbox holds more than N messages (next OTP).
 # Exit: 0 found, 124 timeout, 1 error, 2 bad args.
 source "$(dirname "$0")/_lib.sh"
