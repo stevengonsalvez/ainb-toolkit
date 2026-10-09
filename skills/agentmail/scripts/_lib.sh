@@ -127,10 +127,15 @@ provider_messages() {
       # The mailbox is shared, so only mail received after create.sh belongs to
       # this slug.
       "$(inboxapi_bin)" get-emails --limit 100 | jq -c --arg since "$(jq -r '.created_at' "$state")" '
-        # ISO 8601 with any offset to UTC "YYYY-MM-DDTHH:MM:SSZ".
-        def utc: sub("\\.[0-9]+"; "")
-          | capture("^(?<b>.{19})(Z|(?<s>[+-])(?<h>[0-9]{2}):?(?<m>[0-9]{2}))?$") as $c
-          | ($c.b + "Z" | fromdateiso8601)
+        # ISO 8601 with any offset to UTC "YYYY-MM-DDTHH:MM:SSZ". Epoch via
+        # days-from-civil, not fromdateiso8601: jq 1.6 on macOS skews that by
+        # an hour during DST.
+        def utc: capture("^(?<y>[0-9]{4})-(?<mo>[0-9]{2})-(?<d>[0-9]{2})T(?<H>[0-9]{2}):(?<M>[0-9]{2}):(?<S>[0-9]{2})(\\.[0-9]+)?(Z|(?<s>[+-])(?<h>[0-9]{2}):?(?<m>[0-9]{2}))?$") as $c
+          | ($c.mo | tonumber) as $mo | (($c.y | tonumber) - (if $mo <= 2 then 1 else 0 end)) as $y
+          | (($y / 400) | floor) as $era | ($y - $era * 400) as $yoe
+          | (((153 * ($mo + (if $mo > 2 then -3 else 9 end)) + 2) / 5 | floor) + ($c.d | tonumber) - 1) as $doy
+          | ($era * 146097 + $yoe * 365 + (($yoe / 4) | floor) - (($yoe / 100) | floor) + $doy - 719468) * 86400
+            + ($c.H | tonumber) * 3600 + ($c.M | tonumber) * 60 + ($c.S | tonumber)
             - (if $c.s == null then 0 else (if $c.s == "+" then 1 else -1 end) * (($c.h | tonumber) * 3600 + ($c.m | tonumber) * 60) end)
           | todate;
         (.spotlight.marker // "") as $m
