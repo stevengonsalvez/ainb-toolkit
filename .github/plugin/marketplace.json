@@ -41,6 +41,18 @@
         "gif"
       ],
       "skills": "skills/"
+    },
+    {
+      "name": "illustration",
+      "description": "Explanatory and brand illustration skill starring Popa drawn as intricate hand-drawn sketchnotes",
+      "source": "./plugins/illustration",
+      "category": "design",
+      "tags": [
+        "illustration",
+        "popa",
+        "sketchnote"
+      ],
+      "skills": "skills/"
     }
   ]
 }
