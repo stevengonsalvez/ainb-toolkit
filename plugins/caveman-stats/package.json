@@ -1,0 +1,6 @@
+{
+  "name": "caveman-stats",
+  "version": "1.0.0",
+  "description": "Caveman mode lifecycle hooks for Claude Code",
+  "type": "commonjs"
+}
