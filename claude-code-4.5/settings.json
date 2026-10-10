@@ -227,6 +227,8 @@
     "ainb-fleet@agents-in-a-box": true,
     "ainb-hooks@agents-in-a-box": true,
     "caveman-stats@agents-in-a-box": true,
+    "caveman-stats@ainb-toolkit": true,
+    "illustration@ainb-toolkit": true,
     "caveman@caveman": true,
     "ponytail@ponytail": true,
     "codex@openai-codex": true,

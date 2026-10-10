@@ -459,25 +459,31 @@ claude-plugins:
     purpose: "Shared hook pack; includes stall_guard.py, the Stop hook enforcing never-idle-while-waiting"
 
   - name: caveman-stats
-    marketplace: stevengonsalvez/agents-in-a-box
-    marketplace_id: agents-in-a-box
+    own-plugin: true  # source of truth is THIS repo; setup-external.sh must NOT copy its skills flat
+    marketplace: stevengonsalvez/ainb-toolkit
+    marketplace_id: ainb-toolkit
+    in-repo-marketplace: ".claude-plugin/marketplace.json at repo root"
+    plugin-source: "plugins/caveman-stats/.claude-plugin/plugin.json"
     version: "1.0.0"
     install: |
-      claude plugin marketplace add stevengonsalvez/agents-in-a-box
-      claude plugin install caveman-stats@agents-in-a-box
-    purpose: "Statusline token-savings badge for caveman mode"
+      claude plugin marketplace add stevengonsalvez/ainb-toolkit
+      claude plugin install caveman-stats@ainb-toolkit
+    purpose: "Statusline token-savings badge for caveman mode (own plugin)"
 
   - name: illustration
-    marketplace: stevengonsalvez/agents-in-a-box
-    marketplace_id: agents-in-a-box
+    own-plugin: true  # source of truth is THIS repo; setup-external.sh must NOT copy its skills flat
+    marketplace: stevengonsalvez/ainb-toolkit
+    marketplace_id: ainb-toolkit
+    in-repo-marketplace: ".claude-plugin/marketplace.json at repo root"
+    plugin-source: "plugins/illustration/.claude-plugin/plugin.json"
     version: "1.0.0"
     install: |
-      claude plugin marketplace add stevengonsalvez/agents-in-a-box
-      claude plugin install illustration@agents-in-a-box
-    purpose: "Explanatory + brand illustration (Popa mascot) as hand-drawn sketchnotes"
+      claude plugin marketplace add stevengonsalvez/ainb-toolkit
+      claude plugin install illustration@ainb-toolkit
+    purpose: "Explanatory + brand illustration (Popa mascot) as hand-drawn sketchnotes (own plugin)"
     has_skills: true  # ships skills/illustration and skills/popa
     requires:
-      - "an image backend that accepts reference images (nano-banana-pro / Gemini 3 Pro Image, or image_gen) — the mascot cannot be produced from text alone"
+      - "an image backend that accepts reference images (nano-banana-pro / Gemini 3 Pro Image, or image_gen): the mascot cannot be produced from text alone"
   - name: agy
     marketplace: keli-wen/agy-staff
     marketplace_id: agy-staff

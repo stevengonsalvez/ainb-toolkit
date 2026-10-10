@@ -116,6 +116,7 @@ components:
     - name: agytoggle
       skills:
         - agytoggle
+    - name: caveman-stats
     - name: demo
       skills:
         - brag
@@ -125,6 +126,10 @@ components:
     - name: godmode
       skills:
         - godmode
+    - name: illustration
+      skills:
+        - illustration
+        - popa
     - name: orchestrate
       skills:
         - adopt
@@ -166,6 +171,7 @@ components:
 
   utilities:
     hooks:
+      - README
       - bash_auto_background
       - compile-statusline
       - cost_tracker
@@ -174,7 +180,6 @@ components:
       - post_tool_use
       - pre_compact
       - pre_tool_use
-      - README
       - run_with_profile
       - session_start
       - statusline
