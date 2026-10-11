@@ -7,7 +7,7 @@
 #   - claude-plugins    (beads, debug-bridge, caveman, codex, etc.)
 #   - agent-skills      (git-cloned: fireworks-tech-graph, ui-ux-pro-max, etc.)
 #   - nanoclaw-skills   (auto-synced from stevengonsalvez/nanoclaw fork via native-runner)
-#   - external-packages (uv tool installs: reflect-kb)
+#   - external-packages (uv tool installs: reflect-kb, graphifyy, apm-cli)
 #
 # Usage:
 #   ./update-externals.sh           # update everything
@@ -177,6 +177,9 @@ update_packages() {
   run "uv tool install --force --upgrade 'git+https://github.com/stevengonsalvez/agents-in-a-box.git#subdirectory=reflect-kb[graph]'"
   # graphify (PyPI: graphifyy, double-y) — knowledge-graph builder used by /graphify skill
   run "uv tool install --force --upgrade graphifyy"
+  # apm (PyPI: apm-cli): Microsoft Agent Package Manager; pinned to the version
+  # packages/qe-agent-pack and the CI apm-audit job are verified against
+  run "uv tool install --force 'apm-cli==0.29.0'"
 }
 
 case "$SCOPE" in

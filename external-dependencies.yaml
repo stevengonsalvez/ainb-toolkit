@@ -50,6 +50,20 @@ external-packages:
       env: REFLECT_KB_SOURCE  # local path or git URL — overrides default repo for dev iteration
     docs: "https://github.com/stevengonsalvez/reflect-kb"
 
+  - name: apm-cli
+    source: https://github.com/microsoft/apm
+    install: "uv tool install --force 'apm-cli==0.29.0'"
+    cli: apm
+    version-pin: "0.29.0"  # keep in step with APM_VERSION in .github/workflows and packages/qe-agent-pack
+    requires:
+      - "uv (https://github.com/astral-sh/uv)"
+    purpose: "Microsoft Agent Package Manager; installs packages/qe-agent-pack into a project for Claude Code or Copilot"
+    features:
+      - "apm install <ref>/packages/qe-agent-pack --target claude|copilot"
+      - Lockfile (apm.lock.yaml) with resolved commit and content hash
+      - Policy audit used by the CI apm-audit job
+    docs: "https://github.com/microsoft/apm"
+
 # =============================================================================
 # BUNDLED SKILLS (included in skills/)
 # =============================================================================
