@@ -1,0 +1,20 @@
+{
+  "name": "agytoggle",
+  "version": "1.0.0",
+  "description": "Multi-account session rotation and credential profile switcher for Google Antigravity CLI (agy)",
+  "main": "agytoggle.js",
+  "type": "module",
+  "bin": {
+    "agytoggle": "./agytoggle.js",
+    "agysw": "./agytoggle.js"
+  },
+  "scripts": {
+    "test": "node --test agytoggle.test.js"
+  },
+  "author": "Joel Manuel <joeljmanuel@gmail.com>",
+  "license": "MIT",
+  "dependencies": {},
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "name": "ferry-draft",
+  "takes": "./takes",
+  "out": "./compose",
+  "theme": { "bg": "#F4F1EA", "surface": "#FFFFFF", "accent": "#0B6E4F", "highlight": "#C2410C", "text": "#12241E", "muted": "#5B6B63" },
+  "cards": {
+    "title": { "kicker": "Skerry Ferries", "title": "Running late, paying less", "sub": "A late sailing and the <b>resident fare</b>", "dur": 3 },
+    "end": { "kicker": "Skerry Ferries", "title": "Sail informed", "sub": "Live departures and <b>fares</b> on one board", "dur": 3 }
+  },
+  "chapters": [
+    { "name": "late", "title": "A late sailing",
+      "narration": { "intro": "Start at the pier board.",
+        "marks": ["The {@two}two twenty is running late.", "The board flags it {@too}too, in amber."] } },
+    { "name": "resident", "title": "The resident fare",
+      "narration": { "intro": "Then open the fares.",
+        "marks": ["Island {@residents}residents pay two ten.", "Residents just need {@proof}proof of their address."] } }
+  ]
+}

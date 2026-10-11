@@ -1,0 +1,11 @@
+{
+  "name": "demo-capture",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "node scripts/selfcheck.mjs"
+  },
+  "dependencies": {
+    "@playwright/test": "1.62.0"
+  }
+}

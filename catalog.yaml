@@ -21,6 +21,7 @@ components:
     - ats-resume-matcher
     - attach-agent-worktree
     - autonomous-loops
+    - benchmark-computer-use
     - brainstorm
     - browser-verify
     - claude-langfuse
@@ -112,9 +113,30 @@ components:
     - workflow
 
   plugins:
+    - name: agytoggle
+      skills:
+        - agytoggle
+    - name: demo
+      skills:
+        - brag
+        - capture
+        - compose
+        - export
     - name: godmode
       skills:
         - godmode
+    - name: orchestrate
+      skills:
+        - adopt
+        - discover
+        - handover
+        - loop
+        - preflight
+        - retire
+        - spawn
+        - status
+        - takeover
+        - tick
 
   workflows:
     - name: single-agent

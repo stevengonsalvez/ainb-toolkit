@@ -1,0 +1,56 @@
+# Policy for one programme. Copied to ~/.claude/orchestrator/<programme>/ by
+# `orchestrate.sh init`. Everything personal to a programme lives here, never in
+# the plugin. Keys are read by a small flat parser: nested blocks and inline
+# maps are fine, block lists ("- ...") are read by the agent, not the scripts.
+
+trunk: example-trunk                  # the ONLY branch a merge may target
+never_merge_into: [main, master]      # a wall, config cannot lift it
+autonomy: ask                         # or merge_on_verdict; set this deliberately
+allow_fork_prs: false                 # a fork head is refused unless this is true
+signing: {required: true, key: "<your-signing-key-id>"}
+attribution_guard: true
+# Anchored to the SHAPE of a trailer, not to words a sentence can contain: the
+# bare substring "generated with" refuses an honest body such as
+# "Generated with UPDATE_PARITY_FRAMES=1 so the frames match."
+# Append your own tool names anchored the same way, pipe separated, for example
+#   |^[[:space:]]*generated with <your-tool-name>
+attribution_patterns: "^[[:space:]]*co-authored-by:[[:space:]]"
+ci: ignore                            # or gate, which reads the pinned head's checks
+
+# REQUIRED. The checkout the merge gate reads its evidence from. Without it the
+# gate would read whatever directory a tick happened to start in, which is how
+# the signatures checked and the PR merged end up in different repositories.
+repo: /absolute/path/to/your/checkout
+gh_repo: ""                           # owner/name; derived from origin when empty
+
+default_agent: claude
+send: {max_chars: 2000}               # a message is one line, capped here
+
+loop: {every: 20m, max_ticks: 0, max_hours: 0, tick_timeout: 0}   # tick_timeout 0 means twice the cadence
+compact: {at_pct: 85, keep: "keep the goal, the branch, the open PR and the last decision"}
+handover: {credit_threshold_pct: 85, notify: true}
+
+# Counters the expression may use: open_prs, owed, lanes_done, lanes_total,
+# scope_done (1 when a SCOPE_DONE file sits in the programme dir). Anything else
+# makes it undecidable, never silently true.
+exit: "open_prs == 0 && owed == 0 && scope_done"
+
+placement:
+  floors: {disk_free_gb: 20, mem_free_gb: 4}
+  weights: {disk: 40, ram: 30, load: 20, lanes: 10}
+  max_lanes_per_host: 6
+  exclusive: [e2e, proof]
+
+metrics: {beszel_hub: "", token_ref: ""}   # cut 2; empty means the Orca probe rung
+
+scrub:
+  # Refuses a post outright. Add the vendor and tool names this programme must
+  # never publish; anchor anything that could appear in ordinary prose.
+  deny: "^[[:space:]]*co-authored-by:[[:space:]]"
+
+review:
+  default: {mode: orchestrator, kinds: [code], verdict: "line1 in {MERGE, MERGE WITH FOLLOW-UPS}"}
+  nudge: {stale_pr: "PR #{pr} has had no review for {age}. Run {how} and post the verdict."}
+  classes:
+    - {match: {paths: ["**/proto/**", "**/migrations/**"]}, mode: orchestrator, kinds: [code, security]}
+    - {match: {label: docs}, mode: none}

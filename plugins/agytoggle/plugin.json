@@ -1,0 +1,21 @@
+{
+  "name": "agytoggle",
+  "version": "1.0.0",
+  "description": "Multi-account session rotation and credential profile switcher for Google Antigravity CLI (agy)",
+  "author": {
+    "name": "Joel Manuel",
+    "email": "joeljmanuel@gmail.com"
+  },
+  "homepage": "https://github.com/stevengonsalvez/ainb-toolkit",
+  "repository": "https://github.com/stevengonsalvez/ainb-toolkit",
+  "license": "MIT",
+  "skills": "./skills/",
+  "keywords": [
+    "antigravity",
+    "agy",
+    "multi-account",
+    "keyring",
+    "credential-switching",
+    "agytoggle"
+  ]
+}

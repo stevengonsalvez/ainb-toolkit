@@ -1,0 +1,36 @@
+{
+  "name": "skerry-ferries-demo",
+  "takes": "./takes",
+  "out": "./compose",
+  "theme": {
+    "bg": "#F4F1EA",
+    "surface": "#FFFFFF",
+    "accent": "#0B6E4F",
+    "highlight": "#C2410C",
+    "text": "#12241E",
+    "muted": "#5B6B63",
+    "fonts": {
+      "display": { "file": "fonts/fraunces-700.woff2", "family": "Fraunces", "weight": "600 700" },
+      "body": { "file": "fonts/plex-500.woff2", "family": "IBM Plex Sans", "weight": "500 600" }
+    }
+  },
+  "cards": {
+    "title": {
+      "kicker": "Service walkthrough",
+      "title": "Skerry Ferries, live board",
+      "sub": "One crossing, from the pier board to the <b>fare table</b>",
+      "dur": 3
+    },
+    "end": {
+      "kicker": "Skerry Ferries",
+      "title": "Sail informed",
+      "sub": "Departures, deck space and <b>fares</b> in one board",
+      "dur": 3
+    }
+  },
+  "chapters": [
+    { "name": "departures", "title": "The live board", "persona": "Foot passenger · Mairi" },
+    { "name": "fares", "title": "What it costs", "persona": "Foot passenger · Mairi",
+      "labels": ["Single and return per ticket", "Resident fare needs proof"] }
+  ]
+}

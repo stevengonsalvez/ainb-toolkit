@@ -17,3 +17,6 @@ apm-audit.sarif
 
 # macOS Finder metadata
 .DS_Store
+
+# Benchmark execution output
+benchmark-results/

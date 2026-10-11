@@ -50,6 +50,20 @@ external-packages:
       env: REFLECT_KB_SOURCE  # local path or git URL — overrides default repo for dev iteration
     docs: "https://github.com/stevengonsalvez/reflect-kb"
 
+  - name: apm-cli
+    source: https://github.com/microsoft/apm
+    install: "uv tool install --force 'apm-cli==0.29.0'"
+    cli: apm
+    version-pin: "0.29.0"  # keep in step with APM_VERSION in .github/workflows and packages/qe-agent-pack
+    requires:
+      - "uv (https://github.com/astral-sh/uv)"
+    purpose: "Microsoft Agent Package Manager; installs packages/qe-agent-pack into a project for Claude Code or Copilot"
+    features:
+      - "apm install <ref>/packages/qe-agent-pack --target claude|copilot"
+      - Lockfile (apm.lock.yaml) with resolved commit and content hash
+      - Policy audit used by the CI apm-audit job
+    docs: "https://github.com/microsoft/apm"
+
 # =============================================================================
 # BUNDLED SKILLS (included in skills/)
 # =============================================================================
@@ -69,9 +83,9 @@ bundled-skills:
 
   - name: agentmail
     path: skills/agentmail
-    purpose: "Disposable email inboxes via myagentinbox.com for tests, signup/OTP/magic-link capture (REST-first, no MCP)"
+    purpose: "Disposable email inboxes via agents-inbox.com (inboxapi.ai fallback) for signup, OTP and magic-link capture"
     features:
-      - 24h-lifetime disposable inboxes via plain REST
+      - No-signup REST inboxes, InboxAPI CLI fallback
       - Polling helpers with timeout
       - Verification-code and magic-link extractors
       - Tool-neutral state file under .agents/agentmail/
@@ -478,6 +492,22 @@ claude-plugins:
     has_skills: true  # ships skills/illustration and skills/popa
     requires:
       - "an image backend that accepts reference images (nano-banana-pro / Gemini 3 Pro Image, or image_gen) — the mascot cannot be produced from text alone"
+  - name: agy
+    marketplace: keli-wen/agy-staff
+    marketplace_id: agy-staff
+    version: "0.7.3"
+    install: |
+      claude plugin marketplace add keli-wen/agy-staff
+      claude plugin install agy@agy-staff
+    purpose: "Delegate work to the Antigravity CLI (agy, fast Gemini): staffer, researcher, reviewer, implementer and ask personas, plus background jobs"
+    # Skills are generic (ask, reviewer, lead, jobs...). Keep them namespaced as
+    # agy:<skill> inside the plugin; a flat copy into ~/.claude/skills would put
+    # bare "reviewer"/"ask" in the global namespace competing with other skills.
+    flatten-skills: false
+    requires:
+      - "agy (Antigravity CLI) on PATH; the skills shell out to it"
+      - "node, for the plugin's companion/agy-companion.mjs"
+
   - name: dev-browser
     marketplace: sawyerhood/dev-browser
     marketplace_id: sawyerhood-dev-browser
@@ -528,10 +558,22 @@ claude-plugins:
   - name: codex
     marketplace: openai/codex-plugin-cc
     marketplace_id: openai-codex
-    version: "1.0.3"
+    version: "1.0.6"
+    applies-to: [claude, antigravity]
     install: |
       claude plugin marketplace add openai/codex-plugin-cc
       claude plugin install codex
+    antigravity-install: |
+      # Needs the Claude plugin installed first. agy converts the /codex:* commands
+      # (setup, review, adversarial-review, rescue, status, result, cancel, transfer)
+      # into skills, but leaves ${CLAUDE_PLUGIN_ROOT} unresolved (agy expands
+      # ${PLUGIN_ROOT} instead), so pin it to the installed path. Re-run after
+      # every Claude plugin update.
+      P=$(ls -d ~/.claude/plugins/cache/openai-codex/codex/*/ | sort -V | tail -1)
+      agy plugin import "$P"
+      D="$HOME/.gemini/config/plugins/codex"
+      rm -rf "$D/.in_use"
+      grep -rlF '${CLAUDE_PLUGIN_ROOT}' "$D" | while read -r f; do D="$D" perl -pi -e 's/\$\{CLAUDE_PLUGIN_ROOT\}/$ENV{D}/g' "$f"; done
     purpose: "Delegate tasks to OpenAI Codex CLI from Claude Code"
     has_skills: true
     features:
@@ -1012,12 +1054,34 @@ security-skills:
 # CODEX SKILLS (from developers.openai.com/codex/skills)
 # =============================================================================
 # Installed via $skill-installer in Codex. Stored in $CODEX_HOME/skills/
-codex-skills: []
+codex-skills:
+  - name: agy-staff
+    install: |
+      codex plugin marketplace add https://github.com/keli-wen/agy-staff || true
+      codex plugin add agy@agy-staff || true
+    purpose: "Codex half of the agy plugin (see claude-plugins: agy)"
+    requires:
+      - "codex-cli >= 0.148; 0.141 rejects this marketplace (plugin declared at the repo root, path '.')"
   # Example entry:
   # - name: linear
   #   source: ".experimental"
   #   install: "Use $skill-installer in Codex"
   #   purpose: "Linear issue management"
+  - name: cc-sendbird
+    install: |
+      codex plugin marketplace add sendbird/codex-marketplace || true
+      codex plugin add cc@sendbird || true
+    purpose: "Codex only. Claude Code from inside Codex: read-only review, adversarial review, and tracked rescue tasks run through the local claude CLI"
+    license: "Apache-2.0 (Sendbird; adapted from openai/codex-plugin-cc, the reverse of the codex Claude plugin)"
+    requires:
+      - "claude CLI installed and authenticated"
+      - "node"
+      - "codex-cli >= 0.148 (installed and verified on 0.148, 0.151, 0.154, 0.159)"
+    notes: >-
+      Ships Codex hooks: a SessionStart/SessionEnd bridge, an unread-result
+      check on UserPromptSubmit, and a Stop review gate that is off by default
+      (stopReviewGate false per workspace until $cc:setup enables it), so it
+      does not change how Codex ends a turn unless opted in.
 
 # =============================================================================
 # COPILOT SKILLS (GitHub Copilot CLI skills)
