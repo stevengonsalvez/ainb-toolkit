@@ -7,7 +7,7 @@
 #   - claude-plugins    (beads, debug-bridge, caveman, codex, etc.)
 #   - agent-skills      (git-cloned: fireworks-tech-graph, ui-ux-pro-max, etc.)
 #   - nanoclaw-skills   (auto-synced from stevengonsalvez/nanoclaw fork via native-runner)
-#   - external-packages (uv tool installs: reflect-kb)
+#   - external-packages (uv tool installs: reflect-kb, graphifyy, apm-cli)
 #
 # Usage:
 #   ./update-externals.sh           # update everything
