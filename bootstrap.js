@@ -609,14 +609,11 @@ const ALWAYS_COPY_RULES = [
 // the documented skills.json, which takes a list of directories to scan.
 //
 // Never overwrites an existing file; that one is the user's, and it may inherit
-// from or exclude paths we know nothing about. Only existing directories are
-// listed, so a machine without ~/.agents/skills does not get a dead entry.
+// from or exclude paths we know nothing about. Only the deployed tree is listed:
+// adding ~/.agents/skills (npx global installs) as well pushed agy past its skill
+// budget and it silently dropped core toolkit skills.
 function writeAgySkillsConfig(destDir, relConfigPath) {
-    const homeRoot = path.dirname(destDir);
-    const candidates = [
-        path.join(destDir, 'skills'),
-        path.join(homeRoot, '.agents', 'skills'),
-    ];
+    const candidates = [path.join(destDir, 'skills')];
     const entries = candidates.filter(p => fs.existsSync(p)).map(p => ({ path: p }));
     if (entries.length === 0) return { written: false, reason: 'no skills directories to register' };
 

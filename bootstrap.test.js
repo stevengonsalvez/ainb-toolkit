@@ -955,15 +955,14 @@ describe('Antigravity CLI skills registration (config/skills.json)', () => {
             .toContain(path.join(home, '.gemini', 'skills'));
     });
 
-    it('also registers ~/.agents/skills when that tree exists', () => {
+    it('does not register ~/.agents/skills, which crowds out core skills in agy', () => {
         const home = path.join(tempDir, 'home-agents');
         fs.mkdirSync(path.join(home, '.agents', 'skills'), { recursive: true });
         run('antigravity', home);
 
         const paths = JSON.parse(fs.readFileSync(configPath(home), 'utf8'))
             .entries.map(e => e.path);
-        expect(paths).toContain(path.join(home, '.agents', 'skills'));
-        expect(paths).toContain(path.join(home, '.gemini', 'skills'));
+        expect(paths).toEqual([path.join(home, '.gemini', 'skills')]);
     });
 
     it('lists no directory that does not exist', () => {
