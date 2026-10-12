@@ -1,0 +1,22 @@
+name: test-writer-pack
+version: 0.1.0
+description: Test authoring and repair. Ships one testing skill and the matching agent to GitHub Copilot and Claude Code.
+author: stevengonsalvez
+license: MIT
+repository: https://github.com/stevengonsalvez/ainb-toolkit
+keywords: [testing, qe, test-authoring]
+
+# Skills and agents only: nothing here compiles into the harness context files,
+# so this is a skill package rather than a hybrid one. APM accepts
+# instructions, skill, hybrid and prompts; there is no separate agent type.
+type: skill
+
+# Pinned rather than auto-detected, so the pack deploys the same tree on every
+# machine. Consumers on another harness opt in with `apm install -t <name>`.
+targets:
+  - copilot
+  - claude
+
+dependencies:
+  apm: []
+  mcp: []
