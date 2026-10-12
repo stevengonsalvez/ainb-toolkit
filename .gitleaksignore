@@ -1,0 +1,17 @@
+# Historical gitleaks hits present when this gate was added (2026-10-12).
+# Reviewed as test fixtures and placeholders. A new leak is not in this list and fails CI.
+# Remove a line once its value is rotated or the file is gone. Do not add a line to hide a new leak.
+1b6f3b1d310e41a805f030a1f96f7b69b0f00162:general-rules/postman-security-rule.md:generic-api-key:76
+1b6f3b1d310e41a805f030a1f96f7b69b0f00162:general-rules/postman-security-rule.md:generic-api-key:79
+1b6f3b1d310e41a805f030a1f96f7b69b0f00162:general-rules/postman-security-rule.md:generic-api-key:82
+1b6f3b1d310e41a805f030a1f96f7b69b0f00162:general-rules/postman-security-rule.md:generic-api-key:86
+4661904007c4e003e737338e94c742cc579b2762:plugins/orchestrate/tests/followups.sh:generic-api-key:88
+69e6079af4ddb277db643940c7b296cac8e81907:plugins/orchestrate/references/programme-yaml.md:generic-api-key:68
+708ddc540061fb44c78ef27df2ccb9a54237866d:general-rules/postman-security-rule.md:generic-api-key:76
+708ddc540061fb44c78ef27df2ccb9a54237866d:general-rules/postman-security-rule.md:generic-api-key:79
+708ddc540061fb44c78ef27df2ccb9a54237866d:general-rules/postman-security-rule.md:generic-api-key:82
+708ddc540061fb44c78ef27df2ccb9a54237866d:general-rules/postman-security-rule.md:generic-api-key:86
+ba450e28c910d13a6a99274645b43cc7da602e90:general-rules/postman-security-rule.md:generic-api-key:76
+ba450e28c910d13a6a99274645b43cc7da602e90:general-rules/postman-security-rule.md:generic-api-key:79
+ba450e28c910d13a6a99274645b43cc7da602e90:general-rules/postman-security-rule.md:generic-api-key:82
+ba450e28c910d13a6a99274645b43cc7da602e90:general-rules/postman-security-rule.md:generic-api-key:86
