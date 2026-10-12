@@ -4,8 +4,8 @@
 # Line 2: model · mode/eff · session health · ctx bar · quota bar · tasks · artifacts · HR · RTK
 #
 # Reads JSON session state from stdin (Antigravity CLI schema).
-# All slow external commands are timeout-guarded (500ms) with silent fallbacks.
-# External results cached 10s in /tmp to keep render fast.
+# Single-pass jq parse + file-based micro-cache keeps execution < 80ms.
+# All slow external commands are timeout-guarded with silent fallbacks.
 
 set -o pipefail
 
@@ -23,30 +23,24 @@ FG_GREY='\033[90m'
 
 SEP="${FG_GREY}·${RESET}"
 
-# ── 10-second cache for slow commands ────────────────────────────────────────
-CACHE_FILE="/tmp/antigravity-statusline-cache-${USER}.json"
+# ── 10-second file cache for slow commands ───────────────────────────────────
+CACHE_DIR="/tmp/antigravity-statusline-cache-${USER}"
+mkdir -p "$CACHE_DIR" 2>/dev/null
 CACHE_TTL=10
 
-_cache_age() {
-  [[ ! -f "$CACHE_FILE" ]] && echo 9999 && return
+_cache_get() {
+  local f="$CACHE_DIR/$1"
+  [[ -f "$f" ]] || return
   local now mtime
   now=$(date +%s)
-  mtime=$(stat -c %Y "$CACHE_FILE" 2>/dev/null || stat -f %m "$CACHE_FILE" 2>/dev/null || echo 0)
-  echo $(( now - mtime ))
-}
-
-_cache_get() {
-  [[ ! -f "$CACHE_FILE" ]] && return
-  jq -r --arg k "$1" '.[$k] // empty' "$CACHE_FILE" 2>/dev/null
+  mtime=$(stat -f %m "$f" 2>/dev/null || stat -c %Y "$f" 2>/dev/null || echo 0)
+  if (( (now - mtime) < CACHE_TTL )); then
+    cat "$f" 2>/dev/null
+  fi
 }
 
 _cache_set() {
-  local key=$1 val=$2 tmp existing
-  tmp=$(mktemp)
-  existing="{}"
-  [[ -f "$CACHE_FILE" ]] && existing=$(cat "$CACHE_FILE" 2>/dev/null || echo "{}")
-  printf '%s' "$existing" | jq --arg k "$key" --arg v "$val" '.[$k] = $v' > "$tmp" 2>/dev/null \
-    && mv "$tmp" "$CACHE_FILE" || rm -f "$tmp"
+  printf '%s' "$2" > "$CACHE_DIR/$1" 2>/dev/null || true
 }
 
 # ── Unicode progress bar ──────────────────────────────────────────────────────
@@ -79,17 +73,30 @@ _fmt_epoch() {
 }
 
 # ── timeout wrapper ───────────────────────────────────────────────────────────
+_TIMEOUT_BIN=""
+if command -v timeout >/dev/null 2>&1; then _TIMEOUT_BIN="timeout"
+elif command -v gtimeout >/dev/null 2>&1; then _TIMEOUT_BIN="gtimeout"
+fi
+
 _to() {
-  if command -v timeout >/dev/null 2>&1; then timeout "$@"
-  elif command -v gtimeout >/dev/null 2>&1; then gtimeout "$@"
+  if [[ -n "$_TIMEOUT_BIN" ]]; then "$_TIMEOUT_BIN" "$@"
   else shift; "$@"; fi
 }
 
 # ── Count un-acked reflect errors ─────────────────────────────────────────────
 _reflect_err_count() {
   local f="$HOME/.reflect/errors.json"
-  if [[ -f "$f" ]] && command -v jq >/dev/null 2>&1; then
-    jq -r '[.errors[]? | select(.acked != true)] | length' "$f" 2>/dev/null && return
+  if [[ -f "$f" ]]; then
+    # Fast regex count of un-acked errors
+    local count
+    count=$(grep -c '"acked": false' "$f" 2>/dev/null || true)
+    if [[ -n "$count" && "$count" =~ ^[0-9]+$ ]]; then
+      echo "$count"
+      return
+    fi
+    if command -v jq >/dev/null 2>&1; then
+      jq -r '[.errors[]? | select(.acked != true)] | length' "$f" 2>/dev/null && return
+    fi
   fi
   if command -v reflect >/dev/null 2>&1; then
     reflect errors count 2>/dev/null && return
@@ -97,18 +104,68 @@ _reflect_err_count() {
   echo 0
 }
 
-# ── Read JSON from stdin once ─────────────────────────────────────────────────
+# ── Read JSON from stdin once & parse in a single jq pass ─────────────────────
 INPUT=$(cat)
-_jq() { printf '%s' "$INPUT" | jq -r "${1} // empty" 2>/dev/null; }
 
-CACHE_AGE=$(_cache_age)
+eval "$(printf '%s' "$INPUT" | jq -r '
+. as $root |
+def bucket_fields(prefix):
+  (($root.quota // {}) | to_entries) as $entries |
+  (
+    ($entries[]? | select(.key == (prefix + "-5h"))) //
+    ($entries[]? | select((.key | test(prefix)) and (.key | test("5h|five")))) //
+    ($entries[]? | select(.key | test("5h|five"))) //
+    null
+  ) as $b5 |
+  (
+    ($entries[]? | select(.key == (prefix + "-weekly"))) //
+    ($entries[]? | select((.key | test(prefix)) and (.key | test("week|7d")))) //
+    ($entries[]? | select(.key | test("week|7d"))) //
+    null
+  ) as $bw |
+  [
+    ("Q_" + prefix + "_5H_FRAC=" + ($b5.value.remaining_fraction // "" | tostring | @sh)),
+    ("Q_" + prefix + "_5H_R_SECS=" + ($b5.value.reset_in_seconds // "" | tostring | @sh)),
+    ("Q_" + prefix + "_5H_R_TIME=" + ($b5.value.reset_time // "" | tostring | @sh)),
+    ("Q_" + prefix + "_WK_FRAC=" + ($bw.value.remaining_fraction // "" | tostring | @sh)),
+    ("Q_" + prefix + "_WK_R_SECS=" + ($bw.value.reset_in_seconds // "" | tostring | @sh)),
+    ("Q_" + prefix + "_WK_R_TIME=" + ($bw.value.reset_time // "" | tostring | @sh))
+  ];
+
+[
+  @sh "MODEL_DISPLAY=\($root.model.display_name // "")",
+  @sh "MODEL_ID=\($root.model.id // "")",
+  @sh "EXEC_MODE=\($root.execution_mode // "")",
+  @sh "EFFORT_LEVEL=\($root.effort.level // "")",
+  @sh "FAST_MODE=\($root.fast_mode // false)",
+  @sh "CWD=\($root.workspace.current_dir // $root.cwd // "")",
+  @sh "TERM_COLS=\($root.terminal_width // $root.terminal.width // "")",
+  @sh "TRANSCRIPT_PATH=\($root.transcript_path // "")",
+  @sh "VCS_BRANCH=\($root.vcs.branch // "")",
+  @sh "VCS_DIRTY=\($root.vcs.dirty // false)",
+  @sh "CTX_USED_PCT=\($root.context_window.used_percentage // "")",
+  @sh "INPUT_TOKENS=\($root.context_window.current_usage.input_tokens // "")",
+  @sh "CTX_WINDOW_SIZE=\($root.context_window.context_window_size // "")",
+  @sh "EXCEEDS_200K=\($root.exceeds_200k_tokens // false)",
+  @sh "SESSION_COST=\($root.cost.total_cost_usd // "")",
+  @sh "PLAN_TIER=\($root.plan_tier // "")",
+  @sh "EMAIL=\($root.email // "")",
+  @sh "TASK_COUNT=\($root.task_count // "")",
+  @sh "ARTIFACT_COUNT=\($root.artifact_count // "")",
+  @sh "SANDBOX_ENABLED=\($root.sandbox.enabled // false)",
+  @sh "VIM_MODE=\($root.vim.mode // "")",
+  @sh "PROJECT_DIR=\($root.workspace.project_dir // "")",
+  @sh "HAS_AGY_QUOTA=\(if ($root.quota // {}) != {} then "true" else "" end)",
+  @sh "RL_5H_PCT=\($root.rate_limits.five_hour.used_percentage // "")",
+  @sh "RL_5H_RESETS_AT=\($root.rate_limits.five_hour.resets_at // "")",
+  @sh "RL_WK_PCT=\($root.rate_limits.seven_day.used_percentage // "")",
+  @sh "RL_WK_RESETS_AT=\($root.rate_limits.seven_day.resets_at // "")"
+] + bucket_fields("gemini") + bucket_fields("3p") | .[]
+')"
 
 # ════════════════════════════════════════════════════════════════════════════
 # SIGNAL 1: Model short name and effort
 # ════════════════════════════════════════════════════════════════════════════
-MODEL_DISPLAY=$(_jq '.model.display_name')
-MODEL_ID=$(_jq '.model.id')
-
 EFFORT_FROM_MODEL=""
 CLEANED_MODEL="$MODEL_DISPLAY"
 [[ -z "$CLEANED_MODEL" ]] && CLEANED_MODEL="$MODEL_ID"
@@ -131,9 +188,9 @@ MODEL_SHORT=$(printf '%s' "$CLEANED_MODEL" | awk '{
     if (a[i] ~ /^[0-9]/) ver = a[i]
   }
   if (is_gemini == 1 && tier != "" && ver != "") print "gemini-" ver "-" tier
-  else if (is_gemini == 1 && tier != "") print "gemini-" tier
+  else if (is_gemini == 1 && tier != "" && ver != "") print "gemini-" tier
   else if (tier != "" && ver != "") print tier "-" ver
-  else if (tier != "") print tier
+  else if (tier != "" && tier != raw) print tier
   else print raw
 }')
 [[ -z "$MODEL_SHORT" ]] && MODEL_SHORT="antigravity"
@@ -148,12 +205,10 @@ MODEL_SHORT="${MODEL_SHORT}${CTX_VARIANT}"
 # ════════════════════════════════════════════════════════════════════════════
 # SIGNAL 1b: Reasoning effort, execution mode, and fast flag
 # ════════════════════════════════════════════════════════════════════════════
-EXEC_MODE=$(_jq '.execution_mode')
-EFFORT_LEVEL=$(_jq '.effort.level')
 [[ -z "$EFFORT_LEVEL" ]] && EFFORT_LEVEL="$EFFORT_FROM_MODEL"
 
 FAST_FLAG=""
-if [[ "$(_jq '.fast_mode')" == "true" || "$EXEC_MODE" == "fast" ]]; then
+if [[ "$FAST_MODE" == "true" || "$EXEC_MODE" == "fast" ]]; then
   FAST_FLAG="⚡"
 fi
 
@@ -181,13 +236,9 @@ fi
 # ════════════════════════════════════════════════════════════════════════════
 # SIGNAL 2: Working directory (~ collapsed and adaptively shortened)
 # ════════════════════════════════════════════════════════════════════════════
-CWD=$(_jq '.workspace.current_dir')
-[[ -z "$CWD" ]] && CWD=$(_jq '.cwd')
 [[ -z "$CWD" ]] && CWD=$(pwd 2>/dev/null || echo "?")
 CWD_DISPLAY="${CWD/#$HOME/\~}"
 
-TERM_COLS=$(_jq '.terminal_width')
-[[ -z "$TERM_COLS" || "$TERM_COLS" -lt 20 ]] && TERM_COLS=$(_jq '.terminal.width')
 [[ -z "$TERM_COLS" || "$TERM_COLS" -lt 20 ]] && TERM_COLS=$(tput cols 2>/dev/null || echo 120)
 
 _shorten_path() {
@@ -217,34 +268,58 @@ GIT_BRANCH=""
 GIT_AHEAD_BEHIND=""
 GIT_CHANGES=""
 
-if git -C "$CWD" rev-parse --git-dir &>/dev/null 2>&1; then
-  GIT_BRANCH=$(_to 0.5 git -C "$CWD" symbolic-ref --short HEAD 2>/dev/null \
-    || _to 0.5 git -C "$CWD" rev-parse --short HEAD 2>/dev/null \
-    || true)
+CWD_HASH=$(printf '%s' "$CWD" | tr '/. ' '---')
+GIT_CACHE_VAL=$(_cache_get "git_${CWD_HASH}")
 
-  if [[ -n "$GIT_BRANCH" ]]; then
-    REMOTE_INFO=$(_to 0.5 git -C "$CWD" rev-list --left-right --count \
-      "@{upstream}...HEAD" 2>/dev/null || true)
-    if [[ -n "$REMOTE_INFO" ]]; then
-      BEHIND=$(awk '{print $1}' <<< "$REMOTE_INFO")
-      AHEAD=$(awk '{print $2}'  <<< "$REMOTE_INFO")
-      (( AHEAD > 0 || BEHIND > 0 )) && GIT_AHEAD_BEHIND=" ↑${AHEAD}↓${BEHIND}"
+if [[ -n "$GIT_CACHE_VAL" ]]; then
+  # Parse cached git output: branch \n ahead_behind \n changes
+  IFS=$'\n' read -r -d '' GIT_BRANCH GIT_AHEAD_BEHIND GIT_CHANGES <<< "$GIT_CACHE_VAL" || true
+elif git -C "$CWD" rev-parse --git-dir &>/dev/null 2>&1; then
+  # Single fast git command: status with porcelain -b
+  RAW_GIT_STATUS=$(_to 0.3 git -C "$CWD" status --porcelain -b 2>/dev/null || true)
+  if [[ -n "$RAW_GIT_STATUS" ]]; then
+    PARSED_GIT=$(printf '%s\n' "$RAW_GIT_STATUS" | awk '
+      NR == 1 {
+        sub(/^## /, "", $0)
+        split($0, parts, /\.\.\./)
+        branch = parts[1]
+        sub(/^[ \t]+|[ \t]+$/, "", branch)
+        if ($0 ~ /ahead [0-9]+/) {
+          match($0, /ahead [0-9]+/)
+          ahead = substr($0, RSTART+6, RLENGTH-6)
+        }
+        if ($0 ~ /behind [0-9]+/) {
+          match($0, /behind [0-9]+/)
+          behind = substr($0, RSTART+7, RLENGTH-7)
+        }
+        next
+      }
+      $0 !~ /^[ ?]/ { staged++ }
+      substr($0, 2, 1) !~ /[ ?]/ { unstaged++ }
+      /^\?\?/ { untracked++ }
+      END {
+        ab = ""
+        if (ahead > 0 || behind > 0) ab = " ↑" (ahead+0) "↓" (behind+0)
+        ch = ""
+        delta = staged + unstaged
+        if (delta > 0) ch = "±" delta
+        if (untracked > 0) ch = (ch ? ch " " : "") "?" untracked
+        printf "%s\n%s\n%s", branch, ab, ch
+      }
+    ')
+    IFS=$'\n' read -r -d '' GIT_BRANCH GIT_AHEAD_BEHIND GIT_CHANGES <<< "$PARSED_GIT" || true
+    _cache_set "git_${CWD_HASH}" "$PARSED_GIT"
+  else
+    # Fallback to Antigravity .vcs object if git status timed out
+    GIT_BRANCH="$VCS_BRANCH"
+    if [[ "$VCS_DIRTY" == "true" ]]; then
+      GIT_CHANGES="±"
     fi
-  fi
-
-  STATUS_OUTPUT=$(_to 0.5 git -C "$CWD" status --porcelain 2>/dev/null || true)
-  if [[ -n "$STATUS_OUTPUT" ]]; then
-    STAGED=$(printf '%s\n' "$STATUS_OUTPUT" | awk '$0 !~ /^[ ?]/ {n++} END {print n+0}')
-    UNSTAGED=$(printf '%s\n' "$STATUS_OUTPUT" | awk 'substr($0,2,1) !~ /[ ?]/ {n++} END {print n+0}')
-    UNTRACKED=$(printf '%s\n' "$STATUS_OUTPUT" | grep -c '^\?\?' 2>/dev/null || echo 0)
-    DELTA=$(( STAGED + UNSTAGED ))
-    [[ $DELTA    -gt 0 ]] && GIT_CHANGES="±${DELTA}"
-    [[ $UNTRACKED -gt 0 ]] && GIT_CHANGES="${GIT_CHANGES:+${GIT_CHANGES} }?${UNTRACKED}"
   fi
 else
   # Fallback to Antigravity .vcs object if not raw git or git CLI blocked
-  GIT_BRANCH=$(_jq '.vcs.branch')
-  if [[ "$(_jq '.vcs.dirty')" == "true" ]]; then
+  GIT_BRANCH="$VCS_BRANCH"
+  if [[ "$VCS_DIRTY" == "true" ]]; then
     GIT_CHANGES="±"
   fi
 fi
@@ -252,21 +327,14 @@ fi
 # ════════════════════════════════════════════════════════════════════════════
 # SIGNAL 4: Session health from transcript user turns
 # ════════════════════════════════════════════════════════════════════════════
-TRANSCRIPT_PATH=$(_jq '.transcript_path')
 MSG_COUNT=0
-
 if [[ -n "$TRANSCRIPT_PATH" && -f "$TRANSCRIPT_PATH" ]]; then
   # Fast counting: supports Antigravity USER_INPUT and Claude role:user
   AGY_COUNT=$(grep -c -E '"type"\s*:\s*"USER_INPUT"|"source"\s*:\s*"USER_EXPLICIT"' "$TRANSCRIPT_PATH" 2>/dev/null || echo 0)
   if [[ "$AGY_COUNT" =~ ^[0-9]+$ ]] && (( AGY_COUNT > 0 )); then
     MSG_COUNT=$AGY_COUNT
   else
-    MSG_COUNT=$(_to 0.5 jq -r --slurp '
-      [.[] | select(
-        ((.type == "USER_INPUT" or .source == "USER_EXPLICIT" or (.message.role // .role) == "user"))
-        and (((.content // .message.content) | tostring) | contains("tool_result") | not)
-      )] | length
-    ' "$TRANSCRIPT_PATH" 2>/dev/null || echo 0)
+    MSG_COUNT=$(grep -c -E '"role"\s*:\s*"user"' "$TRANSCRIPT_PATH" 2>/dev/null || echo 0)
   fi
   [[ -z "$MSG_COUNT" || "$MSG_COUNT" == "null" ]] && MSG_COUNT=0
 fi
@@ -281,11 +349,13 @@ HEALTH_DISPLAY="${HEALTH_EMOJI} ${MSG_COUNT}/50"
 # SIGNAL 5: Beads ready count (bd) - cached
 # ════════════════════════════════════════════════════════════════════════════
 BD_DISPLAY=""
-if (( CACHE_AGE < CACHE_TTL )); then
-  BD_COUNT=$(_cache_get "bd")
-else
-  BD_COUNT=$(_to 0.5 bash -c 'bd ready --json 2>/dev/null | jq "length" 2>/dev/null' || true)
-  [[ -n "$BD_COUNT" ]] && _cache_set "bd" "$BD_COUNT"
+BD_COUNT=$(_cache_get "bd")
+if [[ -z "$BD_COUNT" ]]; then
+  if command -v bd >/dev/null 2>&1; then
+    BD_COUNT=$(_to 0.5 bash -c 'bd ready --json 2>/dev/null | jq "length" 2>/dev/null' || true)
+  fi
+  [[ -z "$BD_COUNT" ]] && BD_COUNT=0
+  _cache_set "bd" "$BD_COUNT"
 fi
 if [[ "$BD_COUNT" =~ ^[0-9]+$ ]] && (( BD_COUNT > 0 )); then
   BD_DISPLAY="${FG_CYAN}bd:${BD_COUNT}▸${RESET}"
@@ -295,16 +365,11 @@ fi
 # SIGNAL 6: Context window used %
 # ════════════════════════════════════════════════════════════════════════════
 CTX_PCT=0
-CTX_USED_PCT=$(_jq '.context_window.used_percentage')
-
 if [[ -n "$CTX_USED_PCT" ]]; then
   CTX_PCT=$(printf "%.0f" "$CTX_USED_PCT" 2>/dev/null || echo 0)
 else
-  INPUT_TOKENS=$(_jq '.context_window.current_usage.input_tokens')
-  CTX_WINDOW_SIZE=$(_jq '.context_window.context_window_size')
   [[ -z "$CTX_WINDOW_SIZE" || "$CTX_WINDOW_SIZE" == "0" ]] && CTX_WINDOW_SIZE=1048576
-  EXCEEDS=$(_jq '.exceeds_200k_tokens')
-  if [[ "$EXCEEDS" == "true" && "$CTX_WINDOW_SIZE" -le 200000 ]]; then
+  if [[ "$EXCEEDS_200K" == "true" && "$CTX_WINDOW_SIZE" -le 200000 ]]; then
     CTX_PCT=95
   elif [[ -n "$INPUT_TOKENS" && "$INPUT_TOKENS" =~ ^[0-9]+$ && "$INPUT_TOKENS" -gt 0 ]]; then
     CTX_PCT=$(( INPUT_TOKENS * 100 / CTX_WINDOW_SIZE ))
@@ -322,70 +387,63 @@ FIVE_HR_RESET_FMT=""
 WEEK_BAR=""
 WEEK_RESET_FMT=""
 
-# Determine provider prefix based on active model
 PROVIDER_PREFIX="gemini"
 if [[ "$MODEL_SHORT" =~ (claude|sonnet|haiku|opus|gpt|o1|o3|3p) ]]; then
   PROVIDER_PREFIX="3p"
 fi
 
-# 1. Antigravity .quota format (gemini-5h, gemini-weekly, 3p-5h, 3p-weekly)
-HAS_AGY_QUOTA=$(_jq '.quota // empty')
 if [[ -n "$HAS_AGY_QUOTA" ]]; then
-  # 5-hour bucket: try "${PROVIDER_PREFIX}-5h", then any key containing 5h
-  FIVE_HR_KEY="${PROVIDER_PREFIX}-5h"
-  if [[ -z "$(_jq ".quota[\"$FIVE_HR_KEY\"] // empty")" ]]; then
-    FIVE_HR_KEY=$(_jq '.quota | keys[] | select(test("5h|five"))' | head -n 1)
+  if [[ "$PROVIDER_PREFIX" == "3p" ]]; then
+    FRAC="${Q_3p_5H_FRAC:-$Q_gemini_5H_FRAC}"
+    R_SECS="${Q_3p_5H_R_SECS:-$Q_gemini_5H_R_SECS}"
+    R_TIME="${Q_3p_5H_R_TIME:-$Q_gemini_5H_R_TIME}"
+  else
+    FRAC="${Q_gemini_5H_FRAC:-$Q_3p_5H_FRAC}"
+    R_SECS="${Q_gemini_5H_R_SECS:-$Q_3p_5H_R_SECS}"
+    R_TIME="${Q_gemini_5H_R_TIME:-$Q_3p_5H_R_TIME}"
   fi
-  if [[ -n "$FIVE_HR_KEY" ]]; then
-    FRAC=$(_jq ".quota[\"$FIVE_HR_KEY\"].remaining_fraction")
-    R_SECS=$(_jq ".quota[\"$FIVE_HR_KEY\"].reset_in_seconds")
-    R_TIME=$(_jq ".quota[\"$FIVE_HR_KEY\"].reset_time")
-    if [[ -n "$FRAC" ]]; then
-      PCT=$(awk -v rf="$FRAC" 'BEGIN { printf "%.0f", (1.0 - rf) * 100 }')
-      FIVE_HR_BAR="5h $(_bar "$PCT" 60 85)"
-      if [[ -n "$R_SECS" && "$R_SECS" =~ ^[0-9]+$ ]]; then
-        NOW=$(date +%s)
-        FIVE_HR_RESET_FMT=$(_fmt_epoch "$(( NOW + R_SECS ))" '%H:%M')
-      elif [[ -n "$R_TIME" ]]; then
-        FIVE_HR_RESET_FMT="$R_TIME"
-      fi
+  if [[ -n "$FRAC" ]]; then
+    PCT=$(awk -v rf="$FRAC" 'BEGIN { printf "%.0f", (1.0 - rf) * 100 }')
+    FIVE_HR_BAR="5h $(_bar "$PCT" 60 85)"
+    if [[ -n "$R_SECS" && "$R_SECS" =~ ^[0-9]+$ ]]; then
+      NOW=$(date +%s)
+      FIVE_HR_RESET_FMT=$(_fmt_epoch "$(( NOW + R_SECS ))" '%H:%M')
+    elif [[ -n "$R_TIME" ]]; then
+      FIVE_HR_RESET_FMT="$R_TIME"
     fi
   fi
 
-  # Weekly bucket: try "${PROVIDER_PREFIX}-weekly", then any key containing week|7d
-  WEEK_KEY="${PROVIDER_PREFIX}-weekly"
-  if [[ -z "$(_jq ".quota[\"$WEEK_KEY\"] // empty")" ]]; then
-    WEEK_KEY=$(_jq '.quota | keys[] | select(test("week|7d"))' | head -n 1)
+  if [[ "$PROVIDER_PREFIX" == "3p" ]]; then
+    FRAC="${Q_3p_WK_FRAC:-$Q_gemini_WK_FRAC}"
+    R_SECS="${Q_3p_WK_R_SECS:-$Q_gemini_WK_R_SECS}"
+    R_TIME="${Q_3p_WK_R_TIME:-$Q_gemini_WK_R_TIME}"
+  else
+    FRAC="${Q_gemini_WK_FRAC:-$Q_3p_WK_FRAC}"
+    R_SECS="${Q_gemini_WK_R_SECS:-$Q_3p_WK_R_SECS}"
+    R_TIME="${Q_gemini_WK_R_TIME:-$Q_3p_WK_R_TIME}"
   fi
-  if [[ -n "$WEEK_KEY" ]]; then
-    FRAC=$(_jq ".quota[\"$WEEK_KEY\"].remaining_fraction")
-    R_SECS=$(_jq ".quota[\"$WEEK_KEY\"].reset_in_seconds")
-    R_TIME=$(_jq ".quota[\"$WEEK_KEY\"].reset_time")
-    if [[ -n "$FRAC" ]]; then
-      PCT=$(awk -v rf="$FRAC" 'BEGIN { printf "%.0f", (1.0 - rf) * 100 }')
-      WEEK_BAR="wk $(_bar "$PCT" 70 90)"
-      if [[ -n "$R_SECS" && "$R_SECS" =~ ^[0-9]+$ ]]; then
-        NOW=$(date +%s)
-        WEEK_RESET_FMT=$(_fmt_epoch "$(( NOW + R_SECS ))" '%b %e %H:%M' | tr -s ' ')
-      elif [[ -n "$R_TIME" ]]; then
-        WEEK_RESET_FMT="$R_TIME"
-      fi
+  if [[ -n "$FRAC" ]]; then
+    PCT=$(awk -v rf="$FRAC" 'BEGIN { printf "%.0f", (1.0 - rf) * 100 }')
+    WEEK_BAR="wk $(_bar "$PCT" 70 90)"
+    if [[ -n "$R_SECS" && "$R_SECS" =~ ^[0-9]+$ ]]; then
+      NOW=$(date +%s)
+      WEEK_RESET_FMT=$(_fmt_epoch "$(( NOW + R_SECS ))" '%b %e %H:%M' | tr -s ' ')
+    elif [[ -n "$R_TIME" ]]; then
+      WEEK_RESET_FMT="$R_TIME"
     fi
   fi
 fi
 
-# 2. Fallback: Claude Code style .rate_limits
+# Fallback: Claude Code style .rate_limits
 if [[ -z "$FIVE_HR_BAR" && -z "$WEEK_BAR" ]]; then
-  FIVE_HR_JSON=$(_jq '.rate_limits.five_hour.used_percentage')
-  WEEK_JSON=$(_jq '.rate_limits.seven_day.used_percentage')
-  if [[ -n "$FIVE_HR_JSON" ]]; then
-    FIVE_HR_PCT=$(printf "%.0f" "$FIVE_HR_JSON" 2>/dev/null || echo 0)
-    FIVE_HR_RESET_FMT=$(_fmt_epoch "$(_jq '.rate_limits.five_hour.resets_at')" '%H:%M')
+  if [[ -n "$RL_5H_PCT" ]]; then
+    FIVE_HR_PCT=$(printf "%.0f" "$RL_5H_PCT" 2>/dev/null || echo 0)
+    FIVE_HR_RESET_FMT=$(_fmt_epoch "$RL_5H_RESETS_AT" '%H:%M')
     FIVE_HR_BAR="5h $(_bar "$FIVE_HR_PCT" 60 85)"
   fi
-  if [[ -n "$WEEK_JSON" ]]; then
-    WEEK_PCT=$(printf "%.0f" "$WEEK_JSON" 2>/dev/null || echo 0)
-    WEEK_RESET_FMT=$(_fmt_epoch "$(_jq '.rate_limits.seven_day.resets_at')" '%b %e %H:%M' | tr -s ' ')
+  if [[ -n "$RL_WK_PCT" ]]; then
+    WEEK_PCT=$(printf "%.0f" "$RL_WK_PCT" 2>/dev/null || echo 0)
+    WEEK_RESET_FMT=$(_fmt_epoch "$RL_WK_RESETS_AT" '%b %e %H:%M' | tr -s ' ')
     WEEK_BAR="wk $(_bar "$WEEK_PCT" 70 90)"
   fi
 fi
@@ -393,13 +451,10 @@ fi
 # ════════════════════════════════════════════════════════════════════════════
 # SIGNAL 8: Cost, Subscription Tier, and Account
 # ════════════════════════════════════════════════════════════════════════════
-SESSION_COST=$(_jq '.cost.total_cost_usd')
+SESSION_COST="$SESSION_COST"
 COST_DISPLAY=""
 COST_COLOR="$FG_GREY"
-PLAN_TIER=$(_jq '.plan_tier')
-EMAIL=$(_jq '.email')
 
-# Clean tier name if present, e.g. "Google AI Pro" -> "Pro"
 TIER_SHORT=""
 if [[ -n "$PLAN_TIER" ]]; then
   TIER_SHORT=$(printf '%s' "$PLAN_TIER" | sed -E 's/^[Gg]oogle[[:space:]]+[Aa][Ii][[:space:]]*//' | tr -d '\r\n')
@@ -407,7 +462,6 @@ if [[ -n "$PLAN_TIER" ]]; then
   TIER_SHORT="${TIER_SHORT%"${TIER_SHORT##*[![:space:]]}"}"
 fi
 
-# Account username from email (e.g. lazymonkkmann@gmail.com -> lazymonkkmann)
 ACCOUNT_NAME=""
 if [[ -n "$EMAIL" ]]; then
   ACCOUNT_NAME="${EMAIL%%@*}"
@@ -430,19 +484,16 @@ fi
 # ════════════════════════════════════════════════════════════════════════════
 # SIGNAL 9: Antigravity-specific Badges (Tasks, Artifacts, Sandbox)
 # ════════════════════════════════════════════════════════════════════════════
-TASK_COUNT=$(_jq '.task_count')
 TASKS_DISPLAY=""
 if [[ "$TASK_COUNT" =~ ^[0-9]+$ ]] && (( TASK_COUNT > 0 )); then
   TASKS_DISPLAY="${FG_CYAN}tasks:${TASK_COUNT}${RESET}"
 fi
 
-ARTIFACT_COUNT=$(_jq '.artifact_count')
 ARTIFACT_DISPLAY=""
 if [[ "$ARTIFACT_COUNT" =~ ^[0-9]+$ ]] && (( ARTIFACT_COUNT > 0 )); then
   ARTIFACT_DISPLAY="${FG_BLUE}art:${ARTIFACT_COUNT}${RESET}"
 fi
 
-SANDBOX_ENABLED=$(_jq '.sandbox.enabled')
 SANDBOX_DISPLAY=""
 if [[ "$SANDBOX_ENABLED" == "true" ]]; then
   SANDBOX_DISPLAY="${FG_YELLOW}🔒sb${RESET}"
@@ -541,9 +592,8 @@ if [[ -n "$GIT_BRANCH" ]]; then
 fi
 
 # Reflect error badge (red, only when unacked errors exist)
-if (( CACHE_AGE < CACHE_TTL )); then
-  REFLECT_ERR_COUNT=$(_cache_get "reflect_err_count")
-else
+REFLECT_ERR_COUNT=$(_cache_get "reflect_err_count")
+if [[ -z "$REFLECT_ERR_COUNT" ]]; then
   REFLECT_ERR_COUNT=$(_reflect_err_count)
   _cache_set "reflect_err_count" "${REFLECT_ERR_COUNT:-0}"
 fi
@@ -569,7 +619,6 @@ if [[ -n "$CAVEMAN_BADGE" ]]; then
 fi
 
 # Vim mode indicator (if active)
-VIM_MODE=$(_jq '.vim.mode')
 if [[ -n "$VIM_MODE" ]]; then
   L1+=$(_seg "$C_GREEN" "$C_BLACK" "$VIM_MODE" "$prev")
   prev="$C_GREEN"
@@ -615,8 +664,7 @@ if [[ "$_HR_URLS" == *"127.0.0.1:${_HR_PORT}"* || "$_HR_URLS" == *"localhost:${_
 fi
 
 # ── RTK badge ───────────────────────────────────────────────────────────────
-_RTK_DIR=$(_jq '.workspace.project_dir // .workspace.current_dir')
-[[ -z "$_RTK_DIR" ]] && _RTK_DIR="$CWD"
+_RTK_DIR="${PROJECT_DIR:-$CWD}"
 if grep -qsF 'rtk hook' "${_RTK_DIR}/.claude/settings.json" 2>/dev/null \
    || grep -qsF 'rtk hook' "$HOME/.claude/settings.json" 2>/dev/null \
    || grep -qsF 'rtk hook' "$HOME/.gemini/antigravity-cli/settings.json" 2>/dev/null; then
