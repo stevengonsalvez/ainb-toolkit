@@ -6,7 +6,7 @@
 # ]
 # ///
 """
-usage_sync.py — Claude Code hook for real-time session usage tracking.
+usage_sync.py: Claude Code hook for real-time session usage tracking.
 
 Fires on Stop + SubagentStop events. Parses the session JSONL transcript,
 aggregates token usage and cost, identifies the agent, then:
@@ -63,36 +63,9 @@ DEFAULT_PRICING = MODEL_PRICING["claude-sonnet-4-5-20250929"]
 
 # ─── Agent Identification ────────────────────────────────────────────────────
 
-AGENT_PATH_PATTERNS = [
-    ("popashot-agent", "popashot"),
-    ("popabot", "main"),
-    ("heimdall", "heimdall"),
-]
-
-AGENT_SLUG_PATTERNS = [
-    ("build-", "popashot"),
-    ("research-", "popashot"),
-    ("fix-pr-", "popashot"),
-    ("e2e-", "popashot"),
-    ("heimdall-", "heimdall"),
-    ("popa-", "main"),
-]
-
-
 def identify_agent(transcript_path: str, slug: str | None = None) -> str:
-    """Map a session to an agent ID based on project path and session slug."""
-    # Check slug first (more specific)
-    if slug:
-        for prefix, agent_id in AGENT_SLUG_PATTERNS:
-            if slug.startswith(prefix):
-                return agent_id
-
-    # Check project path
-    for pattern, agent_id in AGENT_PATH_PATTERNS:
-        if pattern in transcript_path:
-            return agent_id
-
-    return "unknown"
+    """Return an optional deployment-specific agent ID without path inference."""
+    return os.getenv("OPENCLAW_AGENT_ID", "unknown")
 
 
 def extract_project_path(transcript_path: str) -> str:
@@ -247,11 +220,8 @@ def push_to_convex(usage_data: dict) -> bool:
     """POST usage data to Convex HTTP endpoint. Returns True on success."""
     convex_url = os.getenv("CONVEX_URL") or os.getenv("NEXT_PUBLIC_CONVEX_URL")
     if not convex_url:
-        # Try reading from mission-control .env.local
-        env_paths = [
-            Path.home() / "d" / "popashot-agent" / "mission-control" / ".env.local",
-            Path.home() / "d" / "popashot-agent" / "mission-control" / ".env",
-        ]
+        configured_env_file = os.getenv("OPENCLAW_ENV_FILE")
+        env_paths = [Path(configured_env_file).expanduser()] if configured_env_file else []
         for env_path in env_paths:
             if env_path.exists():
                 try:

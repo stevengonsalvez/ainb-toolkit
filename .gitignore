@@ -2,6 +2,22 @@ node_modules
 logs/
 .claude/worktrees/
 
+# Credentials and local configuration
+.env
+.env.*
+!.env.example
+.claude/settings.local.json
+.codex/settings.local.json
+
+# Local logs, caches, and transient editor output
+*.log
+*.log.*
+*.tmp
+*.cache
+*.swp
+.pytest_cache/
+.mypy_cache/
+
 # python bytecode
 __pycache__/
 *.pyc
@@ -10,6 +26,11 @@ __pycache__/
 .agents/goals/
 .agents/evidence/
 .agents/specs/
+.agents/scratch/
+.agents/handover/
+.agents/research/
+.beads/
+.tmux-dev-session.json
 
 # CI clean-room APM consumer (created by .github/workflows/ci.yml)
 .apm-ci-consumer/

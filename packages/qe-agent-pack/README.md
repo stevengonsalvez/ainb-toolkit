@@ -271,12 +271,8 @@ are recomputed at gate time from real mutation and seeded-defect runs; the
 recorded trajectories in that corpus are hand-authored fixtures, and the file
 says so. Update the file when a new gate run lands, then regenerate.
 
-The gate report lives in a private repository. `eval-score.json` marks it
-`"visibility": "internal"`, the annotation carries that as
-`sourceVisibility`, and the System's link is titled accordingly: the URL is
-the real location of the report, it resolves for anyone with access to that
-repository, and it returns 404 to an unauthenticated fetch. No public mirror
-exists, so none is claimed.
+The gate report is public. `eval-score.json` marks it `"visibility":
+"public"`, and the generated System links directly to the source report.
 
 ### Skills index
 
