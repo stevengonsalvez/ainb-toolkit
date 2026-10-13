@@ -1,0 +1,32 @@
+[
+ {
+  "number": 1203,
+  "title": "Bulk apply free team app codes",
+  "state": "OPEN",
+  "body": "Admin needs to apply free codes in bulk."
+ },
+ {
+  "number": 1284,
+  "title": "Score match alerts for every sport",
+  "state": "CLOSED",
+  "body": "Score alerts now fire for every sport including tablet and laptop. Tapping an alert opens the match, no dead end."
+ },
+ {
+  "number": 1500,
+  "title": "Calendar export",
+  "state": "CLOSED",
+  "body": "Export the coach calendar."
+ },
+ {
+  "number": 1700,
+  "title": "Evaluation page for team event",
+  "state": "OPEN",
+  "body": ""
+ },
+ {
+  "number": 1701,
+  "title": "Student list empty on team page",
+  "state": "OPEN",
+  "body": ""
+ }
+]

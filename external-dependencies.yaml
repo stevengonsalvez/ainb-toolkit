@@ -90,6 +90,18 @@ bundled-skills:
       - Verification-code and magic-link extractors
       - Tool-neutral state file under .agents/agentmail/
 
+  - name: concertmaster-template
+    path: skills/concertmaster-template
+    purpose: "Project-agnostic fleet-orchestrator template: copy into a project as .agents/skills/concertmaster, fill config.yaml, and it runs one GitHub org's agents across every Orca host"
+    requires:
+      - "orca CLI, bd (beads), Claude Code /loop; optional wacli, codex, agy"
+    features:
+      - Adopts and classifies every in-scope worktree, session and agent across Orca hosts
+      - Spawns standing lane leads and single-task workers on claude, codex or agy
+      - Drives PRs to merge under a configured gate and ships in deploy windows
+      - Teardown of merged single-task work; standing lanes and open beads are never torn down
+      - Turn-end table plus scheduled digest to the owner; never writes code
+
   - name: webapp-testing
     path: skills/webapp-testing
     purpose: "Playwright-based web app testing and browser automation"
