@@ -1,4 +1,4 @@
-# ainb-toolkit — Portable AI-Agent Skills & Configs
+# ainb-toolkit: Portable AI-Agent Skills & Configs
 
 One canonical source. Many AI tools. Write a skill once, install it into
 Claude Code, Codex, Copilot, Gemini, Hermes, nanoclaw, Amazon Q, Cursor,
@@ -9,6 +9,13 @@ This repository is the **sole canonical home** for the skills, the legacy
 source by [`ainb`](https://github.com/stevengonsalvez/agents-in-a-box)
 (the Rust unit manager) and is installable directly by any SKILL.md-aware
 agent harness.
+
+## Status
+
+Active and experimental. The repository contains installable agent skills,
+plugins, utilities, and a generated catalogue. Pin revisions for production
+use, review external dependencies before installation, and run the checks
+listed in [CONTRIBUTING.md](CONTRIBUTING.md) before submitting a change.
 
 ## Related repositories
 
@@ -84,7 +91,7 @@ bash ~/.claude/setup-external.sh
 ```
 
 **Repeat for each target tool.** Each tool gets its own home directory
-population (`~/.claude/`, `~/.codex/`, …). Hermes is special — it reads
+population (`~/.claude/`, `~/.codex/`, …). Hermes is special: it reads
 from `~/.claude/skills/` via `skills.external_dirs`, so installing for
 Claude transitively covers Hermes.
 
@@ -118,7 +125,7 @@ distributed to tool home dirs on `bootstrap` (or installed individually
 by `ainb`).
 
 ```
-skills/                 91 skills — agent-invokable SKILL.md bundles
+skills/                 91 skills: agent-invokable SKILL.md bundles
 agents/                 16 agents across 5 categories
 ├── (root)              distinguished-engineer, web-search-researcher
 ├── engineering/        code-archaeologist, code-reviewer, docs, perf, security, test-engineer
@@ -143,7 +150,7 @@ Per-tool config trees (`claude-code-4.5/`, `codex/`, `copilot/`,
 the shared `general-rules/` also live at the repo root.
 
 > The **reflect** Claude Code plugin and the **reflect-kb** retrieval CLI
-> are NOT in this repo — they live in the
+> are NOT in this repo: they live in the
 > [agents-in-a-box](https://github.com/stevengonsalvez/agents-in-a-box)
 > monorepo (`plugins/reflect/` and `reflect-kb/`). `bootstrap.js` installs
 > reflect-kb via `uv tool install` by cloning that monorepo; see the
@@ -168,7 +175,7 @@ the shared `general-rules/` also live at the repo root.
 
 `swarm-create` · `swarm-join` · `swarm-status` · `swarm-inbox` · `swarm-shutdown` · `swarm-orchestration` · `swarm-agent-troubleshooting`
 
-> Read more: [Progressive subagents](https://stevengonsalvez.com/tools-tips/progressive-subagents) — chaining agents without blowing the context budget.
+> Read more: [Progressive subagents](https://stevengonsalvez.com/tools-tips/progressive-subagents), chaining agents without blowing the context budget.
 </details>
 
 <details>
@@ -194,7 +201,7 @@ the shared `general-rules/` also live at the repo root.
 
 `tmux-monitor` · `tmux-status` · `start-local` · `start-ios` · `start-android` · `expose` · `plugins` · `oracle` · `debug-bridge` · `media-processing` · `standup` · `tmux-message`
 
-> Read more: [oracle](https://stevengonsalvez.com/tools-tips/oracle) — reaching for a second-opinion reasoning pass mid-task.
+> Read more: [oracle](https://stevengonsalvez.com/tools-tips/oracle), reaching for a second-opinion reasoning pass mid-task.
 </details>
 
 <details>
@@ -220,7 +227,7 @@ the shared `general-rules/` also live at the repo root.
 
 `autonomous-loops` · `agent-ops` · `cost-aware-pipeline` · `scrapling-official` · `fireworks-tech-graph`
 
-> Read more: [The Token Optimisation Playbook](https://stevengonsalvez.com/blog/token-optimisation-playbook) and [Token Optimisation 101](https://stevengonsalvez.com/tools-tips/token-optimisation-101) — the thinking behind `cost-aware-pipeline` and the token/burndown skills.
+> Read more: [The Token Optimisation Playbook](https://stevengonsalvez.com/blog/token-optimisation-playbook) and [Token Optimisation 101](https://stevengonsalvez.com/tools-tips/token-optimisation-101), the thinking behind `cost-aware-pipeline` and the token/burndown skills.
 </details>
 
 ---
@@ -246,16 +253,16 @@ tool's home dir. Sections in the manifest:
 
 ### Key manifest flags
 
-- **`applies-to: [claude, codex, copilot, gemini, hermes-agent, nanoclaw]`** — controls which tools install this entry
-- **`catalog-only: true`** — listed for discoverability, never installed (useful for documenting alternatives)
-- **`subpath: <dir>`** — repo has `SKILL.md` under a subdirectory; bootstrap extracts just that
-- **`multi-subpath: <dir>`** — repo bundles multiple skills under `<dir>/<name>/SKILL.md`; bootstrap flattens each as a sibling install
+- **`applies-to: [claude, codex, copilot, gemini, hermes-agent, nanoclaw]`**: controls which tools install this entry
+- **`catalog-only: true`**: listed for discoverability, never installed (useful for documenting alternatives)
+- **`subpath: <dir>`**: repo has `SKILL.md` under a subdirectory; bootstrap extracts just that
+- **`multi-subpath: <dir>`**: repo bundles multiple skills under `<dir>/<name>/SKILL.md`; bootstrap flattens each as a sibling install
 
 ### How bootstrap uses it
 
-1. `node bootstrap.js --tool=X` — writes tool-specific files to `~/.TOOL/` and generates `~/.TOOL/setup-external.sh`
-2. `bash ~/.TOOL/setup-external.sh` — executes the external-install commands (git clones, npx installs, plugin marketplace adds)
-3. `--verify` — checks every applicable manifest entry has its `SKILL.md` at the expected path, reports per-tool parity and orphans
+1. `node bootstrap.js --tool=X`: writes tool-specific files to `~/.TOOL/` and generates `~/.TOOL/setup-external.sh`
+2. `bash ~/.TOOL/setup-external.sh`: executes the external-install commands (git clones, npx installs, plugin marketplace adds)
+3. `--verify`: checks every applicable manifest entry has its `SKILL.md` at the expected path, reports per-tool parity and orphans
 
 ---
 
@@ -278,12 +285,12 @@ Run `bootstrap.js` with `--tool=<X>`:
 
 ## Workflow: add a new skill end-to-end
 
-1. **Author** — create `skills/<name>/SKILL.md` with frontmatter `name`, `description`, and a matching body.
-2. **Test locally** — copy to `~/.claude/skills/<name>/` and invoke via the skill harness. (Or just run `node bootstrap.js --tool=claude-code-4.5 --homeDir=$HOME` to reinstall.)
-3. **Propagate** — `node bootstrap.js --tool=<each-target>` for every tool you care about. Or use `ainb skill install` per tool.
-4. **Verify** — `node bootstrap.js --tool=<X> --verify` should report the skill present on every tool in its applies-to.
-5. **Regenerate the catalog** — `bash bin/generate-catalog.sh` to refresh `catalog.yaml`.
-6. **Commit** — canonical changes go in `skills/<name>/`.
+1. **Author**: create `skills/<name>/SKILL.md` with frontmatter `name`, `description`, and a matching body.
+2. **Test locally**: copy to `~/.claude/skills/<name>/` and invoke via the skill harness. (Or just run `node bootstrap.js --tool=claude-code-4.5 --homeDir=$HOME` to reinstall.)
+3. **Propagate**: `node bootstrap.js --tool=<each-target>` for every tool you care about. Or use `ainb skill install` per tool.
+4. **Verify**: `node bootstrap.js --tool=<X> --verify` should report the skill present on every tool in its applies-to.
+5. **Regenerate the catalog**: `bash bin/generate-catalog.sh` to refresh `catalog.yaml`.
+6. **Commit**: canonical changes go in `skills/<name>/`.
 
 For **externally-authored** skills (git clones), add an entry to
 `external-dependencies.yaml` under `agent-skills:` and set `applies-to`
@@ -294,7 +301,7 @@ appropriately. Bootstrap will generate the `git clone` in each tool's
 
 ## Spec-Driven Development (SDD)
 
-Spec Kit integration — drives a spec → plan → tasks workflow via slash
+Spec Kit integration drives a spec → plan → tasks workflow via slash
 commands in Claude Code.
 
 ```bash
@@ -316,6 +323,6 @@ node bootstrap.js --sdd --targetFolder=<project>
 ## References
 
 - **Manifest**: [`external-dependencies.yaml`](external-dependencies.yaml)
-- **Internal catalog**: [`catalog.yaml`](catalog.yaml) — auto-generated filesystem-derived manifest of every skill, agent, workflow, and utility this repo owns (the "internal" set; anything installed but not listed here is external). Regenerate with `bash bin/generate-catalog.sh`.
+- **Internal catalog**: [`catalog.yaml`](catalog.yaml), auto-generated filesystem-derived manifest of every skill, agent, workflow, and utility this repo owns (the "internal" set; anything installed but not listed here is external). Regenerate with `bash bin/generate-catalog.sh`.
 - **Bootstrap source**: [`bootstrap.js`](bootstrap.js)
 - **Unit manager (`ainb`)**: [stevengonsalvez/agents-in-a-box](https://github.com/stevengonsalvez/agents-in-a-box)
