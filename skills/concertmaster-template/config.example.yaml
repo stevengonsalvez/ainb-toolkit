@@ -1,0 +1,143 @@
+# concertmaster config: everything that varies per project.
+# Copy to config.yaml (next to SKILL.md) and fill every value. No secrets go
+# here: tokens live in files under ~/.secrets (or a vault) and this file only
+# names them. Keys marked [script] are read by scripts/lib.sh; the rest are
+# read by the concertmaster session from SKILL.md and references/lanes.md.
+# Lookup order for scripts: $CM_CONFIG, <skill>/config.yaml,
+# $CM_HOME/config.yaml. An env var (CM_ORG, CM_REPO, ...) beats the file.
+schema: concertmaster.config/v1
+
+project:
+  name: Acme                       # [script] digest title, report headers
+  owner:
+    name: Alex                     # [script] the human the concertmaster reports to
+    id: alex                       # [script] bead assignee / plan owner for "needs the owner"
+
+# Where state lives on the concertmaster host. [script]
+# Ledger, roster, briefs, handovers, outbox, salvage, intake files.
+state_dir: ~/.concertmaster
+
+github:
+  org: AcmeOrg                     # [script] hygiene covers every repo in this org
+  main_repo: acme-app              # [script] lanes and the merge gate run here
+  exclude_repo_patterns:           # [script] shell globs, never in scope at all
+    - "mirror-*"
+  repos_on_request:                # other org repos: only when the owner hands work
+    - acme-web
+  # Repos that share the hosts but belong to nobody here: never read, nudge,
+  # or tear down. Informational; the org filter already excludes them.
+  out_of_scope_examples: [dotfiles, personal-tools]
+
+worktrees:
+  orca_repo: acme-app              # `orca worktree create --repo name:<this>`
+  path_match: "/acme-app/"         # [script] ERE on worktree paths (abrupt.sh, waiting.sh)
+  self_name: concertmaster         # [script] the concertmaster's own worktree, never torn down
+  regenerable_ignored: []          # [script] ignored files teardown may drop (e.g. deno.lock)
+
+hosts:
+  home: local                      # host the concertmaster runs on
+  min_free_disk_gb: 8              # under this, spawn nothing on that host
+  # Rediscovered every tick with `orca host list`; these are defaults the
+  # ledger copies into hosts.<name> on first sight. role: general | native | overflow
+  defaults: { role: general, maxWorkers: 4 }
+  per_host:
+    local: { role: general, maxWorkers: 6 }
+    # build-mac: { role: native, maxWorkers: 2, hostname: build-mac }   # hostname = `hostname -s` over ssh
+
+schedule:
+  timezone: Europe/London          # [script] digest times and deploy windows use this zone
+  timezone_label: UK               # [script] printed after times in the digest
+  deploy_windows: ["11:00", "16:00"]
+  digest_times: ["08:00", "18:00"]
+  tick_delays_s: { busy: 600, running: 900, quiet: 1800 }
+  stuck_minutes: 45                # CM_STUCK_MIN
+  stuck_respawn_hours: 2
+  max_nudges: 2
+
+deploy:
+  # How a window ships. The deploy worker follows ship_verb; the order is
+  # fixed: merge, staging deploy, staging validate, only then production.
+  ship_verb: .agents/skills/pr-sweep/verbs/ship.md
+  production_tag_glob: "v*"        # delta = <last tag>..origin/main
+  # Rails: any hit means ASK the owner, the window waits.
+  rails:
+    - name: destructive-migration
+      paths: ["db/migrations/**"]
+      content_patterns: ["DROP", "DELETE", "TRUNCATE"]
+    - name: native-release
+      paths: ["ios/**", "android/**"]
+    - name: secrets-auth
+      paths: [".github/workflows/deploy-*.yml"]
+      note: "secret lines in deploy workflows, payments, auth flows"
+
+merge:
+  # The pr-sweeper is the only merger. {pr} {org} {repo} are filled at run time.
+  command: "gh pr merge {pr} -R {org}/{repo} --merge"
+  env_prefix: ""                   # e.g. a hook bypass variable, if your merge hook needs one
+  strategy: merge                  # merge | squash | rebase
+  gates:
+    evidence: "node scripts/ci/evidence.mjs --pr {pr} --json"   # must report ready_value
+    ready_value: MERGE_READY
+    review_verdict: ".agents/skills/pr-sweep/scripts/verdict-at-head.sh {pr}"
+    ci_gate: "gh pr checks {pr} --required"
+    verify_merged: ".agents/skills/pr-sweep/scripts/verify-merge.sh {pr}"
+  review_round_cap: 3
+  approved_only_classes: [auth, payments]
+
+beads:
+  ops_epic: acme-ops               # [script] intake parent for ops beads
+  dev_epic: acme-dev               # [script] intake parent for feature and bug beads
+
+# Lanes. standing: true lanes are never torn down. agent: claude | codex | agy.
+lanes:
+  - { name: pr-sweeper,  standing: true,  spawn_at: 1, agent: claude, model: null, skills: [pr-sweep, ready-to-ship] }
+  - { name: dev-sweeper, standing: true,  spawn_at: 2, agent: claude, model: sonnet, skills: [dev-flow, ready-to-ship], max_parallel: 3 }
+  - { name: ops-sweeper, standing: true,  spawn_at: 2, agent: claude, model: sonnet, skills: [] }
+  - { name: research,    standing: true,  spawn_at: 2, agent: claude, model: null, skills: [research] }
+  - { name: "epic:<name>", standing: true, spawn_at: 1, agent: claude, model: null, max_parallel: 3 }
+single_task_workers: [deploy, ops-fix, sweep, native-release, one-pr]
+
+ops:
+  # Skills the ops-sweeper routes to. Leave empty and it investigates itself.
+  route:
+    data_repair: null              # e.g. a runbook skill for account/data repair
+    user_cannot: null              # e.g. an incident-investigate skill
+    errors: null                   # e.g. an error-tracker query skill
+    bug_batch: null                # e.g. a triage-bugs skill for a chat batch
+  production_data: read-only via runbooks; writes ASK
+
+messaging:
+  owner_digest:
+    adapter: wacli                 # wacli | slack | email | none
+    to: self                       # recipient handle for the adapter; "self" = the owner's own linked account
+    send: "wacli send text --to {to} --allow-self --message {text}"
+  collaborators:                   # non-owner PR authors the pr-sweeper may push to
+    - { name: Sam, github: sam-dev, pr_comments: true, daily_dm: null }
+
+# What may leave the concertmaster without a human OK.
+outward_messages:
+  owner_digest: autonomous
+  collaborator_pr_comments: autonomous
+  everything_else: draft_first     # shown to the owner as a draft, sent only after OK
+
+intake:
+  adapter: wacli                   # the chat source; another adapter writes a wacli-shaped export
+  source_label: chat               # [script] word used for the chat in trackers and bead bodies
+  issue_repo: null                 # [script] default github.org/github.main_repo
+  chats: {}                        # [script] alias: { jid: "<id>@g.us", title: "<group title>" }
+  media:
+    host: imgbb
+    key_env_file: null             # [script] NON-production env file holding IMGBB_API_KEY
+    privacy_note: "the chat may carry personal data"   # [script] shown before an upload
+
+telemetry:                         # optional mission-control style sink
+  base_url: ""                     # [script] empty: events queue in outbox.jsonl, never sent
+  tenant_id: ""                    # [script] or MC_TENANT_ID
+  token_file: ~/.secrets/mc-auth-token   # [script] file holding the token, mode 600
+
+terminology:
+  rules: []                        # e.g. { use: Member, never: User, scope: user-facing copy }
+  no_em_dashes: true
+
+# Values still undecided. The SKILL's "Open config" table mirrors this list.
+open_questions: []

@@ -1,0 +1,25 @@
+{
+ "schema": "concertmaster.ledger/v1",
+ "lanes": {
+  "pr-sweeper": {
+   "state": "running",
+   "lead": "w-pr"
+  },
+  "dev-sweeper": {
+   "state": "draining",
+   "lead": "w-dev"
+  },
+  "ops-sweeper": {
+   "state": "absent",
+   "lead": null
+  }
+ },
+ "workers": {
+  "w-pr": {
+   "state": "running"
+  },
+  "w-dev": {
+   "state": "running"
+  }
+ }
+}

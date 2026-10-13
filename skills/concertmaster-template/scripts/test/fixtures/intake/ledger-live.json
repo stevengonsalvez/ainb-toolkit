@@ -1,0 +1,63 @@
+{
+ "schema": "concertmaster.ledger/v1",
+ "lanes": {
+  "pr-sweeper": {
+   "state": "running",
+   "lead": "w-pr"
+  },
+  "dev-sweeper": {
+   "state": "running",
+   "lead": "w-dev"
+  },
+  "ops-sweeper": {
+   "state": "running",
+   "lead": "w-ops"
+  },
+  "research": {
+   "state": "running",
+   "lead": null
+  },
+  "epic:infra-credits": {
+   "state": "running",
+   "lead": "w-epic"
+  },
+  "alpha-sweeper": {
+   "state": "running",
+   "lead": null,
+   "accepts": [
+    "bug"
+   ]
+  },
+  "beta-sweeper": {
+   "state": "running",
+   "lead": "w-dead",
+   "accepts": [
+    "bug"
+   ]
+  },
+  "gamma-sweeper": {
+   "state": "running",
+   "lead": "w-missing",
+   "accepts": [
+    "bug"
+   ]
+  }
+ },
+ "workers": {
+  "w-pr": {
+   "state": "running"
+  },
+  "w-dev": {
+   "state": "running"
+  },
+  "w-ops": {
+   "state": "running"
+  },
+  "w-epic": {
+   "state": "running"
+  },
+  "w-dead": {
+   "state": "torn-down"
+  }
+ }
+}

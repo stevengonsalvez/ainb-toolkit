@@ -33,7 +33,7 @@ def test_every_shipped_skill_conforms() -> None:
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-SHIPPED_SKILL_COUNT = 95
+SHIPPED_SKILL_COUNT = 96
 
 
 def count_skill_dirs() -> int:
