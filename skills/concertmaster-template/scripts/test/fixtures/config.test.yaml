@@ -1,0 +1,24 @@
+# Hermetic config for the script tests. Every test exports CM_CONFIG to this
+# file so a filled-in config.yaml next to scripts/ never changes a result.
+schema: concertmaster.config/v1
+project:
+  name: Acme
+  owner: { name: Owner, id: owner }
+github:
+  org: AcmeOrg
+  main_repo: acme-app
+  exclude_repo_patterns: ["mirror-*"]
+schedule:
+  timezone: UTC
+  timezone_label: UTC
+worktrees:
+  path_match: "/acme/"
+  self_name: concertmaster
+  regenerable_ignored: [deno.lock]
+beads:
+  ops_epic: acme-ops
+  dev_epic: acme-dev
+intake:
+  source_label: WhatsApp
+  chats:
+    team-chat: { jid: "120363000000000001@g.us", title: "Team Chat" }

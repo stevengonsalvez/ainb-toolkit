@@ -28,6 +28,7 @@ components:
     - cleanup-agent-worktree
     - coding-agent
     - commit
+    - concertmaster-template
     - cost-aware-pipeline
     - critique
     - crypto-research
@@ -171,7 +172,6 @@ components:
 
   utilities:
     hooks:
-      - README
       - bash_auto_background
       - compile-statusline
       - cost_tracker
@@ -180,6 +180,7 @@ components:
       - post_tool_use
       - pre_compact
       - pre_tool_use
+      - README
       - run_with_profile
       - session_start
       - statusline
