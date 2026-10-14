@@ -10,6 +10,7 @@ import { dirname, resolve, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { r3, esc } from './config.mjs';
 import { renderToMp4 } from './hfrender.mjs';
+import { installGsap } from './gsap.mjs';
 
 const SKILL = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const stamp = (t) => {
@@ -76,7 +77,8 @@ export function burnCaptions(C, segs, A, final) {
   const d = `${C.out}/work/captions-burn`;
   rmSync(d, { recursive: true, force: true });
   mkdirSync(`${d}/assets/fonts`, { recursive: true });
-  for (const f of ['hyperframes.json', 'package.json', 'gsap.min.js']) copyFileSync(`${SKILL}/assets/template/${f}`, `${d}/${f}`);
+  for (const f of ['hyperframes.json', 'package.json']) copyFileSync(`${SKILL}/assets/template/${f}`, `${d}/${f}`);
+  const gsapScript = installGsap(d);
   for (const f of C.fontFiles) copyFileSync(f, `${d}/assets/fonts/${basename(f)}`);
   // A keyframe every second (HyperFrames warns that a sparse GOP freezes frames), lossless so the
   // burned cut stays one encode away from the final.
@@ -98,7 +100,7 @@ export function burnCaptions(C, segs, A, final) {
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=${W}, height=${H}" />
-<script src="gsap.min.js"></script>
+${gsapScript}
 <style>
 ${C.fontFaces.join('\n')}
 * { margin: 0; padding: 0; box-sizing: border-box; }

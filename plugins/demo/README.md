@@ -70,7 +70,7 @@ copy come from a config file, and each skill ships a worked example.
 | What | Where | Licence |
 |---|---|---|
 | brag | not vendored; installed from [latent-spaces/brag](https://github.com/latent-spaces/brag) as a plugin dependency | MIT |
-| GSAP (`gsap.min.js`) | `skills/compose/assets/template/` | GSAP standard "no charge" licence |
+| GSAP 3.14.2 (generated local file) | generated compose and caption HTML | GSAP standard "no charge" licence |
 | Fraunces, IBM Plex Sans (woff2) | `skills/compose/examples/ferry/fonts/` | SIL Open Font Licence 1.1 |
 
 The fonts are example assets for the worked ferry example. Supply your own in your config's `theme.fonts`.

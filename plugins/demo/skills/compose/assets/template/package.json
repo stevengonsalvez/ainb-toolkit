@@ -2,6 +2,9 @@
   "name": "demo-segment",
   "private": true,
   "type": "module",
+  "dependencies": {
+    "gsap": "3.14.2"
+  },
   "scripts": {
     "check": "npx --yes hyperframes@0.8.40 check",
     "render": "npx --yes hyperframes@0.8.40 render"

@@ -781,7 +781,9 @@ the full-to-limited range change, which any BT.709 4:2:0 delivery pays.
   one slide of each kind (the device images are the ferry app at web, tablet and phone sizes).
 - `scripts/check.mjs`: the gate. For square and vertical output it frames the source frame with
   the same view as the composition before comparing.
-- `assets/template/`: `hyperframes.json`, `package.json`, and a vendored `gsap.min.js` so a
-  render needs no CDN.
+- `assets/template/`: `hyperframes.json` and `package.json`. Compose installs pinned GSAP 3.14.2,
+  verifies its SHA-256, and copies it beside generated `index.html`, so renders stay local. If
+  installation fails, it emits a warning and uses pinned jsDelivr with SRI. Run
+  `node scripts/check-local-gsap.mjs <generated-project-dir>` to confirm the local path.
 - `examples/ferry/`: a runnable example, a made-up app with its server, beats file, config and
   fonts, every path relative to that directory.
