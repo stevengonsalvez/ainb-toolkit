@@ -16,8 +16,8 @@ listed component.
 | `skills/notebooklm/` | [PleasePrompto/notebooklm-skill](https://github.com/PleasePrompto/notebooklm-skill) | MIT | Preserve upstream attribution and MIT terms. Upstream is archived. |
 | `skills/ui-ux-pro-max/` | [nextlevelbuilder/ui-ux-pro-max-skill](https://github.com/nextlevelbuilder/ui-ux-pro-max-skill) | MIT | Preserve upstream attribution and MIT terms. |
 | `skills/media-processing/` | [mrgoonie/claudekit-skills](https://github.com/mrgoonie/claudekit-skills/tree/main/.claude/skills/media-processing) | MIT | Preserve upstream attribution and MIT terms. |
-| `skills/skill-creator/` | Source not recorded | Apache-2.0 text included | Do not relicense. Establish upstream provenance before material change or separate distribution. |
-| `skills/webapp-testing/` | Source not recorded | Apache-2.0 text included | Do not relicense. Establish upstream provenance before material change or separate distribution. |
+| `skills/skill-creator/` | [anthropics/skills at `ef740771`](https://github.com/anthropics/skills/tree/ef740771ac901e03fbca3ce4e1c453a96010f30a/skills/skill-creator) | Apache-2.0 text included | Source components proven by exact Git blob hashes: `LICENSE.txt` `7a4a3ea`, `scripts/package_skill.py` `5cd36cb`, and `scripts/quick_validate.py` `d9fbeb7`. Other files are locally modified or added. Preserve Apache terms and do not relicense. |
+| `skills/webapp-testing/` | [anthropics/skills at `ef740771`](https://github.com/anthropics/skills/tree/ef740771ac901e03fbca3ce4e1c453a96010f30a/skills/webapp-testing) | Apache-2.0 text included | Source components proven by exact Git blob hashes: `LICENSE.txt` `7a4a3ea`, `examples/console_logging.py` `9329b5e`, `examples/static_html_automation.py` `90bbedc`, and `scripts/with_server.py` `431f2eb`. Other files are locally modified or added. Preserve Apache terms and do not relicense. |
 | `plugins/agytoggle/` | Source not recorded, creator named in package metadata | MIT | Preserve creator attribution and MIT metadata. Establish public upstream before material change. |
 | `plugins/demo/skills/compose/assets/template/gsap.min.js` | [GreenSock GSAP 3.14.2](https://www.npmjs.com/package/gsap/v/3.14.2) | Standard no-charge license | Preserve its embedded copyright notice. Owner must confirm redistribution suitability or replace it with an install-time dependency. |
 
@@ -67,7 +67,7 @@ changed to vendor them.
 
 1. Confirm that GreenSock's Standard no-charge license permits redistributing
    the bundled `gsap.min.js`, or replace it with an install-time dependency.
-2. Record public upstream locations for `skill-creator`, `webapp-testing`, and
-   `agytoggle`, or remove those components before a separately packaged release.
+2. Record a public upstream location for `agytoggle`, or remove it before a
+   separately packaged release.
 3. Pin source and license metadata for every unpinned installer entry before
    claiming a fully reproducible third-party supply chain.
