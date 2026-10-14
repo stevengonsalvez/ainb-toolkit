@@ -19,12 +19,17 @@ listed component.
 | `skills/skill-creator/` | [anthropics/skills at `ef740771`](https://github.com/anthropics/skills/tree/ef740771ac901e03fbca3ce4e1c453a96010f30a/skills/skill-creator) | Apache-2.0 text included | Source components proven by exact Git blob hashes: `LICENSE.txt` `7a4a3ea`, `scripts/package_skill.py` `5cd36cb`, and `scripts/quick_validate.py` `d9fbeb7`. Other files are locally modified or added. Preserve Apache terms and do not relicense. |
 | `skills/webapp-testing/` | [anthropics/skills at `ef740771`](https://github.com/anthropics/skills/tree/ef740771ac901e03fbca3ce4e1c453a96010f30a/skills/webapp-testing) | Apache-2.0 text included | Source components proven by exact Git blob hashes: `LICENSE.txt` `7a4a3ea`, `examples/console_logging.py` `9329b5e`, `examples/static_html_automation.py` `90bbedc`, and `scripts/with_server.py` `431f2eb`. Other files are locally modified or added. Preserve Apache terms and do not relicense. |
 | `plugins/agytoggle/` | Source not recorded, creator named in package metadata | MIT | Preserve creator attribution and MIT metadata. Establish public upstream before material change. |
-| `plugins/demo/skills/compose/assets/template/gsap.min.js` | [GreenSock GSAP 3.14.2](https://www.npmjs.com/package/gsap/v/3.14.2) | Standard no-charge license | Preserve its embedded copyright notice. Owner must confirm redistribution suitability or replace it with an install-time dependency. |
 
 `plugins/demo/skills/capture/scripts/motion.mjs` records Cap renderer behaviour
 and its source commit for provenance. It states that its implementation is
 independent and that no Cap code is copied. Cap's repository is AGPL-3.0 for
 content not separately identified as MIT, so Cap material is not bundled here.
+
+## Runtime-loaded dependency
+
+| Use | Upstream | License | Required action |
+| --- | --- | --- | --- |
+| Generated `plugins/demo/skills/compose` HTML | [GreenSock GSAP 3.14.2](https://www.npmjs.com/package/gsap/v/3.14.2) | [GSAP Standard no-charge license](https://gsap.com/standard-license/) | Not bundled. Generated HTML fetches the pinned jsDelivr artifact with SRI `sha384-sG0Hv1tP1lZCk9KQmrIbY/XNwi+OY84GQqhMscbnsoBFqAz8KNCil1kvfL3Hbbk2`; GreenSock's license applies to that fetched package. |
 
 ## Referenced installers, not bundled source
 
@@ -65,9 +70,7 @@ changed to vendor them.
 
 ## Decisions still required
 
-1. Confirm that GreenSock's Standard no-charge license permits redistributing
-   the bundled `gsap.min.js`, or replace it with an install-time dependency.
-2. Record public upstream locations for `skill-creator`, `webapp-testing`, and
+1. Record public upstream locations for `skill-creator`, `webapp-testing`, and
    `agytoggle`, or remove those components before a separately packaged release.
-3. Pin source and license metadata for every unpinned installer entry before
+2. Pin source and license metadata for every unpinned installer entry before
    claiming a fully reproducible third-party supply chain.

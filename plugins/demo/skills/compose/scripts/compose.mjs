@@ -14,6 +14,8 @@ const cfgPath = process.argv[2];
 if (!cfgPath) { console.error('usage: compose.mjs <config.json> [segment ...]'); process.exit(2); }
 const C = loadConfig(cfgPath);
 const SKILL = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const GSAP_CDN = 'https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js';
+const GSAP_SRI = 'sha384-sG0Hv1tP1lZCk9KQmrIbY/XNwi+OY84GQqhMscbnsoBFqAz8KNCil1kvfL3Hbbk2';
 const W = C.dw, H = C.dh, SAFE = C.layout.safeMargin;   // design px, see the document section
 const F = (x) => r3(x * C.pace);          // fade and card-motion timings scale with pace
 
@@ -23,7 +25,7 @@ function project(name, html) {
   const d = `${C.out}/projects/${name}`;
   mkdirSync(`${d}/assets/fonts`, { recursive: true });
   mkdirSync(`${d}/assets/footage`, { recursive: true });
-  for (const f of ['hyperframes.json', 'package.json', 'gsap.min.js']) copyFileSync(`${SKILL}/assets/template/${f}`, `${d}/${f}`);
+  for (const f of ['hyperframes.json', 'package.json']) copyFileSync(`${SKILL}/assets/template/${f}`, `${d}/${f}`);
   writeFileSync(`${d}/meta.json`, JSON.stringify({ id: name, name, createdAt: new Date(0).toISOString() }, null, 1));
   for (const f of C.fontFiles) copyFileSync(f, `${d}/assets/fonts/${basename(f)}`);
   // Grain tile for the backdrop: fixed-seed noise, so every render of it is identical. A bitmap
@@ -238,7 +240,7 @@ function doc(id, dur, body, script) {
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=${C.width}, height=${C.height}" />
-<script src="gsap.min.js"></script>
+<script src="${GSAP_CDN}" integrity="${GSAP_SRI}" crossorigin="anonymous"></script>
 <style>${STYLE}</style>
 </head>
 <body>

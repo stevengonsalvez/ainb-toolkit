@@ -781,7 +781,7 @@ the full-to-limited range change, which any BT.709 4:2:0 delivery pays.
   one slide of each kind (the device images are the ferry app at web, tablet and phone sizes).
 - `scripts/check.mjs`: the gate. For square and vertical output it frames the source frame with
   the same view as the composition before comparing.
-- `assets/template/`: `hyperframes.json`, `package.json`, and a vendored `gsap.min.js` so a
-  render needs no CDN.
+- `assets/template/`: `hyperframes.json` and `package.json`. Generated composition HTML loads
+  pinned GSAP 3.14.2 from jsDelivr with an SRI hash, so this repository does not bundle GSAP.
 - `examples/ferry/`: a runnable example, a made-up app with its server, beats file, config and
   fonts, every path relative to that directory.
