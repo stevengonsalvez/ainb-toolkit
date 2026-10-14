@@ -421,8 +421,6 @@ printf '{"FEATURE_SPEC":"%s","IMPL_PLAN":"%s","SPECS_DIR":"%s","BRANCH":"%s"}\n'
 // --- SDD (Spec-Driven Development) tests ---
 describe('Spec-Driven Development (SDD) Setup', () => {
     const tempDir = path.join(__dirname, 'tmp-test-folder-sdd');
-    const specKitRoot = process.env.SPEC_KIT_PATH || '/Users/stevengonsalvez/d/git/spec-kit';
-
     beforeEach(() => {
         if (fs.existsSync(tempDir)) {
             fs.rmSync(tempDir, { recursive: true, force: true });

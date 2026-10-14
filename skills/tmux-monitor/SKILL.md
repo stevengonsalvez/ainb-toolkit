@@ -169,7 +169,7 @@ fi
 - **Agent Type**: codex
 - **Task**: Refactor authentication module
 - **Status**: ⚙️  Running (15 minutes)
-- **Working Directory**: /Users/stevie/projects/myapp
+- **Working Directory**: /workspace/myapp
 - **Git Worktree**: worktrees/agent-1705160000
 - **Windows**: 1 (work)
 - **Panes**: 2 (agent | monitoring)
@@ -309,7 +309,7 @@ Full report with all metadata, sample output, recommendations.
       "task": "Refactor authentication module",
       "status": "running",
       "runtime": "15m",
-      "directory": "/Users/stevie/projects/myapp",
+      "directory": "/workspace/myapp",
       "worktree": "worktrees/agent-1705160000",
       "metadata_file": "{{HOME_TOOL_DIR}}/agents/agent-1705160000.json"
     }

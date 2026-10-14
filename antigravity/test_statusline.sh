@@ -9,17 +9,17 @@ SCRIPT="${DIR}/statusline.sh"
 echo "=== Test 1: Full Antigravity Payload (Gemini 3.8 Flash + Quota + Tasks) ==="
 cat << 'EOF' | bash "$SCRIPT"
 {
-  "cwd": "/Users/stevengonsalvez/orca/workspaces/ainb-toolkit/antigravity-statusline",
+  "cwd": "/tmp/fixture/antigravity-statusline",
   "conversation_id": "210d73e5-f632-4891-8b7d-cb70acf4def6",
   "session_id": "210d73e5-f632-4891-8b7d-cb70acf4def6",
-  "transcript_path": "/Users/stevengonsalvez/.gemini/antigravity-cli/brain/210d73e5-f632-4891-8b7d-cb70acf4def6/.system_generated/logs/transcript.jsonl",
+  "transcript_path": "/tmp/fixture/.gemini/antigravity-cli/brain/210d73e5-f632-4891-8b7d-cb70acf4def6/.system_generated/logs/transcript.jsonl",
   "model": {
     "id": "Gemini 3.8 Flash (High)",
     "display_name": "Gemini 3.8 Flash (High)"
   },
   "workspace": {
-    "current_dir": "/Users/stevengonsalvez/orca/workspaces/ainb-toolkit/antigravity-statusline",
-    "project_dir": "/Users/stevengonsalvez/orca/workspaces/ainb-toolkit/antigravity-statusline"
+    "current_dir": "/tmp/fixture/antigravity-statusline",
+    "project_dir": "/tmp/fixture/antigravity-statusline"
   },
   "version": "1.0.13",
   "context_window": {
@@ -60,7 +60,7 @@ cat << 'EOF' | bash "$SCRIPT"
   },
   "artifact_count": 2,
   "plan_tier": "Pro",
-  "email": "stevengonsalvez@example.com",
+  "email": "fixture@example.test",
   "task_count": 1,
   "terminal_width": 120,
   "execution_mode": "planning"
@@ -71,7 +71,7 @@ echo ""
 echo "=== Test 1b: Full AGY 4-Bucket Quota (3p + gemini) ==="
 cat << 'EOF' | bash "$SCRIPT"
 {
-  "cwd": "/Users/stevengonsalvez/orca/workspaces/ainb-toolkit/toolkit-intel",
+  "cwd": "/tmp/fixture/toolkit-intel",
   "model": {
     "id": "Gemini 3.8 Flash (High)",
     "display_name": "Gemini 3.8 Flash (High)"
@@ -83,7 +83,7 @@ cat << 'EOF' | bash "$SCRIPT"
     "gemini-weekly": { "remaining_fraction": 0.57, "reset_in_seconds": 305688 }
   },
   "plan_tier": "Google AI Pro",
-  "email": "lazymonkkmann@gmail.com"
+  "email": "fixture@example.test"
 }
 EOF
 
@@ -91,7 +91,7 @@ echo ""
 echo "=== Test 2: Claude Code Payload Compatibility ==="
 cat << 'EOF' | bash "$SCRIPT"
 {
-  "cwd": "/Users/stevengonsalvez/orca/workspaces/ainb-toolkit/antigravity-statusline",
+  "cwd": "/tmp/fixture/antigravity-statusline",
   "model": {
     "id": "claude-sonnet-4.6",
     "display_name": "Claude Sonnet 4.6"

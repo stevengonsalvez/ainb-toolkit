@@ -1,12 +1,11 @@
-# OpenClaw Agents — Usage Sync Hook
+# OpenClaw Agents: Usage Sync Hook
 
 Real-time Claude Code session usage tracking. Fires on `Stop` and `SubagentStop` events, parses the session JSONL transcript, and pushes aggregated usage data (tokens, cost, model, duration) to a Convex HTTP endpoint for dashboard display.
 
 ## Prerequisites
 
-- A Convex deployment with:
-  - `sessionUsage` table (see mission-control `convex/schema.ts`)
-  - HTTP POST endpoint at `/api/usage` (see mission-control `convex/http.ts`)
+- A Convex deployment with a `sessionUsage` table and an HTTP POST endpoint at
+  `/api/usage`
 - `uv` installed (for running the hook script)
 - `python-dotenv` (auto-installed via inline script metadata)
 
@@ -23,7 +22,10 @@ Real-time Claude Code session usage tracking. Fires on `Stop` and `SubagentStop`
 3. Set the Convex URL via one of:
    - `CONVEX_URL` environment variable
    - `NEXT_PUBLIC_CONVEX_URL` environment variable
-   - Auto-discovery from `~/d/popashot-agent/mission-control/.env.local`
+   - `OPENCLAW_ENV_FILE` pointing to a local env file
+
+   Set `OPENCLAW_AGENT_ID` when the deployment needs a fixed agent identifier.
+   No project path or session-slug inference is performed.
 
 ## What it tracks
 
@@ -39,10 +41,8 @@ Real-time Claude Code session usage tracking. Fires on `Stop` and `SubagentStop`
 
 ## Agent identification
 
-Sessions are mapped to agent IDs based on:
-
-- **Project path**: `popashot-agent` -> `popashot`, `popabot` -> `main`, `heimdall` -> `heimdall`
-- **Session slug**: `build-*` / `research-*` / `fix-pr-*` / `e2e-*` -> `popashot`, `heimdall-*` -> `heimdall`
+Sessions use `OPENCLAW_AGENT_ID` when it is set. Otherwise the hook reports
+`unknown`; deployments can group that value at the destination.
 
 ## Model pricing (per million tokens, USD)
 
