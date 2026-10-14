@@ -29,7 +29,7 @@ content not separately identified as MIT, so Cap material is not bundled here.
 
 | Use | Upstream | License | Required action |
 | --- | --- | --- | --- |
-| Generated `plugins/demo/skills/compose` HTML | [GreenSock GSAP 3.14.2](https://www.npmjs.com/package/gsap/v/3.14.2) | [GSAP Standard no-charge license](https://gsap.com/standard-license/) | Not bundled. Generated HTML fetches the pinned jsDelivr artifact with SRI `sha384-sG0Hv1tP1lZCk9KQmrIbY/XNwi+OY84GQqhMscbnsoBFqAz8KNCil1kvfL3Hbbk2`; GreenSock's license applies to that fetched package. |
+| Generated `plugins/demo/skills/compose` HTML | [GreenSock GSAP 3.14.2](https://www.npmjs.com/package/gsap/v/3.14.2) | [GSAP Standard no-charge license](https://gsap.com/standard-license/) | Not bundled in this repository. Compose installs the pinned package into each generated project, verifies `gsap.min.js` SHA-256 `c174bfce53a729418d57a8ad8625e7247c793a22fef8e2851e3cfa3de9cd8280`, then copies it beside `index.html`. Only a failed local install uses pinned jsDelivr with SRI `sha384-sG0Hv1tP1lZCk9KQmrIbY/XNwi+OY84GQqhMscbnsoBFqAz8KNCil1kvfL3Hbbk2`; GreenSock's license applies to the installed or fetched package. |
 
 ## Referenced installers, not bundled source
 

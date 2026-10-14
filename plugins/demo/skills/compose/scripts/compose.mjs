@@ -9,13 +9,12 @@ import { fileURLToPath } from 'node:url';
 import { loadConfig, segmentNames, seams, seamsOf, screenRect, VERTICAL, eventsPath, r3, esc, grayFrames, mad, hexToRgba, clipSpans, frameCount, resolveBeats } from './config.mjs';
 import { audioSettings, narrationClips, fitNarration, beatGrid } from './audio.mjs';
 import { cues as captionCues } from './captions.mjs';
+import { GSAP_SCRIPT_TOKEN, installGsap } from './gsap.mjs';
 
 const cfgPath = process.argv[2];
 if (!cfgPath) { console.error('usage: compose.mjs <config.json> [segment ...]'); process.exit(2); }
 const C = loadConfig(cfgPath);
 const SKILL = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const GSAP_CDN = 'https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js';
-const GSAP_SRI = 'sha384-sG0Hv1tP1lZCk9KQmrIbY/XNwi+OY84GQqhMscbnsoBFqAz8KNCil1kvfL3Hbbk2';
 const W = C.dw, H = C.dh, SAFE = C.layout.safeMargin;   // design px, see the document section
 const F = (x) => r3(x * C.pace);          // fade and card-motion timings scale with pace
 
@@ -26,6 +25,7 @@ function project(name, html) {
   mkdirSync(`${d}/assets/fonts`, { recursive: true });
   mkdirSync(`${d}/assets/footage`, { recursive: true });
   for (const f of ['hyperframes.json', 'package.json']) copyFileSync(`${SKILL}/assets/template/${f}`, `${d}/${f}`);
+  const gsapScript = installGsap(d);
   writeFileSync(`${d}/meta.json`, JSON.stringify({ id: name, name, createdAt: new Date(0).toISOString() }, null, 1));
   for (const f of C.fontFiles) copyFileSync(f, `${d}/assets/fonts/${basename(f)}`);
   // Grain tile for the backdrop: fixed-seed noise, so every render of it is identical. A bitmap
@@ -34,7 +34,7 @@ function project(name, html) {
   if (!existsSync(grain)) execFileSync(C.ffmpeg, ['-nostdin', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=gray:s=256x256',
     '-vf', 'noise=alls=64:allf=u:all_seed=7,format=gray', '-frames:v', '1', grain]);
   copyFileSync(grain, `${d}/assets/grain.png`);
-  writeFileSync(`${d}/index.html`, html);
+  writeFileSync(`${d}/index.html`, html.replace(GSAP_SCRIPT_TOKEN, gsapScript));
   return d;
 }
 
@@ -240,7 +240,7 @@ function doc(id, dur, body, script) {
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=${C.width}, height=${C.height}" />
-<script src="${GSAP_CDN}" integrity="${GSAP_SRI}" crossorigin="anonymous"></script>
+${GSAP_SCRIPT_TOKEN}
 <style>${STYLE}</style>
 </head>
 <body>
