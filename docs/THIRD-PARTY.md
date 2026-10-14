@@ -67,7 +67,7 @@ changed to vendor them.
 
 1. Confirm that GreenSock's Standard no-charge license permits redistributing
    the bundled `gsap.min.js`, or replace it with an install-time dependency.
-2. Record a public upstream location for `agytoggle`, or remove it before a
-   separately packaged release.
+2. Record public upstream locations for `skill-creator`, `webapp-testing`, and
+   `agytoggle`, or remove those components before a separately packaged release.
 3. Pin source and license metadata for every unpinned installer entry before
    claiming a fully reproducible third-party supply chain.
