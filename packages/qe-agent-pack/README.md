@@ -160,11 +160,11 @@ re-vendored fails the build rather than shipping a stale pack.
 
 `catalog-info.yaml` describes the whole pack in the Backstage catalog model so
 that Roadie, or any Backstage, lists every skill and agent as a catalogued
-asset with provenance and an eval score. It is generated, never hand-edited:
+asset with provenance. It carries no eval numbers. It is generated, never hand-edited:
 
 | Entity | Kind | One per |
 |---|---|---|
-| `qe-agent-pack` | `System` | the pack; carries the eval summary in its description and links to the gate report |
+| `qe-agent-pack` | `System` | the pack |
 | `expect-test`, `webapp-testing`, `find-missing-tests`, `test-driven-development` | `AiResource`, `spec.type: skill` | skill under `.apm/skills/` |
 | `test-engineer`, `playwright-test-planner`, `playwright-test-generator`, `playwright-test-healer` | `AiResource`, `spec.type: skill`, category `agent` | agent under `.apm/agents/` |
 | `playwright-test` | `API`, `spec.type: mcp-server` | entry in `dependencies.mcp` of `apm.yml` |
@@ -180,7 +180,7 @@ than an undocumented type.
 
 ```bash
 scripts/generate-backstage-catalog            # regenerate catalog-info.yaml and .well-known/skills/index.json
-scripts/generate-backstage-catalog --check    # exit 1 if either file drifts from apm.yml, .apm/ or eval-score.json
+scripts/generate-backstage-catalog --check    # exit 1 if either file drifts from apm.yml or .apm/
 scripts/validate-backstage-catalog packages/qe-agent-pack/catalog-info.yaml   # Backstage entity model check
 ```
 
@@ -225,14 +225,11 @@ same ingestion pass.
 | Annotation | On | Value |
 |---|---|---|
 | `backstage.io/source-location` | every entity | `url:` plus the GitHub `tree` (directory) or `blob` (file) URL at the exact commit sha the entity was generated from; skills point at their directory, agents at their `.agent.md`, the MCP server at `apm.yml`, the System at the pack root |
-| `wololo.dev/eval-score` | the System | compact JSON with `metrics` (candidate and baseline per signal), `recorded` date, `source` URL of the gate report, `sourceVisibility` and `verdict`, copied from `eval-score.json` |
-| `wololo.dev/eval-score-ref` | every other entity | entity reference to the System that carries the score, so the numbers are stored once |
 | `wololo.dev/apm-package` | every entity | `<name>@<version>` from `apm.yml` |
 | `wololo.dev/mcp-servers` | agents whose `tools` name `mcp__<server>__*` tools | comma-separated server names; the generator fails if a named server is not declared in `apm.yml` |
 | `wololo.dev/agent-model` | agents that declare a `model` | the `model` field from the agent frontmatter |
 
-The source-location sha is the last commit that touched `apm.yml`, `.apm/` or
-`eval-score.json`, not the commit that regenerated the file, so the URL always
+The source-location sha is the last commit that touched `apm.yml` or `.apm/`, not the commit that regenerated the file, so the URL always
 resolves to the bytes the entity describes. The generator refuses to run while
 those sources have uncommitted changes (`--allow-dirty` overrides). `--check`
 reads the sha already pinned in `catalog-info.yaml` rather than deriving one.
@@ -261,18 +258,18 @@ regenerated on `main`, which re-pins it to a commit in history.
 | `spec.agents` | derived: `targets` in `apm.yml`, mapped `claude` to `claude-code` and `copilot` to `github-copilot` |
 | `spec.license`, `spec.allowedTools` | derived: skill frontmatter, falling back to the `apm.yml` license |
 | MCP `remotes` and `definition` | derived: the `dependencies.mcp` entry, `command` plus `args` for stdio |
-| Eval score, gate report URL, date, verdict | supplied: `eval-score.json`, validated by the generator (required signals, numbers in `[0, 1]`, ISO date, https URL, and a `PASS` verdict only when every guarded signal holds its baseline) |
 | `spec.lifecycle` (`experimental`), `spec.disciplines` (`quality-engineering`), categories (`testing`, `agent`) | supplied: constants at the top of `scripts/generate-backstage-catalog` |
 
-`eval-score.json` records the `qe-skill` benchmark gate for this pack from
-wololo-evals: mutation kill rate 0.3012 against a 0.2373 no-agent baseline,
-seeded-defect catch 0.3636 against 0.2500, flake resistance 1.0. Those numbers
-are recomputed at gate time from real mutation and seeded-defect runs; the
-recorded trajectories in that corpus are hand-authored fixtures, and the file
-says so. Update the file when a new gate run lands, then regenerate.
+### Evaluation status
 
-The gate report is public. `eval-score.json` marks it `"visibility":
-"public"`, and the generated System links directly to the source report.
+This pack declares no `eval:` block and ships no gate report, so a hub shows it
+as unscored. It used to carry a score copied into the catalogue, from a
+`qe-skill` replay in wololo-evals whose trajectories were hand-authored
+fixtures rather than captured model runs. That is not a measurement of this
+pack as installed, and it had no single skill to point an `eval:` block at (the
+pack ships four), so the score was removed rather than restated. A live run
+against one skill would add an `eval:` block to `apm.yml` and an
+`eval-gate-report.json` beside it, as `packages/test-writer-pack` does.
 
 ### Skills index
 

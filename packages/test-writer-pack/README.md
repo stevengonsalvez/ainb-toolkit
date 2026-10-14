@@ -36,9 +36,12 @@ Targets are pinned to `copilot` and `claude`. Install for one of them with
 Two runs are recorded here, because a single candidate arm cannot separate what
 this pack contains from whether a model ever reaches for it.
 
+The evaluation is declared once, in the `eval:` block of `apm.yml`.
 `eval-gate-report.json` is the gate's own output for the normal arm, committed
-unedited. `eval-gate-report-forced.json` is the same thing for an arm told to
-use the skill. Both were measured at the pack commit named in their `subject`.
+unedited, and is the single result file the hub reads.
+`evidence/forced-arm-gate-report.json` is the same thing for an arm told to use
+the skill; it backs the claims below and is not read as a score. Both were
+measured at the pack commit named in their `subject`.
 
 ### Routing: does the model reach for it
 

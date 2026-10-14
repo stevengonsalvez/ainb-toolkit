@@ -20,3 +20,17 @@ targets:
 dependencies:
   apm: []
   mcp: []
+
+# How this pack is evaluated, declared once. The measured result is not stored
+# here: `wololo-evals-cli run --config apm.yml` writes eval-gate-report.json
+# beside this file, and that report is the only place a score lives. `asset`
+# is omitted because the pack has exactly one skill. The values mirror the live
+# run that produced the committed report (matrix-candidate.toml in wololo-evals:
+# claude engine, claude-sonnet-5, 12.0 USD cap, 0.7 pass threshold, no
+# tolerated regression).
+eval:
+  benchmark: qe-skill
+  engine: claude
+  model: claude-sonnet-5
+  max_cost_usd: 12.0
+  thresholds: { pass: 0.7, max_regression: 0.0 }

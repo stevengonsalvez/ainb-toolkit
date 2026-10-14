@@ -3,7 +3,7 @@
 What has to hold for the catalogue to be trustworthy in CI:
 the committed files match what the generator produces, every skill and agent
 in the pack has an entity, every source-location resolves to real files at a
-real commit, the eval annotation matches eval-score.json, the drift check
+real commit, the catalogue copies no eval numbers, the drift check
 really fails when the pack changes, the Backstage validator really rejects a
 broken entity, and the skills index matches the pack.
 """
@@ -125,25 +125,14 @@ def test_playwright_agents_declare_their_mcp_dependency() -> None:
             assert servers is None
 
 
-def test_eval_annotation_matches_eval_score_json() -> None:
-    score = json.loads((PACK / "eval-score.json").read_text())
-    system = next(e for e in entities() if e["kind"] == "System")
-    payload = json.loads(system["metadata"]["annotations"]["wololo.dev/eval-score"])
-    assert payload["metrics"] == score["metrics"]
-    assert payload["source"] == score["source"]
-    assert payload["recorded"] == score["recorded"]
-    assert payload["verdict"] == score["verdict"]
-    assert payload["sourceVisibility"] == score["visibility"] == "public"
-    link = next(l for l in system["metadata"]["links"] if l["type"] == "eval")
-    assert link["url"] == score["source"]
-    assert link["title"] == "Eval gate report"
+def test_catalogue_carries_no_eval_numbers() -> None:
+    """A score lives in a gate report, never copied into the catalogue."""
+    assert not (PACK / "eval-score.json").exists()
     for entity in entities():
         annotations = entity["metadata"]["annotations"]
-        if entity["kind"] == "System":
-            assert "wololo.dev/eval-score-ref" not in annotations
-        else:
-            assert "wololo.dev/eval-score" not in annotations
-            assert annotations["wololo.dev/eval-score-ref"] == "system:default/qe-agent-pack"
+        assert not [k for k in annotations if "eval" in k]
+        assert not [l for l in entity["metadata"].get("links", []) if l["type"] == "eval"]
+        assert "Eval gate" not in entity["metadata"].get("description", "")
 
 
 def ensure_commit_is_local(sha: str) -> None:
@@ -225,16 +214,6 @@ def test_check_fails_after_adding_a_skill_without_regenerating(pack_repo: Path) 
     assert "drift: catalog-info.yaml" in result.stderr
     assert "drift: .well-known/skills/index.json" in result.stderr
     assert "brand-new-skill" in result.stderr
-
-
-def test_generator_rejects_an_out_of_range_eval_score(pack_repo: Path) -> None:
-    score_file = pack_repo / "eval-score.json"
-    score = json.loads(score_file.read_text())
-    score["metrics"]["mutation_kill_rate"]["candidate"] = 1.5
-    score_file.write_text(json.dumps(score))
-    result = run_generator("--pack", str(pack_repo), "--pack-rel", "packages/qe-agent-pack", "--allow-dirty")
-    assert result.returncode == 2
-    assert "mutation_kill_rate" in result.stderr
 
 
 def test_generator_refuses_a_pack_outside_a_git_repository(tmp_path: Path) -> None:
