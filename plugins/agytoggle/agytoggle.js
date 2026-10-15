@@ -6,7 +6,7 @@
  */
 
 import { promises as fs } from 'fs';
-import { execSync } from 'child_process';
+import { execSync, execFileSync } from 'child_process';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import os from 'os';
@@ -165,6 +165,18 @@ function hasCommand(cmd) {
     return true;
   } catch {
     return false;
+  }
+}
+
+// Newer agy CLI keeps login creds in the macOS keychain, not the token file.
+// Same go-keyring-base64 payload that writeCredentials() stores.
+function readKeychainPayload() {
+  if (os.platform() !== 'darwin' || !hasCommand('security')) return null;
+  try {
+    const raw = execFileSync('security', ['find-generic-password', '-s', 'gemini', '-a', 'antigravity', '-w'], { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
+    return Buffer.from(raw.replace(/^go-keyring-base64:/, ''), 'base64').toString('utf8');
+  } catch {
+    return null;
   }
 }
 
@@ -545,9 +557,13 @@ Usage:
     try {
       fileContent = await fs.readFile(TOKEN_PATH, 'utf8');
     } catch (err) {
-      console.error(`[Error] Could not read token file at ${TOKEN_PATH}: ${err.message}`);
-      console.error("Please run 'agy' and log in first to establish an active session.");
-      process.exit(1);
+      fileContent = readKeychainPayload() || '';
+      if (!fileContent) {
+        console.error(`[Error] Could not read token file at ${TOKEN_PATH}: ${err.message}`);
+        console.error("No keychain session either. Run 'agy' and log in first to establish an active session.");
+        process.exit(1);
+      }
+      console.log('Token file missing, using keychain session.');
     }
 
     let tokenData;
