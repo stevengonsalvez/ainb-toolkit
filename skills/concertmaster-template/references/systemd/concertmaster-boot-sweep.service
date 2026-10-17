@@ -1,0 +1,22 @@
+# /etc/systemd/system/concertmaster-boot-sweep.service
+# Runs once per boot, after orca-resume had its chance to reopen and nudge sessions.
+# After= orders it behind orca-serve and orca-resume WITHOUT pulling orca-resume in (a Wants=
+# would start that oneshot a second time). Type=exec: the service does not hold up boot completion
+# and has no start timeout that could kill it before the report is written. If Orca never answers
+# the script waits 300 s, leaves an inbox note and exits 0.
+[Unit]
+Description=Re-arm standing lanes that did nothing since boot (concertmaster)
+After=orca-serve.service orca-resume.service network-online.target
+
+[Service]
+Type=exec
+User=@USER@
+WorkingDirectory=@HOME@
+Environment=HOME=@HOME@
+# same PATH as orca-serve.service: orca-ide lives in ~/.local/bin, which systemd's default PATH lacks
+Environment=PATH=@HOME@/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStartPre=/bin/mkdir -p @HOME@/.local/state
+ExecStart=/bin/sh -c 'exec @HOME@/.concertmaster/bin/boot-sweep.sh >> @HOME@/.local/state/boot-sweep.log 2>&1'
+
+[Install]
+WantedBy=multi-user.target

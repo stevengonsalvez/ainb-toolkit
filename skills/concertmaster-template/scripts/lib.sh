@@ -151,3 +151,10 @@ cm_file_fresh() {
 }
 
 cm_now_ms() { printf '%s000\n' "$(date +%s)"; }
+
+# Screen checks shared by boot-sweep.sh (same patterns resume.sh uses locally; judge only the
+# bottom ~12 non-empty lines of a screen, never the replayed transcript above it).
+# shellcheck disable=SC2034  # read by boot-sweep.sh
+CM_MENU_RE='enter to select|enter to confirm|esc to cancel|arrow keys|tab/arrow'
+# shellcheck disable=SC2034  # read by boot-sweep.sh
+CM_CLAUDE_RE='claude code|\? for shortcuts|esc to interrupt|shift\+tab|bypass permissions|accept edits|auto-accept'

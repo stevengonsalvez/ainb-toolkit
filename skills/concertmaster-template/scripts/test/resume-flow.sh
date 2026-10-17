@@ -13,9 +13,10 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 export CM_CONFIG="$HERE/fixtures/config.test.yaml"
 unset CM_ORG CM_REPO CM_PROJECT CM_OWNER_NAME CM_OWNER_ID CM_TZ CM_TZ_LABEL CM_EXCLUDE_REPOS CM_PATH_MATCH CM_SELF_WORKTREE
 SCRIPTS="$(cd "$HERE/.." && pwd)"
-ROOT="$(mktemp -d "${TMPDIR:-/tmp}/cm-resume-test.XXXXXX")"
+ROOT="$(mktemp -d "${TMPDIR:-/tmp}/cm-resume-test.XXXXXX")" || { echo "cannot create a temp dir" >&2; exit 1; }
+[ -n "$ROOT" ] && [ -d "$ROOT" ] || { echo "temp dir missing" >&2; exit 1; }
 PROC_PID=""
-trap '[ -z "$PROC_PID" ] || kill "$PROC_PID" 2>/dev/null; rm -rf "$ROOT"' EXIT
+trap '[ -z "$PROC_PID" ] || kill "$PROC_PID" 2>/dev/null; rm -rf -- "${ROOT:?}"' EXIT
 export CM_HOME="$ROOT/home"
 STUB="$ROOT/stub"
 mkdir -p "$CM_HOME" "$STUB" "$ROOT/bin" "$ROOT/wtproc"
@@ -132,7 +133,7 @@ row() { # row <lane> <host> <path> <current> [agent] [state] [worktreeId]
   row fail-lane local /x/fail-lane "#4703 fail"
   row remote-lane remote-1 /y/remote-dead "#4704 remote"
   row stale-lane local /y/stale-agent "#4705 stale"
-  row epic-offline m1-mac /m/offline "#4706 offline"
+  row epic-offline mac-1 /m/offline "#4706 offline"
   row ghost local /x/ghost "#4707 ghost"
   row blind-lane local /x/blind-lane "#4708 blind"
   row slow-lane local /x/slow-lane "#4709 slow"
@@ -235,7 +236,7 @@ OUT="$("$SCRIPTS/resume.sh" --lane shell-lane 2>/dev/null)"; CALLS="$(cat "$STUB
 check "failed attempt in the last 30 min: no second terminal" 'has_line "shell-lane +failed +resume already tried in the last 30 min" && [ "$(creates)" = 0 ]'
 
 echo "--- dry run"
-: > "$STUB/calls.log"; rm -f "$STUB"/handle-* "$STUB/n" "$STUB"/pscount-*; rm -rf "$CM_HOME/resume.attempts"
+: > "$STUB/calls.log"; rm -f -- "${STUB:?}"/handle-* "${STUB:?}/n" "${STUB:?}"/pscount-*; rm -rf -- "${CM_HOME:?}/resume.attempts"
 OUT="$("$SCRIPTS/resume.sh" --dry-run 2>/dev/null)"; CALLS="$(cat "$STUB/calls.log")"
 check "dry run: no create, no send"                '[ "$(creates)" = 0 ] && [ "$(sends)" = 0 ]'
 check "dry run: dead row reported as would resume" 'has_line "dev-sweeper +dead +would claude --continue --model sonnet, nudge \(#4612\)"'
@@ -268,7 +269,7 @@ cat > "$CM_HOME/ledger.json" <<'J'
 {"updatedAt": "2026-10-13T08:00:00Z",
  "workers": {"w-dev": {"lane": "dev-sweeper", "host": "local", "agent": "claude", "model": "sonnet", "path": "/x/dev-sweeper", "task": "#4612 calendar export", "lastComment": "cm:running"}}}
 J
-rm -f "$R"; : > "$STUB/calls.log"; rm -f "$STUB"/handle-* "$STUB/n" "$STUB"/pscount-*; rm -rf "$CM_HOME/resume.attempts"
+rm -f "$R"; : > "$STUB/calls.log"; rm -f -- "${STUB:?}"/handle-* "${STUB:?}/n" "${STUB:?}"/pscount-*; rm -rf -- "${CM_HOME:?}/resume.attempts"
 OUT="$("$SCRIPTS/resume.sh" 2>/dev/null)"; CALLS="$(cat "$STUB/calls.log")"
 check "missing roster: rewritten from ledger, then resumed" '[ -s "$R" ] && has_line "dev-sweeper +dead +claude --continue --model sonnet, nudged \(#4612\)"'
 rm -f "$R" "$CM_HOME/ledger.json"; : > "$STUB/calls.log"
@@ -282,7 +283,7 @@ cat > "$CM_HOME/ledger.json" <<'J'
 J
 { row dev-sweeper local /x/dev-sweeper "#4612 calendar export"; row ghost-retired local /x/blind-lane "#4708 retired"; } > "$R"
 touch -d '2 hours ago' "$R" 2>/dev/null || touch -t 202610130600 "$R"
-: > "$STUB/calls.log"; rm -f "$STUB"/handle-* "$STUB/n" "$STUB"/pscount-*; rm -rf "$CM_HOME/resume.attempts"
+: > "$STUB/calls.log"; rm -f -- "${STUB:?}"/handle-* "${STUB:?}/n" "${STUB:?}"/pscount-*; rm -rf -- "${CM_HOME:?}/resume.attempts"
 OUT="$("$SCRIPTS/resume.sh" 2>/dev/null)"; CALLS="$(cat "$STUB/calls.log")"
 check "stale roster rewritten: retired worker left out" '! has_line "ghost-retired" && has_line "dev-sweeper +dead"'
 check "retired worker's tree got no create or send"   '! printf "%s\n" "$CALLS" | grep -E "^terminal (create|send)" | grep -q "blind-lane"'
@@ -293,7 +294,7 @@ cat > "$CM_HOME/ledger.json" <<'J'
  "workers": {"w-dev": {"lane": "dev-sweeper", "host": "local", "agent": "claude", "model": "sonnet", "path": "/x/dev-sweeper", "task": "#4612 calendar export", "lastComment": "cm:running"},
              "w-menu": {"lane": "menu-lane", "host": "local", "agent": "claude", "model": "sonnet", "path": "/x/menu-lane", "task": "#4702 menu", "lastComment": "cm:running"}}}
 J
-: > "$STUB/calls.log"; rm -f "$STUB"/handle-* "$STUB/n" "$STUB"/pscount-*; rm -rf "$CM_HOME/resume.attempts"
+: > "$STUB/calls.log"; rm -f -- "${STUB:?}"/handle-* "${STUB:?}/n" "${STUB:?}"/pscount-*; rm -rf -- "${CM_HOME:?}/resume.attempts"
 OUT="$("$SCRIPTS/resume.sh" --path /x/dev-sweeper/ 2>/dev/null)"; CALLS="$(cat "$STUB/calls.log")"
 check "--path: only that row is acted on"            '[ "$(creates)" = 1 ] && has_line "dev-sweeper +dead" && ! has_line "menu-lane"'
 OUT="$("$SCRIPTS/resume.sh" --lane no-such-lane 2>/dev/null)"
@@ -307,7 +308,7 @@ cat > "$CM_HOME/ledger.json" <<'J'
              "w-rem": {"lane": "remote-lane", "host": "remote-1", "agent": "claude", "model": "sonnet", "path": "/y/remote-dead", "task": "#4704 remote", "lastComment": "cm:running"},
              "w-big": {"lane": "big-lane", "host": "bigbox", "agent": "claude", "path": "/z/big", "task": "far away", "lastComment": "cm:running"}}}
 J
-: > "$STUB/calls.log"; rm -f "$STUB"/handle-* "$STUB/n" "$STUB"/pscount-*; rm -rf "$CM_HOME/resume.attempts"
+: > "$STUB/calls.log"; rm -f -- "${STUB:?}"/handle-* "${STUB:?}/n" "${STUB:?}"/pscount-*; rm -rf -- "${CM_HOME:?}/resume.attempts"
 OUT="$(CM_TEST_CLAUDE_CWDS_CMD=false "$SCRIPTS/resume.sh" --host local 2>/dev/null)"; CALLS="$(cat "$STUB/calls.log")"
 check "process check cannot run: local dead row is unknown, no create" 'has_line "dev-sweeper +unknown +process check unavailable" && [ "$(creates)" = 0 ]'
 OUT="$("$SCRIPTS/resume.sh" --host bigbox 2>/dev/null)"
@@ -315,7 +316,7 @@ check "truncated census: unknown, not missing"       'has_line "big-lane +unknow
 : > "$STUB/calls.log"
 OUT="$("$SCRIPTS/resume.sh" --host remote-1 2>/dev/null)"; CALLS="$(cat "$STUB/calls.log")"
 check "--host: only that host's row is acted on"     'has_line "remote-lane +dead" && ! has_line "dev-sweeper" && [ "$(creates)" = 1 ]'
-: > "$STUB/calls.log"; rm -f "$STUB"/handle-* "$STUB/n" "$STUB"/pscount-*; rm -rf "$CM_HOME/resume.attempts"
+: > "$STUB/calls.log"; rm -f -- "${STUB:?}"/handle-* "${STUB:?}/n" "${STUB:?}"/pscount-*; rm -rf -- "${CM_HOME:?}/resume.attempts"
 OUT="$(CM_RESUME_BUDGET_S=-1 "$SCRIPTS/resume.sh" --host local 2>/dev/null)"
 # shellcheck disable=SC2034  # BRC is read inside the eval-ed check below
 BRC=$?
@@ -332,9 +333,9 @@ cat > "$CM_HOME/ledger.json" <<'J'
 {"updatedAt": "2026-10-13T09:00:00Z",
  "workers": {"w-dev": {"lane": "dev-sweeper", "host": "local", "agent": "claude", "model": "--dangerously-skip-permissions", "path": "/x/dev-sweeper", "task": "#4612 calendar export", "lastComment": "cm:running"}}}
 J
-: > "$STUB/calls.log"; rm -f "$STUB"/handle-* "$STUB/n" "$STUB"/pscount-*; rm -rf "$CM_HOME/resume.attempts"; touch "$STUB/steal-lock"
+: > "$STUB/calls.log"; rm -f -- "${STUB:?}"/handle-* "${STUB:?}/n" "${STUB:?}"/pscount-*; rm -rf -- "${CM_HOME:?}/resume.attempts"; touch "$STUB/steal-lock"
 OUT="$("$SCRIPTS/resume.sh" --lane dev-sweeper 2>/dev/null)"; CALLS="$(cat "$STUB/calls.log")"
-rm -f "$STUB/steal-lock"; rm -rf "$CM_HOME/resume.lock"
+rm -f "$STUB/steal-lock"; rm -rf -- "${CM_HOME:?}/resume.lock"
 check "lock taken over after the census: unknown, no create" 'has_line "dev-sweeper +unknown +lost the resume lock" && [ "$(creates)" = 0 ]'
 OUT="$("$SCRIPTS/resume.sh" --dry-run --lane dev-sweeper 2>/dev/null)"
 check "a model value starting with a dash is not passed to claude" '! has_line "--model" && has_line "dev-sweeper +dead +would claude --continue, nudge"'

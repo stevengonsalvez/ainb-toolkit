@@ -1,0 +1,10 @@
+# /etc/systemd/system/concertmaster-cred-check.timer
+[Unit]
+Description=Check fleet credentials every Monday 07:00 UTC
+
+[Timer]
+OnCalendar=Mon *-*-* 07:00:00 UTC
+Persistent=true
+
+[Install]
+WantedBy=timers.target

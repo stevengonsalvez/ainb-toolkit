@@ -1042,7 +1042,7 @@ for p in "$@"; do
   esac
 done
 rc=0
-for p in "$@"; do rm -rf -- "./$p" || rc=1; done
+for p in "$@"; do rm -rf -- "./${p:?}" || rc=1; done
 for p in "$@"; do if [ -e "./$p" ] || [ -L "./$p" ]; then printf "%s\n" "$p"; rc=1; fi; done
 exit "$rc"'
   [ -n "$SALVAGE_DIR" ] || fail "bd runtime files present but not salvaged (nothing removed)"

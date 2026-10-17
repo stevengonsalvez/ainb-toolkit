@@ -9,8 +9,9 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 # Hermetic config: never the project config.yaml next to scripts/.
 export CM_CONFIG="$HERE/fixtures/config.test.yaml"
 unset CM_ORG CM_REPO CM_PROJECT CM_OWNER_NAME CM_OWNER_ID CM_TZ CM_TZ_LABEL CM_EXCLUDE_REPOS CM_PATH_MATCH CM_SELF_WORKTREE
-ROOT="$(mktemp -d "${TMPDIR:-/tmp}/cm-classify.XXXXXX")"
-trap 'rm -rf "$ROOT"' EXIT
+ROOT="$(mktemp -d "${TMPDIR:-/tmp}/cm-classify.XXXXXX")" || { echo "cannot create a temp dir" >&2; exit 1; }
+[ -n "$ROOT" ] && [ -d "$ROOT" ] || { echo "temp dir missing" >&2; exit 1; }
+trap 'rm -rf -- "${ROOT:?}"' EXIT
 export CM_HOME="$ROOT"
 cat > "$ROOT/ledger.json" <<'J'
 {"lanes": {"dev-sweeper": {"lead": "w-lead"}, "pr-sweeper": "running"},
@@ -20,7 +21,7 @@ cat > "$ROOT/ledger.json" <<'J'
   "w-single": {"host": "local", "path": "/x/research-ota-cost", "standing": false},
   "w-epic":   {"host": "local", "path": "/x/ops-e", "standing": false, "beadsEpic": "t-ep1"},
   "w-null":   {"host": "local", "path": "/x/ops-null", "standing": null},
-  "w-ldm":    {"host": "local", "path": "/elsewhere", "worktreeId": "repo::ldm", "standing": true, "beadsEpic": "acme-ldm1"},
+  "w-ldm":    {"host": "local", "path": "/elsewhere", "worktreeId": "repo::ldm", "standing": true, "beadsEpic": "acme-epic1"},
   "w-old":    {"host": "local", "path": "/x/reused", "standing": true, "state": "gone"},
   "w-new":    {"host": "local", "path": "/x/reused", "standing": false},
   "w-hung":   {"host": "local", "path": "/x/hung-lead", "standing": true},
