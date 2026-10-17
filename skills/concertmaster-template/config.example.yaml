@@ -33,6 +33,7 @@ worktrees:
   path_match: "/acme-app/"         # [script] ERE on worktree paths (abrupt.sh, waiting.sh)
   self_name: concertmaster         # [script] the concertmaster's own worktree, never torn down
   regenerable_ignored: []          # [script] ignored files teardown may drop (e.g. deno.lock)
+  never_touch: []                  # worktrees or sessions of other projects on shared hosts: lanes never read or act on them
 
 hosts:
   home: local                      # host the concertmaster runs on
@@ -49,7 +50,7 @@ schedule:
   timezone_label: UK               # [script] printed after times in the digest
   deploy_windows: ["11:00", "16:00"]
   digest_times: ["08:00", "18:00"]
-  tick_delays_s: { busy: 600, running: 900, quiet: 1800 }
+  tick_delays_s: { busy: 600, running: 1200, quiet: 1800 }
   stuck_minutes: 45                # CM_STUCK_MIN
   stuck_respawn_hours: 2
   max_nudges: 2
@@ -93,7 +94,11 @@ lanes:
   - { name: pr-sweeper,  standing: true,  spawn_at: 1, agent: claude, model: null, skills: [pr-sweep, ready-to-ship] }
   - { name: dev-sweeper, standing: true,  spawn_at: 2, agent: claude, model: sonnet, skills: [dev-flow, ready-to-ship], max_parallel: 3 }
   - { name: ops-sweeper, standing: true,  spawn_at: 2, agent: claude, model: sonnet, skills: [] }
-  - { name: research,    standing: true,  spawn_at: 2, agent: claude, model: null, skills: [research] }
+  - { name: research-sweeper, standing: true, spawn_at: 0, agent: claude, model: null, skills: [research], publish: null }
+    # spawn_at 0 = spawned at first boot and takes every item. publish: skill or command that
+    # publishes owner-facing pages; null = the inbox file only
+  # - { name: release-tester, standing: true, spawn_at: 0, agent: claude, model: sonnet, skills: [] }
+  #   uncomment to get a read-only production test after every release; fill release_tester below
   - { name: "epic:<name>", standing: true, spawn_at: 1, agent: claude, model: null, max_parallel: 3 }
 single_task_workers: [deploy, ops-fix, sweep, native-release, one-pr]
 
@@ -131,9 +136,44 @@ intake:
     privacy_note: "the chat may carry personal data"   # [script] shown before an upload
 
 telemetry:                         # optional mission-control style sink
-  base_url: ""                     # [script] empty: events queue in outbox.jsonl, never sent
-  tenant_id: ""                    # [script] or MC_TENANT_ID
+  # base_url and tenant_id are REQUIRED for anything to be sent; there is no built-in default
+  # for either. With either empty, scripts/mc-emit.sh queues events in outbox.jsonl (capped at
+  # 5000 lines, drops logged in outbox.dropped) and sends nothing. Env MC_BASE_URL and
+  # MC_TENANT_ID, or the same two lines in $CM_HOME/mc.env, beat these keys.
+  base_url: ""                     # [script] e.g. https://mc.example.com
+  tenant_id: ""                    # [script] the sink's id for this project, e.g. acme
   token_file: ~/.secrets/mc-auth-token   # [script] file holding the token, mode 600
+
+# A session that waited this long on a human for a decision inside its own scope stops waiting
+# (SKILL.md hard rule 16). Never covers merges, deploys, secrets, data or releases.
+away:
+  timeout_minutes: 30
+
+# Read-only production test after each release (lane release-tester in references/lanes.md).
+# Only used when the lane is listed under lanes. Holds names and routes, never a credential.
+release_tester:
+  prod_url: https://app.example.com            # the production base URL the tester opens
+  staging_note: "staging is https://staging.example.com"   # where a check that needs a write runs instead
+  accounts: ["demo-reviewer-1", "demo-reviewer-2"]          # read-only demo accounts; credentials come from your secret store
+  coverage: ["home and its tabs", "settings", "notifications"]   # routes and tabs every run covers
+  viewports: [390, 1440]
+  themes: [light, dark]
+  evidence_branch: "evidence/release-{version}"   # signed evidence commits land here
+  report_via: null                 # skill or command that publishes the report page; null = matrix in the comment plus issues only
+  defect_label: release-regression
+
+# scripts/ci-queue-alert.sh: alert when too many workflow runs stay queued. [script]
+ci:
+  queue:
+    repo: null                     # default github.org/github.main_repo
+    threshold: 15                  # more queued runs than this ...
+    minutes: 15                    # ... for this long raises one alert per episode
+    hint: "Check the runner fleet; adding runner capacity or flipping to GitHub-hosted runners is the concertmaster call."
+
+# scripts/cred-check.sh: weekly validity probe of the credentials in a names-only index. [script]
+credentials:
+  index_key: CONCERTMASTER-CREDENTIALS-INDEX   # name of the Bitwarden secret holding the index (names only)
+  bws_project: null                # Bitwarden project the index secret lives in (needed only for --publish)
 
 terminology:
   rules: []                        # e.g. { use: Member, never: User, scope: user-facing copy }
