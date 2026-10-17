@@ -31,7 +31,13 @@
 # oldest first; a fleet upsert superseded by a newer one for the same agentId
 # (requeued or queued) is dropped, so replay never reverts fleet state. It
 # refuses when no tenant is configured or when the result would pass the cap
-# (flush first), and moves nothing on a second run.
+# (flush first), and moves nothing on a second run. A requeued /api/events
+# line also gets the configured projectId when it has none, and an eventId
+# when it has none: "rq-" plus a sha256 of its body (tenantId and projectId
+# left out), queuedAt and its line number in the dead file, so requeueing the
+# same dead file twice yields the same ids and the sink dedupes the replay.
+# A dead line naming a projectId other than the configured one is never
+# picked, and neither is a fleet upsert while a project id is set.
 #
 # Cap: the outbox never holds more than MC_OUTBOX_MAX lines. Over the cap it
 # is trimmed to 90% (oldest dropped), so a full outbox is not rewritten on
@@ -50,16 +56,33 @@
 #
 # Installed copies (~/.concertmaster/bin, references/hooks-install.md) share
 # this outbox. A copy older than MC_EMIT_VERSION 2 POSTs tenantId null and
-# dead-letters lines this copy kept; this copy warns when it finds one.
-# Re-copy on every host; --requeue-dead recovers what an old copy killed.
+# dead-letters lines this copy kept; one older than 3 never sends a projectId,
+# so a project-bound token answers 400 to every event it flushes. This copy
+# warns when it finds one. Re-copy on every host; --requeue-dead recovers
+# what an old copy killed.
 #
 # PROVISIONAL: --tick and --issue-state post to /api/events with the types in
 # TYPE_TICK and TYPE_ISSUE_STATE. The real contract belongs to your sink and
 # may differ: change the constant, not callers.
 #
 # Endpoints (base $MC_BASE_URL, else config telemetry.base_url; no default):
-#   POST /api/events        {tenantId,type,message,metadata,timestamp}
+#   POST /api/events        {tenantId,type,message,metadata,timestamp[,projectId][,eventId]}
 #   POST /api/fleet/upsert  {tenantId,agentId,name,status,currentTask,workspace,hiddenFromUI}
+#
+# Project-bound tokens: MC_PROJECT_ID, else a MC_PROJECT_ID= line in mc.env,
+# else config telemetry.project_id. A token bound to projects may call only
+# /api/events and must name one of its projects on every write, so with a
+# project id set every /api/events body carries projectId (lines queued
+# before it was set get it filled in when sent, like the tenant; an existing
+# projectId is never rewritten). A value that does not match
+# ^p_[a-z0-9][a-z0-9-]{0,38}$ is not sent, with one warning per call; empty
+# or invalid means no projectId at all (never null: the sink answers 400).
+# With a project id set, --fleet-upsert queues nothing and logs one line
+# (the sink refuses /api/fleet/upsert to a bound token; $CM_HOME/fleet.skipped
+# holds the latest skip, even with MC_QUIET=1); see fleet_event.
+# A 403 on /api/fleet/upsert is a route refusal, not a token one (a bad token
+# is 401), so that line is dead-lettered with deadCode 403 instead of
+# blocking the queue.
 #
 # Auth: header X-MC-Token read from $MC_TOKEN_FILE (else config
 # telemetry.token_file, else ~/.secrets/mc-auth-token). The token never touches argv: it goes into a
@@ -87,7 +110,7 @@ else
   CM_HOME="${CM_HOME:-$HOME/.concertmaster}"
 fi
 
-MC_EMIT_VERSION=2
+MC_EMIT_VERSION=3
 
 # trim: drop CR, edge spaces and one pair of surrounding quotes.
 trim() { printf '%s' "$1" | tr -d '\r' | sed "s/^[[:space:]]*//; s/[[:space:]]*\$//; s/^[\"']//; s/[\"']\$//"; }
@@ -102,6 +125,8 @@ BASE="${MC_BASE_URL:-$(cfg MC_BASE_URL)}"
 # tenant are required config values: there is no built-in default for either.
 if [ -z "$BASE" ] && command -v cm_cfg >/dev/null 2>&1; then BASE="$(cm_cfg .telemetry.base_url)"; fi
 if [ -z "$TENANT" ] && command -v cm_cfg >/dev/null 2>&1; then TENANT="$(trim "$(cm_cfg .telemetry.tenant_id)")"; fi
+PROJECT="$(trim "${MC_PROJECT_ID:-$(cfg MC_PROJECT_ID)}")"
+if [ -z "$PROJECT" ] && command -v cm_cfg >/dev/null 2>&1; then PROJECT="$(trim "$(cm_cfg .telemetry.project_id)")"; fi
 TOKEN_FILE="${MC_TOKEN_FILE:-}"
 if [ -z "$TOKEN_FILE" ] && command -v cm_cfg >/dev/null 2>&1; then TOKEN_FILE="$(cm_cfg .telemetry.token_file)"; fi
 TOKEN_FILE="${TOKEN_FILE:-$HOME/.secrets/mc-auth-token}"
@@ -129,6 +154,17 @@ case "$TENANT" in
     TENANT="" ;;
   *) rm -f "$CM_HOME/mc-emit.tenant-rejected" ;;
 esac
+# The sink's PROJECT_ID_PATTERN, ^p_[a-z0-9][a-z0-9-]{0,38}$, spelled out as
+# case sets so no locale or regex flavour can widen [a-z].
+valid_project() {
+  case "$1" in p_[abcdefghijklmnopqrstuvwxyz0123456789]*) ;; *) return 1 ;; esac
+  case "${1#p_}" in *[!abcdefghijklmnopqrstuvwxyz0123456789-]*) return 1 ;; esac
+  [ "${#1}" -le 41 ]
+}
+if [ -n "$PROJECT" ] && ! valid_project "$PROJECT"; then
+  warn "project id '$PROJECT' is not a p_<owner> id: no projectId sent"
+  PROJECT=""
+fi
 
 NOW_MS="$(date +%s)000"
 HOSTNAME_S="$(hostname 2>/dev/null | cut -d. -f1)"
@@ -251,7 +287,7 @@ stale_install_check() {
   [ "$(cd "$(dirname "$inst")" && pwd -P)/$(basename "$inst")" = "$HERE/$(basename "$0")" ] && return 0
   v="$(sed -n 's/^MC_EMIT_VERSION=\([0-9][0-9]*\).*/\1/p' "$inst" | head -n 1)"
   [ "${v:-0}" -ge "$MC_EMIT_VERSION" ] && return 0
-  warn "$inst is MC_EMIT_VERSION ${v:-1}, older than $MC_EMIT_VERSION: it dead-letters tenant-less lines; re-copy it (references/hooks-install.md)"
+  warn "$inst is MC_EMIT_VERSION ${v:-1}, older than $MC_EMIT_VERSION: it dead-letters tenant-less or project-less lines; re-copy it (references/hooks-install.md)"
 }
 
 # State shared with the cleanup trap, so an interrupted flush never leaks the
@@ -263,12 +299,12 @@ F_KEEP=""
 F_LOCK=""
 F_WLOCK=""
 F_POS=0
-F_RQ_RAW=""; F_RQ_MOVE=""; F_RQ_KEEP=""; F_RQ_NEW=""; F_RQ_IDS=""   # requeue temp files
+F_RQ_RAW=""; F_RQ_MOVE=""; F_RQ_KEEP=""; F_RQ_NEW=""; F_RQ_IDS=""; F_RQ_SUM=""   # requeue temp files
 
 flush_cleanup() {
   [ -n "$F_HDR" ] && rm -f "$F_HDR"
   local t
-  for t in "$F_RQ_RAW" "$F_RQ_MOVE" "$F_RQ_KEEP" "$F_RQ_NEW" "$F_RQ_IDS"; do [ -z "$t" ] || rm -f "$t"; done
+  for t in "$F_RQ_RAW" "$F_RQ_MOVE" "$F_RQ_KEEP" "$F_RQ_NEW" "$F_RQ_IDS" "$F_RQ_SUM"; do [ -z "$t" ] || rm -f "$t"; done
   if [ -n "$F_WORK" ] && [ -f "$F_WORK" ]; then
     # Interrupted mid-flush: kept lines plus everything from the line in
     # flight on go back in front (the in-flight one may be sent twice).
@@ -283,7 +319,7 @@ flush_cleanup() {
   wlock_drop
   [ -n "$F_LOCK" ] && rmdir "$F_LOCK" 2>/dev/null
   F_HDR=""; F_WORK=""; F_KEEP=""; F_LOCK=""
-  F_RQ_RAW=""; F_RQ_MOVE=""; F_RQ_KEEP=""; F_RQ_NEW=""; F_RQ_IDS=""
+  F_RQ_RAW=""; F_RQ_MOVE=""; F_RQ_KEEP=""; F_RQ_NEW=""; F_RQ_IDS=""; F_RQ_SUM=""
 }
 trap flush_cleanup EXIT
 trap 'flush_cleanup; exit 0' INT TERM HUP
@@ -340,9 +376,13 @@ flush() {
       printf '%s\n' "$line" >> "$F_KEEP"; kept=$((kept + 1)); continue
     fi
     ep="$(printf '%s' "$line" | jq -r '.endpoint // empty' 2>/dev/null)"
-    # A line queued before the tenant was configured carries tenantId null.
-    body="$(printf '%s' "$line" | jq -c --arg t "$TENANT" \
-              '.body // empty | if type == "object" and (.tenantId // "") == "" then .tenantId = $t else . end' 2>/dev/null)"
+    # A line queued before the tenant (or the project id) was configured
+    # carries tenantId null (or no projectId). Only events take a projectId.
+    body="$(printf '%s' "$line" | jq -c --arg t "$TENANT" --arg p "$PROJECT" --arg ep "$ep" \
+              '.body // empty | if type == "object" then
+                 (if (.tenantId // "") == "" then .tenantId = $t else . end)
+                 | (if $ep == "/api/events" and $p != "" and (has("projectId") | not) then .projectId = $p else . end)
+               else . end' 2>/dev/null)"
     # Only the two known endpoints: "$BASE$ep" with any other value could
     # send the token elsewhere (an "@host" endpoint rewrites the URL).
     case "$ep" in /api/events|/api/fleet/upsert) ;; *) ep="" ;; esac
@@ -357,8 +397,14 @@ flush() {
     case "$code" in
       2??) sent=$((sent + 1)); mark_sent "$line" ;;
       000) net_down=1; kept=$((kept + 1)); printf '%s\n' "$line" >> "$F_KEEP" ;;
+      # The sink refuses /api/fleet/upsert to a project-bound or shared token
+      # with 403 every time: dead-letter it like a 400, the batch goes on.
+      403) if [ "$ep" = /api/fleet/upsert ]; then
+             dead=$((dead + 1)); jq -c --argjson b "$body" '.body = $b | . + {deadCode: 403}' <<<"$line" >> "$DEAD" 2>/dev/null \
+               || printf '%s\n' "$line" >> "$DEAD"
+           else net_down=1; kept=$((kept + 1)); printf '%s\n' "$line" >> "$F_KEEP"; fi ;;
       # Auth failure: every later line would fail too, so stop the batch now.
-      401|403) net_down=1; kept=$((kept + 1)); printf '%s\n' "$line" >> "$F_KEEP" ;;
+      401) net_down=1; kept=$((kept + 1)); printf '%s\n' "$line" >> "$F_KEEP" ;;
       # Timeout and rate limit are about the endpoint, not the line: keep it
       # and stop the batch, the next call retries.
       408|429) net_down=1; kept=$((kept + 1)); printf '%s\n' "$line" >> "$F_KEEP" ;;
@@ -389,6 +435,7 @@ flush() {
 # Order: backup, new outbox (under the write lock), new dead file. A failure
 # before the new outbox changes nothing; one after it can only send a line
 # twice. The picked and kept line counts must add up to the dead file's.
+# Picked events get the project id and a deterministic eventId (stamp_ids).
 requeue_dead() {
   local any=0
   [ "${1:-}" = "--any-tenant" ] && any=1
@@ -400,13 +447,17 @@ requeue_dead() {
   # Same lock as flush: a flush appends to the dead file and rewrites the outbox.
   take_lock || { warn "a flush holds $CM_HOME/outbox.lock: nothing requeued, try again"; return 0; }
   F_RQ_RAW="$DEAD.raw.$$"; F_RQ_MOVE="$DEAD.move.$$"; F_RQ_KEEP="$DEAD.keep.$$"; F_RQ_NEW="$OUTBOX.requeue.$$"
-  F_RQ_IDS="$OUTBOX.ids.$$"
+  F_RQ_IDS="$OUTBOX.ids.$$"; F_RQ_SUM="$DEAD.sum.$$"
   local total picked kept moved superseded queued stamp bak
   # Lines are read raw so one malformed line never blocks the rest.
   # shellcheck disable=SC2016  # jq programs: $o, $t, $newer, $sent are jq, not shell
+  # A line naming another project stays dead (never rewritten), and so does a
+  # fleet upsert while a project id is set (a bound token gets 403 there).
   local pick='(try fromjson catch null) as $o
     | ($o | type == "object") and $o.deadCode == 400
-      and ($o.body | type == "object") and ($any or $o.body.tenantId == null)'
+      and ($o.body | type == "object") and ($any or $o.body.tenantId == null)
+      and (($o.body | has("projectId") | not) or $o.body.projectId == $p)
+      and ($p == "" or $o.endpoint != "/api/fleet/upsert")'
   # shellcheck disable=SC2016
   # Newest per agentId only, none queued for it already, none older than one
   # the sink accepted (fleet.sent.json).
@@ -429,8 +480,18 @@ requeue_dead() {
   if ! total="$(jq -R -n '[inputs] | length' "$DEAD" 2>/dev/null)"; then
     warn "could not read $DEAD: nothing requeued"; flush_cleanup; echo "requeued 0 line(s)"; return 0
   fi
-  if ! jq -R -c --arg t "$TENANT" --argjson any "$anyj" "select($pick) | fromjson | del(.deadCode) | .body.tenantId = \$t" "$DEAD" > "$F_RQ_RAW" 2>/dev/null \
-     || ! jq -R -r --argjson any "$anyj" "select(($pick) | not)" "$DEAD" > "$F_RQ_KEEP" 2>/dev/null; then
+  # Events: projectId when absent, and _idsrc (the eventId hash input: body
+  # minus tenantId and projectId, queuedAt, dead-file line number) when the
+  # line has no eventId; stamp_ids turns _idsrc into eventId.
+  # shellcheck disable=SC2016
+  local stamp='input_line_number as $n | select('"$pick"') | fromjson | del(.deadCode)
+    | (.body | del(.tenantId, .projectId) | tojson) as $src | .body.tenantId = $t
+    | if .endpoint != "/api/events" then .
+      else (if $p != "" and (.body | has("projectId") | not) then .body.projectId = $p else . end)
+        | (if .body | has("eventId") then . else ._idsrc = "\($src)|\(.queuedAt)|\($n)" end) end'
+  if ! jq -R -c --arg t "$TENANT" --arg p "$PROJECT" --argjson any "$anyj" "$stamp" "$DEAD" > "$F_RQ_RAW" 2>/dev/null \
+     || ! jq -R -r --arg p "$PROJECT" --argjson any "$anyj" "select(($pick) | not)" "$DEAD" > "$F_RQ_KEEP" 2>/dev/null \
+     || ! stamp_ids; then
     warn "could not split $DEAD (disk full?): nothing requeued"; flush_cleanup; echo "requeued 0 line(s)"; return 0
   fi
   if ! jq -s -c --slurpfile newer "$F_RQ_IDS" --slurpfile sent "$SENT" "$latest" "$F_RQ_RAW" > "$F_RQ_MOVE" 2>/dev/null; then
@@ -471,12 +532,45 @@ requeue_dead() {
   echo "requeued $moved line(s)"
 }
 
-# event_body <type> <message> <metadata-object-json>: one /api/events body.
+# stamp_ids: in F_RQ_RAW, each line's _idsrc becomes body.eventId "rq-" + the
+# first 40 hex of its sha256. One hasher run per such line.
+stamp_ids() {
+  local sha src h
+  grep -q '"_idsrc"' "$F_RQ_RAW" || return 0
+  if command -v sha256sum >/dev/null 2>&1; then sha="sha256sum"
+  elif command -v shasum >/dev/null 2>&1; then sha="shasum -a 256"
+  else warn "no sha256sum or shasum: cannot give requeued events an eventId"; return 1; fi
+  jq -r '._idsrc // ""' "$F_RQ_RAW" | while IFS= read -r src; do
+    if [ -z "$src" ]; then echo; else h="$(printf '%s' "$src" | $sha)"; printf '%s\n' "${h:0:40}"; fi
+  done | jq -R . | jq -s -c . > "$F_RQ_SUM" || return 1
+  jq -s -c --slurpfile h "$F_RQ_SUM" \
+    'to_entries[] | ($h[0][.key] // "") as $x | .value
+     | if $x == "" then . else del(._idsrc) | .body.eventId = ("rq-" + $x) end' "$F_RQ_RAW" > "$F_RQ_MOVE" \
+    && mv "$F_RQ_MOVE" "$F_RQ_RAW"
+}
+
+# event_body <type> <message> <metadata-object-json>: one /api/events body,
+# with projectId only when a valid project id is set (never null).
 event_body() {
-  jq -cn --arg t "$TENANT" --arg type "$1" --arg m "$2" --argjson meta "$3" \
+  jq -cn --arg t "$TENANT" --arg p "$PROJECT" --arg type "$1" --arg m "$2" --argjson meta "$3" \
         --arg host "$HOSTNAME_S" --argjson ts "$NOW_MS" \
     '{tenantId:(if $t == "" then null else $t end), type:$type, message:$m,
-      metadata:({source:"concertmaster", host:$host} + $meta), timestamp:$ts}'
+      metadata:({source:"concertmaster", host:$host} + $meta), timestamp:$ts}
+     + (if $p == "" then {} else {projectId:$p} end)'
+}
+
+# fleet_event: the hook point for fleet state under a project-bound token.
+# TODO(mission-control#533): post the typed fleet events (lane.state,
+# issue.state, fleet.snapshot, each with an eventId) to /api/events once that
+# contract is on the sink's main. Until then fleet state is not reported with a
+# project id set: nothing is queued (a legacy upsert would only 403) and one
+# line says so, on stderr and in $CM_HOME/fleet.skipped (the latest skip only,
+# written even with MC_QUIET=1, which the worker hook sets).
+fleet_event() {
+  warn "project id set: fleet upsert for $1 not sent (bound tokens may not call /api/fleet/upsert; typed fleet events pending mission-control#533)"
+  jq -cn --arg a "$1" --argjson at "$NOW_MS" \
+    '{at:$at, agentId:$a, reason:"project-bound token: /api/fleet/upsert not called, typed fleet events pending mission-control#533"}' \
+    > "$CM_HOME/fleet.skipped" 2>/dev/null
 }
 
 # as_object <json>: the value when it is a JSON object, else {raw:<text>}.
@@ -512,6 +606,7 @@ case "${1:-}" in
   --fleet-upsert)
     shift
     if [ $# -lt 5 ]; then warn "usage: --fleet-upsert <agentId> <name> <status> <currentTask> <workspace> [hiddenFromUI]"; exit 0; fi
+    if [ -n "$PROJECT" ]; then fleet_event "$@"; exit 0; fi
     if body="$(jq -cn --arg t "$TENANT" --arg a "$1" --arg n "$2" --arg s "$3" --arg c "$4" --arg w "$5" \
               --arg h "${6:-false}" \
       '{tenantId:(if $t == "" then null else $t end), agentId:$a, name:$n, status:$s,
