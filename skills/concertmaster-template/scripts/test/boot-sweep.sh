@@ -72,7 +72,8 @@ case "$cmd" in
 esac
 S
 chmod +x "$ROOT/orca"
-export ORCA_CLI_COMMAND="$ROOT/orca" TOUCH_STALE="$(tdir stale)/s.jsonl"
+TOUCH_STALE="$(tdir stale)/s.jsonl"
+export ORCA_CLI_COMMAND="$ROOT/orca" TOUCH_STALE
 
 fail=0
 check() { if [ "$2" = "$3" ]; then echo "ok   $1"; else echo "FAIL $1: want '$3' got '$2'"; fail=1; fi; }

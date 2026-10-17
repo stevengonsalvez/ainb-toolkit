@@ -115,7 +115,7 @@ rm -rf "${CM_HOME:?}/inbox"
 "$SCRIPT" --index "$ROOT/nope.json" >/dev/null 2>&1; check "no usable index exits 3" "$?" "3"
 # seed fallback after install: no index file given, no bws secret, seed copied into CM_HOME
 cp "$ROOT/index.json" "$CM_HOME/credentials-index.seed.json"
-SEEDOUT="$(BWS_ACCESS_TOKEN=test "$SCRIPT" --dry-run)"
+SEEDOUT="$(env BWS_ACCESS_TOKEN=test "$SCRIPT" --dry-run)"
 check "seed in CM_HOME is used after install" "$(printf '%s\n' "$SEEDOUT" | grep -c 'Supabase PAT')" "1"
 # publish guard
 printf '{"entries":[{"name":"x","source":"bws:k","note":"%s"}]}' "$SB" > "$ROOT/bad1.json"
