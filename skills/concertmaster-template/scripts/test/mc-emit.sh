@@ -13,7 +13,7 @@ ROOT="$(mktemp -d "${TMPDIR:-/tmp}/cm-mc-emit.XXXXXX")" || { echo "cannot create
 trap 'rm -rf -- "${ROOT:?}"' EXIT
 STUB="$ROOT/stub"
 mkdir -p "$ROOT/bin" "$ROOT/home" "$ROOT/tmp" "$STUB"
-unset MC_TENANT_ID MC_BASE_URL MC_QUIET MC_FLUSH_BATCH MC_FLUSH_SECS MC_OUTBOX_MAX CM_INSTALLED_EMIT
+unset MC_TENANT_ID MC_PROJECT_ID MC_BASE_URL MC_QUIET MC_FLUSH_BATCH MC_FLUSH_SECS MC_OUTBOX_MAX CM_INSTALLED_EMIT
 export HOME="$ROOT/home" TMPDIR="$ROOT/tmp" CM_HOME="$ROOT/cm"
 export MC_BASE_URL="http://mc.stub.invalid" MC_TOKEN_FILE="$ROOT/token" STUB_DIR="$STUB"
 export PATH="$ROOT/bin:$PATH"
@@ -179,7 +179,7 @@ printf '#!/usr/bin/env bash\nexit 0\n' > "$HOME/.concertmaster/bin/mc-emit.sh"
 emit worker.done x >/dev/null
 check "stale installed copy: warned" "$(grep -c 'older than' "$STUB/stderr")" "1"
 check "stale installed copy: this copy still sends" "$(calls)" "1"
-check "--version prints MC_EMIT_VERSION" "$("$EMIT" --version)" "2"
+check "--version prints MC_EMIT_VERSION" "$("$EMIT" --version)" "3"
 rm -rf -- "${HOME:?}/.concertmaster"
 
 # ---- 400 dead-letters with deadCode; 5xx keeps --------------------------------
@@ -328,6 +328,135 @@ seed_dead; "$EMIT" --requeue-dead >/dev/null 2>&1; echo 200 > "$STUB/code"
 emit --flush >/dev/null
 check "requeue then flush: all sent" "$(lines "$CM_HOME/outbox.jsonl")" "0"
 check "requeue then flush: every body has a tenant" "$(jq -r '.tenantId' "$STUB/bodies.jsonl" | grep -c '^t-test$')" "3"
+
+# ---- project id: projectId on every event kind, never on an upsert -----------
+reset; export MC_PROJECT_ID="p_example"; echo 200 > "$STUB/code"
+emit worker.done "w1 done" '{"pr":1}' >/dev/null
+emit worktree.teardown "teardown h:/w" >/dev/null
+emit --tick '{"summary":"1 live","live":1}' >/dev/null
+emit --issue-state 44 in-review '#90' >/dev/null
+check "project id: every event kind posted with it" \
+  "$(jq -r '"\(.type)=\(.projectId)"' "$STUB/bodies.jsonl" | tr '\n' ' ')" \
+  "worker.done=p_example worktree.teardown=p_example concertmaster.tick=p_example issue.state=p_example "
+reset; MC_NO_FLUSH=1 "$EMIT" worker.done queued 2>/dev/null
+check "project id: stamped when queued, not only on send" "$(jq -r '.body.projectId' "$CM_HOME/outbox.jsonl")" "p_example"
+reset
+check "project id: --fleet-upsert exits 0" "$(emit --fleet-upsert a1 n1 active task /w)" "rc=0"
+check "project id: --fleet-upsert queues and sends nothing" "$(lines "$CM_HOME/outbox.jsonl") $(calls)" "0 0"
+check "project id: skipped upsert logged once" "$(grep -c 'fleet upsert for a1 not sent' "$STUB/stderr")" "1"
+MC_QUIET=1 "$EMIT" --fleet-upsert a2 n2 idle - /w
+check "project id: quiet skip still recorded in fleet.skipped" "$(jq -r '.agentId' "$CM_HOME/fleet.skipped")" "a2"
+# a line queued before the project id was set gets it on send; another project's is kept
+reset
+{ echo '{"endpoint":"/api/events","body":{"tenantId":null,"type":"old"},"queuedAt":1}'
+  echo '{"endpoint":"/api/events","body":{"tenantId":"t-test","type":"mine","projectId":"p_other"},"queuedAt":2}'; } > "$CM_HOME/outbox.jsonl"
+emit --flush >/dev/null
+check "project id: filled in on send, an existing one left alone" \
+  "$(jq -r '"\(.type)=\(.projectId)"' "$STUB/bodies.jsonl" | tr '\n' ' ')" "old=p_example mine=p_other "
+# from mc.env and from config.yaml
+reset; unset MC_PROJECT_ID; printf 'MC_PROJECT_ID="p_from-file"\n' > "$CM_HOME/mc.env"
+emit worker.done x >/dev/null
+check "project id: read from mc.env" "$(jq -r '.projectId' "$STUB/bodies.jsonl")" "p_from-file"
+reset; printf 'telemetry:\n  project_id: p_from-cfg\n' > "$CM_HOME/config.yaml"
+emit worker.done x >/dev/null
+check "project id: read from config telemetry.project_id" "$(jq -r '.projectId' "$STUB/bodies.jsonl")" "p_from-cfg"
+
+# ---- project id unset or invalid: no projectId key at all ----------------------
+reset
+emit worker.done x >/dev/null; emit --tick '{"live":0}' >/dev/null
+check "no project id: no projectId key, not even null" "$(jq -r 'has("projectId")' "$STUB/bodies.jsonl" | sort -u)" "false"
+check "no project id: no warning" "$(grep -c 'project id' "$STUB/stderr")" "0"
+rm -f "$STUB/curl.args"; emit --fleet-upsert a1 n1 active task /w >/dev/null
+check "no project id: legacy upsert still posted" "$(sed 's/.* //' "$STUB/curl.args")" "http://mc.stub.invalid/api/fleet/upsert"
+for bad in "P_UPPER" "p_" "p_-lead" "x_acme" "p_has space" "p_$(printf 'a%.0s' $(seq 1 40))"; do
+  reset; MC_PROJECT_ID="$bad" emit worker.done x >/dev/null
+  check "invalid project id '$bad': not sent, one warning" \
+    "$(jq -r 'has("projectId")' "$STUB/bodies.jsonl") $(grep -c 'is not a p_<owner> id' "$STUB/stderr")" "false 1"
+done
+reset; MC_PROJECT_ID="p_$(printf 'a%.0s' $(seq 1 39))" emit worker.done x >/dev/null
+check "project id at the 41-char limit: sent" "$(jq -r '.projectId | length' "$STUB/bodies.jsonl")" "41"
+
+# ---- 403 on a fleet upsert dead-letters; 403 on an event still stops ---------
+reset; echo 403 > "$STUB/code"
+{ echo '{"endpoint":"/api/fleet/upsert","body":{"tenantId":"t-test","agentId":"a"},"queuedAt":1}'
+  echo '{"endpoint":"/api/events","body":{"tenantId":"t-test","type":"e"},"queuedAt":2}'; } > "$CM_HOME/outbox.jsonl"
+emit --flush >/dev/null
+check "403 upsert: dead-lettered with deadCode 403" "$(jq -r '"\(.endpoint) \(.deadCode)"' "$CM_HOME/outbox.dead.jsonl")" "/api/fleet/upsert 403"
+check "403 upsert: the event behind it was tried, kept, not dead" "$(calls) $(jq -r '.body.type' "$CM_HOME/outbox.jsonl")" "2 e"
+emit --flush >/dev/null
+check "403 event: kept, batch stops, upsert never retried" "$(calls) $(lines "$CM_HOME/outbox.jsonl") $(lines "$CM_HOME/outbox.dead.jsonl")" "3 1 1"
+check "403 upsert: not a requeue candidate" "$("$EMIT" --requeue-dead --any-tenant 2>/dev/null | tail -n 1)" "requeued 0 line(s)"
+
+# ---- requeue with a project id: projectId, tenantId and a stable eventId -------
+seed_proj() {
+  reset
+  {
+    echo '{"endpoint":"/api/events","body":{"tenantId":null,"type":"a","message":"m"},"queuedAt":1,"deadCode":400}'
+    echo '{"endpoint":"/api/events","body":{"tenantId":null,"type":"a","message":"m"},"queuedAt":1,"deadCode":400}'
+    echo '{"endpoint":"/api/events","body":{"tenantId":null,"type":"b","eventId":"keep-me"},"queuedAt":2,"deadCode":400}'
+    echo '{"endpoint":"/api/events","body":{"tenantId":null,"type":"c","projectId":"p_other"},"queuedAt":3,"deadCode":400}'
+    echo '{"endpoint":"/api/fleet/upsert","body":{"tenantId":null,"agentId":"u"},"queuedAt":4,"deadCode":400}'
+  } > "$DEADF"
+  cp "$DEADF" "$ROOT/dead.proj"
+}
+export MC_PROJECT_ID="p_example"
+seed_proj; OUTP="$("$EMIT" --requeue-dead 2>/dev/null)"
+check "requeue, project id: events moved, other project and upsert stay" "$(printf '%s\n' "$OUTP" | tail -n 1)" "requeued 3 line(s)"
+check "requeue, project id: tenantId and projectId stamped" \
+  "$(jq -r '"\(.body.tenantId) \(.body.projectId)"' "$CM_HOME/outbox.jsonl" | sort -u)" "t-test p_example"
+check "requeue, project id: existing eventId kept, others rq- ids" \
+  "$(jq -r '.body.eventId | if startswith("rq-") then "rq:\(length)" else . end' "$CM_HOME/outbox.jsonl" | tr '\n' ' ')" "rq:43 rq:43 keep-me "
+check "requeue, project id: identical lines share one id (the same event)" \
+  "$(jq -r '.body.eventId' "$CM_HOME/outbox.jsonl" | sort -u | wc -l | tr -d ' ')" "2"
+check "requeue, project id: eventIds match the sink's charset" \
+  "$(jq -r '.body.eventId | test("^[A-Za-z0-9._:-]{1,128}$")' "$CM_HOME/outbox.jsonl" | sort -u)" "true"
+check "requeue, project id: no _idsrc left behind" "$(grep -c _idsrc "$CM_HOME/outbox.jsonl")" "0"
+check "requeue, project id: other project's line untouched, byte for byte" \
+  "$(sed -n '4,5p' "$ROOT/dead.proj" | cmp -s - "$DEADF" && echo same)" "same"
+jq -r '.body.eventId' "$CM_HOME/outbox.jsonl" > "$ROOT/ids.1"
+seed_proj; "$EMIT" --requeue-dead >/dev/null 2>&1
+check "requeue twice: same eventIds both times" "$(jq -r '.body.eventId' "$CM_HOME/outbox.jsonl" | cmp -s - "$ROOT/ids.1" && echo same)" "same"
+# the dead file is trimmed from the top (cap_dead): line numbers shift, ids must not
+seed_proj; { echo '{"endpoint":"/api/events","body":{"tenantId":"x"},"queuedAt":0,"deadCode":404}'
+  echo '{"endpoint":"/api/events","body":{"tenantId":"x"},"queuedAt":0,"deadCode":404}'; cat "$ROOT/dead.proj"; } > "$DEADF"
+"$EMIT" --requeue-dead >/dev/null 2>&1
+check "requeue after a trim shifted the lines: same eventIds" "$(jq -r '.body.eventId' "$CM_HOME/outbox.jsonl" | cmp -s - "$ROOT/ids.1" && echo same)" "same"
+# tenant-free: a line dead with a wrong tenant gets the id it would have had with none
+seed_proj; sed -i.orig '1s/"tenantId":null/"tenantId":"tenant-x"/' "$DEADF"
+MC_TENANT_ID="tenant-x" "$EMIT" --requeue-dead --any-tenant >/dev/null 2>&1
+check "requeue: eventId ignores the tenant the line died with" \
+  "$(jq -r '.body.eventId' "$CM_HOME/outbox.jsonl" | cmp -s - "$ROOT/ids.1" && echo same)" "same"
+echo 200 > "$STUB/code"; emit --flush >/dev/null
+check "requeue then flush: every event posted with projectId and eventId" \
+  "$(jq -r '"\(.projectId) \(.eventId != null)"' "$STUB/bodies.jsonl" | sort -u)" "p_example true"
+# a copy older than 3 filled the tenant in before the bound token refused the line
+reset; echo '{"endpoint":"/api/events","body":{"tenantId":"t-test","type":"v2"},"queuedAt":7,"deadCode":400}' > "$DEADF"
+check "requeue, project id: tenant set but no projectId is picked without --any-tenant" \
+  "$("$EMIT" --requeue-dead 2>/dev/null | tail -n 1) $(jq -r '"\(.body.tenantId) \(.body.projectId)"' "$CM_HOME/outbox.jsonl")" "requeued 1 line(s) t-test p_example"
+# a 403 on an event naming another project (id changed while queued) dead-letters
+reset; echo 403 > "$STUB/code"
+{ echo '{"endpoint":"/api/events","body":{"tenantId":"t-test","type":"was-a","projectId":"p_a"},"queuedAt":1}'
+  echo '{"endpoint":"/api/events","body":{"tenantId":"t-test","type":"now"},"queuedAt":2}'; } > "$CM_HOME/outbox.jsonl"
+emit --flush >/dev/null
+check "403 event naming another project: dead-lettered with deadCode 403" "$(jq -r '"\(.body.type) \(.deadCode)"' "$DEADF")" "was-a 403"
+check "403 event for the configured project: kept, batch stopped" "$(calls) $(jq -r '.body.type' "$CM_HOME/outbox.jsonl")" "2 now"
+# no sha256sum and no shasum: requeue still moves the lines, without an eventId
+NH="$ROOT/nohash"; mkdir -p "$NH"
+for d in $(printf '%s' "$PATH" | tr ':' ' '); do for f in "$d"/*; do
+  n="${f##*/}"; case "$n" in sha256sum|shasum|'*') continue ;; esac; [ -e "$NH/$n" ] || [ -L "$NH/$n" ] || ln -s "$f" "$NH/$n"
+done; done
+seed_proj; OUTH="$(PATH="$NH" "$EMIT" --requeue-dead 2>>"$STUB/stderr")"
+check "no hasher, project id: requeue still moves the lines" "$(printf '%s\n' "$OUTH" | tail -n 1)" "requeued 3 line(s)"
+check "no hasher: events go without a new eventId, one warning" \
+  "$(jq -r '.body.eventId // "none"' "$CM_HOME/outbox.jsonl" | tr '\n' ' ')$(grep -c 'no sha256sum or shasum' "$STUB/stderr")" "none none keep-me 1"
+unset MC_PROJECT_ID
+seed_proj; OUTH="$(PATH="$NH" "$EMIT" --requeue-dead 2>/dev/null)"
+check "no hasher, no project id: requeue still moves the lines (upsert too)" "$(printf '%s\n' "$OUTH" | tail -n 1)" "requeued 4 line(s)"
+seed_proj; "$EMIT" --requeue-dead >/dev/null 2>&1
+check "requeue, no project id: no projectId stamped, eventId still set" \
+  "$(jq -r 'select(.endpoint == "/api/events") | "\(.body | has("projectId")) \(.body.eventId != null)"' "$CM_HOME/outbox.jsonl" | sort -u)" "false true"
+check "requeue, no project id: line naming a project stays dead, upsert moves" \
+  "$(jq -r '.body.type // .body.agentId' "$DEADF" | tr '\n' ' ')$(jq -r 'select(.endpoint == "/api/fleet/upsert") | .body.agentId' "$CM_HOME/outbox.jsonl")" "c u"
 
 echo "passed=$PASS failed=$FAIL"
 [ "$FAIL" = 0 ]

@@ -37,7 +37,8 @@ exits 0.
 - A project checkout on `main` to copy the scripts from.
 - A sink token in the file named by `cfg.telemetry.token_file`, mode 600.
 - The tenant id (`cfg.telemetry.tenant_id` or `MC_TENANT_ID`), if the sink
-  needs one.
+  needs one, and the project id (`cfg.telemetry.project_id` or `MC_PROJECT_ID`)
+  when the token is project-bound.
 
 ## Settings snippet
 
@@ -79,10 +80,10 @@ cp "$SRC/scripts/lib.sh" "$SRC/scripts/mc-emit.sh" "$SRC/scripts/hooks/mc-worker
 cp "$SRC/config.yaml" ~/.concertmaster/config.yaml   # lib.sh finds it as $CM_HOME/config.yaml
 chmod 755 ~/.concertmaster/bin/*.sh
 mkdir -p ~/.secrets && chmod 700 ~/.secrets          # token copied in separately, mode 600
-grep -m1 '^MC_EMIT_VERSION=' ~/.concertmaster/bin/mc-emit.sh   # must be 2 or later; works on any copy
+grep -m1 '^MC_EMIT_VERSION=' ~/.concertmaster/bin/mc-emit.sh   # must be 3 or later; works on any copy
 # (never run `--version` on an unknown copy: a v1 copy takes it as an event type and flushes)
 # optional overrides, parsed (never sourced) by mc-emit.sh; a placeholder value is ignored:
-#   printf 'MC_TENANT_ID=%s\nMC_BASE_URL=%s\n' "$TENANT_ID" "$BASE_URL" > ~/.concertmaster/mc.env && chmod 600 ~/.concertmaster/mc.env
+#   printf 'MC_TENANT_ID=%s\nMC_BASE_URL=%s\nMC_PROJECT_ID=%s\n' "$TENANT_ID" "$BASE_URL" "$PROJECT_ID" > ~/.concertmaster/mc.env && chmod 600 ~/.concertmaster/mc.env
 # then the settings merge above
 ```
 
@@ -90,7 +91,10 @@ Copying (not symlinking) keeps hooks working while the checkout switches
 branches. Re-copy after the skill's scripts or config change on `main`, on every host:
 the copies share `~/.concertmaster/outbox.jsonl`, and a copy older than
 `MC_EMIT_VERSION` 2 POSTs `tenantId: null` and dead-letters lines a newer copy
-kept (recover them with `mc-emit.sh --requeue-dead` once the tenant is set).
+kept (recover them with `mc-emit.sh --requeue-dead` once the tenant is set); one
+older than 3 never sends a projectId, so a project-bound token answers 400 to
+every event it flushes (same recovery once the project id is set: plain
+`--requeue-dead` then takes those lines too, although that copy filled their tenant in).
 `scripts/sync-from-toolkit.sh` does the copy for the skill tree; the installed
 `~/.concertmaster/bin` copy is a separate `cp`.
 

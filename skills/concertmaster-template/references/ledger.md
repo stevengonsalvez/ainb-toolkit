@@ -193,7 +193,14 @@ base URL or no tenant configured lines stay queued (capped). Capped at 5000 line
 
 A flush sends at most 10 lines in at most 30s. 401, 403, 408, 429, 5xx and
 network failures keep the line queued; any other 4xx moves it to
-`outbox.dead.jsonl` with a `deadCode`, since it can never succeed. With no
+`outbox.dead.jsonl` with a `deadCode`, since it can never succeed. So does a
+403 on `/api/fleet/upsert` (`deadCode` 403): the sink refuses that route to
+project-bound and shared tokens every time. So does a 403 on an event naming a
+`projectId` other than the configured one (the id changed while it was queued). With a project id
+(`cfg.telemetry.project_id`, `MC_PROJECT_ID`) every `/api/events` body carries
+`projectId` (filled in on send for lines queued before it, never rewritten when
+present, never `null`) and `--fleet-upsert` queues nothing; the latest skip is
+in `fleet.skipped` (`{"at","agentId","reason"}`), written even when quiet. With no
 tenant (`cfg.telemetry.tenant_id`, `MC_TENANT_ID`) a flush sends nothing (a sink
 typically answers 400 to `tenantId: null`) and lines stay queued, still under the
 cap: over 5000 the outbox is trimmed to 4500, oldest first, and each trim is a
@@ -202,7 +209,12 @@ quiet. Every append and outbox rewrite takes the short write lock
 `outbox.wlock`. A line queued before the tenant was set gets it filled in when
 sent. `mc-emit.sh --requeue-dead` puts dead lines with `deadCode` 400 and
 `body.tenantId` null back in FRONT of the outbox, oldest first, with the tenant
-set, after a timestamped backup of the dead file (newest 5 kept). A fleet upsert
+set (with a project id it also takes 400 lines that carry a tenant but no
+`projectId`; events get the project id and, when they have none, an `eventId`
+`rq-<sha256 of body minus tenantId and projectId, then queuedAt>`, so
+requeueing the same line twice is deduped by the sink, and with no `sha256sum`
+or `shasum` they go without one after a warning; a line naming another
+project, or a fleet upsert while a project id is set, stays dead), after a timestamped backup of the dead file (newest 5 kept). A fleet upsert
 with a newer upsert for the same agentId (requeued or queued) is dropped.
 `fleet.sent.json` (`{"<agentId>": <queuedAt>}`) records the newest upsert the
 sink accepted per agent; neither a flush nor a requeue sends an older one, and

@@ -231,7 +231,8 @@ when the owner calls it).
    state change, `scripts/mc-emit.sh --issue-state <issue> <state> [pr]`.
    Several emits in one tick: `MC_NO_FLUSH=1` on all but the last. Nothing is
    sent while `cfg.telemetry.base_url` or `cfg.telemetry.tenant_id` is empty
-   (the lines queue, capped).
+   (the lines queue, capped). With `cfg.telemetry.project_id` set the fleet
+   upsert is skipped with one log line (a project-bound token may not call it).
 6. **Schedule.** ScheduleWakeup (via the dynamic `/loop`) with
    `cfg.schedule.tick_delays_s`:
 
@@ -746,7 +747,7 @@ shellcheck clean.
 | `scripts/roster.sh [--stdout]` | rewrites `$CM_HOME/roster.yaml` from the ledger, active rows only; atomic, mode 600, exit 1 and roster untouched when the ledger is unreadable |
 | `scripts/resume.sh [--dry-run] [--host <h>] [--worktree-id <id>] [--path <wt>] [--lane <label>]` | `/concertmaster resume`: rewrites the roster, then per row: live, dead (`claude --continue` plus one nudge), offline, duplicate, missing, manual, unknown, held; one run at a time (lock); exit 3 when a row needs attention |
 | `scripts/teardown.sh <host> <path> [--apply] [--allow-no-pr] [--salvage] [--close-handle <h>] [--force-standing <ask-id>] [--accept-unmerged-beads <ask-id>] [--retire-check]` | safe teardown, dry run by default; refuses standing lanes, unknown standing and open beads, fails closed |
-| `scripts/mc-emit.sh <type> <msg> [meta]` / `--fleet-upsert ...` / `--tick <json>` / `--issue-state <issue> <state> [pr]` / `--flush` / `--requeue-dead` | outbox + telemetry POST, always exit 0; base URL or tenant not configured: sends nothing, lines stay queued (capped); `--requeue-dead [--any-tenant]` puts dead 400 lines with tenantId null (or any tenant) back in front of the outbox, newest fleet upsert per agent only (backup kept, refused past the cap); never sends an upsert older than one accepted (`fleet.sent.json`); unsent lines go back in front; write lock on every append and rewrite; `MC_NO_FLUSH=1` queues only; warns when the installed copy is older |
+| `scripts/mc-emit.sh <type> <msg> [meta]` / `--fleet-upsert ...` / `--tick <json>` / `--issue-state <issue> <state> [pr]` / `--flush` / `--requeue-dead` | outbox + telemetry POST, always exit 0; base URL or tenant not configured: sends nothing, lines stay queued (capped); `--requeue-dead [--any-tenant]` puts dead 400 lines with tenantId null (or any tenant; with a project id, also any without a projectId) back in front of the outbox, newest fleet upsert per agent only (backup kept, refused past the cap), events stamped with the project id and a deterministic eventId so a replay dedupes; with a project id every event carries projectId and fleet upserts are skipped; a 403 on an upsert, or on an event naming another project, dead-letters it; never sends an upsert older than one accepted (`fleet.sent.json`); unsent lines go back in front; write lock on every append and rewrite; `MC_NO_FLUSH=1` queues only; warns when the installed copy is older |
 | `scripts/boot-sweep.sh [--dry-run] [--no-wait]` | after a host restart, nudges standing lanes that ran no turn since boot to re-arm their `/loop` (`references/boot-sweep.md`) |
 | `scripts/ci-queue-alert.sh [--dry-run]` | alerts when too many workflow runs stay queued, once per episode (`references/ci-capacity.md`) |
 | `scripts/cred-check.sh [--dry-run] [--publish [FILE]]` | weekly validity probe of the credentials in a names-only index (`references/credentials.md`) |
@@ -769,8 +770,11 @@ Telemetry needs two required values before anything is sent: `cfg.telemetry.base
 and `cfg.telemetry.tenant_id` (or `MC_BASE_URL` and `MC_TENANT_ID`, or the same
 two lines in `$CM_HOME/mc.env`). Until both are set `mc-emit.sh` sends nothing and
 keeps the lines queued up to the 5000-line cap, drops recorded in `outbox.dropped`.
-Once set, on each host: re-copy the scripts (`references/hooks-install.md`;
-`grep -m1 '^MC_EMIT_VERSION=' ~/.concertmaster/bin/mc-emit.sh` must show 2), drain
+A project-bound token also needs `cfg.telemetry.project_id` (or `MC_PROJECT_ID`, or
+a `MC_PROJECT_ID=` line in `$CM_HOME/mc.env`), a `p_<owner>` id from the sink: without
+it the sink answers 400 to every event. Once set, on each host: re-copy the scripts
+(`references/hooks-install.md`;
+`grep -m1 '^MC_EMIT_VERSION=' ~/.concertmaster/bin/mc-emit.sh` must show 3), drain
 with `MC_FLUSH_BATCH=500 MC_FLUSH_SECS=300 mc-emit.sh --flush` (repeat while the
 outbox shrinks), then `--requeue-dead`, then `--flush` again (requeue refuses past
 the cap). The event types for `--tick` and `--issue-state` are `TYPE_TICK` and
