@@ -13,8 +13,9 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 export CM_CONFIG="$HERE/fixtures/config.test.yaml"
 unset CM_ORG CM_REPO CM_PROJECT CM_OWNER_NAME CM_OWNER_ID CM_TZ CM_TZ_LABEL CM_EXCLUDE_REPOS CM_PATH_MATCH CM_SELF_WORKTREE
 TD="$HERE/../teardown.sh"
-ROOT="$(mktemp -d "${TMPDIR:-/tmp}/cm-gates.XXXXXX")"
-trap 'chmod -R u+rwx "$ROOT" 2>/dev/null; rm -rf "$ROOT"' EXIT
+ROOT="$(mktemp -d "${TMPDIR:-/tmp}/cm-gates.XXXXXX")" || { echo "cannot create a temp dir" >&2; exit 1; }
+[ -n "$ROOT" ] && [ -d "$ROOT" ] || { echo "temp dir missing" >&2; exit 1; }
+trap 'chmod -R u+rwx "$ROOT" 2>/dev/null; rm -rf -- "${ROOT:?}"' EXIT
 export CM_HOME="$ROOT/cmhome"
 mkdir -p "$CM_HOME" "$ROOT/bin"
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \

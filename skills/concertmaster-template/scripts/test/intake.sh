@@ -19,7 +19,7 @@ SKILL="$(cd "$SCRIPTS/.." && pwd)"
 IN="$SCRIPTS/intake.sh"
 FX="$HERE/fixtures/intake"
 ROOT="$(mktemp -d "${TMPDIR:-/tmp}/cm-intake-test.XXXXXX")"
-trap 'rm -rf "$ROOT"' EXIT
+trap 'rm -rf -- "${ROOT:?}"' EXIT
 export CM_HOME="$ROOT/cmhome" CM_INTAKE_NOW=2026-10-12T14:00:00Z
 mkdir -p "$CM_HOME" "$ROOT/bin"
 export PATH="$ROOT/bin:$PATH"
