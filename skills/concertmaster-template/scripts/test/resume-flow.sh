@@ -133,7 +133,7 @@ row() { # row <lane> <host> <path> <current> [agent] [state] [worktreeId]
   row fail-lane local /x/fail-lane "#4703 fail"
   row remote-lane remote-1 /y/remote-dead "#4704 remote"
   row stale-lane local /y/stale-agent "#4705 stale"
-  row epic-offline m1-mac /m/offline "#4706 offline"
+  row epic-offline mac-1 /m/offline "#4706 offline"
   row ghost local /x/ghost "#4707 ghost"
   row blind-lane local /x/blind-lane "#4708 blind"
   row slow-lane local /x/slow-lane "#4709 slow"

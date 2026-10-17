@@ -21,7 +21,7 @@ cat > "$ROOT/ledger.json" <<'J'
   "w-single": {"host": "local", "path": "/x/research-ota-cost", "standing": false},
   "w-epic":   {"host": "local", "path": "/x/ops-e", "standing": false, "beadsEpic": "t-ep1"},
   "w-null":   {"host": "local", "path": "/x/ops-null", "standing": null},
-  "w-ldm":    {"host": "local", "path": "/elsewhere", "worktreeId": "repo::ldm", "standing": true, "beadsEpic": "acme-ldm1"},
+  "w-ldm":    {"host": "local", "path": "/elsewhere", "worktreeId": "repo::ldm", "standing": true, "beadsEpic": "acme-epic1"},
   "w-old":    {"host": "local", "path": "/x/reused", "standing": true, "state": "gone"},
   "w-new":    {"host": "local", "path": "/x/reused", "standing": false},
   "w-hung":   {"host": "local", "path": "/x/hung-lead", "standing": true},

@@ -162,7 +162,7 @@ jq --arg id w-dev-101 --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
 | `workers.<id>.lastComment` | the worker's Orca comment, `cm:<state> <detail>` (lanes.md § Reporting) |
 | `workers.<id>.adopted` | true for sessions found at first boot rather than spawned |
 | `workers.<id>.standing` | true for sweepers and lane leads, false for single-task workers; set at spawn and at adoption. The ONLY source of standing for `teardown.sh` and `classify.sh` (names never decide): true or being a `lanes.<lane>.lead` refuses teardown and retire, false allows, null or missing refuses as "standing state unknown". Removal of a standing lane needs a `remove-standing` ask (§ asks) |
-| `workers.<id>.beadsEpic` | beads epic id (string) the worker owns, e.g. `acme-ldm1`, or null; set at spawn, adoption, or when a lane takes an epic. Any other type refuses teardown. Not done, and `teardown.sh` refuses, while any child bead (dotted `<epic>.N` or `parent-child` linked, recursively) is not closed or tombstoned |
+| `workers.<id>.beadsEpic` | beads epic id (string) the worker owns, e.g. `acme-epic1`, or null; set at spawn, adoption, or when a lane takes an epic. Any other type refuses teardown. Not done, and `teardown.sh` refuses, while any child bead (dotted `<epic>.N` or `parent-child` linked, recursively) is not closed or tombstoned |
 | `workers.<id>.state` `gone` / `repurposed` | dead records: ignored when matching a worktree, so an old record on a reused path never decides standing or beads |
 | `prs.<repo>#<n>.driver` | worker id currently pushing to the PR; at most one |
 | `prs.<repo>#<n>.gate` | last merge-gate reading, each part bound to `headSha` |

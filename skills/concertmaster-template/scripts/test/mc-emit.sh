@@ -209,8 +209,8 @@ check "503: nothing dead-lettered" "$(lines "$CM_HOME/outbox.dead.jsonl")" "0"
 # ---- provisional emitters -----------------------------------------------------
 reset; unset MC_TENANT_ID
 emit --tick '{"summary":"3 live, 1 stuck","live":3,"stuck":1}' >/dev/null
-emit --issue-state 4844 in-review '#4900' >/dev/null
-emit --issue-state 4845 open >/dev/null
+emit --issue-state 44 in-review '#90' >/dev/null
+emit --issue-state 45 open >/dev/null
 emit --issue-state nope open >/dev/null
 check "emitters: three lines queued, bad issue refused" "$(lines "$CM_HOME/outbox.jsonl")" "3"
 check "tick: type from TYPE_TICK" "$(jq -r 'select(.body.type == "concertmaster.tick") | .endpoint' "$CM_HOME/outbox.jsonl")" "/api/events"
@@ -219,7 +219,7 @@ check "tick: message and fleet summary" \
   '["3 live, 1 stuck",3,"concertmaster"]'
 check "issue-state: type, message and metadata" \
   "$(jq -c 'select(.body.type == "issue.state") | [.endpoint, .body.message, .body.metadata.issue, .body.metadata.state, .body.metadata.pr]' "$CM_HOME/outbox.jsonl" | tr '\n' ' ')" \
-  '["/api/events","#4844 in-review",4844,"in-review",4900] ["/api/events","#4845 open",4845,"open",null] '
+  '["/api/events","#44 in-review",44,"in-review",90] ["/api/events","#45 open",45,"open",null] '
 export MC_TENANT_ID="t-test"
 
 # ---- --requeue-dead ------------------------------------------------------------
