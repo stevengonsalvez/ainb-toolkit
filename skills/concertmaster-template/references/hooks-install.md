@@ -93,7 +93,8 @@ the copies share `~/.concertmaster/outbox.jsonl`, and a copy older than
 `MC_EMIT_VERSION` 2 POSTs `tenantId: null` and dead-letters lines a newer copy
 kept (recover them with `mc-emit.sh --requeue-dead` once the tenant is set); one
 older than 3 never sends a projectId, so a project-bound token answers 400 to
-every event it flushes (same recovery, once the project id is set).
+every event it flushes (same recovery once the project id is set: plain
+`--requeue-dead` then takes those lines too, although that copy filled their tenant in).
 `scripts/sync-from-toolkit.sh` does the copy for the skill tree; the installed
 `~/.concertmaster/bin` copy is a separate `cp`.
 
