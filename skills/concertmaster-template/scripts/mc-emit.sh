@@ -576,16 +576,16 @@ event_body() {
 }
 
 # fleet_event: the hook point for fleet state under a project-bound token.
-# TODO(mission-control#533): post the typed fleet events (lane.state,
-# issue.state, fleet.snapshot, each with an eventId) to /api/events once that
-# contract is on the sink's main. Until then fleet state is not reported with a
+# TODO: post the sink's typed fleet events (lane.state, issue.state,
+# fleet.snapshot, each with an eventId) to /api/events once that contract
+# ships. Until then fleet state is not reported with a
 # project id set: nothing is queued (a legacy upsert would only 403) and one
 # line says so, on stderr and in $CM_HOME/fleet.skipped (the latest skip only,
 # written even with MC_QUIET=1, which the worker hook sets).
 fleet_event() {
-  warn "project id set: fleet upsert for $1 not sent (bound tokens may not call /api/fleet/upsert; typed fleet events pending mission-control#533)"
+  warn "project id set: fleet upsert for $1 not sent (bound tokens may not call /api/fleet/upsert; typed fleet events not yet supported)"
   jq -cn --arg a "$1" --argjson at "$NOW_MS" \
-    '{at:$at, agentId:$a, reason:"project-bound token: /api/fleet/upsert not called, typed fleet events pending mission-control#533"}' \
+    '{at:$at, agentId:$a, reason:"project-bound token: /api/fleet/upsert not called, typed fleet events not yet supported"}' \
     > "$CM_HOME/fleet.skipped" 2>/dev/null
 }
 
