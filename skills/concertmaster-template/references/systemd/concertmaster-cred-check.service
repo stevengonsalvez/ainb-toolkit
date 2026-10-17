@@ -1,0 +1,17 @@
+# /etc/systemd/system/concertmaster-cred-check.service
+# Exit 1 (a credential is INVALID or MISSING) or 3 (FATAL) shows the unit as failed on purpose: look at
+# ~/.concertmaster/inbox/cred-check-*.md, which the concertmaster tick reads.
+[Unit]
+Description=Weekly fleet credential validity check (concertmaster)
+
+[Service]
+Type=oneshot
+User=@USER@
+WorkingDirectory=@HOME@
+Environment=HOME=@HOME@
+# same PATH as the Orca service: bws lives in ~/.local/bin, which systemd's default PATH lacks
+# (without it every run would report a false "Bitwarden dead" FATAL)
+Environment=PATH=@HOME@/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+TimeoutStartSec=15min
+ExecStartPre=/bin/mkdir -p @HOME@/.local/state
+ExecStart=/bin/sh -c 'exec @HOME@/.concertmaster/bin/cred-check.sh >> @HOME@/.local/state/cred-check.log 2>&1'
