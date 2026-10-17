@@ -1,0 +1,11 @@
+# /etc/systemd/system/concertmaster-ci-queue.timer
+[Unit]
+Description=Sample the CI queue every 5 minutes
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=5min
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

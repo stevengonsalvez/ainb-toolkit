@@ -1,0 +1,13 @@
+# /etc/systemd/system/concertmaster-ci-queue.service
+[Unit]
+Description=Alert when CI runs stay queued (concertmaster)
+
+[Service]
+Type=oneshot
+User=@USER@
+WorkingDirectory=@HOME@
+Environment=HOME=@HOME@
+Environment=PATH=@HOME@/.local/bin:/usr/local/bin:/usr/bin:/bin
+TimeoutStartSec=90
+ExecStartPre=/bin/mkdir -p @HOME@/.local/state
+ExecStart=/bin/sh -c 'exec @HOME@/.concertmaster/bin/ci-queue-alert.sh >> @HOME@/.local/state/ci-queue-alert.log 2>&1'
