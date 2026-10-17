@@ -79,13 +79,20 @@ cp "$SRC/scripts/lib.sh" "$SRC/scripts/mc-emit.sh" "$SRC/scripts/hooks/mc-worker
 cp "$SRC/config.yaml" ~/.concertmaster/config.yaml   # lib.sh finds it as $CM_HOME/config.yaml
 chmod 755 ~/.concertmaster/bin/*.sh
 mkdir -p ~/.secrets && chmod 700 ~/.secrets          # token copied in separately, mode 600
-# optional overrides, parsed (never sourced) by mc-emit.sh:
-#   printf 'MC_TENANT_ID=%s\n' '<tenant id>' > ~/.concertmaster/mc.env && chmod 600 ~/.concertmaster/mc.env
+grep -m1 '^MC_EMIT_VERSION=' ~/.concertmaster/bin/mc-emit.sh   # must be 2 or later; works on any copy
+# (never run `--version` on an unknown copy: a v1 copy takes it as an event type and flushes)
+# optional overrides, parsed (never sourced) by mc-emit.sh; a placeholder value is ignored:
+#   printf 'MC_TENANT_ID=%s\nMC_BASE_URL=%s\n' "$TENANT_ID" "$BASE_URL" > ~/.concertmaster/mc.env && chmod 600 ~/.concertmaster/mc.env
 # then the settings merge above
 ```
 
 Copying (not symlinking) keeps hooks working while the checkout switches
-branches. Re-copy after the skill's scripts or config change on `main`.
+branches. Re-copy after the skill's scripts or config change on `main`, on every host:
+the copies share `~/.concertmaster/outbox.jsonl`, and a copy older than
+`MC_EMIT_VERSION` 2 POSTs `tenantId: null` and dead-letters lines a newer copy
+kept (recover them with `mc-emit.sh --requeue-dead` once the tenant is set).
+`scripts/sync-from-toolkit.sh` does the copy for the skill tree; the installed
+`~/.concertmaster/bin` copy is a separate `cp`.
 
 ## Per host
 

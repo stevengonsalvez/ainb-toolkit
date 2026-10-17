@@ -178,7 +178,7 @@ jq --arg id w-dev-101 --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
 One JSON object per line, appended by `scripts/mc-emit.sh` from any process
 (concertmaster ticks, teardown, worker hooks on this host). A line is removed
 only after the telemetry sink (`cfg.telemetry.base_url`) answers 2xx; with no
-base URL configured lines stay queued (capped). Capped at 5000 lines, oldest dropped.
+base URL or no tenant configured lines stay queued (capped). Capped at 5000 lines, oldest dropped.
 
 ```json
 {"endpoint":"/api/events","body":{"tenantId":"<cfg.telemetry.tenant_id>","type":"pr.merged","message":"#341 merged","metadata":{"source":"concertmaster","host":"host-1","pr":341},"timestamp":1791150228000},"queuedAt":1791150228000}
@@ -193,10 +193,30 @@ base URL configured lines stay queued (capped). Capped at 5000 lines, oldest dro
 
 A flush sends at most 10 lines in at most 30s. 401, 403, 408, 429, 5xx and
 network failures keep the line queued; any other 4xx moves it to
-`outbox.dead.jsonl` with a `deadCode`, since it can never succeed. Read the
-dead file when the sink's contract changes, then requeue by hand.
+`outbox.dead.jsonl` with a `deadCode`, since it can never succeed. With no
+tenant (`cfg.telemetry.tenant_id`, `MC_TENANT_ID`) a flush sends nothing (a sink
+typically answers 400 to `tenantId: null`) and lines stay queued, still under the
+cap: over 5000 the outbox is trimmed to 4500, oldest first, and each trim is a
+line in `outbox.dropped` (`{"at","dropped","cap"}`, newest 200 kept), even when
+quiet. Every append and outbox rewrite takes the short write lock
+`outbox.wlock`. A line queued before the tenant was set gets it filled in when
+sent. `mc-emit.sh --requeue-dead` puts dead lines with `deadCode` 400 and
+`body.tenantId` null back in FRONT of the outbox, oldest first, with the tenant
+set, after a timestamped backup of the dead file (newest 5 kept). A fleet upsert
+with a newer upsert for the same agentId (requeued or queued) is dropped.
+`fleet.sent.json` (`{"<agentId>": <queuedAt>}`) records the newest upsert the
+sink accepted per agent; neither a flush nor a requeue sends an older one, and
+lines a flush could not send go back in front of the outbox, so a backlog never
+overwrites newer fleet state. Requeue refuses when the result would pass the
+cap: drain first with `MC_FLUSH_BATCH=500 MC_FLUSH_SECS=300 mc-emit.sh --flush`
+(under the 10-minute lock steal), repeated while the outbox shrinks (it stops on
+401, 403, 408 and 429). `--any-tenant` also takes 400 lines that carried a wrong
+tenant. The dead file keeps its newest 5000 lines. Any other dead line: read it
+when the sink's contract changes, requeue by hand.
 
-Event `type` vocabulary: `tick`, `worker.spawned`, `worker.stuck`,
+Event `type` vocabulary: `concertmaster.tick` (`--tick`) and `issue.state`
+(`--issue-state`), both PROVISIONAL until your sink's contract is fixed (set
+`TYPE_TICK` and `TYPE_ISSUE_STATE` in `scripts/mc-emit.sh`), `tick` (older ticks), `worker.spawned`, `worker.stuck`,
 `worker.nudged`, `worker.respawned`, `worker.done`, `worktree.teardown`,
 `pr.merged`, `deploy.started`, `deploy.staging`, `deploy.prod`, `deploy.stopped`,
 `ask.opened`, `ask.answered`, `host.offline`, `host.online`, and from hooks
