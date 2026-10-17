@@ -406,8 +406,8 @@ check "requeue, project id: tenantId and projectId stamped" \
   "$(jq -r '"\(.body.tenantId) \(.body.projectId)"' "$CM_HOME/outbox.jsonl" | sort -u)" "t-test p_example"
 check "requeue, project id: existing eventId kept, others rq- ids" \
   "$(jq -r '.body.eventId | if startswith("rq-") then "rq:\(length)" else . end' "$CM_HOME/outbox.jsonl" | tr '\n' ' ')" "rq:43 rq:43 keep-me "
-check "requeue, project id: identical lines get distinct ids (line number)" \
-  "$(jq -r '.body.eventId' "$CM_HOME/outbox.jsonl" | sort -u | wc -l | tr -d ' ')" "3"
+check "requeue, project id: identical lines share one id (the same event)" \
+  "$(jq -r '.body.eventId' "$CM_HOME/outbox.jsonl" | sort -u | wc -l | tr -d ' ')" "2"
 check "requeue, project id: eventIds match the sink's charset" \
   "$(jq -r '.body.eventId | test("^[A-Za-z0-9._:-]{1,128}$")' "$CM_HOME/outbox.jsonl" | sort -u)" "true"
 check "requeue, project id: no _idsrc left behind" "$(grep -c _idsrc "$CM_HOME/outbox.jsonl")" "0"
@@ -416,6 +416,11 @@ check "requeue, project id: other project's line untouched, byte for byte" \
 jq -r '.body.eventId' "$CM_HOME/outbox.jsonl" > "$ROOT/ids.1"
 seed_proj; "$EMIT" --requeue-dead >/dev/null 2>&1
 check "requeue twice: same eventIds both times" "$(jq -r '.body.eventId' "$CM_HOME/outbox.jsonl" | cmp -s - "$ROOT/ids.1" && echo same)" "same"
+# the dead file is trimmed from the top (cap_dead): line numbers shift, ids must not
+seed_proj; { echo '{"endpoint":"/api/events","body":{"tenantId":"x"},"queuedAt":0,"deadCode":404}'
+  echo '{"endpoint":"/api/events","body":{"tenantId":"x"},"queuedAt":0,"deadCode":404}'; cat "$ROOT/dead.proj"; } > "$DEADF"
+"$EMIT" --requeue-dead >/dev/null 2>&1
+check "requeue after a trim shifted the lines: same eventIds" "$(jq -r '.body.eventId' "$CM_HOME/outbox.jsonl" | cmp -s - "$ROOT/ids.1" && echo same)" "same"
 # tenant-free: a line dead with a wrong tenant gets the id it would have had with none
 seed_proj; sed -i.orig '1s/"tenantId":null/"tenantId":"tenant-x"/' "$DEADF"
 MC_TENANT_ID="tenant-x" "$EMIT" --requeue-dead --any-tenant >/dev/null 2>&1
@@ -424,6 +429,10 @@ check "requeue: eventId ignores the tenant the line died with" \
 echo 200 > "$STUB/code"; emit --flush >/dev/null
 check "requeue then flush: every event posted with projectId and eventId" \
   "$(jq -r '"\(.projectId) \(.eventId != null)"' "$STUB/bodies.jsonl" | sort -u)" "p_example true"
+# a copy older than 3 filled the tenant in before the bound token refused the line
+reset; echo '{"endpoint":"/api/events","body":{"tenantId":"t-test","type":"v2"},"queuedAt":7,"deadCode":400}' > "$DEADF"
+check "requeue, project id: tenant set but no projectId is picked without --any-tenant" \
+  "$("$EMIT" --requeue-dead 2>/dev/null | tail -n 1) $(jq -r '"\(.body.tenantId) \(.body.projectId)"' "$CM_HOME/outbox.jsonl")" "requeued 1 line(s) t-test p_example"
 # a 403 on an event naming another project (id changed while queued) dead-letters
 reset; echo 403 > "$STUB/code"
 { echo '{"endpoint":"/api/events","body":{"tenantId":"t-test","type":"was-a","projectId":"p_a"},"queuedAt":1}'
@@ -431,7 +440,18 @@ reset; echo 403 > "$STUB/code"
 emit --flush >/dev/null
 check "403 event naming another project: dead-lettered with deadCode 403" "$(jq -r '"\(.body.type) \(.deadCode)"' "$DEADF")" "was-a 403"
 check "403 event for the configured project: kept, batch stopped" "$(calls) $(jq -r '.body.type' "$CM_HOME/outbox.jsonl")" "2 now"
+# no sha256sum and no shasum: requeue still moves the lines, without an eventId
+NH="$ROOT/nohash"; mkdir -p "$NH"
+for d in $(printf '%s' "$PATH" | tr ':' ' '); do for f in "$d"/*; do
+  n="${f##*/}"; case "$n" in sha256sum|shasum|'*') continue ;; esac; [ -e "$NH/$n" ] || [ -L "$NH/$n" ] || ln -s "$f" "$NH/$n"
+done; done
+seed_proj; OUTH="$(PATH="$NH" "$EMIT" --requeue-dead 2>>"$STUB/stderr")"
+check "no hasher, project id: requeue still moves the lines" "$(printf '%s\n' "$OUTH" | tail -n 1)" "requeued 3 line(s)"
+check "no hasher: events go without a new eventId, one warning" \
+  "$(jq -r '.body.eventId // "none"' "$CM_HOME/outbox.jsonl" | tr '\n' ' ')$(grep -c 'no sha256sum or shasum' "$STUB/stderr")" "none none keep-me 1"
 unset MC_PROJECT_ID
+seed_proj; OUTH="$(PATH="$NH" "$EMIT" --requeue-dead 2>/dev/null)"
+check "no hasher, no project id: requeue still moves the lines (upsert too)" "$(printf '%s\n' "$OUTH" | tail -n 1)" "requeued 4 line(s)"
 seed_proj; "$EMIT" --requeue-dead >/dev/null 2>&1
 check "requeue, no project id: no projectId stamped, eventId still set" \
   "$(jq -r 'select(.endpoint == "/api/events") | "\(.body | has("projectId")) \(.body.eventId != null)"' "$CM_HOME/outbox.jsonl" | sort -u)" "false true"

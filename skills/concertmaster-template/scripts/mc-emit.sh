@@ -31,13 +31,16 @@
 # oldest first; a fleet upsert superseded by a newer one for the same agentId
 # (requeued or queued) is dropped, so replay never reverts fleet state. It
 # refuses when no tenant is configured or when the result would pass the cap
-# (flush first), and moves nothing on a second run. A requeued /api/events
-# line also gets the configured projectId when it has none, and an eventId
-# when it has none: "rq-" plus a sha256 of its body (tenantId and projectId
-# left out), queuedAt and its line number in the dead file, so requeueing the
-# same dead file twice yields the same ids and the sink dedupes the replay.
-# A dead line naming a projectId other than the configured one is never
-# picked, and neither is a fleet upsert while a project id is set.
+# (flush first), and moves nothing on a second run. With a project id set it
+# also picks 400 lines that carry a tenant but no projectId (a copy older than
+# 3 filled the tenant in, then the bound token refused the line). A requeued
+# /api/events line gets the configured projectId, and an eventId when it has
+# none: "rq-" plus a sha256 of its body (tenantId and projectId left out) and
+# queuedAt, so requeueing the same line twice yields the same id and the sink
+# dedupes the replay (identical lines share one id: the same event). No
+# sha256sum or shasum: a warning, and the lines go without an eventId. A dead
+# line naming a projectId other than the configured one is never picked, and
+# neither is a fleet upsert while a project id is set.
 #
 # Cap: the outbox never holds more than MC_OUTBOX_MAX lines. Over the cap it
 # is trimmed to 90% (oldest dropped), so a full outbox is not rewritten on
@@ -456,11 +459,13 @@ requeue_dead() {
   local total picked kept moved superseded queued stamp bak
   # Lines are read raw so one malformed line never blocks the rest.
   # shellcheck disable=SC2016  # jq programs: $o, $t, $newer, $sent are jq, not shell
+  # With a project id, a line with a tenant but no projectId is picked too.
   # A line naming another project stays dead (never rewritten), and so does a
   # fleet upsert while a project id is set (a bound token gets 403 there).
   local pick='(try fromjson catch null) as $o
     | ($o | type == "object") and $o.deadCode == 400
-      and ($o.body | type == "object") and ($any or $o.body.tenantId == null)
+      and ($o.body | type == "object")
+      and ($any or $o.body.tenantId == null or ($p != "" and ($o.body | has("projectId") | not)))
       and (($o.body | has("projectId") | not) or $o.body.projectId == $p)
       and ($p == "" or $o.endpoint != "/api/fleet/upsert")'
   # shellcheck disable=SC2016
@@ -485,15 +490,16 @@ requeue_dead() {
   if ! total="$(jq -R -n '[inputs] | length' "$DEAD" 2>/dev/null)"; then
     warn "could not read $DEAD: nothing requeued"; flush_cleanup; echo "requeued 0 line(s)"; return 0
   fi
-  # Events: projectId when absent, and _idsrc (the eventId hash input: body
-  # minus tenantId and projectId, queuedAt, dead-file line number) when the
-  # line has no eventId; stamp_ids turns _idsrc into eventId.
+  # Events: the project id (pick left only lines without one or with this
+  # one), and _idsrc (the eventId hash input: body minus tenantId and
+  # projectId, then queuedAt) when the line has no eventId; stamp_ids turns
+  # _idsrc into eventId. No line number: it shifts when cap_dead trims.
   # shellcheck disable=SC2016
-  local stamp='input_line_number as $n | select('"$pick"') | fromjson | del(.deadCode)
+  local stamp='select('"$pick"') | fromjson | del(.deadCode)
     | (.body | del(.tenantId, .projectId) | tojson) as $src | .body.tenantId = $t
     | if .endpoint != "/api/events" then .
-      else (if $p != "" and (.body | has("projectId") | not) then .body.projectId = $p else . end)
-        | (if .body | has("eventId") then . else ._idsrc = "\($src)|\(.queuedAt)|\($n)" end) end'
+      else (if $p != "" then .body.projectId = $p else . end)
+        | (if .body | has("eventId") then . else ._idsrc = "\($src)|\(.queuedAt)" end) end'
   if ! jq -R -c --arg t "$TENANT" --arg p "$PROJECT" --argjson any "$anyj" "$stamp" "$DEAD" > "$F_RQ_RAW" 2>/dev/null \
      || ! jq -R -r --arg p "$PROJECT" --argjson any "$anyj" "select(($pick) | not)" "$DEAD" > "$F_RQ_KEEP" 2>/dev/null \
      || ! stamp_ids; then
@@ -538,13 +544,18 @@ requeue_dead() {
 }
 
 # stamp_ids: in F_RQ_RAW, each line's _idsrc becomes body.eventId "rq-" + the
-# first 40 hex of its sha256. One hasher run per such line.
+# first 40 hex of its sha256. One hasher run per such line. No hasher: the
+# lines go without an eventId (a replay is then not deduped), never refused.
 stamp_ids() {
   local sha src h
   grep -q '"_idsrc"' "$F_RQ_RAW" || return 0
   if command -v sha256sum >/dev/null 2>&1; then sha="sha256sum"
   elif command -v shasum >/dev/null 2>&1; then sha="shasum -a 256"
-  else warn "no sha256sum or shasum: cannot give requeued events an eventId"; return 1; fi
+  else
+    warn "no sha256sum or shasum: requeued events get no eventId, a second replay is not deduped"
+    jq -c 'del(._idsrc)' "$F_RQ_RAW" > "$F_RQ_MOVE" && mv "$F_RQ_MOVE" "$F_RQ_RAW"
+    return
+  fi
   jq -r '._idsrc // ""' "$F_RQ_RAW" | while IFS= read -r src; do
     if [ -z "$src" ]; then echo; else h="$(printf '%s' "$src" | $sha)"; printf '%s\n' "${h:0:40}"; fi
   done | jq -R . | jq -s -c . > "$F_RQ_SUM" || return 1
