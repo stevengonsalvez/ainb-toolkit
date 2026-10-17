@@ -8,8 +8,9 @@
 #   scripts/test/boot-sweep.sh         # exit 0 when every case passes
 set -uo pipefail
 SCRIPT="$(cd "$(dirname "$0")/.." && pwd)/boot-sweep.sh"
-ROOT="$(mktemp -d "${TMPDIR:-/tmp}/cm-boot-test.XXXXXX")"
-trap 'rm -rf "${ROOT:?}"' EXIT
+ROOT="$(mktemp -d "${TMPDIR:-/tmp}/cm-boot-test.XXXXXX")" || { echo "cannot create a temp dir" >&2; exit 1; }
+[ -n "$ROOT" ] && [ -d "$ROOT" ] || { echo "temp dir missing" >&2; exit 1; }
+trap 'rm -rf -- "${ROOT:?}"' EXIT
 export CM_HOME="$ROOT/home" STUB_DIR="$ROOT/stub" CM_CLAUDE_PROJECTS="$ROOT/projects"
 mkdir -p "$CM_HOME" "$STUB_DIR" "$CM_CLAUDE_PROJECTS"
 export CM_PATH_MATCH="/acme-app/" CM_CONFIG=/nonexistent

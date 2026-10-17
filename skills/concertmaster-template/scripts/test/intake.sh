@@ -18,7 +18,8 @@ SCRIPTS="$(cd "$HERE/.." && pwd)"
 SKILL="$(cd "$SCRIPTS/.." && pwd)"
 IN="$SCRIPTS/intake.sh"
 FX="$HERE/fixtures/intake"
-ROOT="$(mktemp -d "${TMPDIR:-/tmp}/cm-intake-test.XXXXXX")"
+ROOT="$(mktemp -d "${TMPDIR:-/tmp}/cm-intake-test.XXXXXX")" || { echo "cannot create a temp dir" >&2; exit 1; }
+[ -n "$ROOT" ] && [ -d "$ROOT" ] || { echo "temp dir missing" >&2; exit 1; }
 trap 'rm -rf -- "${ROOT:?}"' EXIT
 export CM_HOME="$ROOT/cmhome" CM_INTAKE_NOW=2026-10-12T14:00:00Z
 mkdir -p "$CM_HOME" "$ROOT/bin"
