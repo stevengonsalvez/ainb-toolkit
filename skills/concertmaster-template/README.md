@@ -33,15 +33,19 @@ those keys; nothing in them names an org, repo, host, person or chat.
 | `references/intake.md` | chat intake procedure; wacli is one adapter |
 | `references/resume.md` | restart recovery |
 | `references/hooks-install.md` | optional telemetry hooks |
+| `references/boot-sweep.md`, `references/systemd/` | re-arm lanes after a host restart; unit and timer files for the boot sweep, CI queue alert and credential check (`@USER@` and `@HOME@` tokens) |
+| `references/ci-capacity.md` | CI queue alert and the shared-token budget |
+| `references/credentials.md`, `references/credentials-index.seed.json` | credential index (names only) and the weekly validity check |
+| `references/prompt-stalls.md` | the guarded-`rm` rule, the rm-guard hook and an optional allowlist |
 | `companions/dev-flow.md` | generic copy of the dev-flow skill the dev-sweeper runs |
-| `scripts/` | bash + jq (+ yq) scripts, `lib.sh` holds the config loader |
+| `scripts/` | bash + jq (+ yq) scripts, `lib.sh` holds the config loader. Fleet jobs: `boot-sweep.sh`, `ci-queue-alert.sh`, `cred-check.sh`, `hooks/rm-guard-hook.sh`. `sync-from-toolkit.sh` updates a project's copy |
 | `scripts/test/` | hermetic tests, run against `scripts/test/fixtures/config.test.yaml` |
 
 ## Dependencies
 
 Tools: `bash` (3.2+), `jq`, `yq` (mikefarah v4), `git`, `gh`, `curl`, the Orca
 CLI (`orca` / `orca-ide`), `bd` (beads), Claude Code with `/loop` and
-ScheduleWakeup. Optional: `wacli` (chat intake and digest), `codex`, `agy`.
+ScheduleWakeup. Optional: `wacli` (chat intake and digest), `codex`, `agy`, `bws` (credential check), `systemd` (boot sweep, CI queue alert and credential check timers), `shellcheck` (lint).
 
 Skills the runbook calls. These live in the source project's repo
 (`.agents/skills/<name>`) or in the global toolkit skills, NOT in this template:
@@ -57,6 +61,27 @@ copy them into the new project or replace them with equivalents.
 | `gh` | PRs, issues, repo list | CLI |
 | `/commit`, `/review`, `/research`, `/interview`, `/codex:rescue` | worker and lead steps | global skills / plugins |
 | ops route skills (`cfg.ops.route`) | ops-sweeper routing | project-specific; null routes mean "investigate yourself" |
+
+## Update a project (public engine, private config)
+
+The engine lives here; each project keeps its own `config.yaml` (and any other
+`config.*.yaml`) in its own repo. To pull a newer engine into a project's copy:
+
+```bash
+# from a toolkit checkout (or any copy of this tree):
+scripts/sync-from-toolkit.sh --dry-run <repo>/.agents/skills/concertmaster   # what would change
+scripts/sync-from-toolkit.sh           <repo>/.agents/skills/concertmaster   # do it
+# or straight from GitHub, no checkout:
+scripts/sync-from-toolkit.sh --fetch   <repo>/.agents/skills/concertmaster
+```
+
+It never writes `config.yaml`, keeps the project's `SKILL.md` frontmatter, leaves
+project-only files alone (`--prune` removes engine files the toolkit dropped), and
+prints the config keys that `config.example.yaml` now documents but the project's
+`config.yaml` does not set. Afterwards re-copy the installed hook scripts on each
+host (`references/hooks-install.md`) and run the tests. Telemetry needs two required
+config values, `telemetry.base_url` and `telemetry.tenant_id`: there is no default
+for either, and nothing is sent until both are set.
 
 ## Adopt in a new project
 
