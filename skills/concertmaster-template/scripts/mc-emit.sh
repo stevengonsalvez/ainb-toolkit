@@ -82,7 +82,9 @@
 # holds the latest skip, even with MC_QUIET=1); see fleet_event.
 # A 403 on /api/fleet/upsert is a route refusal, not a token one (a bad token
 # is 401), so that line is dead-lettered with deadCode 403 instead of
-# blocking the queue.
+# blocking the queue. So is a 403 on an event naming a projectId other than
+# the configured one (the project id changed while it was queued); any other
+# 403 on an event keeps the line and stops the batch.
 #
 # Auth: header X-MC-Token read from $MC_TOKEN_FILE (else config
 # telemetry.token_file, else ~/.secrets/mc-auth-token). The token never touches argv: it goes into a
@@ -398,8 +400,11 @@ flush() {
       2??) sent=$((sent + 1)); mark_sent "$line" ;;
       000) net_down=1; kept=$((kept + 1)); printf '%s\n' "$line" >> "$F_KEEP" ;;
       # The sink refuses /api/fleet/upsert to a project-bound or shared token
-      # with 403 every time: dead-letter it like a 400, the batch goes on.
-      403) if [ "$ep" = /api/fleet/upsert ]; then
+      # with 403 every time, and an event naming another project than the
+      # configured one (the id changed since it was queued) too: dead-letter
+      # it like a 400, the batch goes on. Any other 403 is about the token.
+      403) if [ "$ep" = /api/fleet/upsert ] \
+              || [ "$(jq -r --arg p "$PROJECT" '(has("projectId") and .projectId != $p)' <<<"$body" 2>/dev/null)" = true ]; then
              dead=$((dead + 1)); jq -c --argjson b "$body" '.body = $b | . + {deadCode: 403}' <<<"$line" >> "$DEAD" 2>/dev/null \
                || printf '%s\n' "$line" >> "$DEAD"
            else net_down=1; kept=$((kept + 1)); printf '%s\n' "$line" >> "$F_KEEP"; fi ;;

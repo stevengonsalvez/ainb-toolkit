@@ -424,6 +424,13 @@ check "requeue: eventId ignores the tenant the line died with" \
 echo 200 > "$STUB/code"; emit --flush >/dev/null
 check "requeue then flush: every event posted with projectId and eventId" \
   "$(jq -r '"\(.projectId) \(.eventId != null)"' "$STUB/bodies.jsonl" | sort -u)" "p_example true"
+# a 403 on an event naming another project (id changed while queued) dead-letters
+reset; echo 403 > "$STUB/code"
+{ echo '{"endpoint":"/api/events","body":{"tenantId":"t-test","type":"was-a","projectId":"p_a"},"queuedAt":1}'
+  echo '{"endpoint":"/api/events","body":{"tenantId":"t-test","type":"now"},"queuedAt":2}'; } > "$CM_HOME/outbox.jsonl"
+emit --flush >/dev/null
+check "403 event naming another project: dead-lettered with deadCode 403" "$(jq -r '"\(.body.type) \(.deadCode)"' "$DEADF")" "was-a 403"
+check "403 event for the configured project: kept, batch stopped" "$(calls) $(jq -r '.body.type' "$CM_HOME/outbox.jsonl")" "2 now"
 unset MC_PROJECT_ID
 seed_proj; "$EMIT" --requeue-dead >/dev/null 2>&1
 check "requeue, no project id: no projectId stamped, eventId still set" \
