@@ -50,8 +50,8 @@ done
 
 ORCA="$(cm_orca)"
 HOST_TIMEOUT="${CM_HOST_TIMEOUT:-25}"
-TMP="$(mktemp -d "${TMPDIR:-/tmp}/cm-discover.XXXXXX")"
-trap 'rm -rf "$TMP"' EXIT
+TMP="$(mktemp -d "${TMPDIR:-/tmp}/cm-discover.XXXXXX")" || { cm_warn "discover: cannot create a temp dir"; exit 1; }
+trap 'rm -rf -- "${TMP:?}"' EXIT
 : > "$TMP/errors.ndjson"
 : > "$TMP/hosts.ndjson"
 : > "$TMP/rows.ndjson"

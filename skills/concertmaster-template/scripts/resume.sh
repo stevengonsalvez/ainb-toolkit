@@ -79,14 +79,15 @@ ROW_MAX="${CM_RESUME_ROW_MAX_S:-$((HOST_TIMEOUT + 60 + 3 * WAIT_MS / 1000 + 30 +
 RETRY_MIN="${CM_RESUME_RETRY_MIN:-30}"
 ROSTER="$CM_HOME/roster.yaml"
 LEDGER="$CM_HOME/ledger.json"
-TMP="$(mktemp -d "${TMPDIR:-/tmp}/cm-resume.XXXXXX")"
+TMP="$(mktemp -d "${TMPDIR:-/tmp}/cm-resume.XXXXXX")" || { cm_warn "resume: cannot create a temp dir"; exit 1; }
 LOCK="$CM_HOME/resume.lock"
 HAVE_LOCK=0
 START=$SECONDS
 # shellcheck disable=SC2329  # invoked by the EXIT trap
 cleanup() {
-  rm -rf "$TMP"
-  if [ "$HAVE_LOCK" = 1 ] && [ "$(cat "$LOCK/pid" 2>/dev/null)" = "$$" ]; then rm -rf "$LOCK"; fi
+  # Lock first: nothing after it may stop the release.
+  if [ "$HAVE_LOCK" = 1 ] && [ "$(cat "$LOCK/pid" 2>/dev/null)" = "$$" ]; then rm -rf -- "${LOCK:?}"; fi
+  [ -z "$TMP" ] || rm -rf -- "${TMP:?}"
   return 0
 }
 trap cleanup EXIT
@@ -117,9 +118,9 @@ if [ "$DRY" = 0 ]; then
     # stale: the rename is atomic, so only one reclaimer takes it. Afterwards check
     # that what we moved is the lock we judged stale, else put it back and stand down.
     if mv "$LOCK" "$LOCK.stale.$$" 2>/dev/null; then
-      if [ "$(lock_pid "$LOCK.stale.$$")" = "$judged" ]; then rm -rf "$LOCK.stale.$$"
+      if [ "$(lock_pid "$LOCK.stale.$$")" = "$judged" ]; then rm -rf -- "${LOCK:?}.stale.$$"
       else
-        mv "$LOCK.stale.$$" "$LOCK" 2>/dev/null || rm -rf "$LOCK.stale.$$"
+        mv "$LOCK.stale.$$" "$LOCK" 2>/dev/null || rm -rf -- "${LOCK:?}.stale.$$"
         cm_warn "resume: lock changed while reclaiming; standing down"; exit 4
       fi
     else

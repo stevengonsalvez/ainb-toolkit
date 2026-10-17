@@ -47,10 +47,10 @@ die() { printf 'intake: %s\n' "$*" >&2; exit "${2:-1}"; }
 need() { command -v "$1" >/dev/null 2>&1 || die "$1 not found on PATH"; }
 need jq
 
-TMP="$(mktemp -d "${TMPDIR:-/tmp}/cm-intake.XXXXXX")"
+TMP="$(mktemp -d "${TMPDIR:-/tmp}/cm-intake.XXXXXX")" || die "cannot create a temp dir"
 LOCK_DIR="$CM_HOME/.intake.lock"; LOCK_HELD=0
 lock_release() { if [ "$LOCK_HELD" = 1 ]; then rmdir "$LOCK_DIR" 2>/dev/null || true; LOCK_HELD=0; fi; }
-trap 'lock_release; rm -rf "$TMP"' EXIT
+trap 'lock_release; rm -rf -- "${TMP:?}"' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
