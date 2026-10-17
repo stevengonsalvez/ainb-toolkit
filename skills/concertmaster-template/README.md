@@ -81,7 +81,8 @@ prints the config keys that `config.example.yaml` now documents but the project'
 `config.yaml` does not set. Afterwards re-copy the installed hook scripts on each
 host (`references/hooks-install.md`) and run the tests. Telemetry needs two required
 config values, `telemetry.base_url` and `telemetry.tenant_id`: there is no default
-for either, and nothing is sent until both are set.
+for either, and nothing is sent until both are set. A project-bound sink token also
+needs `telemetry.project_id` (a `p_<owner>` id), else the sink refuses every event.
 
 ## Adopt in a new project
 

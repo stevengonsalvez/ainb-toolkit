@@ -142,6 +142,11 @@ telemetry:                         # optional mission-control style sink
   # MC_TENANT_ID, or the same two lines in $CM_HOME/mc.env, beat these keys.
   base_url: ""                     # [script] e.g. https://mc.example.com
   tenant_id: ""                    # [script] the sink's id for this project, e.g. acme
+  # Set when the token is project-bound (it may call only /api/events and must name one of its
+  # projects on every event). Every event then carries projectId and fleet upserts are not sent.
+  # Must match ^p_[a-z0-9][a-z0-9-]{0,38}$; empty or invalid sends no projectId. Env
+  # MC_PROJECT_ID, or a MC_PROJECT_ID= line in $CM_HOME/mc.env, beats this key.
+  project_id: ""                   # [script] e.g. p_example
   token_file: ~/.secrets/mc-auth-token   # [script] file holding the token, mode 600
 
 # A session that waited this long on a human for a decision inside its own scope stops waiting
