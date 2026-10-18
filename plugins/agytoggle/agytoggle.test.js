@@ -47,6 +47,19 @@ test('agytoggle help output', () => {
   }
 });
 
+test('agytoggle usage refuses an empty pool before touching credentials', () => {
+  const { run, accountsPath, cleanup } = makeTempHarness();
+  try {
+    writeFileSync(accountsPath, JSON.stringify({ accounts: [], activeIndex: 0 }));
+    assert.throws(() => run(['usage']), (err) => {
+      assert.match(err.stdout + err.stderr, /No accounts found in your pool/);
+      return true;
+    });
+  } finally {
+    cleanup();
+  }
+});
+
 test('agytoggle import and list active profile', () => {
   const { run, tokenPath, accountsPath, cleanup } = makeTempHarness();
   try {

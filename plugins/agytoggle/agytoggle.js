@@ -292,6 +292,7 @@ Antigravity CLI Multi-Account Switcher (agytoggle)
 Usage:
   agytoggle list                                - List all profiles with status
   agytoggle current                             - Show active account
+  agytoggle usage                               - Show remaining quota for every account
   agytoggle switch <index|email>                - Switch to specific account
   agytoggle rotate                              - Rotate using current strategy (default: round-robin)
   agytoggle rotate --strategy=<s>               - Rotate with specific strategy (one-time)
@@ -813,6 +814,23 @@ Usage:
 
     const next = healthyIndices.find(i => i > currentIndex) ?? healthyIndices[0];
     await doSwitch(next, storage);
+    process.exit(0);
+  }
+
+  if (command === 'usage') {
+    // agy only reports quota for the active account, so cycle each one and restore the original.
+    const original = storage.activeIndex ?? 0;
+    for (let i = 0; i < storage.accounts.length; i++) {
+      await doSwitch(i, storage);
+      console.log(`\n=== ${storage.accounts[i].email}`);
+      try {
+        const out = execFileSync(process.env.AGY_BIN || 'agy', ['-p', '/usage'], { encoding: 'utf8', timeout: 60000, stdio: ['ignore', 'pipe', 'pipe'] });
+        console.log(out.trim() || '(no usage output)');
+      } catch (err) {
+        console.log(`(usage failed: ${err.message.split('\n')[0]})`);
+      }
+    }
+    await doSwitch(original, storage);
     process.exit(0);
   }
 
