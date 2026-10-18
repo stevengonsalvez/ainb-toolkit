@@ -6,9 +6,9 @@
 #   scripts/digest.sh [--ledger <path>] [--since-hours <n>]
 #
 # Sections: merged, deployed (and stopped deploys), needs <owner>, stuck, then
-# a one-line fleet footer. Default window: 12h. Default ledger:
-# $CM_HOME/ledger.json. Times print in config schedule.timezone (CM_TZ),
-# labelled schedule.timezone_label. Plain text, chat friendly, no em-dashes.
+# a one-line fleet footer, plus a queue line when work is queued. Default
+# window: 12h. Default ledger: $CM_HOME/ledger.json. Times print in config
+# schedule.timezone (CM_TZ), labelled schedule.timezone_label. Plain text, chat friendly, no em-dashes.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -60,5 +60,9 @@ TZ="$CM_TZ" jq -r --argjson sinceH "$SINCE_H" --arg project "$CM_PROJECT" --arg 
       | ($run | group_by(.host) | map("\(.[0].host) \(length)") | join(", ")) as $byHost
       | ([ $hosts | to_entries[] | select(.value.reachable == false) | .key ]) as $off
       | ([ $prs[] | select(.state == "OPEN") ] | length) as $open
-      | "Fleet: \($run | length) running\(if $byHost != "" then " (" + $byHost + ")" else "" end), \($open) open PRs tracked\(if ($off | length) > 0 then ", offline: " + ($off | join(" ")) else "" end)" )
+      | "Fleet: \($run | length) running\(if $byHost != "" then " (" + $byHost + ")" else "" end), \($open) open PRs tracked\(if ($off | length) > 0 then ", offline: " + ($off | join(" ")) else "" end)" ),
+    ( [ (.queue.items // [])[] | select(.state == "queued") ]
+      | sort_by(({"P0": 0, "urgent": 1}[.priority // "normal"] // 2), (.addedAt // ""))
+      | if length == 0 then empty
+        else "Queue: \(length) waiting, next \(.[0:3] | map("#\(.issue) \(.lane) \(.priority // "normal")") | join(", "))" end )
 ' "$LEDGER"

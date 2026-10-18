@@ -35,6 +35,10 @@ if [ "$MODE" = json ]; then
 fi
 
 printf '%s\n' "$OUT" | jq -r '"summary: " + (.summary | to_entries | map("\(.key)=\(.value)") | join(" "))'
+# Queue depth and the next 3 (SKILL.md § Work queue); silent when the ledger has no queue.
+if [ -s "$LEDGER" ] && jq -e '.queue | type == "object"' "$LEDGER" >/dev/null 2>&1; then
+  CM_LEDGER="$LEDGER" "$HERE/queue.sh" depth 2>/dev/null || true
+fi
 printf '%s\n' "$OUT" | jq -r '
   (["host", "class", "worktree", "branch", "pr", "idle", "suggest"] | @tsv),
   (.items | sort_by(.class, .host)[]
