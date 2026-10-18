@@ -33,6 +33,11 @@ Host-local, outside git. The directory is `cfg.state_dir` (default
 - Times are UTC ISO-8601 without fractions: `2026-10-04T11:00:00Z`.
 - Unknown is `null`, never an invented value.
 - Missing file on boot means first boot (SKILL.md § First boot).
+- One document: the temp file must hold exactly one JSON object before the
+  `mv` (`jq -s 'length == 1'`). A filter that emits several documents (a
+  stray `,` at the top level) once concatenated them into the ledger and
+  corrupted it; `scripts/queue.sh` refuses such a write and leaves the ledger
+  untouched.
 
 ```bash
 L=$CM_HOME/ledger.json
@@ -73,6 +78,17 @@ jq --arg id w-dev-101 --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     "laptop":         { "kind": "environment", "selector": "--environment laptop",
                         "reachable": false, "lastSeenAt": "2026-10-04T09:00:00Z",
                         "offlineSince": "2026-10-04T09:15:00Z", "role": "native", "maxWorkers": 2 }
+  },
+
+  "queue": {
+    "cap": 30, "policy": "P0, then urgent, then oldest addedAt",
+    "items": [
+      { "id": "q-7", "issue": 412, "lane": "dev-sweeper", "priority": "P0",
+        "addedAt": "2026-10-04T18:12:00Z", "state": "granted",
+        "grantedAt": "2026-10-04T18:15:00Z", "host": "build-2" },
+      { "id": "q-8", "issue": 101, "lane": "dev-sweeper", "priority": "normal",
+        "addedAt": "2026-10-04T18:10:00Z", "state": "queued", "grantedAt": null, "host": null }
+    ]
   },
 
   "lanes": {
@@ -149,9 +165,13 @@ jq --arg id w-dev-101 --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
 | `hosts.<name>.reachable` | from the last discover; `offlineSince` set on the first unreachable tick |
 | `hosts.<name>.hostname` | `hostname -s` the host answers over ssh; teardown.sh refuses a remote host that answers otherwise (seeded from `cfg.hosts.per_host.<name>.hostname`) |
 | `hosts.<name>.role` | `general`, `native` (native builds), `overflow`; seeded from `cfg.hosts` |
-| `hosts.<name>.maxWorkers` | live-worker cap for that host; seeded from `cfg.hosts`, read every tick |
+| `hosts.<name>.maxWorkers` | live-worker cap for that host; seeded from `cfg.hosts`, read every tick. `queue.sh grant` takes `cfg.hosts.per_host.<name>.maxWorkers` first, then this, then `cfg.hosts.defaults.maxWorkers` |
+| `queue.cap` | total live project agent sessions across all hosts; `queue.sh` copies `cfg.queue.cap` here and prefers the config value. Unset in both: nothing is granted |
+| `queue.grant_hold_minutes` | config only (default 30): a `granted` item younger than this counts as live on its host, so a slot is not granted twice before the session shows up |
+| `queue.policy` | the order, as text: P0 (security or production), then urgent, then the oldest `addedAt` |
+| `queue.items[]` | work waiting for a slot (SKILL.md § Work queue): `id` (`q-<n>`), `issue` (number), `lane`, `priority` (`P0`, `urgent` or `normal`), `addedAt`, `state` (`queued`, `granted`, `done`, `dropped`), `grantedAt` (null until granted), `host` (pinned by `add --host`, else set at grant; null while unpinned), `closedAt` (set by `mark done` or `mark dropped`; `mark queued` returns a failed hand-off to `queued` with its `addedAt` kept). Written only through `scripts/queue.sh` |
 | `lanes.<lane>.state` | `absent`, `spawning`, `running`, `idle` (queue empty, lead kept: lanes are standing and never torn down), `draining` (legacy: treat as `idle`), `gone` |
-| `lanes.<lane>.queue` | items handed by the owner not yet given to a worker |
+| `lanes.<lane>.queue` | items already granted to the lane (`queue.items[]`) not yet given to a worker |
 | `workers.<id>.state` | `queued`, `spawning`, `running`, `stuck`, `blocked-on-owner`, `done`, `retired` (agent terminal closed, worktree kept), `teardown`, `gone` (only when its host was reached and the row is absent) |
 | `workers.<id>.terminal` | the ONE agent handle (`agentTerminalHandle` or `startupTerminal.handle`); refreshed after an Orca restart |
 | `workers.<id>.agent` | `claude`, `codex` or `agy`. Unset (some adopted lanes): `resume` never starts claude there, the row is `manual` |

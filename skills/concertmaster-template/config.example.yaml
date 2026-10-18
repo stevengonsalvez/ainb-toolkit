@@ -45,6 +45,11 @@ hosts:
     local: { role: general, maxWorkers: 6 }
     # build-mac: { role: native, maxWorkers: 2, hostname: build-mac }   # hostname = `hostname -s` over ssh
 
+queue:
+  cap: 10                          # [script] live agent sessions across all hosts; queue.sh grant
+                                   # grants nothing at or over it (and nothing when unset)
+  # grant_hold_minutes: 30         # [script] a fresh grant counts as live on its host this long
+
 schedule:
   timezone: Europe/London          # [script] digest times and deploy windows use this zone
   timezone_label: UK               # [script] printed after times in the digest

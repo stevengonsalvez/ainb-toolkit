@@ -28,6 +28,7 @@ Config-backed placeholders (fill from `config.yaml`):
 | `{{evidence_cmd}}`, `{{ready_value}}` | `merge.gates.evidence` (`{pr}` as `<n>`), `merge.gates.ready_value` |
 | `{{review_verdict_cmd}}` | `merge.gates.review_verdict` |
 | `{{ci_gate_cmd}}` | `merge.gates.ci_gate` |
+| `{{queue_caps}}` | `queue.cap` in total, plus each `hosts.per_host.<name>.maxWorkers`, as `<total> total; <host> <n>, ...` |
 | `{{verify_merged_cmd}}` | `merge.gates.verify_merged` |
 | `{{review_round_cap}}` | `merge.review_round_cap` |
 | `{{approved_only_classes}}` | `merge.approved_only_classes` |
@@ -64,6 +65,7 @@ orca worktree set --worktree active --comment "cm:<state> <detail>" --json
 | `cm:blocked <one question>` | needs a decision it may not make | relays to the owner or answers |
 | `cm:merge-ready #<pr> <sha12>` | PR verified at the merge gate at head | pr-sweeper takes it |
 | `cm:merged #<pr> <sha12>` | pr-sweeper merged and proved it landed | records for the deploy window |
+| `cm:queued <issue#> <lane> <priority>` | new work would pass a host cap; in-flight work continues | `queue.sh add`, grants it at a free slot, hands it back |
 | `cm:idle <n> open beads` | standing lead with nothing assigned, or waiting on beads only the owner can decide | records the count, hands new work; never retires or tears it down |
 | `cm:done <deliverable>` | single-task worker finished, nothing left, every bead in its epic closed | checks beads, verifies, retires the worker; teardown once its PR merges or closes |
 | `cm:failed <reason>` | cannot finish from this repo | escalates or respawns |
@@ -80,7 +82,7 @@ recommended option, and ends its turn. The answer arrives as a typed message.
 - Repo: {{org}}/{{repo}} only. Never touch another repo or another worktree.
 - Report through your Orca worktree comment at every checkpoint:
     orca worktree set --worktree active --comment "cm:<state> <detail>" --json
-  states: running, blocked, merge-ready, merged, idle, done, failed.
+  states: running, blocked, queued, merge-ready, merged, idle, done, failed.
 - All hosts, every tick: run `orca host list --json`, then per host
   `timeout 30 orca worktree list --json --repo name:{{orca_repo}} --limit 500 --environment <host>`
   (no `--environment` for the host whose `kind` is `local`; `gtimeout` on
@@ -109,6 +111,10 @@ recommended option, and ends its turn. The answer arrives as a typed message.
 - {{terminology_lines}} No em-dashes anywhere.
 - Every wait is bounded and polls failure states too. Kill processes and tmux
   sessions by exact name only.
+- Work queue: keep your in-flight work, but never start a new session or worker
+  past a host cap ({{queue_caps}}). Post
+  "cm:queued <issue#> <lane> <P0|urgent|normal>" and wait for the
+  concertmaster to hand it back once a slot is granted.
 - Production data: {{production_data_rule}}.
 ```
 

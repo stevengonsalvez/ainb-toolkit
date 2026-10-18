@@ -223,9 +223,17 @@ when the owner calls it).
      that lane, standing true, in any state but gone. An idle standing lead takes new items first;
      else spawn a lead at its `cfg.lanes[].spawn_at` item count, a single worker
      below it, within caps.
+   - **Work queue** (§ Work queue): `scripts/queue.sh grant --discover
+     $CM_HOME/last-discover.json`. It counts live project agent sessions per
+     host and grants the top queued items while the total is under
+     `queue.cap` and the target host is under `hosts.<name>.maxWorkers`.
+     Hand every `granted` line's item to its lane this tick (idle lead first,
+     else spawn within § Spawn recipe). `granted nothing` at the cap is normal.
    - Deploy window due (`cfg.schedule.deploy_windows`): § Deploy windows.
    - Digest due (`cfg.schedule.digest_times`): § Messaging.
-5. **Report** in the turn-end format (§ Reporting). Emit
+5. **Report** in the turn-end format (§ Reporting), with a `queue` row: depth
+   and the next 3 items (`scripts/queue.sh depth`, also in `classify.sh --table`).
+   Emit
    `scripts/mc-emit.sh --tick '<fleet summary json>'` (a `summary` field becomes
    the message) and a fleet upsert for concertmaster itself; on an issue's
    state change, `scripts/mc-emit.sh --issue-state <issue> <state> [pr]`.
@@ -337,7 +345,7 @@ Lead rules:
 - Caps: `hosts.<name>.maxWorkers` per host (seeded from `cfg.hosts.per_host`,
   else `cfg.hosts.defaults`), read every tick; spawn on the host with the most
   free slots among `general` hosts, `native` hosts only for native-build work
-  or overflow. Never exceed the cap; queue instead.
+  or overflow. Never exceed the cap; queue instead (§ Work queue).
 
 ## Handing work
 
@@ -349,7 +357,44 @@ The owner says "issues #101, #102 to dev" or "sort today's team chat".
 2. **Pair-sort.** One AskUserQuestion with the drafted routing as the
    recommended option first (`preview` shows the routing table) and the
    realistic alternative second. Two options is enough.
-3. **Spawn** per the answer, record in the ledger, report.
+3. **Queue** per the answer: `scripts/queue.sh add <issue> <lane> [--priority
+   P0|urgent] [--host <name>]`, never a direct spawn. Tell the asker the
+   printed "queued, position N". The tick's grant step hands it to the lane.
+
+## Work queue
+
+New work waits for a free slot instead of spawning past capacity. The queue is
+`.queue` in the ledger (`references/ledger.md`); `scripts/queue.sh` is the only
+writer of it.
+
+```text
+┌──────────┐ add  ┌──────────┐ tick: grant while      ┌──────────┐ hand ┌──────┐
+│ handed / │─────▶│ queued   │─ live < queue.cap and ▶│ granted  │─────▶│ lane │
+│ cm:queued│      │ (ledger) │  host < maxWorkers     │ +host    │      │      │
+└──────────┘      └──────────┘                        └──────────┘      └──────┘
+```
+
+- **Order**: P0 (security or production) first, then urgent asks, then the
+  oldest `addedAt`.
+- **Caps**: `queue.cap` live project agent sessions in total (config, mirrored
+  to the ledger), and `hosts.<name>.maxWorkers` per host. A live session is an
+  agent pane in a live terminal of a worktree under `cfg.worktrees.path_match`.
+  A host that is unreachable or truncated counts as full. No cap configured:
+  nothing is granted.
+- **Grant** each tick (§ The tick, Act): top item first, repeated until a cap
+  is hit. An item pinned to a full host waits; the next item may go elsewhere.
+  An item with no host goes to the reachable `general` host with the most free
+  slots. A grant counts as live on its host for `queue.grant_hold_minutes`
+  (default 30), so a slow spawn is never granted twice. A warning that config
+  and census host names differ means a host's `maxWorkers` is not applied: fix
+  the `hosts.per_host` key to the census name.
+- **Askers** are told "queued, position N" (from `queue.sh add`).
+- **Lanes** keep their in-flight work but never spawn a worker past a host cap:
+  they post `cm:queued <issue#> <lane> <priority>` and wait. The concertmaster
+  reads it at the next tick, runs `queue.sh add`, and hands the item back when
+  it is granted.
+- Close items with `queue.sh mark <id> done|dropped` when the work is merged or
+  abandoned; `mark <id> queued` puts a failed hand-off back at its old position.
 
 ## Intake
 
@@ -744,6 +789,8 @@ shellcheck clean.
 | `scripts/classify.sh [--table]` | one class per item (rules in `classify.jq`), ledger-aware: `standing-idle` for idle sweepers and leads, beads-gate suggest for epic owners; `CM_STUCK_MIN` default 45 |
 | `scripts/abrupt.sh` | sessions cut off by a restart (background work killed, `/loop` resume pending, agent fell back to a shell) and duplicate live agents in one worktree; TSV |
 | `scripts/waiting.sh` | sessions showing a question menu, with minutes waiting and the question; TSV |
+| `scripts/queue.sh list\|add\|grant\|mark\|depth` | the work queue in the ledger (§ Work queue): `add` prints "queued, position N", `grant --discover <file>` (or `--live h=n,...`) grants while under `queue.cap` and each host's `maxWorkers` (fresh grants hold their slot for `queue.grant_hold_minutes`); plan and write under one pid-owned lock, one JSON object checked with `jq -s`, then `mv` |
+| `scripts/test/queue.sh` | queue tests: add and list order, at-cap grants nothing and one under grants the top item, grant hold, requeue, host caps, discover counting, host-name warning, lock ownership and stale steal, the single-document write guard |
 | `scripts/roster.sh [--stdout]` | rewrites `$CM_HOME/roster.yaml` from the ledger, active rows only; atomic, mode 600, exit 1 and roster untouched when the ledger is unreadable |
 | `scripts/resume.sh [--dry-run] [--host <h>] [--worktree-id <id>] [--path <wt>] [--lane <label>]` | `/concertmaster resume`: rewrites the roster, then per row: live, dead (`claude --continue` plus one nudge), offline, duplicate, missing, manual, unknown, held; one run at a time (lock); exit 3 when a row needs attention |
 | `scripts/teardown.sh <host> <path> [--apply] [--allow-no-pr] [--salvage] [--close-handle <h>] [--force-standing <ask-id>] [--accept-unmerged-beads <ask-id>] [--retire-check]` | safe teardown, dry run by default; refuses standing lanes, unknown standing and open beads, fails closed |
