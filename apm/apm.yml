@@ -12,6 +12,8 @@ dependencies:
     - yizhiyanhua-ai/fireworks-tech-graph
     - antvis/Infographic
     - Cocoon-AI/architecture-diagram-generator/architecture-diagram
+    - steipete/oracle/skills/oracle
+    - steipete/oracle/skills/oracle-advisor
     - google-labs-code/stitch-skills/plugins/stitch-build
     - google-labs-code/stitch-skills/plugins/stitch-design
     # npx skills
