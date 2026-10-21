@@ -180,6 +180,8 @@ update_packages() {
   # apm (PyPI: apm-cli): Microsoft Agent Package Manager; pinned to the version
   # packages/qe-agent-pack and the CI apm-audit job are verified against
   run "uv tool install --force 'apm-cli==0.29.0'"
+  # oracle CLI (npm, not uv): tracks latest; skills come from the agent-skills manifest entry
+  run "npm install -g @steipete/oracle@latest"
 }
 
 case "$SCOPE" in
