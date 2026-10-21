@@ -1,0 +1,17 @@
+# Alternative to native `claude plugin install`: the same plugins through apm (flat skills, commands and hooks).
+# Use ONE path per host, not both. Install with:  apm install -g  using this file as ~/.apm/apm.yml
+# ponytail is left out: its hooks use process.env.CLAUDE_PLUGIN_ROOT, which apm cannot relocate.
+name: ainb-fleet-plugins
+version: 0.1.0
+targets: [claude, codex]
+dependencies:
+  apm:
+    - stevengonsalvez/ainb-toolkit/plugins/godmode
+    - anthropics/claude-plugins-official/plugins/ralph-loop
+    - anthropics/claude-plugins-official/plugins/code-review
+    - anthropics/claude-plugins-official/plugins/skill-creator
+    - anthropics/claude-plugins-official/plugins/playground
+    - steveyegge/beads
+    - openprose/prose
+    - sawyerhood/dev-browser
+    - stevengonsalvez/agent-bridge

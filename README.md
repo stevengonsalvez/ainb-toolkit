@@ -50,6 +50,22 @@ See the agents-in-a-box repo for `ainb` install (homebrew tap or
 
 ---
 
+## Install with `apm` (fleet hosts)
+
+```bash
+scripts/fleet-install.sh                  # skills + MCP via apm, plugins via native `claude plugin install`
+scripts/fleet-install.sh --plugins apm    # everything through apm, one tool
+scripts/fleet-install.sh --dry-run        # print what would run
+```
+
+`apm/apm.yml` holds the skills and MCP servers for Claude and Codex; `apm/plugins.apm.yml` is the apm
+alternative to the native plugin installs listed in `external-dependencies.yaml`. Use one plugin path per
+host. apm can only relocate a hook written as `"${CLAUDE_PLUGIN_ROOT}/path"`, so a plugin whose hooks build
+the root another way ships a generated `hooks/claude-codex-hooks.json` for apm (see
+`plugins/godmode/scripts/gen-claude-codex-hooks.cjs`); the native runtimes keep reading `hooks/hooks.json`.
+
+---
+
 ## Nix
 
 The flattened `skills/` and `agents/` trees are exposed as Nix packages:

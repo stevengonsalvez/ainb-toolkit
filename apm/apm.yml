@@ -1,0 +1,32 @@
+# Skills and MCP servers for every host, installed with: apm install -g
+# (copy to ~/.apm/apm.yml first; scripts/fleet-install.sh does this).
+# Plugins stay on the native `claude plugin install` path; see apm/plugins.apm.yml for the apm alternative.
+name: ainb-fleet-user
+version: 0.1.0
+targets: [claude, codex]
+dependencies:
+  apm:
+    # agent-skills (git repos following the SKILL.md standard)
+    - nextlevelbuilder/ui-ux-pro-max-skill
+    - PleasePrompto/notebooklm-skill
+    - yizhiyanhua-ai/fireworks-tech-graph
+    - antvis/Infographic
+    - Cocoon-AI/architecture-diagram-generator/architecture-diagram
+    - google-labs-code/stitch-skills/plugins/stitch-build
+    - google-labs-code/stitch-skills/plugins/stitch-design
+    # npx skills
+    - vercel-labs/agent-browser
+    - vercel-labs/agent-skills
+    - kepano/obsidian-skills
+    - pbakaus/impeccable
+    - tt-a1i/archify/archify
+    - cloudflare/skills
+    - higgsfield-ai/skills
+  mcp:
+    - name: context7
+      registry: false
+      transport: stdio
+      command: npx
+      args:
+        - -y
+        - '@upstash/context7-mcp'
