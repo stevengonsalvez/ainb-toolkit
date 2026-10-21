@@ -549,11 +549,11 @@ claude-plugins:
       - Eval-driven skill improvement
 
   - name: open-prose
-    marketplace: anthropics/prose
-    marketplace_id: prose
+    marketplace: openprose/prose
+    marketplace_id: openprose
     version: "0.17.0"
     install: |
-      claude plugin marketplace add anthropics/prose
+      claude plugin marketplace add openprose/prose
       claude plugin install open-prose
     purpose: "OpenProse programming language for AI sessions and multi-agent workflows"
     features:
@@ -562,7 +562,7 @@ claude-plugins:
       - Variable binding and context passing
       - Parallel and sequential execution blocks
       - Skills and imports composition
-    docs: "https://github.com/anthropics/prose"
+    docs: "https://github.com/openprose/prose"
 
   - name: codex
     marketplace: openai/codex-plugin-cc
@@ -1218,7 +1218,7 @@ marketplaces:
     description: "Browser DevTools integration"
 
   - id: prose
-    repo: anthropics/prose
+    repo: openprose/prose
     description: "OpenProse AI workflow language"
 
   - id: openai-codex
