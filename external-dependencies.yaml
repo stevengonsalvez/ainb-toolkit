@@ -475,15 +475,6 @@ claude-plugins:
     purpose: "Fleet orchestration over every local claude session (standup / broadcast / needs / ATC)"
     has_skills: true
 
-  - name: ainb-hooks
-    marketplace: stevengonsalvez/agents-in-a-box
-    marketplace_id: agents-in-a-box
-    version: "0.4.8"
-    install: |
-      claude plugin marketplace add stevengonsalvez/agents-in-a-box
-      claude plugin install ainb-hooks@agents-in-a-box
-    purpose: "Shared hook pack; includes stall_guard.py, the Stop hook enforcing never-idle-while-waiting"
-
   - name: caveman-stats
     own-plugin: true  # source of truth is THIS repo; setup-external.sh must NOT copy its skills flat
     marketplace: stevengonsalvez/ainb-toolkit
