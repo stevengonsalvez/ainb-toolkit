@@ -60,7 +60,6 @@ components:
     - mobile-e2e-mcp
     - nano-banana-pro
     - notebooklm
-    - oracle
     - plan
     - plan-gh
     - plan-tdd

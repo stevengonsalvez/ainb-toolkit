@@ -50,6 +50,20 @@ external-packages:
       env: REFLECT_KB_SOURCE  # local path or git URL — overrides default repo for dev iteration
     docs: "https://github.com/stevengonsalvez/reflect-kb"
 
+  - name: oracle-cli
+    source: https://github.com/steipete/oracle
+    install: "npm install -g @steipete/oracle@latest"
+    cli: oracle
+    version-pin: latest
+    requires:
+      - "node (>=22) and npm; on a root-owned npm prefix use --prefix ~/.npm-global"
+    purpose: "oracle CLI: one-shot second-model requests with repo files attached (ChatGPT browser engine or provider APIs); also ships oracle-mcp"
+    features:
+      - "--engine browser drives a logged-in ChatGPT in Chrome; --engine api needs OPENAI_API_KEY (or Gemini/Anthropic keys)"
+      - "--remote-chrome lets a headless server use another machine's logged-in Chrome"
+      - "--dry-run previews the bundle without calling a model"
+    docs: "https://askoracle.dev"
+
   - name: apm-cli
     source: https://github.com/microsoft/apm
     install: "uv tool install --force 'apm-cli==0.29.0'"
@@ -180,6 +194,17 @@ bundled-skills:
 # These follow the SKILL.md standard and work across Claude, Codex, Copilot.
 # Reference is committed here; actual files pulled at bootstrap time.
 agent-skills:
+  - name: oracle
+    repo: https://github.com/steipete/oracle
+    multi-subpath: skills
+    applies-to: [claude, codex, copilot, gemini, antigravity]
+    purpose: "Upstream skills for the oracle CLI: browser-first second-model review, plus the oracle-advisor transport/provenance variant"
+    requires:
+      - "oracle CLI (see external-packages: oracle-cli)"
+    skills:
+      - oracle: "Bundle prompt + files into one-shot second-model review, debug, refactor or design (browser-first)"
+      - oracle-advisor: "Second-model consultation with explicit API, browser or render transport and per-run provenance"
+
   - name: ui-ux-pro-max
     repo: https://github.com/nextlevelbuilder/ui-ux-pro-max-skill
     version: "2.2.1"
