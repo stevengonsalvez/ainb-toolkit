@@ -20,8 +20,6 @@ dependencies:
     - kepano/obsidian-skills#3ccff5338ea700537839b21900aa5358a0402c98
     - pbakaus/impeccable#8644175285360c166e57b1e35ecadfbc85ff5209
     - tt-a1i/archify/archify#25cf37080fc8b1dbe758a4efc3935b55f3327083
-    - cloudflare/skills#86505e44f87d801aa1864a3c4109e9a8ae5c409f
-    - higgsfield-ai/skills#f83af0bc1d937c8119099a11f8ebbf5e6fb99819
 
     # toolkit bundled skills (skills/ in this repo)
     - stevengonsalvez/ainb-toolkit/skills/agent-ops
@@ -252,6 +250,10 @@ dependencies:
     - remotion-dev/skills/skills/remotion-best-practices#039e8a2fc78b67efc228d5645367838b85818a1c
     - typesafe-ai/skills/skills/typesafe-ai#65a39f393687675ce170e6094757de20370365b9
     - vercel-labs/skills/skills/find-skills#a80e4c9d12d607631249d4d7d059f835d4b2f13a
+    # skills from their own repos
+    - morluto/rea/.agents/skills/reverse-engineer-anything#77c72b96aa01b74f5f1e6dc2e1b737bd0fd1ee0e
+    - stevengonsalvez/agent-bridge/skills/test-design-mode
+    # fpl skills: add stevengonsalvez/fpl/skills/{fpl-manager,fpl-scout,fpl-twitter} once stevengonsalvez/fpl#8 is merged
   mcp:
     - name: context7
       registry: false

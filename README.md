@@ -62,6 +62,11 @@ Third-party entries in `apm/apm.yml` are pinned to a commit (`scripts/apm-pin.py
 `~/.apm/apm.lock.yaml` after an `apm install -g`); pinned is not reviewed, so read a skill before trusting it
 with credentials (the Google Workspace, gogcli and cookie skills do touch them).
 
+Skills deliberately not installed by apm, so a diff against a long-lived host shows them as extra: the NanoClaw
+and OpenClaw sets (handled separately), plugin-owned skills (caveman, beads, higgsfield, cloudflare,
+browser-harness; Orca's own skills ship with Orca), the plugly project skills, and the machine-local
+`concertmaster`, `review-this` and `orca-model-fleet`. The fpl skills live in `stevengonsalvez/fpl`.
+
 `apm/apm.yml` holds the skills and MCP servers for Claude and Codex; `apm/plugins.apm.yml` is the apm
 alternative to the native plugin installs listed in `external-dependencies.yaml`. Use one plugin path per
 host. apm can only relocate a hook written as `"${CLAUDE_PLUGIN_ROOT}/path"`, so a plugin whose hooks build

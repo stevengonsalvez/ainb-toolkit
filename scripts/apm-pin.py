@@ -16,7 +16,8 @@ manifest, lockfile = sys.argv[1], sys.argv[2]
 lock = {}
 for e in yaml.safe_load(open(lockfile))["dependencies"]:
     key = (e["repo_url"].lower(), (e.get("virtual_path") or "").strip("/"))
-    lock[key] = e["resolved_commit"]
+    if e.get("resolved_commit"):
+        lock[key] = e["resolved_commit"]
 
 DEP = re.compile(r"^(\s+- )([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)(/[^#\s]+)?(#\S+)?\s*$")
 out, pinned, missing = [], 0, []
