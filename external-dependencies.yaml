@@ -637,6 +637,38 @@ claude-plugins:
       claude plugin install ponytail@ponytail
     purpose: "Lazy senior dev mode: forces the simplest, shortest working solution (YAGNI, stdlib first)"
 
+  - name: higgsfield
+    marketplace: higgsfield-ai/skills
+    marketplace_id: higgsfield
+    version: "0.13.0"
+    repo: "https://github.com/higgsfield-ai/skills"
+    applies-to: [claude, codex]
+    install: |
+      claude plugin marketplace add higgsfield-ai/skills
+      claude plugin install higgsfield@higgsfield
+    purpose: "Higgsfield AI skills for images, videos, brand systems and narrated content"
+
+  - name: cloudflare
+    marketplace: cloudflare/skills
+    marketplace_id: cloudflare
+    version: "1.0.2"
+    repo: "https://github.com/cloudflare/skills"
+    applies-to: [claude, codex]
+    install: |
+      claude plugin marketplace add cloudflare/skills
+      claude plugin install cloudflare@cloudflare
+    purpose: "Build, test and deploy on Cloudflare: Workers, Durable Objects, Wrangler, Zero Trust and more"
+
+  - name: browser-harness
+    marketplace: browser-use/browser-harness
+    marketplace_id: browser-harness
+    version: "0.1.0"
+    repo: "https://github.com/browser-use/browser-harness"
+    install: |
+      claude plugin marketplace add browser-use/browser-harness
+      claude plugin install browser-harness@browser-harness
+    purpose: "Direct browser control over CDP in the user's real Chrome or a Browser Use cloud browser"
+
 # =============================================================================
 # NPX SKILLS (agent skills from npm/GitHub)
 # =============================================================================
