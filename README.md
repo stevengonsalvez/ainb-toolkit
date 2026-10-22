@@ -83,6 +83,10 @@ node bootstrap.js --tool=codex
 node bootstrap.js --tool=copilot
 node bootstrap.js --tool=gemini
 
+# Remote SSH target: bootstrap refuses to guess the runtime user's home.
+# Resolve process owner first, then pass that user's home explicitly.
+sudo -iu claude node bootstrap.js --tool=codex --homeDir=/home/claude
+
 # Verify everything landed (read-only)
 node bootstrap.js --tool=claude-code-4.5 --verify
 
