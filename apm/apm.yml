@@ -22,6 +22,7 @@ dependencies:
     - kepano/obsidian-skills
     - pbakaus/impeccable
     - tt-a1i/archify/archify
+    - citrolabs/ego-lite/skills/ego-browser
     - cloudflare/skills
     - higgsfield-ai/skills
   mcp:
