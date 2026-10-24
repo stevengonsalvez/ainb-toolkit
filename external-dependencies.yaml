@@ -780,6 +780,22 @@ npx-skills:
       - Accessibility and WCAG compliance auditing
       - Design system extraction and normalization
 
+  - name: ego-browser
+    repo: citrolabs/ego-lite
+    install: "npx skills add citrolabs/ego-lite -g -y -s ego-browser -a claude-code codex github-copilot antigravity gemini-cli"
+    version: "2.1.0"
+    purpose: "Browser automation through the ego lite Chromium app, reusing the user's logged-in sites and profile"
+    requires:
+      - "ego lite desktop app (macOS DMG or Windows installer) with first-run GUI onboarding; it puts ego-browser on PATH"
+    features:
+      - "`ego-browser skill` prints the usage guide for the installed app version"
+      - Sign-in reuse, form filling, screenshots, data extraction, web app QA
+    notes: >-
+      Installs to ~/.agents/skills (Codex, Copilot, Gemini read it natively; Claude gets a symlink).
+      agy only sees it where ~/.gemini/config/skills.json lists ~/.agents/skills, otherwise symlink it
+      into ~/.gemini/skills. No Linux app: on servers the skill is present but ego-browser is not, and
+      its description tells agents to prefer it for every browser task.
+
   - name: archify
     repo: tt-a1i/archify
     install: "npx skills add tt-a1i/archify -g --yes"
