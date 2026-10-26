@@ -417,7 +417,7 @@ claude-plugins:
   - name: beads
     marketplace: steveyegge/beads
     marketplace_id: beads-marketplace
-    version: "0.49.0"
+    version: "1.2.2"
     install: |
       claude plugin marketplace add steveyegge/beads
       claude plugin install beads
@@ -432,7 +432,7 @@ claude-plugins:
   - name: debug-bridge
     marketplace: stevengonsalvez/agent-bridge
     marketplace_id: agent-bridge-marketplace
-    version: "0.2.0"
+    version: "0.3.1"
     install: |
       claude plugin marketplace add stevengonsalvez/agent-bridge
       claude plugin install debug-bridge
@@ -445,7 +445,7 @@ claude-plugins:
   - name: ralph-loop
     marketplace: anthropics/claude-plugins-official
     marketplace_id: claude-plugins-official
-    version: "55b58ec6e564"
+    version: "1.0.0"
     install: |
       claude plugin marketplace add anthropics/claude-plugins-official
       claude plugin install ralph-loop
@@ -489,7 +489,7 @@ claude-plugins:
   - name: reflect
     marketplace: stevengonsalvez/agents-in-a-box
     marketplace_id: agents-in-a-box
-    version: "3.1.0"
+    version: "5.2.5"
     install: |
       claude plugin marketplace add stevengonsalvez/agents-in-a-box
       claude plugin install reflect@agents-in-a-box
@@ -510,7 +510,7 @@ claude-plugins:
   - name: ainb-fleet
     marketplace: stevengonsalvez/agents-in-a-box
     marketplace_id: agents-in-a-box
-    version: "0.2.0"
+    version: "0.3.0"
     install: |
       claude plugin marketplace add stevengonsalvez/agents-in-a-box
       claude plugin install ainb-fleet@agents-in-a-box
@@ -520,7 +520,7 @@ claude-plugins:
   - name: ainb-hooks
     marketplace: stevengonsalvez/agents-in-a-box
     marketplace_id: agents-in-a-box
-    version: "0.4.4"
+    version: "0.4.8"
     install: |
       claude plugin marketplace add stevengonsalvez/agents-in-a-box
       claude plugin install ainb-hooks@agents-in-a-box
@@ -570,11 +570,11 @@ claude-plugins:
 
   - name: dev-browser
     marketplace: sawyerhood/dev-browser
-    marketplace_id: sawyerhood-dev-browser
+    marketplace_id: dev-browser-marketplace
     version: "66682fb0513a"
     install: |
       claude plugin marketplace add sawyerhood/dev-browser
-      claude plugin install dev-browser@sawyerhood/dev-browser
+      claude plugin install dev-browser@dev-browser-marketplace
     purpose: "Browser automation skill for web testing and verification"
     features:
       - Persistent Chromium browser control (maintains cookies, localStorage, page state)
@@ -602,7 +602,7 @@ claude-plugins:
   - name: open-prose
     marketplace: anthropics/prose
     marketplace_id: prose
-    version: "0.8.1"
+    version: "0.17.0"
     install: |
       claude plugin marketplace add anthropics/prose
       claude plugin install open-prose
@@ -677,12 +677,24 @@ claude-plugins:
       - Native Gemini extension support via gemini-extension.json (loads GEMINI.md)
     docs: "https://github.com/JuliusBrussee/caveman"
 
+  - name: ponytail
+    marketplace: DietrichGebert/ponytail
+    marketplace_id: ponytail
+    version: "4.7.0"
+    repo: "https://github.com/DietrichGebert/ponytail"
+    applies-to: [claude, codex]
+    install: |
+      claude plugin marketplace add DietrichGebert/ponytail
+      claude plugin install ponytail@ponytail
+    purpose: "Lazy senior dev mode: forces the simplest, shortest working solution (YAGNI, stdlib first)"
+
 # =============================================================================
 # NPX SKILLS (agent skills from npm/GitHub)
 # =============================================================================
 # Installed via `npx skills add`. These follow the agentskills.io specification.
 # See: https://github.com/vercel-labs/add-skill
 npx-skills:
+
   - name: agent-browser
     repo: vercel-labs/agent-browser
     install: "npx skills add vercel-labs/agent-browser --yes"
