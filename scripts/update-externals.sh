@@ -182,6 +182,11 @@ update_packages() {
   run "uv tool install --force 'apm-cli==0.29.0'"
   # oracle CLI (npm, not uv): tracks latest; skills come from the agent-skills manifest entry
   run "npm install -g @steipete/oracle@latest"
+  # cua-driver: GUI app driver; needs a desktop session, so macOS only here
+  if [ "$(uname -s)" = Darwin ]; then
+    run "/bin/bash -c \"\$(curl -fsSL https://cua.ai/driver/install.sh)\" -- --no-modify-path"
+    run "cua-driver skills update --from=main"
+  fi
 }
 
 case "$SCOPE" in

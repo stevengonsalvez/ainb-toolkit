@@ -50,6 +50,23 @@ external-packages:
       env: REFLECT_KB_SOURCE  # local path or git URL — overrides default repo for dev iteration
     docs: "https://github.com/stevengonsalvez/reflect-kb"
 
+  - name: cua-driver
+    source: https://github.com/trycua/cua
+    install: "/bin/bash -c \"$(curl -fsSL https://cua.ai/driver/install.sh)\" && cua-driver skills install --from=main"
+    cli: cua-driver
+    version-pin: latest
+    platforms: [macos, linux-desktop, windows]
+    purpose: "Drive native GUI apps through the accessibility tree (snapshot, element tokens, menus, geometry), as CLI or stdio MCP server"
+    features:
+      - "Installer puts the CLI in ~/.local/bin and never touches agent skill dirs"
+      - "`cua-driver skills install --from=main` fetches the skill pack (libs/cua-driver/rust/Skills/cua-driver) and symlinks it into Claude, Codex/~/.agents, agy, Gemini, OpenCode and Hermes"
+      - "Pin a release with CUA_DRIVER_RS_VERSION=X.Y.Z (the stable channel can lag the newest release)"
+    notes: >-
+      Needs a graphical session; skip on headless Linux servers. Use either the CLI's
+      `skills install` links or the apm.yml entry for the skill, not both: they target the same
+      ~/.claude/skills/cua-driver path.
+    docs: "https://github.com/trycua/cua/tree/main/libs/cua-driver"
+
   - name: oracle-cli
     source: https://github.com/steipete/oracle
     install: "npm install -g @steipete/oracle@latest"
