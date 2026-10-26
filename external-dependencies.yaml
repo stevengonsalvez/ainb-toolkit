@@ -517,15 +517,6 @@ claude-plugins:
     purpose: "Fleet orchestration over every local claude session (standup / broadcast / needs / ATC)"
     has_skills: true
 
-  - name: ainb-hooks
-    marketplace: stevengonsalvez/agents-in-a-box
-    marketplace_id: agents-in-a-box
-    version: "0.4.8"
-    install: |
-      claude plugin marketplace add stevengonsalvez/agents-in-a-box
-      claude plugin install ainb-hooks@agents-in-a-box
-    purpose: "Shared hook pack; includes stall_guard.py, the Stop hook enforcing never-idle-while-waiting"
-
   - name: caveman-stats
     own-plugin: true  # source of truth is THIS repo; setup-external.sh must NOT copy its skills flat
     marketplace: stevengonsalvez/ainb-toolkit
@@ -600,11 +591,11 @@ claude-plugins:
       - Eval-driven skill improvement
 
   - name: open-prose
-    marketplace: anthropics/prose
-    marketplace_id: prose
+    marketplace: openprose/prose
+    marketplace_id: openprose
     version: "0.17.0"
     install: |
-      claude plugin marketplace add anthropics/prose
+      claude plugin marketplace add openprose/prose
       claude plugin install open-prose
     purpose: "OpenProse programming language for AI sessions and multi-agent workflows"
     features:
@@ -613,7 +604,7 @@ claude-plugins:
       - Variable binding and context passing
       - Parallel and sequential execution blocks
       - Skills and imports composition
-    docs: "https://github.com/anthropics/prose"
+    docs: "https://github.com/openprose/prose"
 
   - name: codex
     marketplace: openai/codex-plugin-cc
@@ -687,6 +678,38 @@ claude-plugins:
       claude plugin marketplace add DietrichGebert/ponytail
       claude plugin install ponytail@ponytail
     purpose: "Lazy senior dev mode: forces the simplest, shortest working solution (YAGNI, stdlib first)"
+
+  - name: higgsfield
+    marketplace: higgsfield-ai/skills
+    marketplace_id: higgsfield
+    version: "0.13.0"
+    repo: "https://github.com/higgsfield-ai/skills"
+    applies-to: [claude, codex]
+    install: |
+      claude plugin marketplace add higgsfield-ai/skills
+      claude plugin install higgsfield@higgsfield
+    purpose: "Higgsfield AI skills for images, videos, brand systems and narrated content"
+
+  - name: cloudflare
+    marketplace: cloudflare/skills
+    marketplace_id: cloudflare
+    version: "1.0.2"
+    repo: "https://github.com/cloudflare/skills"
+    applies-to: [claude, codex]
+    install: |
+      claude plugin marketplace add cloudflare/skills
+      claude plugin install cloudflare@cloudflare
+    purpose: "Build, test and deploy on Cloudflare: Workers, Durable Objects, Wrangler, Zero Trust and more"
+
+  - name: browser-harness
+    marketplace: browser-use/browser-harness
+    marketplace_id: browser-harness
+    version: "0.1.0"
+    repo: "https://github.com/browser-use/browser-harness"
+    install: |
+      claude plugin marketplace add browser-use/browser-harness
+      claude plugin install browser-harness@browser-harness
+    purpose: "Direct browser control over CDP in the user's real Chrome or a Browser Use cloud browser"
 
 # =============================================================================
 # NPX SKILLS (agent skills from npm/GitHub)
@@ -1285,7 +1308,7 @@ marketplaces:
     description: "Browser DevTools integration"
 
   - id: prose
-    repo: anthropics/prose
+    repo: openprose/prose
     description: "OpenProse AI workflow language"
 
   - id: openai-codex
