@@ -12,6 +12,8 @@ dependencies:
     - yizhiyanhua-ai/fireworks-tech-graph#1ca1ff9cfcb67893a43d32b9ef3a1b782c44a46f
     - antvis/Infographic#5ae0d9394ac6280cb688eb4b4345881e291b9209
     - Cocoon-AI/architecture-diagram-generator/architecture-diagram#4b9087d55268c79a935105439dbcd37b630fc3f3
+    - steipete/oracle/skills/oracle#8ca21e82ce82d4b65c12243929c0a31e5d73c847
+    - steipete/oracle/skills/oracle-advisor#8ca21e82ce82d4b65c12243929c0a31e5d73c847
     - google-labs-code/stitch-skills/plugins/stitch-build#0337446dadde6f8c94210444e2aa9d546126480f
     - google-labs-code/stitch-skills/plugins/stitch-design#0337446dadde6f8c94210444e2aa9d546126480f
     # npx skills
@@ -20,6 +22,9 @@ dependencies:
     - kepano/obsidian-skills#3ccff5338ea700537839b21900aa5358a0402c98
     - pbakaus/impeccable#8644175285360c166e57b1e35ecadfbc85ff5209
     - tt-a1i/archify/archify#25cf37080fc8b1dbe758a4efc3935b55f3327083
+    - citrolabs/ego-lite/skills/ego-browser#aecc5831fc5a9ea01a078b632185992a3a7ac448
+    # cua-driver skill; the CLI itself comes from cua.ai/driver/install.sh (see external-dependencies.yaml)
+    - trycua/cua/libs/cua-driver/rust/Skills/cua-driver#3d6be5173e4feb3e0b2f5c303e3196216d33d216
 
     # toolkit bundled skills (skills/ in this repo)
     - stevengonsalvez/ainb-toolkit/skills/agent-ops
