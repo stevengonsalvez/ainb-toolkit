@@ -7,11 +7,40 @@ targets: [claude, codex]
 dependencies:
   apm:
     - stevengonsalvez/ainb-toolkit/plugins/godmode
-    - anthropics/claude-plugins-official/plugins/ralph-loop
-    - anthropics/claude-plugins-official/plugins/code-review
-    - anthropics/claude-plugins-official/plugins/skill-creator
-    - anthropics/claude-plugins-official/plugins/playground
-    - steveyegge/beads
-    - openprose/prose
-    - sawyerhood/dev-browser
+    - anthropics/claude-plugins-official/plugins/ralph-loop#af59ee3a1051a29dda4a2e7a2af221aa457ae08b
+    - anthropics/claude-plugins-official/plugins/code-review#af59ee3a1051a29dda4a2e7a2af221aa457ae08b
+    - anthropics/claude-plugins-official/plugins/skill-creator#af59ee3a1051a29dda4a2e7a2af221aa457ae08b
+    - anthropics/claude-plugins-official/plugins/playground#af59ee3a1051a29dda4a2e7a2af221aa457ae08b
+    - steveyegge/beads#9d6fff760b7a314b476539198504d77ce0959656
+    - openprose/prose#0ab7237ced4ac29ca002c94878e69c5cbf6b1ea6
+    - sawyerhood/dev-browser#e5d746f1fc17a3301d6e7f865f89c034f15f69fb
     - stevengonsalvez/agent-bridge
+    # higgsfield, cloudflare and browser-harness are Claude plugins; apm takes their skill folders one by one
+    - higgsfield-ai/skills/higgsfield-brandkit#f83af0bc1d937c8119099a11f8ebbf5e6fb99819
+    - higgsfield-ai/skills/higgsfield-generate#f83af0bc1d937c8119099a11f8ebbf5e6fb99819
+    - higgsfield-ai/skills/higgsfield-marketplace-cards#f83af0bc1d937c8119099a11f8ebbf5e6fb99819
+    - higgsfield-ai/skills/higgsfield-product-photoshoot#f83af0bc1d937c8119099a11f8ebbf5e6fb99819
+    - higgsfield-ai/skills/higgsfield-soul-id#f83af0bc1d937c8119099a11f8ebbf5e6fb99819
+    - higgsfield-ai/skills/higgsfield-video-explainer#f83af0bc1d937c8119099a11f8ebbf5e6fb99819
+    - higgsfield-ai/skills/higgsfield-websites#f83af0bc1d937c8119099a11f8ebbf5e6fb99819
+    - higgsfield-ai/skills/higgsfield-youtube-thumbnail#f83af0bc1d937c8119099a11f8ebbf5e6fb99819
+    - cloudflare/skills/skills/agents-sdk#86505e44f87d801aa1864a3c4109e9a8ae5c409f
+    - cloudflare/skills/skills/basin#86505e44f87d801aa1864a3c4109e9a8ae5c409f
+    - cloudflare/skills/skills/cf-cli#86505e44f87d801aa1864a3c4109e9a8ae5c409f
+    - cloudflare/skills/skills/cloudflare-email-service#86505e44f87d801aa1864a3c4109e9a8ae5c409f
+    - cloudflare/skills/skills/cloudflare-one-migrations#86505e44f87d801aa1864a3c4109e9a8ae5c409f
+    - cloudflare/skills/skills/cloudflare-one#86505e44f87d801aa1864a3c4109e9a8ae5c409f
+    - cloudflare/skills/skills/cloudflare#86505e44f87d801aa1864a3c4109e9a8ae5c409f
+    - cloudflare/skills/skills/durable-objects#86505e44f87d801aa1864a3c4109e9a8ae5c409f
+    - cloudflare/skills/skills/gateway-workers#86505e44f87d801aa1864a3c4109e9a8ae5c409f
+    - cloudflare/skills/skills/k2#86505e44f87d801aa1864a3c4109e9a8ae5c409f
+    - cloudflare/skills/skills/nextjs-on-cloudflare#86505e44f87d801aa1864a3c4109e9a8ae5c409f
+    - cloudflare/skills/skills/sandbox-migrate-to-next#86505e44f87d801aa1864a3c4109e9a8ae5c409f
+    - cloudflare/skills/skills/sandbox-next#86505e44f87d801aa1864a3c4109e9a8ae5c409f
+    - cloudflare/skills/skills/sandbox-stable#86505e44f87d801aa1864a3c4109e9a8ae5c409f
+    - cloudflare/skills/skills/turnstile-spin#86505e44f87d801aa1864a3c4109e9a8ae5c409f
+    - cloudflare/skills/skills/web-perf#86505e44f87d801aa1864a3c4109e9a8ae5c409f
+    - cloudflare/skills/skills/workers-best-practices#86505e44f87d801aa1864a3c4109e9a8ae5c409f
+    - cloudflare/skills/skills/workers-profiling#86505e44f87d801aa1864a3c4109e9a8ae5c409f
+    - cloudflare/skills/skills/wrangler#86505e44f87d801aa1864a3c4109e9a8ae5c409f
+    - browser-use/browser-harness/skills/browser-harness#c6a941287424f32e2d20c7b7b892c8493f46808d
