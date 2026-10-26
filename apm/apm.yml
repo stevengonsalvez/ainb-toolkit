@@ -23,6 +23,8 @@ dependencies:
     - pbakaus/impeccable
     - tt-a1i/archify/archify
     - citrolabs/ego-lite/skills/ego-browser
+    # cua-driver skill; the CLI itself comes from cua.ai/driver/install.sh (see external-dependencies.yaml)
+    - trycua/cua/libs/cua-driver/rust/Skills/cua-driver
     - cloudflare/skills
     - higgsfield-ai/skills
   mcp:
