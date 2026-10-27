@@ -442,6 +442,31 @@ claude-plugins:
       - Element inspection
       - Screenshot capture
 
+  - name: egm
+    marketplace: google/elephant-goldfish-model
+    marketplace_id: egm
+    version: "0.1.0"
+    applies-to: [claude, codex, antigravity]
+    install: |
+      claude plugin marketplace add google/elephant-goldfish-model
+      claude plugin install egm@egm
+    codex-install: |
+      codex plugin marketplace add google/elephant-goldfish-model
+      codex plugin add egm@egm
+    antigravity-install: |
+      agy plugin install https://github.com/google/elephant-goldfish-model
+    purpose: "Elephant-Goldfish Model: draft specs and design docs, review them with fresh-context reviewer agents, resolve findings, check implementation drift"
+    has_skills: true
+    has_agents: true
+    features:
+      - "7 skills: egm-bootstrap, egm-brainstorm, egm-draft, egm-drift-report, egm-resolve, egm-review, egm-review-loop"
+      - "9 reviewer personas (design, structural, style, comprehension, zoom-out, synthesizer, ...)"
+    notes: >-
+      Install as a whole plugin, never as skills alone: the skills read agents/ and
+      resources/document_standards/ at run time. Not in apm/apm.yml for the same reason: apm
+      deploys the skills and agents but leaves resources/ behind in apm_modules.
+    docs: "https://github.com/google/elephant-goldfish-model"
+
   - name: ralph-loop
     marketplace: anthropics/claude-plugins-official
     marketplace_id: claude-plugins-official
@@ -1283,6 +1308,10 @@ mcporter-servers:
 # =============================================================================
 # Claude plugin marketplaces that have been added
 marketplaces:
+  - id: egm
+    repo: google/elephant-goldfish-model
+    description: "Elephant-Goldfish Model: spec drafting and design review plugin"
+
   - id: claude-plugins-official
     repo: anthropics/claude-plugins-official
     description: "Official Anthropic plugins"
