@@ -54,7 +54,8 @@ The lane set above is the default; `cfg.lanes` is the list in use.
    the pane with `--screen`. If it shows `Enter to select`, `Tab/Arrow keys`,
    or a numbered question, do not send text: answer with menu keys only when the
    answer is already decided and factual, else escalate to the owner. Send only
-   at an empty prompt or while the agent is busy.
+   at an empty prompt or while the agent is busy. The one exception is the Claude Code
+   autocompact prompt, which is not a question: see `references/prompt-stalls.md`.
 4. **Two agents in one worktree** (`multi-agent` flag, or two `claude` processes
    on one cwd): send to neither, pause anything that would act on that
    worktree, ask the owner which one keeps going.
@@ -197,7 +198,8 @@ BEFORE asking.
 2. **Discover.** `scripts/discover.sh > $CM_HOME/last-discover.json`
    then `scripts/classify.sh --table < $CM_HOME/last-discover.json`.
    Read the table, not the JSON. Also run `scripts/abrupt.sh` (sessions cut off
-   by a restart) and `scripts/waiting.sh` (sessions blocked on a question menu).
+   by a restart) and `scripts/waiting.sh` (sessions blocked on a question menu or the
+   autocompact prompt).
    Then `scripts/runtime-check.sh` (an Orca runtime restart that left a lane
    without its `/loop`, § Resume; call timeout 600000 ms).
    **Forbidden-agent check** (only when `cfg.agents.forbidden` is set): `classify.sh`
@@ -733,6 +735,7 @@ When there is no ledger:
 | Dirty tree or unpushed commits on a merged branch | never delete; escalate with a diff summary (subagent writes it) |
 | Two agents in one worktree | flag; never send to either until the owner picks one |
 | Agent showing an AskUserQuestion menu | never type into it; menu keys for a decided answer, else escalate |
+| Agent showing the autocompact prompt (`waiting.sh` `BLOCKED PROMPT` row) | not a question: Escape once, confirm it closed, nudge the session (`references/prompt-stalls.md`); never change the setting |
 | Worker done but PR still open | retire the worker, hand the PR to pr-sweeper; teardown after the PR merges or closes |
 | Lane says "done" or "all picked items done" but its epic has open beads | not done: nudge it to continue the open beads, surface beads that need the owner, never teardown |
 | Standing lane with an empty queue | idle; leave it running and hand it the next item; never retire or tear it down |
@@ -804,7 +807,8 @@ next: trigger prod for the 16:00 window
   the owner started, it may go into AskUserQuestion, recommended option first, after
   `ScheduleWakeup`.
 - Quiet tick (nothing changed): one row per lane plus `next:`.
-- Every session blocked on a menu (`waiting.sh`) gets a row with its wait time.
+- Every session blocked on a menu (`waiting.sh`) gets a row with its wait time; its
+  `BLOCKED PROMPT` rows (autocompact) are cleared, not reported as waiting on the owner.
 
 ## Scripts
 
@@ -817,7 +821,7 @@ shellcheck clean.
 | `scripts/discover.sh` | every host's Orca worktrees, local git-only worktrees, PR state, to one JSON doc; unreachable host = `reachable:false`. With `agents.forbidden` set it also lists the terminals under `path_match` with their `agentIdentity`; a failed or cut-off terminal list = `terminalScope.hosts[].ok:false` |
 | `scripts/classify.sh [--table]` | one class per item (rules in `classify.jq`), ledger-aware: `standing-idle` for idle sweepers and leads, beads-gate suggest for epic owners; `CM_STUCK_MIN` default 45. Forbidden-agent check: `.violations` rows and `.violationCheck`, printed by `--table` as `violations: <n>` plus `VIOLATION` rows (§ The tick, step 2) |
 | `scripts/abrupt.sh` | sessions cut off by a restart (background work killed, `/loop` resume pending, agent fell back to a shell) and duplicate live agents in one worktree; TSV |
-| `scripts/waiting.sh` | sessions showing a question menu, with minutes waiting and the question; TSV |
+| `scripts/waiting.sh` | sessions showing a question menu or the autocompact prompt (`BLOCKED PROMPT` row, idle 2 minutes or more), with minutes waiting and the question; TSV |
 | `scripts/jsanitize`, `scripts/jstrings` | Orca JSON helpers (python3): `jsanitize` re-emits JSON with lone UTF-16 surrogates replaced so `jq` can parse remote-host replies; `jstrings` prints every string of a reply (pane text), tolerating the same. `abrupt.sh`, `waiting.sh` and the census in `discover.sh` pipe Orca output through them |
 | `scripts/roster.sh [--stdout]` | rewrites `$CM_HOME/roster.yaml` from the ledger, active rows only; atomic, mode 600, exit 1 and roster untouched when the ledger is unreadable |
 | `scripts/resume.sh [--dry-run] [--host <h>] [--worktree-id <id>] [--path <wt>] [--lane <label>]` | `/concertmaster resume`: rewrites the roster, then per row: live, dead (`claude --continue` plus one nudge), offline, duplicate, missing, manual, unknown, held; one run at a time (lock); exit 3 when a row needs attention |
@@ -832,7 +836,7 @@ shellcheck clean.
 | `scripts/hooks/mc-worker-hook.sh` | Claude Code hook for workers, in-scope repos only (optional) |
 | `scripts/digest.sh [--full] [--since-hours n]` | digest text, stdout only, `- ` bullets, no Needs, Stuck or Fleet section (`--full` adds them for the terminal report): Merged (merged since `digests.lastSentAt`, else 12h) from `gh pr list`, and in `--full` the open PR count (a failed gh prints "unknown (gh failed)", never 0), every other section from the ledger; read-only; `--full` also lists `ledger.violations` and an incomplete `ledger.violationCheck` |
 | `scripts/intake.sh <cmd>` | the deterministic half of `intake` (rules in `scripts/intake.jq`) |
-| `scripts/test/*.sh` | `classify-standing`, `classify-violations`, `teardown-gates`, `resume-flow`, `intake`, `mc-emit`, `boot-sweep`, `runtime-check`, `ci-queue-alert`, `cred-check`, `rm-guard-hook`, `digest-gh`, `orca-json-helpers`: hermetic tests against `scripts/test/fixtures/config.test.yaml`; run the matching one after any script change |
+| `scripts/test/*.sh` | `classify-standing`, `classify-violations`, `teardown-gates`, `resume-flow`, `intake`, `mc-emit`, `boot-sweep`, `runtime-check`, `ci-queue-alert`, `cred-check`, `rm-guard-hook`, `digest-gh`, `orca-json-helpers`, `waiting-autocompact`: hermetic tests against `scripts/test/fixtures/config.test.yaml`; run the matching one after any script change |
 
 <!-- project-local: scripts -->
 

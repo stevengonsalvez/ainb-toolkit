@@ -60,6 +60,19 @@ layer 1, the brief rule. The hook file is trusted code run on every Bash call: k
 `~/.concertmaster/bin` writable only by the agent user and re-run the copy above after each merge.
 Rollback: restore `settings.json.bak-rmguard`.
 
+## The autocompact prompt
+Claude Code's "We recommend compacting earlier" dialog (an "Autocompact at <N> tokens" size
+picker, footer ending "esc not now") blocks an idle session until someone dismisses it, and
+nobody does overnight. `scripts/waiting.sh` reports a pane whose last 15 lines show that footer
+and "Autocompact at" as a `BLOCKED PROMPT: autocompact recommendation` row, only when the session
+has been idle 2 minutes or more, so a working session is never hit. It is not a question for
+anyone, so it is cleared in every mode:
+1. Send Escape once (`--text $'\e'`, no Enter). Two quick Escapes on an idle prompt open rewind.
+2. Re-read the pane after about 2 seconds to confirm the dialog closed.
+3. Nudge the session to run its tick. For a session that waits on the owner by design
+   (a `cm:blocked` comment) Escape is still safe but send no nudge.
+Never change the autocompact setting and never accept the suggested size.
+
 ## The allowlist (optional, narrow)
 Prefix rules accept any flags, so only commands with no program-running or file-writing flags are
 listed. This is "no known execution or write flag", not a proof of read-only. Prefer the project's
