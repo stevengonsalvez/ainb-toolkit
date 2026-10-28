@@ -155,6 +155,7 @@ Test: `scripts/test/ledger-write.sh`.
       "lastComment": "cm:running plan written, implementing",
       "spawnedAt": "2026-10-04T18:11:00Z",
       "updatedAt": "2026-10-04T18:15:00Z",
+      "parent": null,
       "pr": null,
       "briefFile": "$CM_HOME/briefs/w-dev-101.md",
       "handoverFile": null,
@@ -179,6 +180,12 @@ Test: `scripts/test/ledger-write.sh`.
       "state": "done", "prs": [344, 345], "fromTag": "v1.4.56", "tag": "v1.4.57",
       "worker": "w-deploy-20261004-1100", "stagingRunId": 123, "stagingValidated": true,
       "prodRunId": 456, "blockedReason": null, "finishedAt": "2026-10-04T10:41:00Z" }
+  ],
+
+  "followUps": [
+    { "id": "check-report", "worker": "w-lead-a", "lane": "lane-a", "owner": "lane-a",
+      "text": "re-run the checks after the batch", "state": "open",
+      "openedAt": "2026-10-04T11:00:00Z", "closedAt": null }
   ],
 
   "asks": [
@@ -210,6 +217,7 @@ Test: `scripts/test/ledger-write.sh`.
 | `lanes.<lane>.state` | `absent`, `spawning`, `running`, `idle` (queue empty, lead kept: lanes are standing and never torn down), `draining` (legacy: treat as `idle`), `gone` |
 | `lanes.<lane>.queue` | items handed by the owner not yet given to a worker |
 | `workers.<id>.state` | `queued`, `spawning`, `running`, `stuck`, `blocked-on-owner`, `done`, `retired` (agent terminal closed, worktree kept), `teardown`, `gone` (only when its host was reached and the row is absent) |
+| `workers.<id>.parent` | the worker id of the lead that owns this worker, or null when the concertmaster owns it. Set at spawn by whoever spawns, and filled by `scripts/followups.sh reconcile` from the Orca row's `parentWorktreeId` first, then from `cm:child <worktree-name>` comment lines (only while unset; a cycle or two different claimants set nothing). `teardown.sh` follows the chain: a worker is not done while a descendant has an open follow-up |
 | `workers.<id>.terminal` | the ONE agent handle (`agentTerminalHandle` or `startupTerminal.handle`); refreshed after an Orca restart |
 | `workers.<id>.agent` | `claude`, `codex` or `agy`. Unset (some adopted lanes): `resume` never starts claude there, the row is `manual` |
 | `workers.<id>.model` | optional model name for the roster (`sonnet`, `opus`, ...), or null; set at spawn when known |
@@ -226,8 +234,9 @@ Test: `scripts/test/ledger-write.sh`.
 | `prs.<repo>#<n>.gate` | last merge-gate reading, each part bound to `headSha` |
 | `prs.<repo>#<n>.authorNotifiedAt` | last PR comment to a collaborator (`cfg.messaging.collaborators`) |
 | `deployWindows[].state` | `pending`, `rails-check`, `staging`, `validating`, `prod`, `done`, `skipped` (nothing to ship), `stopped` (a rail or red staging) |
+| `followUps[]` | open items that must outlive the worker that raised them: `{id, worker, lane, owner, text, state, openedAt, closedAt}`. `id` is kebab-case, unique per lane, never reused. `worker` is the worker whose comment posted it (an item another live worker posts under the same lane and id moves to that worker). `owner` is `project.owner.id`, a lane, or a worker id. `state` is `open` or `done`. Written only by `scripts/followups.sh` from the comment lines (grammar in `references/lanes.md`) `cm:followup <id> owner=<owner> <text>` and `cm:followup-done <id>` (SKILL.md rule 12a). An item owned by `project.owner.id` ALSO has an `asks[]` row (`kind` `owner`, `id` `fu-<lane>-<id>` (a `-<n>` suffix on a collision), `followUp` the id) so the terminal report lists it; closing the item answers the ask |
 | `asks[]` | every AskUserQuestion: open ones are "needs <owner>" in the digest |
-| `asks[].kind` | set only for asks that unlock a teardown override: `remove-standing` (`--force-standing`) or `accept-unmerged-beads` (`--accept-unmerged-beads`). Such an ask also carries `host`, `path` (canonical) and/or `worker` naming exactly one worktree, `decision` (`approved` or `declined`, from the owner's answer) and `usedAt` (set by concertmaster after the `--apply` that used it; a used ask never unlocks again). `teardown.sh` accepts it only when `state` is `answered`, `decision` is `approved`, `usedAt` is null, and host + path/worker match the worktree. Any other answered ask unlocks nothing |
+| `asks[].kind` | `owner` for the ask `scripts/followups.sh` writes for an item owned by the project owner (`followUp` and `lane` name the item; it unlocks nothing). Otherwise set only for asks that unlock a teardown override: `remove-standing` (`--force-standing`) or `accept-unmerged-beads` (`--accept-unmerged-beads`). Such an ask also carries `host`, `path` (canonical) and/or `worker` naming exactly one worktree, `decision` (`approved` or `declined`, from the owner's answer) and `usedAt` (set by concertmaster after the `--apply` that used it; a used ask never unlocks again). `teardown.sh` accepts it only when `state` is `answered`, `decision` is `approved`, `usedAt` is null, and host + path/worker match the worktree. Any other answered ask unlocks nothing |
 | `digests.lastCollaboratorDmAt` | map of collaborator github handle to last daily DM time |
 | `digests.lastSentAt` | last digest send (`cfg.schedule.digest_times`) |
 | `violations[]` | the forbidden-agent rows of the last census (`cfg.agents.forbidden`): classify's `.violations` (`host`, `worktree`, `handle`, `title`, `agent`), replaced every tick, `[]` when none; `scripts/digest.sh` lists them as "Forbidden agents" |
