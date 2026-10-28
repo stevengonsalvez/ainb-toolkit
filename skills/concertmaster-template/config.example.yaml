@@ -54,6 +54,7 @@ schedule:
   stuck_minutes: 45                # CM_STUCK_MIN
   stuck_respawn_hours: 2
   max_nudges: 2
+  lane_loop_minutes: 30            # [script] default /loop interval of a standing lane; stale = no Claude turn for 2 x this (scripts/runtime-check.sh)
 
 deploy:
   # How a window ships. The deploy worker follows ship_verb; the order is
@@ -91,6 +92,7 @@ beads:
 
 # Lanes. standing: true lanes are never torn down. agent: claude | codex | agy.
 lanes:
+  # loop_minutes (optional, any lane): that lane's /loop interval when it differs from schedule.lane_loop_minutes
   - { name: pr-sweeper,  standing: true,  spawn_at: 1, agent: claude, model: null, skills: [pr-sweep, ready-to-ship] }
   - { name: dev-sweeper, standing: true,  spawn_at: 2, agent: claude, model: sonnet, skills: [dev-flow, ready-to-ship], max_parallel: 3 }
   - { name: ops-sweeper, standing: true,  spawn_at: 2, agent: claude, model: sonnet, skills: [] }

@@ -152,6 +152,23 @@ cm_file_fresh() {
 
 cm_now_ms() { printf '%s000\n' "$(date +%s)"; }
 
+# cm_transcript_mtime <worktree path>: newest Claude transcript mtime (epoch seconds) for the
+# worktree, or "unknown" when the project dir or any transcript is missing (a lane we cannot see
+# is never treated as idle). Claude keys the dir by the path with every non-alphanumeric as "-".
+# Shared by boot-sweep.sh and runtime-check.sh. CM_CLAUDE_PROJECTS overrides ~/.claude/projects.
+cm_transcript_mtime() {
+  local dir f newest=0 m found=0
+  dir="${CM_CLAUDE_PROJECTS:-$HOME/.claude/projects}/$(printf '%s' "$1" | sed 's#[^A-Za-z0-9]#-#g')"
+  [ -d "$dir" ] || { echo unknown; return; }
+  for f in "$dir"/*.jsonl; do
+    [ -e "$f" ] || continue
+    found=1
+    m="$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null || echo 0)"
+    [ "$m" -gt "$newest" ] && newest="$m"
+  done
+  if [ "$found" = 1 ]; then echo "$newest"; else echo unknown; fi
+}
+
 # Screen checks shared by boot-sweep.sh (same patterns resume.sh uses locally; judge only the
 # bottom ~12 non-empty lines of a screen, never the replayed transcript above it).
 # shellcheck disable=SC2034  # read by boot-sweep.sh
@@ -363,3 +380,7 @@ _cm_ledger_write_locked() {
   fi
   return 0
 }
+# A healthy Claude pane ends with one of these footers (boot-sweep.sh tick mode): the status line, the
+# permissions line, the shortcuts hint, or a subagent/task row. A shell prompt (any style) or an error never does.
+# shellcheck disable=SC2034  # read by boot-sweep.sh
+CM_FOOTER_RE='⏵⏵|⏸|plan mode on|bypass permissions|accept edits on|auto-accept|\? for shortcuts|esc to interrupt|(·|•)[[:space:]]+eff(ort)?[[:space:]]+[a-z]+|ctx \[|^[[:space:]]*(◯|●|◐|◑|⎿|✻|✢|✳|✶|✽)[[:space:]]'

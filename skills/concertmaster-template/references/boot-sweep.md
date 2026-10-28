@@ -67,6 +67,12 @@ The resume unit is not touched. macOS hosts have no systemd unit: not covered, i
 `sudo systemctl start concertmaster-boot-sweep.service` (acts for real on lanes with no turn since the
 real boot; run the dry run first).
 
+## Tick mode
+`boot-sweep.sh --since <epoch> [--lanes <path,path>]` runs the same decision and nudge core with "since" =
+a lane's expected wake time instead of boot time, for an Orca RUNTIME restart (no reboot). It is driven by
+`scripts/runtime-check.sh` (`references/runtime-check.md`), not by systemd: no Orca wait, no settle, no inbox
+note, and a pane is typed into only when its last line is a Claude footer.
+
 ## Env
 `CM_BOOT_SETTLE_S` (45), `CM_BOOT_ORCA_WAIT_S` (300), `CM_BOOT_CONFIRM_S` (60), `CM_BOOT_NUDGE` (text),
 `CM_SELF_PATH_RE` (concertmaster worktree path regex, default built from `worktrees.self_name`), `CM_CLAUDE_PROJECTS`, `CM_BOOT_EPOCH` (tests), `CM_PATH_MATCH`, `CM_HOME`. Tests: `scripts/test/boot-sweep.sh` (stubbed

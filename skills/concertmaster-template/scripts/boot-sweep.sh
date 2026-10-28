@@ -5,6 +5,12 @@
 #   scripts/boot-sweep.sh              # wait for Orca, settle, sweep, nudge, confirm, write the inbox note
 #   scripts/boot-sweep.sh --dry-run    # same decisions, nothing sent, nothing written
 #   scripts/boot-sweep.sh --no-wait    # skip the Orca wait and the settle delay (tests, manual runs)
+#   scripts/boot-sweep.sh --since <epoch> [--lanes <path,path>]
+#                                      # tick mode (scripts/runtime-check.sh): the SAME decision and nudge core with
+#                                      # "since" = a lane's expected wake time instead of boot time, for an Orca
+#                                      # RUNTIME restart. No Orca wait, no settle, no inbox note, "Orca restarted"
+#                                      # text (CM_TICK_NUDGE), attempts kept per transcript in runtime-sweep.tsv;
+#                                      # --lanes keeps only those worktree paths. Without --since nothing changes.
 #
 # Why: a host-level resume unit (if the host has one) reopens dead sessions and sends ONE generic
 # nudge, but such nudges can come back UNCONFIRMED (input accepted, no turn started) and the text
@@ -27,7 +33,7 @@
 #   within CM_BOOT_CONFIRM_S (60 s); otherwise it is reported `unconfirmed` and retried once later
 # Output: TSV on stdout and $CM_HOME/inbox/boot-sweep-<UTC with seconds>.md. Exit 0 always except
 # bad usage (2): a failed sweep must never fail the boot. Install: references/boot-sweep.md.
-# Env: CM_HOME, CM_BOOT_SETTLE_S (45), CM_BOOT_ORCA_WAIT_S (300), CM_BOOT_CONFIRM_S (60),
+# Env: CM_HOME, CM_TICK_NUDGE (tick mode text), CM_BOOT_SETTLE_S (45), CM_BOOT_ORCA_WAIT_S (300), CM_BOOT_CONFIRM_S (60),
 #      CM_BOOT_NUDGE (text), CM_SELF_PATH_RE (concertmaster worktree path regex, default built from
 #      worktrees.self_name), CM_BOOT_EPOCH (test hook), CM_CLAUDE_PROJECTS (default ~/.claude/projects).
 # Scope: terminals whose worktree path matches config worktrees.path_match (CM_PATH_MATCH).
@@ -36,12 +42,14 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=SCRIPTDIR/lib.sh
 . "$HERE/lib.sh"
 
-DRY=0; WAIT=1
+DRY=0; WAIT=1; SINCE=""; LANES=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY=1 ;;
     --no-wait) WAIT=0 ;;
-    -h|--help) sed -n '2,32p' "$0"; exit 0 ;;
+    --since) [ $# -ge 2 ] && [[ "$2" =~ ^[0-9]+$ ]] || { cm_warn "boot-sweep.sh: --since takes an epoch"; exit 2; }; SINCE="$2"; shift ;;
+    --lanes) [ $# -ge 2 ] || { cm_warn "boot-sweep.sh: --lanes takes comma-separated worktree paths"; exit 2; }; LANES="$2"; shift ;;
+    -h|--help) sed -n '2,39p' "$0"; exit 0 ;;
     *) cm_warn "boot-sweep.sh: unknown arg: $1"; exit 2 ;;
   esac
   shift
@@ -56,20 +64,29 @@ ORCA="$(cm_orca)"
 SETTLE="${CM_BOOT_SETTLE_S:-45}"
 WAIT_MAX="${CM_BOOT_ORCA_WAIT_S:-300}"
 CONFIRM_S="${CM_BOOT_CONFIRM_S:-60}"
-PROJECTS="${CM_CLAUDE_PROJECTS:-$HOME/.claude/projects}"
 NUDGE="${CM_BOOT_NUDGE:-The VM restarted. Any /loop or ScheduleWakeup timer you had died with it. Check git status and your worktree comment, re-arm your standing /loop now with the same prompt as before (your brief under ~/.concertmaster/briefs lists it if you lost it), and carry on.}"
 NUDGE_CM="/loop /concertmaster tick"   # the concertmaster re-arms by running its own loop, not by being told to
 # the concertmaster's own worktree: a path ending /<worktrees.self_name> (ERE metacharacters escaped)
 CM_PATH_RE="${CM_SELF_PATH_RE:-/$(printf '%s' "$CM_SELF_WORKTREE" | sed 's#[][\\.^$*+?(){}|]#\\&#g')/*\$}"
 STATE_DIR="$CM_HOME/cache"
-boot="${CM_BOOT_EPOCH:-$(awk '$1=="btime"{print $2; exit}' /proc/stat 2>/dev/null)}"
-if [ -z "$boot" ]; then cm_warn "boot-sweep.sh: cannot read boot time, nothing to do"; exit 0; fi
-STATE="$STATE_DIR/boot-sweep-$boot.tsv"   # handle<TAB>attempts
+TICK=0
+if [ -n "$SINCE" ]; then
+  # tick mode (runtime restart): "boot" is the lane's expected wake time, the attempts file is its own
+  TICK=1; WAIT=0; boot="$SINCE"
+  NUDGE="${CM_TICK_NUDGE:-Orca restarted. Any /loop or ScheduleWakeup timer you had died with it. Check git status and your worktree comment, re-arm your standing /loop now with the same prompt as before (your brief under ~/.concertmaster/briefs lists it if you lost it), and carry on.}"
+  STATE="$STATE_DIR/runtime-sweep.tsv"   # handle<TAB>attempts<TAB>transcript mtime of that episode
+  HIST="$STATE_DIR/runtime-sweep-history.tsv"   # handle<TAB>epoch of each accepted nudge (3 in 6 h = gave-up)
+else
+  boot="${CM_BOOT_EPOCH:-$(awk '$1=="btime"{print $2; exit}' /proc/stat 2>/dev/null)}"
+  if [ -z "$boot" ]; then cm_warn "boot-sweep.sh: cannot read boot time, nothing to do"; exit 0; fi
+  STATE="$STATE_DIR/boot-sweep-$boot.tsv"   # handle<TAB>attempts
+fi
 if [ "$DRY" = 0 ]; then mkdir -p "$STATE_DIR" "$CM_HOME/inbox" 2>/dev/null; touch "$STATE" 2>/dev/null; fi
 
 now_s() { date +%s; }
 early_note() { # an early exit must never be silent: leave a note the concertmaster tick reads
   [ "$DRY" = 1 ] && return
+  [ "$TICK" = 1 ] && { cm_warn "boot-sweep (tick mode): $1"; return; }
   mkdir -p "$CM_HOME/inbox" 2>/dev/null
   printf '# boot-sweep %s (boot %s): NOT RUN\n\n%s\n' "$(date -u +%FT%TZ)" "$boot" "$1" > "$CM_HOME/inbox/boot-sweep-$(date -u +%Y%m%dT%H%M%SZ)-$$.md" 2>/dev/null
 }
@@ -85,32 +102,31 @@ if [ "$WAIT" = 1 ]; then
   sleep "$SETTLE"
 fi
 
-# newest transcript mtime (epoch) for a worktree path; prints "unknown" when the directory or any
-# transcript is missing (a lane we cannot see is never treated as "no turn since boot")
-transcript_mtime() {
-  local dir; dir="$PROJECTS/$(printf '%s' "$1" | sed 's#[^A-Za-z0-9]#-#g')"
-  [ -d "$dir" ] || { echo unknown; return; }
-  local f newest=0 m found=0
-  for f in "$dir"/*.jsonl; do
-    [ -e "$f" ] || continue
-    found=1
-    m="$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null || echo 0)"
-    [ "$m" -gt "$newest" ] && newest="$m"
-  done
-  [ "$found" = 1 ] && echo "$newest" || echo unknown
-}
-attempts_of() { awk -F'\t' -v h="$1" '$1==h{print $2; f=1} END{if(!f) print 0}' "$STATE" 2>/dev/null; }
-set_attempts() { # $1 handle $2 n  (awk, not grep: the handle is data, never a pattern)
+# newest transcript mtime for a worktree path, "unknown" when none is visible (lib.sh)
+transcript_mtime() { cm_transcript_mtime "$1"; }
+# Attempts per handle. Tick mode passes the lane's transcript mtime ($2/$3): attempts belong to ONE episode of
+# silence, so a lane that got going starts fresh and one that did not stays capped. Boot mode passes none.
+attempts_of() { awk -F'\t' -v h="$1" -v m="${2:-}" '$1==h && !f {f=1; if (m != "" && $3 != "" && $3 != m) print 0; else print $2} END{if(!f) print 0}' "$STATE" 2>/dev/null; }
+set_attempts() { # $1 handle $2 n [$3 mtime] (awk, not grep: the handle is data, never a pattern)
   [ "$DRY" = 1 ] && return
-  { awk -F'\t' -v h="$1" '$1 != h' "$STATE" 2>/dev/null; printf '%s\t%s\n' "$1" "$2"; } > "$STATE.new" 2>/dev/null && mv "$STATE.new" "$STATE"
+  { awk -F'\t' -v h="$1" '$1 != h' "$STATE" 2>/dev/null; if [ -n "${3:-}" ]; then printf '%s\t%s\t%s\n' "$1" "$2" "$3"; else printf '%s\t%s\n' "$1" "$2"; fi; } > "$STATE.new" 2>/dev/null && mv "$STATE.new" "$STATE"
 }
 
 out=""; sent=0; kept=0; CM_HANDLES=""
 add() { out="$out$1|$2|$3|$4"$'\n'; } # session | handle | result | detail
 
 terms="$(cm_timeout 60 "$ORCA" terminal list --json </dev/null 2>/dev/null | jq -r --arg re "$CM_PATH_MATCH" '.result.terminals[]? | select((.worktreePath // "") | test($re)) | select((.agentIdentity // "") == "claude") | "\(.handle)|\(.worktreePath)"' 2>/dev/null)"
+if [ -n "$LANES" ] && [ -n "$terms" ]; then
+  # keep only the named worktrees (comma-separated, compared after the same path normalisation)
+  want="$(printf '%s' "$LANES" | tr ',' '\n' | sed -E 's#/\.(/|$)#/#g; s#//+#/#g; s#(.)/+$#\1#')"
+  terms="$(printf '%s\n' "$terms" | while IFS='|' read -r th tw; do
+    [ -n "$th" ] || continue
+    np="$(printf '%s' "$tw" | sed -E 's#/\.(/|$)#/#g; s#//+#/#g; s#(.)/+$#\1#')"
+    grep -qxF -- "$np" <<<"$want" && printf '%s|%s\n' "$th" "$tw"
+  done)"
+fi
 if [ -z "$terms" ]; then
-  [ "$DRY" = 1 ] || printf '# boot-sweep %s (boot %s): no Claude terminals found for this project (or Orca did not answer)\n' "$(date -u +%FT%TZ)" "$boot" > "$CM_HOME/inbox/boot-sweep-$(date -u +%Y%m%dT%H%M%SZ)-$$.md" 2>/dev/null
+  [ "$DRY" = 1 ] || [ "$TICK" = 1 ] || printf '# boot-sweep %s (boot %s): no Claude terminals found for this project (or Orca did not answer)\n' "$(date -u +%FT%TZ)" "$boot" > "$CM_HOME/inbox/boot-sweep-$(date -u +%Y%m%dT%H%M%SZ)-$$.md" 2>/dev/null
   echo "boot-sweep: no Claude terminals found for this project"; exit 0
 fi
 
@@ -140,21 +156,33 @@ while IFS='|' read -r handle wt; do
   if [ "$is_cm" = 0 ] && ! grep -qxF -- "$normwt" <<<"$STANDING"; then add "$name" "$handle" not-standing "not a standing lane in the ledger: never nudged"; continue; fi
   m="$(transcript_mtime "$normwt")"
   if [ "$m" = unknown ]; then add "$name" "$handle" unknown "no Claude transcript visible for this worktree: not nudged"; kept=$((kept+1)); continue; fi
-  if [ "$m" -ge "$boot" ]; then add "$name" "$handle" skipped "active since boot"; continue; fi
-  tries="$(attempts_of "$handle")"; tries="${tries:-0}"
-  if [ "$tries" -ge 2 ]; then add "$name" "$handle" gave-up "two nudges sent, no turn since boot: left to the concertmaster tick"; kept=$((kept+1)); continue; fi
-  screen="$(cm_timeout 30 "$ORCA" terminal read --terminal "$handle" --screen --json </dev/null 2>/dev/null | jq -r 'if .ok == true then ((.result.screen // .result.text // .result.output // "") | tostring) else "" end' 2>/dev/null)"
+  if [ "$m" -ge "$boot" ]; then add "$name" "$handle" skipped "$([ "$TICK" = 1 ] && echo "active since the expected wake" || echo "active since boot")"; continue; fi
+  ep=""; [ "$TICK" = 1 ] && ep="$m"
+  tries="$(attempts_of "$handle" "$ep")"; tries="${tries:-0}"
+  if [ "$tries" -ge 2 ]; then add "$name" "$handle" gave-up "two nudges sent, no turn since $([ "$TICK" = 1 ] && echo "the expected wake" || echo boot): left to the concertmaster tick"; kept=$((kept+1)); continue; fi
+  # live CLI: .result.terminal.tail (array of lines); older shapes carry a text field
+  screen="$(cm_timeout 30 "$ORCA" terminal read --terminal "$handle" --screen --json </dev/null 2>/dev/null | jq -r 'if .ok == true then (((.result.terminal.tail // empty) | if type == "array" then join("\n") else tostring end | select(length > 0)) // .result.screen // .result.text // .result.output // "") | tostring else "" end' 2>/dev/null)"
   bottom="$(printf '%s\n' "$screen" | grep -v '^[[:space:]]*$' | tail -n 12)"
   if [ -z "$bottom" ]; then add "$name" "$handle" unreadable "screen unreadable"; kept=$((kept+1)); continue; fi
   if grep -qiE "$CM_MENU_RE" <<<"$bottom"; then add "$name" "$handle" menu "question menu showing, not typed into"; kept=$((kept+1)); continue; fi
   if tail -n 1 <<<"$bottom" | grep -qE '^[^[:space:]]*[$#%] *$'; then add "$name" "$handle" report "shell prompt, agent gone: resume.sh respawns it"; kept=$((kept+1)); continue; fi
   if ! grep -qiE "$CM_CLAUDE_RE" <<<"$bottom"; then add "$name" "$handle" unreadable "no sign of Claude at the prompt"; kept=$((kept+1)); continue; fi
   if grep -qE 'esc to interrupt' <<<"$bottom"; then add "$name" "$handle" busy "mid-turn"; kept=$((kept+1)); continue; fi
-  if [ "$DRY" = 1 ]; then add "$name" "$handle" would-nudge "no turn since boot (transcript $((boot - m))s before boot)"; continue; fi
+  if [ "$TICK" = 1 ]; then
+    # tick mode runs every few minutes against lanes that may be dead: type only into a pane whose LAST line
+    # is a Claude footer (a zsh prompt under Claude scrollback passes the looser checks above)
+    if ! tail -n 1 <<<"$bottom" | grep -qiE "$CM_FOOTER_RE"; then add "$name" "$handle" report "last screen line is not a Claude footer (shell prompt or exited): resume.sh respawns it"; kept=$((kept+1)); continue; fi
+    # a lane that takes a turn after each nudge but never re-arms its loop is capped across episodes
+    if [ "$(awk -F'\t' -v h="$handle" -v s="$(( $(now_s) - 21600 ))" '$1==h && $2>=s' "$HIST" 2>/dev/null | wc -l | tr -d ' ')" -ge 3 ]; then
+      add "$name" "$handle" gave-up "nudged 3 times in 6 h and still not re-arming: left to the concertmaster tick (resume.sh, handover)"; kept=$((kept+1)); continue
+    fi
+  fi
+  if [ "$DRY" = 1 ]; then add "$name" "$handle" would-nudge "no turn since $([ "$TICK" = 1 ] && echo "the expected wake" || echo boot) (transcript $((boot - m))s before $([ "$TICK" = 1 ] && echo "it" || echo "boot"))"; continue; fi
   t0="$(now_s)"
   resp="$(cm_timeout 60 "$ORCA" terminal send --terminal "$handle" --text "$text" --enter --json </dev/null 2>/dev/null)"
   if [ "$(printf '%s' "$resp" | jq -r '.ok // false' 2>/dev/null)" != true ]; then add "$name" "$handle" send-failed "orca did not accept the input"; kept=$((kept+1)); continue; fi
-  set_attempts "$handle" $((tries + 1))
+  set_attempts "$handle" $((tries + 1)) "$ep"
+  [ "$TICK" = 1 ] && printf '%s\t%s\n' "$handle" "$(now_s)" >> "$HIST" 2>/dev/null   # every accepted send counts toward the 6 h cap
   ok=0; waited=0
   while [ "$waited" -lt "$CONFIRM_S" ]; do
     sleep 3; waited=$((waited + 3))
@@ -173,7 +201,7 @@ for h in $CM_HANDLES; do
 done
 [ -n "$cm_bad" ] && cm_warn "boot-sweep: CONCERTMASTER NOT RE-ARMED:$cm_bad: a human must run /loop /concertmaster tick in that session"
 printf '%s' "$out" | awk -F'|' '{printf "%s\t%s\t%s\t%s\n",$1,$2,$3,$4}'
-if [ "$DRY" = 0 ]; then
+if [ "$DRY" = 0 ] && [ "$TICK" = 0 ]; then
   note="$CM_HOME/inbox/boot-sweep-$(date -u +%Y%m%dT%H%M%SZ)-$$.md"
   {
     printf '# boot-sweep %s (boot %s): %s nudged, %s not nudged\n\n' "$(date -u +%FT%TZ)" "$boot" "$sent" "$kept"
