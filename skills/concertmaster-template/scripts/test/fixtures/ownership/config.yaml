@@ -1,0 +1,21 @@
+# Test fixture: a minimal ownership config for classify-ownership.sh.
+schema: concertmaster.config/v1
+worktrees:
+  orca_repo: acme-app
+  self_name: concertmaster
+  never_touch: [other-repo, shared-tool, n9, nx]
+ownership:
+  leads:
+    lead-a: lane-a
+    lead-b: lane-b
+    lead-g: lane-g
+    lead-aaa: lane-zzz
+    lead-b2: lane-b
+  comment_markers: ["workers i own", "owned", "orchestrated"]
+  comment_stop_words: ["sweep done", "merged today", "held", "cm", "next"]
+  scratch_path_regex: "-workspaces-acme-app-(?<worker>[^/]+)/"
+  prefixes:
+    wa-: lane-a
+    wb-: lane-b
+    ghost-: lane-g
+    release-tester: release-tester

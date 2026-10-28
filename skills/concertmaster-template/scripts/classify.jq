@@ -51,6 +51,23 @@
 # whose terminal list failed or was cut off, is incomplete and names why, so "no violations"
 # is never claimed unchecked. With agents.forbidden empty the census is off:
 # `violationCheck.enabled` is false and `complete` is true with no gaps.
+# Ownership (when --argjson own is not null; rules in config.yaml `ownership`):
+# every in-scope worktree (the configured Orca repo, never a main checkout, never a
+# never_touch name) gets `owner` (a lane label) and `ownerSource`, first hit wins:
+#   self     the concertmaster worktree itself
+#   lead     the worktree is a lane lead (config leads, or the ledger's lanes.<lane>.lead)
+#   comment:<lead>  a lead's own worktree comment lists the worktree after one of
+#            its markers ("WORKERS I OWN: a (..), b (..)"); tolerant of format;
+#            fresher than the ledger, so it wins over it
+#   ledger   workers.<id>.lane
+#   prefix   longest worktree-name prefix in the config
+#   standing a ledger-standing worktree with no other owner owns itself
+#   scratch-of:<worker>  a git-only worktree inside that worker's session scratch
+#            dir (config scratch_path_regex) inherits the worker's owner
+# No owner: flag ORPHAN and a suggest to ask the likely lane, else tear down per
+# the teardown gates. A lead with no live session (or no worktree in a fully
+# reachable census) while it owns open work: flag LEAD-DEAD on the lead row and
+# list it under .ownership.leadDead. Class never changes for ownership.
 #
 # Timestamps are epoch ms; any of them may be null on remote rows.
 
@@ -62,10 +79,51 @@ def max_or_null: map(select(. != null and . > 1577836800000)) | if length == 0 t
 
 def normpath: if type == "string" then sub("/+$"; "") else "" end;
 
+def lc: ascii_downcase;
+def rxesc: gsub("(?<c>[\\\\.^$|?*+()\\[\\]{}])"; "\\" + .c);
+def tokens: [ match("[A-Za-z0-9][A-Za-z0-9._-]*"; "g").string | sub("[._-]+$"; "") | lc ];
+# Worker names a lead lists in $text: after each marker that starts the comment, a
+# " | " section, a sentence ("... . OWNED (x): a, b") or a "cm:<state> " prefix (or follows
+# ", ", ": " or " - " directly before ( [ or :), and is written as a
+# header (followed by "(", "[" or ":" or by a few words and a colon), up to the
+# next " | ", the next "<stop word>:", the next ALL-CAPS header, or the end.
+# Parenthesised text is masked for the marker, pipe, stop-word and name search
+# (a "(cm: nudged)" never cuts a list, a "(not owned)" never starts one, a name
+# inside a parenthesis is never claimed); a marker after "not", "not-", "never",
+# "no longer" or "dis" is a negation. Only names in $names count, so prose and
+# host names never become owners.
+def mask: gsub("(?<p>\\([^()]*\\))"; (.p | length) as $n | " " * $n);
+def claims($text; $mk; $stop; $names):
+  ($text | mask | mask) as $m
+  | ($mk | map(rxesc) | join("|")) as $mre
+  | (if ($stop | length) > 0 then "\\b(" + ($stop | map(rxesc) | join("|")) + ")\\s*:" else null end) as $sre
+  # strong boundaries (comment start, pipe section, sentence, line, a "cm:<state> " prefix) allow the
+  # "few words and a colon" header; weak ones (", " ": " " - ") need the marker right before ( [ or :
+  | ("(?:\\A|\\| |[.;] |\\n|cm:[A-Za-z-]+\\s+)\\s*\\b(" + $mre + ")") as $strong
+  | ("(?:, |: | - )\\b(" + $mre + ")(?=\\s*[(\\[:])") as $weak
+  | [ ($strong, $weak) as $rx | $m | match($rx; "gi") | .captures[0] as $mk0
+      | select(($text[($mk0.offset + $mk0.length):]) | test("^(\\s*[(\\[:]|(?![^:|()\\n]{0,40}\\bby\\b)[^:|()\\n]{0,40}:)"))
+      | select(($text[($mk0.offset + $mk0.length):]) | test("^\\s*\\([^)]*\\b(not|never|no longer)\\b") | not)
+      | {offset: $mk0.offset, length: $mk0.length}
+      | ($m[(.offset + .length):]) as $mrest
+      | ([ ([$mrest | match(" \\| ")] | first | .offset?),
+           (if $sre == null then null else ([$mrest | match($sre; "i")] | first | .offset?) end),
+           ([$mrest | match("\\b[A-Z]{2,}[A-Z0-9 ]*:")] | first | .offset?),
+           ([$mrest | match("\\.\\s")] | first | .offset?) ]
+         | map(select(. != null)) | if length == 0 then ($mrest | length) else min end) as $e
+      | $mrest[:$e] | tokens[] | select(. as $t | $names | index($t)) ] | unique;
+def nrm: ascii_downcase | gsub("[^a-z0-9]"; "-");
+
 ($stuckMin // 45) as $stuck
 | [ ($forbidden // [])[] | select(type == "string" and length > 0) | ascii_downcase ] as $forbid
 | (($ledger // [])[0] // {}) as $L
 | [ ($L.lanes // {})[]? | .lead? // empty | select(type == "string") ] as $leads
+| [ ($L.lanes // {}) | if type == "object" then . else {} end | to_entries[]
+    | select(.value | type == "object") | select(.value.lead | type == "string")
+    | . as $e | (($L.workers // {}) | if type == "object" then . else {} end)[$e.value.lead]
+    | select(type == "object") | select(.path | type == "string")
+    | select(((.state // "") | IN("gone", "repurposed")) | not)
+    | {name: (.path | normpath | split("/") | last // ""), label: $e.key, host: (.host // null)} ] as $ledgerLeads
 | .generatedAtMs as $now
 | (.hosts // []) as $hosts
 | [
@@ -187,8 +245,104 @@ def normpath: if type == "string" then sub("/+$"; "") else "" end;
       | {host: $w.host, class: $c.class, path: $w.path, repo: $w.repo, branch: $w.branch,
          worktreeId: $w.worktreeId, inOrca: $w.inOrca, idleMinutes: $idle,
          pr: (if $w.pr == null then null else {number: $w.pr.number, state: $w.pr.state, author: $w.pr.author} end),
-         flags: $flags, reason: $c.reason, suggest: $c.suggest} )
-  ] as $items
+         flags: $flags, reason: $c.reason, suggest: $c.suggest,
+         name: ($w.path | normpath | split("/") | last // ""), isMain: ($w.isMainWorktree // false),
+         comment: ($w.comment // ""), noAgent: $noAgent,
+         ledgerLane: ([$lw[] | .value.lane? | select(type == "string" and length > 0)] | first // null)} )
+  ] as $items0
+| (if $own == null then null else
+    ($own.neverTouch // [] | map(lc)) as $nt
+    | ($own.repo // "" | lc) as $repo
+    | ($own.self // "" | lc) as $self
+    | ($own.markers // []) as $mk
+    | ($own.stopWords // []) as $stop
+    | def inscope: (.name // "" | lc) as $n | (.repo // "" | lc) as $r
+                    | $n != "" and .repo != null and $r == $repo and (.isMain | not)
+                      and (($nt | index($n)) == null) and (($nt | index($r)) == null);
+      ([ $items0[] | select(inscope) | .name | lc ] | unique) as $names
+    | (( $own.leads // {} | to_entries | map({name: (.key | lc), label: .value}))
+       + ($ledgerLeads | map({name: (.name | lc), label: .label}))
+       | unique_by(.name)) as $leadList
+    | [ $leadList[] | . as $ld
+        | ([ $items0[] | select(inscope and (.name | lc) == $ld.name) | .comment ] | join(" | ")) as $c
+        | claims($c; $mk; $stop; $names)[] | select(. != $ld.name)
+        | {name: ., label: $ld.label, lead: $ld.name} ] as $claims
+    | ($own.prefixes // {} | to_entries | map({key: (.key | lc), value: .value})) as $pfx
+    | [ $items0[] | . as $i
+        | (if ($i | inscope | not) then
+             {owner: null, ownerSource: (if $i.class == "host-offline" then null elif $i.isMain then "main-checkout" else "out-of-scope" end), extra: []}
+           else
+             ($i.name | lc) as $nm
+             | ([$claims[] | select(.name == $nm)] | sort_by(.label)) as $cl
+             | ([$pfx[] | . as $p | select($nm | startswith($p.key))] | sort_by(.key | length) | last) as $pf
+             | ($leadList | map(select(.name == $nm)) | first) as $ld
+             | if $nm == $self then {owner: $own.self, ownerSource: "self", extra: []}
+               elif $ld != null then {owner: $ld.label, ownerSource: "lead", extra: []}
+               elif ($cl | length) > 0 then
+                 {owner: $cl[0].label, ownerSource: ("comment:" + $cl[0].lead),
+                  extra: (if ($cl | map(.label) | unique | length) > 1
+                          then ["owner-contested:" + ($cl | map(.label) | unique | join(","))] else [] end)}
+               elif $i.ledgerLane != null then {owner: $i.ledgerLane, ownerSource: "ledger", extra: []}
+               elif $pf != null then {owner: $pf.value, ownerSource: "prefix", extra: []}
+               elif ($i.flags | index("standing")) != null then {owner: $i.name, ownerSource: "standing", extra: []}
+               else {owner: null, ownerSource: "none", extra: []} end
+           end) as $o
+        | $i + {owner: $o.owner, ownerSource: $o.ownerSource, flags: ($i.flags + $o.extra)} ] as $owned1
+    # Last rule: a worktree made inside another worker's session scratch dir
+    # (a git-only temp worktree) belongs to that worker's owner. The agent CLI encodes a
+    # cwd by turning every non-alphanumeric into "-", and a session may start in a
+    # subdirectory, so both sides are normalised and the longest worktree name
+    # that prefixes the captured segment wins. Then ORPHAN.
+    | ([ $owned1[] | select(.owner != null and (.name // "") != "") | . + {n: (.name | nrm)} ]) as $ownedNorm
+    | [ $owned1[] | . as $i
+        | if $i.ownerSource != "none" then $i
+          else
+            (if ($own.scratchPathRegex // null) == null then null
+             else (try ([$i.path // "" | capture($own.scratchPathRegex; "i")] | first | .worker?) catch null) end) as $w
+            | (if $w == null then null
+               else ($w | nrm) as $wn
+                    | ($ownedNorm | map(select(. as $r | $r.n == $wn or ($wn | startswith($r.n + "-")))) | sort_by(.n | length) | last) end) as $par
+            | if $par != null then $i + {owner: $par.owner, ownerSource: ("scratch-of:" + $par.name)}
+              else $i + {flags: ($i.flags + ["ORPHAN"]),
+                         suggest: ($i.suggest + "; ORPHAN: no owner (no lead lists it, no prefix covers it). Ask the likely lane lead"
+                           + (if (($i.class | IN("idle", "orphan-git-only", "done-merged", "done-selfreported"))
+                                  and (($i.flags | index("standing")) == null) and (($i.flags | index("standing-unknown")) == null)
+                                  and (($i.flags | index("has-child-agent")) == null))
+                              then "; with no claim after 2 ticks and the lead's loop interval, tear down per the teardown gates (SKILL.md § Ownership)"
+                              else "; never teardown on this class (SKILL.md § Ownership)" end))} end
+          end ] as $owned
+    | ([ $ledgerLeads[] | {key: (.name | lc), value: .host} ] | from_entries) as $ledgerHost
+    | [ $leadList[] | . as $ld
+        | ([ $owned[] | select(inscope and (.name | lc) == $ld.name) ]) as $rows
+        # Open work is counted per lead, not per label: an item another lead's comment
+        # claimed is that lead's; label-owned items (prefix, ledger) go to this lead only
+        # while no other lead sharing the label has a live session (a superseded
+        # a superseded iteration must not inherit its successor's work).
+        | ([ $leadList[] | select(.label == $ld.label and .name != $ld.name) | .name ]) as $sibs
+        | ([ $sibs[] | . as $sn | [ $owned[] | select(inscope and (.name | lc) == $sn) ] | select(length > 0 and (all(.[]; .noAgent) | not)) ] | length > 0) as $sibLive
+        | ([ $owned[] | select(.owner == $ld.label and ((.ownerSource | IN("lead", "self")) | not)
+                               and ((.class | IN("done-merged", "main-checkout", "host-offline")) | not)
+                               and ((.pr == null) or ((.pr.state | IN("MERGED", "CLOSED")) | not))
+                               and ((.name | lc) != $ld.name)
+                               and ((.ownerSource == ("comment:" + $ld.name))
+                                    or (((.ownerSource | startswith("comment:")) | not) and ($sibLive | not)))) ]) as $open
+        # A lead with no worktree is called dead only when the ledger records it as
+        # spawned and not gone, and its own host answered in full (not offline, not truncated).
+        | ($ledgerHost[$ld.name] // null) as $lh
+        | (($lh != null) and ([$hosts[] | select(.name == $lh and .reachable and (.truncated != true))] | length) > 0) as $hostOk
+        | select(($open | length) > 0)
+        | select((($rows | length) > 0 and all($rows[]; .noAgent)) or (($rows | length) == 0 and $hostOk))
+        | {lane: $ld.label, lead: $ld.name, hosts: ($rows | map(.host)),
+           reason: (if ($rows | length) == 0 then "lead worktree not in the census (ledger lead, its host answered in full)" else "lead session gone" end),
+           open: ($open | map(.name) | unique)} ] as $dead
+    | {owned: ([ $owned[] | . as $i
+          | if (.owner != null) and ([$dead[] | select(.lead == ($i.name | lc))] | length) > 0 and ($i | inscope) then
+              .flags += ["LEAD-DEAD"]
+              | if .class == "standing-dead" then .
+                else .suggest += "; LEAD-DEAD: lane \(.owner) lead session is gone while it owns \([$dead[] | select(.lead == ($i.name | lc)) | .open | length] | first) open item(s): respawn in place (claude --continue in its worktree) else hand the items to another lead; never leave them unwatched" end
+            else . end ]),
+       dead: $dead} end) as $O2
+| (if $O2 == null then $items0 else $O2.owned end | map(del(.isMain, .comment, .noAgent, .ledgerLane))) as $items
 | ([ (.terminals // [])[]
      | (if (.agentIdentity | type) == "string" then (.agentIdentity | ascii_downcase) else "" end) as $id
      | (if (.title | type) == "string" then (.title | ascii_downcase) else "" end) as $ti
@@ -214,5 +368,10 @@ def normpath: if type == "string" then sub("/+$"; "") else "" end;
     violations: $violations,
     violationCheck: {enabled: ($forbid | length > 0), forbidden: $forbid,
                      complete: ($vgaps | length == 0), gaps: $vgaps},
+    ownership: (if $O2 == null then {configured: false, error: ($ownErr // "ownership accounting is off")}
+                else {configured: true,
+                      orphans: ($items | map(select(.flags | index("ORPHAN"))) | length),
+                      leadDead: $O2.dead,
+                      byOwner: ($items | map(select(.owner != null)) | group_by(.owner) | map({key: .[0].owner, value: length}) | from_entries)} end),
     items: $items
   }
