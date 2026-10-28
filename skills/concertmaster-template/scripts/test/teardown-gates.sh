@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# teardown-gates.sh: behaviour tests for teardown.sh's ledger, standing and
-# beads gates. Builds a throwaway repo whose origin is a local bare repo (so
+# teardown-gates.sh: behaviour tests for teardown.sh's ledger, standing, beads and follow-up
+# gates. Builds a throwaway repo whose origin is a local bare repo (so
 # `git fetch` is real), linked worktrees, a ledger, and stubs for orca, gh and
 # bd, then dry-runs teardown.sh per case and checks the exit code and output.
 # Nothing outside a mktemp dir is touched. --apply runs only in the "apply"
@@ -85,8 +85,8 @@ cat > "$ROOT/bin/orca-stub" <<'O'
 #!/usr/bin/env bash
 case "$1 $2" in
   "worktree ps") [ "${STUB_ORCA_NONE:-0}" = 1 ] && { echo '{"result":{"worktrees":[]}}'; exit 0; }
-    jq -cn --arg p "$STUB_PATH" --arg n "${STUB_NAME:-x}" --arg id "${STUB_WID:-r::x}" \
-    '{result:{worktrees:[{path:$p,worktreeId:$id,displayName:$n,status:"idle",agents:[],childWorktreeIds:[],liveTerminalCount:0}]}}' ;;
+    jq -cn --arg p "$STUB_PATH" --arg n "${STUB_NAME:-x}" --arg id "${STUB_WID:-r::x}" --arg c "${STUB_COMMENT:-}" \
+    '{result:{worktrees:[{path:$p,worktreeId:$id,displayName:$n,comment:$c,status:"idle",agents:[],childWorktreeIds:[],liveTerminalCount:0}]}}' ;;
   # STUB_TERM_FILE present = one live claude terminal; close removes it
   # unless STUB_TERM_STICKY=1. Closes are logged to STUB_BD_LOG for ordering.
   "terminal list") if [ -n "${STUB_TERM_FILE:-}" ] && [ -e "$STUB_TERM_FILE" ]; then
@@ -478,6 +478,84 @@ if [ "$AS_ROOT" = 0 ]; then
 else
   skip "partial bd runtime delete"
 fi
+
+echo "== follow-up gate"
+FUS="$HERE/../followups.sh"
+fu() { # fu <worker> <id> [state]: one followUps[] row as JSON
+  printf '{"id":"%s","worker":"%s","lane":"lane-a","owner":"owner","text":"choose a or b","state":"%s","openedAt":"2026-10-04T00:00:00Z","closedAt":null}' "$2" "$1" "${3:-open}"; }
+ledger "{\"followUps\":[$(fu w-a item-ids)],\"workers\":{\"w-a\":$(w "$W1" '"standing":false')}}"
+run "open follow-up on the worker refuses"                 3 'open follow-up(s) (w-a:item-ids)' "$W1"
+run "open follow-up refuses --retire-check too"            3 'open follow-up(s) (w-a:item-ids)' "$W1" --retire-check
+ledger "{\"followUps\":[$(fu w-child item-check)],\"workers\":{\"w-a\":$(w "$W1" '"standing":false'),\"w-child\":$(w /elsewhere '"standing":false,"parent":"w-a"')}}"
+run "open follow-up on a child refuses the parent"         3 'open follow-up(s) (w-child:item-check)' "$W1"
+ledger "{\"followUps\":[$(fu w-grand deep-item)],\"workers\":{\"w-a\":$(w "$W1" '"standing":false'),\"w-child\":$(w /elsewhere '"standing":false,"parent":"w-a"'),\"w-grand\":$(w /elsewhere2 '"state":"gone","parent":"w-child"')}}"
+run "open follow-up on a grandchild refuses"               3 'w-grand:deep-item' "$W1"
+ledger "{\"followUps\":[$(fu w-other other-item)],\"workers\":{\"w-a\":$(w "$W1" '"standing":false'),\"w-other\":$(w /elsewhere '"standing":false'),\"w-child\":$(w /elsewhere2 '"standing":false,"parent":"w-other"')}}"
+run "open follow-up on an unrelated worker is ignored"     0 'none open' "$W1"
+ledger "{\"followUps\":[$(fu w-a item-ids "done")],\"workers\":{\"w-a\":$(w "$W1" '"standing":false')}}"
+run "done follow-up allows"                                0 'none open' "$W1"
+ledger "{\"followUps\":{\"id\":\"x\"},\"workers\":{\"w-a\":$(w "$W1" '"standing":false')}}"
+run "followUps not an array refuses"                       3 'followUps is not an array' "$W1"
+ledger "{\"followUps\":[$(fu w-a item-ids)],\"workers\":{\"w-a\":$(w "$W1" '"standing":false')}}"
+printf '{"worktrees":[{"host":"local","path":"%s","comment":"cm:done\\ncm:followup-done item-ids"}]}' "$W1" > "$ROOT/disc-done.json"
+LANEFIX='.workers["w-a"].lane = "lane-a"'
+jq "$LANEFIX" "$CM_HOME/ledger.json" > "$ROOT/l.tmp" && mv "$ROOT/l.tmp" "$CM_HOME/ledger.json"
+run "still open before the cm:followup-done line"          3 'w-a:item-ids' "$W1"
+"$FUS" reconcile --discover "$ROOT/disc-done.json" >/dev/null 2>&1
+run "allows after cm:followup-done is reconciled"          0 'none open' "$W1"
+
+echo "== follow-up gate: live comment"
+one "$W1" '"standing":false,"lane":"lane-a"'
+STUB_COMMENT=$'cm:running\ncm:followup fresh-one owner=owner not folded in yet' \
+  run "open tag in the live comment, not in the ledger"    3 'open follow-up(s) in live comment (fresh-one)' "$W1"
+STUB_COMMENT='cm:running | cm:followup fresh-one owner=owner t' \
+  run "single-line comment is read too"                    3 'in live comment (fresh-one)' "$W1"
+STUB_COMMENT=$'cm:running\ncm:followup fresh-one owner=owner t' \
+  run "live comment also refuses --retire-check"           3 'in live comment (fresh-one)' "$W1" --retire-check
+STUB_COMMENT=$'cm:running\ncm:followup fresh-one owner=owner t\ncm:followup-done fresh-one' \
+  run "a done line in the comment allows"                  0 'none open' "$W1"
+ledger "{\"followUps\":[$(fu w-a fresh-one "done" | sed 's/"worker":"w-a"/"worker":"w-gone"/')],\"workers\":{\"w-a\":$(w "$W1" '"standing":false,"lane":"lane-a"')}}"
+STUB_COMMENT=$'cm:running\ncm:followup fresh-one owner=owner choose a or b' \
+  run "a done ledger row for the lane, same text, allows"  0 'none open' "$W1"
+STUB_COMMENT=$'cm:running\ncm:followup fresh-one owner=owner a NEW item still to do' \
+  run "a done id reused with new text refuses"             3 'in live comment (fresh-one)' "$W1"
+STUB_COMMENT=$'cm:running\ncm:followup fresh-one owner=owner a NEW item still to do' \
+  run "the reused id refuses --retire-check too"           3 'in live comment (fresh-one)' "$W1" --retire-check
+ledger "{\"followUps\":[$(fu w-a fresh-one "done" | sed 's/"lane":"lane-a"/"lane":"lane-b"/')],\"workers\":{\"w-a\":$(w "$W1" '"standing":false,"lane":"lane-a"')}}"
+STUB_COMMENT=$'cm:running\ncm:followup fresh-one owner=owner choose a or b' \
+  run "a done row in another lane still refuses"           3 'in live comment (fresh-one)' "$W1"
+one "$W1" '"standing":false,"lane":"lane-a"'
+STUB_COMMENT=$'cm:running\ncm:followup Bad-Id owner=owner t' \
+  run "a malformed cm:followup line refuses"               3 'malformed follow-up line in live comment' "$W1"
+STUB_COMMENT=$'cm:running\n- cm:followup x owner=owner t' \
+  run "a prefixed cm:followup line refuses"                3 'malformed follow-up line in live comment' "$W1"
+STUB_COMMENT='cm:running note; cm:followup a-b owner=owner t' \
+  run "a tag after a semicolon refuses"                    3 'malformed follow-up line in live comment' "$W1"
+STUB_COMMENT=$'cm:running\ncm:follow_up a-b owner=owner t' \
+  run "a follow_up spelling refuses"                       3 'malformed follow-up line in live comment' "$W1"
+ledger "{\"workers\":{\"w-a\":$(w "$W1" '"standing":false,"lane":"lane-a","worktreeId":"r::x"')}}"
+STUB_ORCA_NONE=1 run "Orca row missing for a tracked worker refuses" 3 'Orca row missing' "$W1"
+one "$W1" '"standing":false,"lane":"lane-a"'
+STUB_ORCA_NONE=1 run "no worktreeId (git-only worker): no row is fine" 0 'none open' "$W1"
+STUB_COMMENT='cm:running plain note' run "a comment with no tags is fine"     0 'none open' "$W1"
+
+echo "== comment archive on --apply"
+W21="$(mkwt cmt-a)"; W22="$(mkwt cmt-b)"
+one "$W21" '"standing":false,"lane":"lane-a"'
+STUB_COMMENT=$'cm:done\nnote to keep' STUB_NAME=cmt-a STUB_ORCA_RM_MAIN="$M" \
+  run "apply archives the comment, then removes"           0 'done: .* torn down' "$W21" --apply
+ARC="$(find "$CM_HOME/salvage/comments/local" -name 'cmt-a-*.txt' 2>/dev/null | head -n 1)"
+if [ -n "$ARC" ] && [ "$(stat -c %a "$ARC" 2>/dev/null || stat -f %Lp "$ARC")" = 600 ] && grep -q 'note to keep' "$ARC"; then
+  PASS=$((PASS + 1)); echo "PASS comment archived, mode 600, text intact"
+else
+  FAIL=$((FAIL + 1)); echo "FAIL comment archive missing or wrong mode: ${ARC:-none}"
+fi
+one "$W22" '"standing":false,"lane":"lane-a"'
+mkdir -p "$CM_HOME/salvage"; rm -rf "$CM_HOME/salvage/comments"; : > "$CM_HOME/salvage/comments"
+STUB_COMMENT=$'cm:done\nnote' STUB_NAME=cmt-b STUB_ORCA_RM_MAIN="$M" \
+  run "archive write fails: nothing removed"               4 'comment archive (nothing removed)' "$W22" --apply
+if [ -d "$W22" ]; then PASS=$((PASS + 1)); echo "PASS worktree kept after the archive failure"; else FAIL=$((FAIL + 1)); echo "FAIL worktree removed anyway"; fi
+rm -f "$CM_HOME/salvage/comments"
 
 echo "== --retire-check"
 one "$W1" '"standing":true'

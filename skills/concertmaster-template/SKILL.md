@@ -89,6 +89,11 @@ The lane set above is the default; `cfg.lanes` is the list in use.
     on the ledger worker the moment a lane takes an epic: `teardown.sh` gates
     on it, and without it the only beads check left is "open beads changed in
     this worktree and nowhere else".
+12a. **Follow-up gate.** A worker, or a worker whose `parent` chain leads to it, with an
+    open `followUps[]` row (`cm:followup`, `references/ledger.md`), or an open `cm:followup`
+    line in its live comment, is not done: `teardown.sh` refuses. If its worktree goes by other means
+    and the tick marks it `gone`, its open item stays listed by `scripts/followups.sh report` until it closes or moves to a
+    live worker. Never hold an item that outlives a worker only in a session's memory.
 13. **Every lane reads all hosts, every tick.** Run `orca host list --json`,
     then per host
     `timeout 30 orca worktree list --json --repo name:<cfg.worktrees.orca_repo> --limit 500 --environment <host>`
@@ -227,13 +232,18 @@ BEFORE asking.
 3. **Reconcile.** Match classify items to ledger workers by host + path. New
    in-scope worktrees not in the ledger: adopt (`adopted: true`). A ledger worker
    with no row is marked `gone` ONLY when its host was reached this tick and
-   that host's census is not `truncated`. If the host is unreachable, missing
+   that host's census is not `truncated`; its open follow-ups stay listed by
+   `followups.sh report`. If the host is unreachable, missing
    from the host list, or truncated, the worker keeps its state untouched.
    Every adopted worker gets explicit `standing` (true for a sweeper or lead,
    false for a single-task worker, null only while unknown), `agent` (`claude`,
    `codex` or `agy`, from the Orca agent type; `resume` leaves a lane with none
-   for a manual resume) and `beadsEpic` (the epic id, or null). Update `hosts`,
-   `lastOutputAt`, `lastComment` (from the worktree `comment`, `cm:<state>` per
+   for a manual resume) and `beadsEpic` (the epic id, or null). Then fold the comment tags into
+   the ledger: `scripts/followups.sh reconcile < $CM_HOME/last-discover.json` (Orca's
+   `parentWorktreeId` and `cm:child` set `workers.<id>.parent`; `cm:followup` and `cm:followup-done`
+   update `followUps[]`; a failure is a warning). Each `followups: malformed`, `unmatched`,
+   `unmatched-child`, `parent-conflict` and `reused-id` line it prints becomes a report row.
+   Update `hosts`, `lastOutputAt`, `lastComment` (from the worktree `comment`, `cm:<state>` per
    `references/lanes.md`), PR state. Last, rewrite the roster:
    `scripts/roster.sh` (active work only, atomic, mode 600; read by `resume`,
    § Resume). A failure is a warning, never a stop.
@@ -521,7 +531,8 @@ $ORCA worktree create $ENV --repo name:<cfg.worktrees.orca_repo> \
   `result.startupTerminal.handle`. Ledger entry: host, worktreeId, path,
   terminal, agent, model, lane, task, `state: spawning`, `nudges: 0`,
   briefFile, spawnedAt, `standing` (true for every sweeper and lead),
-  `beadsEpic` (the epic id it owns, or null). Emit `worker.spawned`.
+  `beadsEpic` (the epic id it owns, or null), `parent` (the lead's worker id when a lead spawns it,
+  else null). Emit `worker.spawned`.
 - `agy` rejected by `--agent`: create without it, then
   `terminal create --command agy`, `terminal wait --for tui-idle --timeout-ms 60000`,
   and send the brief only when `wait.satisfied` is true (pr-sweep `adapters/orca.md`).
@@ -578,7 +589,8 @@ idle 45m ─▶ read pane (--screen) ─▶ question? ─▶ answer if factual/d
    worktree (`terminal create --worktree id:<wid> --command claude`, wait
    tui-idle, send "Read <handover> and continue from it"), reset `nudges`, emit
    `worker.respawned`. If the work is ambiguous, high-stakes, or was already
-   respawned once: ASK the owner instead.
+   respawned once: ASK the owner instead. The handover lists the lane's open items
+   (`scripts/followups.sh open --lane <lane>`).
 5. Output resumes at any point: back to `running`, `nudges: 0`.
 
 Orca "working" with hours of silence is stuck, not running. A session whose
@@ -728,10 +740,10 @@ Two different operations. Never improvise a third.
 
 | operation | what it does | when |
 |---|---|---|
-| **Retire worker** | read the pane (no menu showing, prompt idle), then `scripts/teardown.sh <host> <path> --retire-check` must exit 0 (ledger, standing and beads gates only; it never acts), then `ORCA terminal close --terminal <h> $ENV` for that worker's ONE agent handle; keep the worktree; set `prs.<pr>.driver` to the pr-sweeper for any open PR; ledger state `retired` | a single-task worker is done (`cm:done`, `cm:merge-ready`, done-selfreported) with every epic bead closed, or a stuck worker is being replaced. Never a standing lane |
+| **Retire worker** | read the pane (no menu showing, prompt idle), then `scripts/teardown.sh <host> <path> --retire-check` must exit 0 (ledger, standing, beads and follow-up gates only; it never acts), then `ORCA terminal close --terminal <h> $ENV` for that worker's ONE agent handle; keep the worktree; set `prs.<pr>.driver` to the pr-sweeper for any open PR; ledger state `retired` | a single-task worker is done (`cm:done`, `cm:merge-ready`, done-selfreported) with every epic bead closed, or a stuck worker is being replaced. Never a standing lane |
 | **Teardown worktree** | `scripts/teardown.sh`, dry run first, `--apply` only on a clean plan | single-task worker only, every epic bead closed, and the branch's PR is merged or closed; or, with no PR, after the owner approves that item via AskUserQuestion (then `--allow-no-pr`) |
 
-Before either operation, three checks, every time:
+Before either operation, four checks, every time:
 
 1. **Standing lane?** Sweepers and leads are never retired or torn down;
    idle is their resting state. The ledger alone decides: `standing: true` or
@@ -763,6 +775,13 @@ Before either operation, three checks, every time:
    line: `[ ] final status filed (PR heads, next steps, watchers) -> handoverFile set`.
    (Rule only: `teardown.sh --retire-check` does not read the file yet, so the
    concertmaster checks the ledger field itself before each retire.)
+4. **Open follow-ups?** Any `followUps[]` row with `state` not `done` whose `worker` is this
+   worker or a worker whose `parent` chain leads to it, or an open `cm:followup` line in the live
+   comment that the ledger does not hold as `done` for the lane, refuses retire and teardown. Close the item
+   (`cm:followup-done <id>` in the poster's comment, or `scripts/followups.sh close <id>`) or hand it to
+   another owner first. The live-comment read covers this worktree only; a child's unreconciled line is
+   caught by the child-worktree refusal and by `followups.sh reconcile`. (An item held only in a
+   lead's session memory is lost when its worker goes.)
 
 ```bash
 scripts/teardown.sh <host> <path>                          # dry run: checks + plan
@@ -795,7 +814,8 @@ handle; a process outside any Orca terminal always refuses), a ledger that is
 missing, empty, malformed, or has no live worker (state not `gone`/`repurposed`)
 for this host and path (matched by canonical path or Orca worktreeId), ledger
 paths that cannot be canonicalised, a **standing lane** or **unknown standing**
-(check 1, every live worker on the path counted), or **open beads** (check 2
+(check 1, every live worker on the path counted), or **open follow-ups** (check 4, naming `worker:id`),
+or **open beads** (check 2
 over the union of every live worker's `beadsEpic`, a non-string `beadsEpic`,
 each bead's latest record across all sources by epoch, ties open; a failed fetch
 or any source that fails to read (absent only on exit 5), an epic found nowhere,
@@ -806,7 +826,8 @@ is removed. It closes terminals one handle at a time (never `--all`), then
 `orca worktree rm` (Orca deletes the branch only when it can prove it merged);
 git-only worktrees get `git worktree remove` and a branch delete only when
 GitHub says MERGED. Salvage lands in `$CM_HOME/salvage/<host>/<branch>-<ts>/`
-on that host. On a remote host the ssh target must answer with
+on that host, and the worktree comment is saved to `$CM_HOME/salvage/comments/<host>/<name>-<ts>-<pid>.txt`
+(mode 600) before Orca removes the worktree. On a remote host the ssh target must answer with
 `hosts.<name>.hostname`.
 
 `teardown.sh` covers the local host. Before removing a worktree that lives on a
@@ -874,7 +895,7 @@ When there is no ledger:
 
 - **Owner digest** at `cfg.schedule.digest_times`. The text is terse `- ` bullets, no
   greeting, and carries only Merged and Deployed, so it is safe for a chat group: Needs
-  <owner>, Stuck and the Fleet footer name workers and hosts, so put those in your
+  <owner>, Open follow-ups, Stuck and the Fleet footer name workers and hosts, so put those in your
   terminal report with `scripts/digest.sh --full`, never in the sent text. Send steps:
   `scripts/digest.sh > $CM_HOME/digest.txt`, read it, then send with
   `cfg.messaging.owner_digest.send` (`{to}` = `cfg.messaging.owner_digest.to`,
@@ -928,6 +949,12 @@ next: trigger prod for the 16:00 window
   recommended option in the question, and `next:` names it. Outside a tick, in a turn
   the owner started, it may go into AskUserQuestion, recommended option first, after
   `ScheduleWakeup`.
+- **Follow-ups:** one row per line of `scripts/followups.sh report` (an open follow-up whose
+  owner is a lane or worker that is gone, idle or missing, or one owned by the project owner whose ask is
+  no longer open (`owner-answered`: an answered ask does not close the item), and every `orphaned` row: an
+  open item whose worker is missing or not alive), under the owning lane. An open item owned by the
+  project owner is already a `WAITING: <owner>` row from `asks[]`, so it gets no `followup` row while its
+  ask is open (its `orphaned` row still shows when its worker is dead).
 - Quiet tick (nothing changed): one row per lane plus `next:`.
 - Every session blocked on a menu (`waiting.sh`) gets a row with its wait time; its
   `BLOCKED PROMPT` rows (autocompact) are cleared, not reported as waiting on the owner.
@@ -947,7 +974,8 @@ shellcheck clean.
 | `scripts/jsanitize`, `scripts/jstrings` | Orca JSON helpers (python3): `jsanitize` re-emits JSON with lone UTF-16 surrogates replaced so `jq` can parse remote-host replies; `jstrings` prints every string of a reply (pane text), tolerating the same. `abrupt.sh`, `waiting.sh` and the census in `discover.sh` pipe Orca output through them |
 | `scripts/roster.sh [--stdout]` | rewrites `$CM_HOME/roster.yaml` from the ledger, active rows only; atomic, mode 600, exit 1 and roster untouched when the ledger is unreadable |
 | `scripts/resume.sh [--dry-run] [--host <h>] [--worktree-id <id>] [--path <wt>] [--lane <label>]` | `/concertmaster resume`: rewrites the roster, then per row: live, dead (`claude --continue` plus one nudge), offline, duplicate, missing, manual, unknown, held; one run at a time (lock); exit 3 when a row needs attention |
-| `scripts/teardown.sh <host> <path> [--apply] [--allow-no-pr] [--salvage] [--close-handle <h>] [--force-standing <ask-id>] [--accept-unmerged-beads <ask-id>] [--retire-check]` | safe teardown, dry run by default; refuses standing lanes, unknown standing and open beads, fails closed |
+| `scripts/teardown.sh <host> <path> [--apply] [--allow-no-pr] [--salvage] [--close-handle <h>] [--force-standing <ask-id>] [--accept-unmerged-beads <ask-id>] [--retire-check]` | safe teardown, dry run by default; refuses standing lanes, unknown standing, open beads and open follow-ups (ledger and live comment; `--apply` archives the comment first), fails closed |
+| `scripts/followups.sh reconcile\|close\|open\|report\|comment-open` | the follow-up ledger (rule 12a): `reconcile` reads discover JSON and folds Orca's `parentWorktreeId`, `cm:child`, `cm:followup <id> owner=<o> <text>` and `cm:followup-done <id>` comment lines into `workers.<id>.parent` and `followUps[]` (an item owned by `project.owner.id` also gets an `asks[]` row; idempotent, writes nothing when nothing changed, through `cm_ledger_write`) and prints `followups: malformed`, `unmatched`, `unmatched-child`, `parent-conflict` and `reused-id` lines; `close` closes an item from outside a comment; `open [--lane]` lists open items as TSV; `report` prints the turn-end rows (`orphaned`, `followup`); `comment-open [--texts]` reads one comment on stdin and prints its open ids, with their text under `--texts` (teardown uses it on the live comment) |
 | `scripts/mc-emit.sh <type> <msg> [meta]` / `--fleet-upsert ...` / `--tick <json>` / `--issue-state <issue> <state> [pr]` / `--flush` / `--requeue-dead` | outbox + telemetry POST, always exit 0; base URL or tenant not configured: sends nothing, lines stay queued (capped); `--requeue-dead [--any-tenant]` puts dead 400 lines with tenantId null (or any tenant; with a project id, also any without a projectId) back in front of the outbox, newest fleet upsert per agent only (backup kept, refused past the cap), events stamped with the project id and a deterministic eventId so a replay dedupes; with a project id every event carries projectId and fleet upserts are skipped; a 403 on an upsert, or on an event naming another project, dead-letters it; never sends an upsert older than one accepted (`fleet.sent.json`); unsent lines go back in front; write lock on every append and rewrite; `MC_NO_FLUSH=1` queues only; warns when the installed copy is older |
 | `scripts/boot-sweep.sh [--dry-run] [--no-wait] [--since <epoch> [--lanes <paths>]]` | after a host restart, nudges standing lanes that ran no turn since boot to re-arm their `/loop` (`references/boot-sweep.md`) |
 | `scripts/runtime-check.sh [--dry-run]` | tick step after an Orca runtime restart: refreshes standing lanes' ledger handles by worktree path and nudges lanes whose `/loop` wake died, via `boot-sweep.sh --since --lanes` (`references/runtime-check.md`) |
@@ -966,9 +994,9 @@ shellcheck clean.
 | `scripts/sync-from-toolkit.sh <project-skill-dir>` | copies this engine into a project's skill directory without touching its `config.yaml` or `references/project-local.md` (README, "Update a project") |
 | `scripts/config-check.sh [--config <file>]` | the config doctor: required keys, shape of the optional blocks, no secret-looking text, no em-dash; exit 1 on any failure, 2 on bad usage; read-only; `--config config.example.yaml` checks the template itself |
 | `scripts/hooks/mc-worker-hook.sh` | Claude Code hook for workers, in-scope repos only (optional) |
-| `scripts/digest.sh [--full] [--since-hours n]` | digest text, stdout only, `- ` bullets, no Needs, Stuck or Fleet section (`--full` adds them for the terminal report): Merged (merged since `digests.lastSentAt`, else 12h) from `gh pr list`, and in `--full` the open PR count (a failed gh prints "unknown (gh failed)", never 0), every other section from the ledger; read-only; `--full` also lists `ledger.violations` and an incomplete `ledger.violationCheck` |
+| `scripts/digest.sh [--full] [--since-hours n]` | digest text, stdout only, `- ` bullets, no Needs, Open follow-ups, Stuck or Fleet section (`--full` adds them for the terminal report): Merged (merged since `digests.lastSentAt`, else 12h) from `gh pr list`, and in `--full` the open PR count (a failed gh prints "unknown (gh failed)", never 0), every other section from the ledger; read-only; `--full` also lists `ledger.violations` and an incomplete `ledger.violationCheck` |
 | `scripts/intake.sh <cmd>` | the deterministic half of `intake` (rules in `scripts/intake.jq`) |
-| `scripts/test/*.sh` | `classify-standing`, `classify-violations`, `teardown-gates`, `resume-flow`, `intake`, `mc-emit`, `boot-sweep`, `runtime-check`, `ci-queue-alert`, `cred-check`, `rm-guard-hook`, `digest-gh`, `orca-json-helpers`, `waiting-autocompact`, `spawn-verify`, `classify-ownership`, `ask-timeout`, `queue`, `queue-audit`, `salv3`, `markers`, `unlinked-prs`, `tick-emit`, `config-check`, `automations-audit`: hermetic tests against `scripts/test/fixtures/config.test.yaml`; run the matching one after any script change |
+| `scripts/test/*.sh` | `classify-standing`, `classify-violations`, `teardown-gates`, `resume-flow`, `intake`, `mc-emit`, `boot-sweep`, `runtime-check`, `ci-queue-alert`, `cred-check`, `rm-guard-hook`, `digest-gh`, `orca-json-helpers`, `waiting-autocompact`, `spawn-verify`, `classify-ownership`, `ask-timeout`, `queue`, `queue-audit`, `salv3`, `markers`, `unlinked-prs`, `tick-emit`, `config-check`, `automations-audit`, `followups`: hermetic tests against `scripts/test/fixtures/config.test.yaml`; run the matching one after any script change |
 
 <!-- project-local: scripts -->
 

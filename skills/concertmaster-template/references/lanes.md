@@ -29,6 +29,7 @@ Config-backed placeholders (fill from `config.yaml`):
 | `{{org}}` | `github.org` |
 | `{{repo}}` | `github.main_repo` (or the repo the owner handed) |
 | `{{owner}}` | `project.owner.name` |
+| `{{owner_id}}` | `project.owner.id` |
 | `{{project}}` | `project.name` |
 | `{{terminology_lines}}` | `terminology.rules`, one line each: `User-facing copy says "<use>", never "<never>".` (empty list: drop the line) |
 | `{{merge_command}}` | `merge.env_prefix` + `merge.command` with `{org}` `{repo}` filled, `{pr}` left as `<n>` |
@@ -88,6 +89,23 @@ Before `cm:done` or any handoff, write the final status (open PR heads, next ste
 watchers; "none" where empty) into the handover file or send it inline in the same report;
 the concertmaster files it and sets `workers.<id>.handoverFile` (SKILL.md § Retire and
 teardown, check 3). A `cm:done` with no filed status is sent back for it.
+
+A lead (and any worker that owns another worktree) also posts these, each on its own line
+(a multi-line `--comment $'cm:running ...\ncm:child <name>\ncm:followup ...'`; a " | " also separates
+them) after the first-line `cm:<state>`:
+
+| line | use when | concertmaster does |
+|---|---|---|
+| `cm:child <worktree-name>` | you spawned or own that child worktree | sets `workers.<child>.parent` to you when unset (`scripts/followups.sh reconcile`; Orca's own parent link does the same); two claimants set nothing |
+| `cm:followup <id> owner=<owner-id\|lane-or-worker-id> <short text>` | an open item must outlive the worker that raised it; `<id>` is kebab-case, unique in your lane, never reused; `<owner-id>` is `project.owner.id` | opens `followUps[]`; an item owned by `<owner-id>` is also a `WAITING: <owner>` row; no teardown of the worker or its parent until it closes |
+| `cm:followup-done <id>` | the item is finished or handed over | closes it |
+
+`<id>` is at most 40 chars (`a-z0-9-`), the owner `[A-Za-z0-9._:-]` up to 40, and the text has no pipe. A line that
+does not parse (a leading `- `, wrong case, a bad id) is reported (`followups: malformed`) and refuses teardown, never dropped silently; a `cm:child` naming no ledger worker is reported as `unmatched-child`, and a closed `<id>` posted again with other text as `reused-id` (post it under a new id; `teardown.sh` also refuses a closed id reused with new text). A `cm:followup` or `cm:child` tag that is not at the start of its line (after `;`, `-`, `>`, a backtick, a number) or is spelled `follow_up` is reported malformed too. Whoever rewrites a comment (a lead
+setting `cm:running`, the concertmaster, a worker) carries every open `cm:followup` line it owns forward; dropping one does not
+close it, but the live-comment gate in `teardown.sh` reads the comment as well as the ledger. To hand an item over, the new
+poster writes the same `<id>` (same lane) and the old poster drops the line. A `cm:done` written to a child keeps that
+child's open lines.
 
 Workers never use AskUserQuestion: nobody is there to answer the menu, and
 concertmaster never types into one. A worker that needs a decision writes
@@ -176,6 +194,13 @@ idle when empty. Single-task workers do not get this footer.
   (`cm:<state>`), never `SendMessage` to "concertmaster": on shared hosts
   that name can resolve to other projects' concertmasters. (A lead's message
   once reached another project's concertmaster.)
+- Children and follow-ups: for each worker you spawn, add a line `cm:child <worktree-name>`
+  to your comment; for anything that must outlive a worker (a check to re-run, a decision
+  waiting on {{owner}}), add `cm:followup <id> owner=<{{owner_id}}|lane|worker> <short text>`, and
+  `cm:followup-done <id>` once it is finished. Your comment, not your session memory, holds them:
+  whenever you rewrite your comment, carry every open `cm:followup` line forward, and set it as one
+  multi-line value, for example
+  `orca worktree set --worktree active --comment $'cm:running 2 workers\ncm:child lane-a-task-1\ncm:followup check-report owner=lane-b re-run the checks once the batch finishes' --json`.
 - Every piece of work has an issue: link it in every pull request body
   (`Closes #N` or `Part of #N`). Beads only break an issue down.
 - Away timeout: after {{away_minutes}} minutes waiting on a human, take the decision from one
