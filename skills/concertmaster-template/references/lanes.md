@@ -74,6 +74,8 @@ orca worktree set --worktree active --comment "cm:<state> <detail>" --json
 | `cm:idle <n> open beads` | standing lead with nothing assigned, or waiting on beads only the owner can decide | records the count, hands new work; never retires or tears it down |
 | `cm:done <deliverable>` | single-task worker finished, nothing left, every bead in its epic closed | checks beads, verifies, retires the worker; teardown once its PR merges or closes |
 | `cm:failed <reason>` | cannot finish from this repo | escalates or respawns |
+| `cm:retire <why>` | set by the concertmaster or the owner on a worktree whose work is finished | classify treats every agent as done: retire, then teardown once clean and merged or closed |
+| `cm:keep <why, until when>` | set by the concertmaster or the owner to hold a finished worktree on purpose | classify holds it as standing-idle: never retired or torn down; chase the owner once the until-when has passed |
 
 Workers never use AskUserQuestion: nobody is there to answer the menu, and
 concertmaster never types into one. A worker that needs a decision writes

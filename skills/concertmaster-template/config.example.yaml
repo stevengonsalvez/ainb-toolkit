@@ -35,6 +35,35 @@ worktrees:
   regenerable_ignored: []          # [script] ignored files teardown may drop (e.g. deno.lock)
   never_touch: []                  # worktrees or sessions of other projects on shared hosts: lanes never read or act on them
 
+# Ownership accounting [script]: scripts/classify.sh gives every in-scope worktree one owner lane
+# and flags ORPHAN (nobody owns it) and LEAD-DEAD (a lane lead's session is gone while it still
+# owns open work). Needs worktrees.orca_repo, worktrees.self_name and worktrees.never_touch above.
+# Without this block, or with a malformed one, ownership is skipped and reported as off.
+ownership:
+  # lane lead worktree name -> lane label. Their comments are read for worker lists.
+  leads:
+    pr-sweeper: pr-sweeper
+    dev-sweeper: dev-sweeper
+    ops-sweeper: ops-sweeper
+    research-sweeper: research-sweeper
+  # Words that introduce a worker list in a lead's comment (case-insensitive). A marker counts
+  # only when written as a header: followed by "(", "[" or ":" or by a few words and a colon.
+  # A list runs to the next " | ", the next stop word followed by a colon, the next ALL-CAPS
+  # header, the end of the sentence, or the end. Parenthesised text is ignored. Write lists
+  # with commas, never pipes. A marker after not, never, no longer or dis is a negation.
+  comment_markers: ["workers i own", "workers owned", "my workers", "workers", "owned", "orchestrated"]
+  comment_stop_words: ["sweep done", "merged today", "open ready", "held", "needs cm", "stuck check", "hosts read", "next check", "next tick", "next", "note", "cm"]
+  # Optional. Session scratch dirs embed the worker's worktree name; a git-only worktree made
+  # there inherits that worker's owner. The regex needs a named group "worker".
+  # scratch_path_regex: "-workspaces-acme-app-(?<worker>[^/]+)/"
+  # worktree-name prefix -> lane label (longest prefix wins). Add one when a family of worktrees
+  # keeps showing up as ORPHAN.
+  prefixes:
+    task-: dev-sweeper
+    incident-: ops-sweeper
+    study-: research-sweeper
+    pr-: pr-sweeper
+
 hosts:
   home: local                      # host the concertmaster runs on
   min_free_disk_gb: 8              # under this, spawn nothing on that host

@@ -27,7 +27,12 @@ cat > "$ROOT/ledger.json" <<'J'
   "w-hung":   {"host": "local", "path": "/x/hung-lead", "standing": true},
   "w-dead":   {"host": "local", "path": "/x/dead-lead", "standing": true},
   "w-deadpr": {"host": "local", "path": "/x/dead-pr", "standing": true},
-  "w-orphan": {"host": "local", "path": "/x/orphan-lead", "standing": true}}}
+  "w-orphan": {"host": "local", "path": "/x/orphan-lead", "standing": true},
+  "w-keptlane": {"host": "local", "path": "/x/kept-lane", "standing": true},
+  "w-retlane": {"host": "local", "path": "/x/ret-lane", "standing": true},
+  "w-keepalive": {"host": "local", "path": "/x/keepalive", "standing": false},
+  "w-retlive": {"host": "local", "path": "/x/ret-live", "standing": false},
+  "w-retired": {"host": "local", "path": "/x/retired", "standing": false}}}
 J
 NOW=1791600000000; OLD=$((NOW - 3600000))
 item() { # item <path> <name> <status> <agent-state> <comment> <pr-state> [worktreeId] [source]
@@ -53,6 +58,12 @@ item() { # item <path> <name> <status> <agent-state> <comment> <pr-state> [workt
   item /x/dead-lead dead-lead idle "" "cm:idle 0 open beads" ""
   item /x/dead-pr dead-pr idle "" "" OPEN
   item /x/orphan-lead orphan-lead idle "" "" "" "" git
+  item /x/retired retired idle "" "cm:retire helper finished" ""
+  item /x/kept-lane kept-lane idle "" "cm:keep paused until 2026-11-01" ""
+  item /x/ret-lane ret-lane idle "" "cm:retire stale marker" ""
+  item /x/keepalive keepalive idle "" "cm:keepalive ping" ""
+  item /x/ret-live ret-live working working "cm:retire early" ""
+  item /x/kept kept idle "" "cm:keep waiting on pr 7 until 2026-11-01" ""
 } | jq -s --argjson now "$NOW" '{generatedAtMs: $now, generatedAt: "t",
       hosts: [{name: "local", reachable: true}], worktrees: .}' > "$ROOT/discover.json"
 OUT="$("$HERE/../classify.sh" < "$ROOT/discover.json")" || { echo "classify.sh failed"; exit 1; }
@@ -79,5 +90,11 @@ expect "gone record on a reused path ignored"                         /x/reused 
 expect "standing lane with no agent: standing-dead, respawn in place"  /x/dead-lead standing-dead 'respawn in place (claude --continue in its worktree)'
 expect "dead standing lane keeps its open PR hand-off"                /x/dead-pr standing-dead 'hand PR #7 to pr-sweeper; respawn in place'
 expect "git-only standing lane: standing-dead, never teardown"        /x/orphan-lead standing-dead 'never retire or teardown'
+expect "cm:retire, no agent: done, retire like cm:done"               /x/retired done-selfreported 'retire worker'
+expect "cm:keep, no agent: standing-idle, chase the owner"            /x/kept standing-idle 'chase the owner'
+expect "cm:keep on a standing lane with no agent: still respawned"    /x/kept-lane standing-dead 'respawn in place'
+expect "cm:retire on a standing lane: never retired"                  /x/ret-lane standing-dead 'never retire or teardown'
+expect "cm:keepalive is not cm:keep"                                  /x/keepalive idle 'adopt or ask'
+expect "cm:retire with a live agent keeps its live class"             /x/ret-live stuck 'nudge'
 echo "passed=$PASS failed=$FAIL"
 [ "$FAIL" = 0 ]
