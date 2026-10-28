@@ -808,6 +808,7 @@ shellcheck clean.
 | `scripts/classify.sh [--table]` | one class per item (rules in `classify.jq`), ledger-aware: `standing-idle` for idle sweepers and leads, beads-gate suggest for epic owners; `CM_STUCK_MIN` default 45 |
 | `scripts/abrupt.sh` | sessions cut off by a restart (background work killed, `/loop` resume pending, agent fell back to a shell) and duplicate live agents in one worktree; TSV |
 | `scripts/waiting.sh` | sessions showing a question menu, with minutes waiting and the question; TSV |
+| `scripts/jsanitize`, `scripts/jstrings` | Orca JSON helpers (python3): `jsanitize` re-emits JSON with lone UTF-16 surrogates replaced so `jq` can parse remote-host replies; `jstrings` prints every string of a reply (pane text), tolerating the same. `abrupt.sh`, `waiting.sh` and the census in `discover.sh` pipe Orca output through them |
 | `scripts/roster.sh [--stdout]` | rewrites `$CM_HOME/roster.yaml` from the ledger, active rows only; atomic, mode 600, exit 1 and roster untouched when the ledger is unreadable |
 | `scripts/resume.sh [--dry-run] [--host <h>] [--worktree-id <id>] [--path <wt>] [--lane <label>]` | `/concertmaster resume`: rewrites the roster, then per row: live, dead (`claude --continue` plus one nudge), offline, duplicate, missing, manual, unknown, held; one run at a time (lock); exit 3 when a row needs attention |
 | `scripts/teardown.sh <host> <path> [--apply] [--allow-no-pr] [--salvage] [--close-handle <h>] [--force-standing <ask-id>] [--accept-unmerged-beads <ask-id>] [--retire-check]` | safe teardown, dry run by default; refuses standing lanes, unknown standing and open beads, fails closed |
@@ -821,7 +822,7 @@ shellcheck clean.
 | `scripts/hooks/mc-worker-hook.sh` | Claude Code hook for workers, in-scope repos only (optional) |
 | `scripts/digest.sh [--full] [--since-hours n]` | digest text, stdout only, `- ` bullets, no Needs, Stuck or Fleet section (`--full` adds them for the terminal report): Merged (merged since `digests.lastSentAt`, else 12h) from `gh pr list`, and in `--full` the open PR count (a failed gh prints "unknown (gh failed)", never 0), every other section from the ledger; read-only |
 | `scripts/intake.sh <cmd>` | the deterministic half of `intake` (rules in `scripts/intake.jq`) |
-| `scripts/test/*.sh` | `classify-standing`, `teardown-gates`, `resume-flow`, `intake`, `mc-emit`, `boot-sweep`, `runtime-check`, `ci-queue-alert`, `cred-check`, `rm-guard-hook`, `digest-gh`: hermetic tests against `scripts/test/fixtures/config.test.yaml`; run the matching one after any script change |
+| `scripts/test/*.sh` | `classify-standing`, `teardown-gates`, `resume-flow`, `intake`, `mc-emit`, `boot-sweep`, `runtime-check`, `ci-queue-alert`, `cred-check`, `rm-guard-hook`, `digest-gh`, `orca-json-helpers`: hermetic tests against `scripts/test/fixtures/config.test.yaml`; run the matching one after any script change |
 
 <!-- project-local: scripts -->
 

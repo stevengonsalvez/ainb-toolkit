@@ -17,15 +17,18 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/lib.sh"
 [ -n "$CM_PATH_MATCH" ] || { cm_warn "abrupt.sh: set worktrees.path_match in config (or CM_PATH_MATCH)"; exit 2; }
 ORCA="$(cm_orca)"
-export ORCA CM_PATH_MATCH
+# Remote Orca JSON can carry lone UTF-16 surrogates and raw control characters that make
+# jq fail and silently hide the session: sanitize before jq, flatten pane text with jstrings.
+SAN="$HERE/jsanitize"; STR="$HERE/jstrings"
+export ORCA SAN STR CM_PATH_MATCH
 
 scan() {
   local host=$1; shift
-  local names; names=$("$ORCA" worktree ps "$@" --json 2>/dev/null </dev/null | jq -c '[.result.worktrees[]? | {key:.path, value:(.displayName // (.path|split("/")|last))}] | from_entries')
-  "$ORCA" terminal list "$@" --json 2>/dev/null </dev/null \
+  local names; names=$("$ORCA" worktree ps "$@" --json 2>/dev/null </dev/null | "$SAN" | jq -c '[.result.worktrees[]? | {key:.path, value:(.displayName // (.path|split("/")|last))}] | from_entries')
+  "$ORCA" terminal list "$@" --json 2>/dev/null </dev/null | "$SAN" \
     | jq -r --arg re "$CM_PATH_MATCH" '.result.terminals[]? | select((.worktreePath//"")|test($re)) | "\(.handle)\t\(.worktreePath)\t\(.agentIdentity // "")"' \
     | while IFS=$'\t' read -r h wt agent; do
-        s=$("$ORCA" terminal read --terminal "$h" "$@" --json 2>/dev/null </dev/null | jq -r '[.. | strings] | join("\n")' | grep -v '^\s*$' | tail -40)
+        s=$("$ORCA" terminal read --terminal "$h" "$@" --json 2>/dev/null </dev/null | "$STR" | grep -v '^\s*$' | tail -40)
         name=$(jq -r --arg p "$wt" '.[$p] // ($p|split("/")|last)' <<<"$names")
         r=""
         grep -qE "didn't finish before the previous session ended" <<<"$s" && r="background work cut off by restart"
@@ -44,7 +47,7 @@ scan() {
 }
 
 scan local
-for e in $("$ORCA" host list --json 2>/dev/null </dev/null | jq -r '.result.hosts[]? | select(.name!="this machine") | .name'); do
+for e in $("$ORCA" host list --json 2>/dev/null </dev/null | "$SAN" | jq -r '.result.hosts[]? | select(.name!="this machine") | .name'); do
   cm_timeout 90 bash -c "$(declare -f scan); scan \"\$1\" --environment \"\$1\"" _ "$e" 2>/dev/null
 done
 
