@@ -198,6 +198,8 @@ BEFORE asking.
    then `scripts/classify.sh --table < $CM_HOME/last-discover.json`.
    Read the table, not the JSON. Also run `scripts/abrupt.sh` (sessions cut off
    by a restart) and `scripts/waiting.sh` (sessions blocked on a question menu).
+   Then `scripts/runtime-check.sh` (an Orca runtime restart that left a lane
+   without its `/loop`, § Resume; call timeout 600000 ms).
 3. **Reconcile.** Match classify items to ledger workers by host + path. New
    in-scope worktrees not in the ledger: adopt (`adopted: true`). A ledger worker
    with no row is marked `gone` ONLY when its host was reached this tick and
@@ -505,7 +507,14 @@ safety rules: `references/resume.md`.
 After a host restart, `scripts/boot-sweep.sh` (run by systemd after the host's
 resume unit) nudges every lane that is still cut off to re-arm its `/loop`, and
 the concertmaster session itself (the `cfg.worktrees.self_name` worktree) with
-`/loop /concertmaster tick`: `references/boot-sweep.md`.
+`/loop /concertmaster tick`: `references/boot-sweep.md`. An Orca runtime restart (no reboot, so no boot sweep)
+changes every terminal handle and kills each standing lane's `/loop` wake the same
+way. `scripts/runtime-check.sh` runs every tick: it re-resolves each standing lane's
+ledger handle by worktree path, and nudges once any lane with no Claude turn for 2 x
+its loop interval (1 x after handle churn) through `boot-sweep.sh --since --lanes`,
+with the same safety checks and a per-transcript attempt cap. Nothing is sent while
+`resume.lock` exists. Intervals: `schedule.lane_loop_minutes` (30), per lane
+`lanes[].loop_minutes`. Details: `references/runtime-check.md`.
 
 ## Autonomy and guardrails
 
@@ -803,7 +812,8 @@ shellcheck clean.
 | `scripts/resume.sh [--dry-run] [--host <h>] [--worktree-id <id>] [--path <wt>] [--lane <label>]` | `/concertmaster resume`: rewrites the roster, then per row: live, dead (`claude --continue` plus one nudge), offline, duplicate, missing, manual, unknown, held; one run at a time (lock); exit 3 when a row needs attention |
 | `scripts/teardown.sh <host> <path> [--apply] [--allow-no-pr] [--salvage] [--close-handle <h>] [--force-standing <ask-id>] [--accept-unmerged-beads <ask-id>] [--retire-check]` | safe teardown, dry run by default; refuses standing lanes, unknown standing and open beads, fails closed |
 | `scripts/mc-emit.sh <type> <msg> [meta]` / `--fleet-upsert ...` / `--tick <json>` / `--issue-state <issue> <state> [pr]` / `--flush` / `--requeue-dead` | outbox + telemetry POST, always exit 0; base URL or tenant not configured: sends nothing, lines stay queued (capped); `--requeue-dead [--any-tenant]` puts dead 400 lines with tenantId null (or any tenant; with a project id, also any without a projectId) back in front of the outbox, newest fleet upsert per agent only (backup kept, refused past the cap), events stamped with the project id and a deterministic eventId so a replay dedupes; with a project id every event carries projectId and fleet upserts are skipped; a 403 on an upsert, or on an event naming another project, dead-letters it; never sends an upsert older than one accepted (`fleet.sent.json`); unsent lines go back in front; write lock on every append and rewrite; `MC_NO_FLUSH=1` queues only; warns when the installed copy is older |
-| `scripts/boot-sweep.sh [--dry-run] [--no-wait]` | after a host restart, nudges standing lanes that ran no turn since boot to re-arm their `/loop` (`references/boot-sweep.md`) |
+| `scripts/boot-sweep.sh [--dry-run] [--no-wait] [--since <epoch> [--lanes <paths>]]` | after a host restart, nudges standing lanes that ran no turn since boot to re-arm their `/loop` (`references/boot-sweep.md`) |
+| `scripts/runtime-check.sh [--dry-run]` | tick step after an Orca runtime restart: refreshes standing lanes' ledger handles by worktree path and nudges lanes whose `/loop` wake died, via `boot-sweep.sh --since --lanes` (`references/runtime-check.md`) |
 | `scripts/ci-queue-alert.sh [--dry-run]` | alerts when too many workflow runs stay queued, once per episode (`references/ci-capacity.md`) |
 | `scripts/cred-check.sh [--dry-run] [--publish [FILE]]` | weekly validity probe of the credentials in a names-only index (`references/credentials.md`) |
 | `scripts/hooks/rm-guard-hook.sh` | PreToolUse hook: denies an unguarded variable path under a recursive `rm` at once (`references/prompt-stalls.md`) |
@@ -811,7 +821,7 @@ shellcheck clean.
 | `scripts/hooks/mc-worker-hook.sh` | Claude Code hook for workers, in-scope repos only (optional) |
 | `scripts/digest.sh [--full] [--since-hours n]` | digest text, stdout only, `- ` bullets, no Needs, Stuck or Fleet section (`--full` adds them for the terminal report): Merged (merged since `digests.lastSentAt`, else 12h) from `gh pr list`, and in `--full` the open PR count (a failed gh prints "unknown (gh failed)", never 0), every other section from the ledger; read-only |
 | `scripts/intake.sh <cmd>` | the deterministic half of `intake` (rules in `scripts/intake.jq`) |
-| `scripts/test/*.sh` | `classify-standing`, `teardown-gates`, `resume-flow`, `intake`, `mc-emit`, `boot-sweep`, `ci-queue-alert`, `cred-check`, `rm-guard-hook`, `digest-gh`: hermetic tests against `scripts/test/fixtures/config.test.yaml`; run the matching one after any script change |
+| `scripts/test/*.sh` | `classify-standing`, `teardown-gates`, `resume-flow`, `intake`, `mc-emit`, `boot-sweep`, `runtime-check`, `ci-queue-alert`, `cred-check`, `rm-guard-hook`, `digest-gh`: hermetic tests against `scripts/test/fixtures/config.test.yaml`; run the matching one after any script change |
 
 <!-- project-local: scripts -->
 
