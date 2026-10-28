@@ -15,6 +15,9 @@ STUB="$ROOT/stub"
 mkdir -p "$ROOT/bin" "$ROOT/home" "$ROOT/tmp" "$STUB"
 unset MC_TENANT_ID MC_PROJECT_ID MC_BASE_URL MC_QUIET MC_FLUSH_BATCH MC_FLUSH_SECS MC_OUTBOX_MAX CM_INSTALLED_EMIT
 export HOME="$ROOT/home" TMPDIR="$ROOT/tmp" CM_HOME="$ROOT/cm"
+# Pin the config: a config.yaml next to the scripts (or in CM_HOME) would otherwise
+# supply telemetry.base_url / project_id and change the "unset" cases.
+export CM_CONFIG="$HERE/fixtures/config.test.yaml"
 export MC_BASE_URL="http://mc.stub.invalid" MC_TOKEN_FILE="$ROOT/token" STUB_DIR="$STUB"
 export PATH="$ROOT/bin:$PATH"
 TOKEN="tok-$$-secret-value"
@@ -358,7 +361,7 @@ reset; unset MC_PROJECT_ID; printf 'MC_PROJECT_ID="p_from-file"\n' > "$CM_HOME/m
 emit worker.done x >/dev/null
 check "project id: read from mc.env" "$(jq -r '.projectId' "$STUB/bodies.jsonl")" "p_from-file"
 reset; printf 'telemetry:\n  project_id: p_from-cfg\n' > "$CM_HOME/config.yaml"
-emit worker.done x >/dev/null
+CM_CONFIG="$CM_HOME/config.yaml" emit worker.done x >/dev/null   # this case reads its own config file
 check "project id: read from config telemetry.project_id" "$(jq -r '.projectId' "$STUB/bodies.jsonl")" "p_from-cfg"
 
 # ---- project id unset or invalid: no projectId key at all ----------------------
@@ -457,6 +460,16 @@ check "requeue, no project id: no projectId stamped, eventId still set" \
   "$(jq -r 'select(.endpoint == "/api/events") | "\(.body | has("projectId")) \(.body.eventId != null)"' "$CM_HOME/outbox.jsonl" | sort -u)" "false true"
 check "requeue, no project id: line naming a project stays dead, upsert moves" \
   "$(jq -r '.body.type // .body.agentId' "$DEADF" | tr '\n' ' ')$(jq -r 'select(.endpoint == "/api/fleet/upsert") | .body.agentId' "$CM_HOME/outbox.jsonl")" "c u"
+
+# ---- --issue-state carries an eventId (the sink requires one on typed events) -----
+reset; for _ in 1 2; do MC_NO_FLUSH=1 "$EMIT" --issue-state 44 in-review 2>/dev/null; done
+check "issue.state carries an eventId in the sink's charset" \
+  "$(jq -r '.body.eventId | test("^is-44-[0-9]+-[0-9]+$")' "$CM_HOME/outbox.jsonl" | sort -u)" "true"
+check "two issue.state calls, two eventIds" "$(jq -r '.body.eventId' "$CM_HOME/outbox.jsonl" | sort -u | wc -l | tr -d ' ')" "2"
+MC_TENANT_ID="t-mc" emit --flush >/dev/null
+check "issue.state eventId sent as queued" "$(jq -r '.eventId | startswith("is-44-")' "$STUB/bodies.jsonl" | sort -u)" "true"
+check "token never in argv, queued or dead lines" \
+  "$(cat "$STUB/curl.args" "$CM_HOME"/outbox*.jsonl 2>/dev/null | grep -c -- "$TOKEN")" "0"
 
 echo "passed=$PASS failed=$FAIL"
 [ "$FAIL" = 0 ]
