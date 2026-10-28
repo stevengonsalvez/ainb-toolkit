@@ -616,7 +616,9 @@ case "${1:-}" in
     [ -n "${2:-}" ] || { warn "usage: --issue-state <issue> <state> [pr]"; exit 0; }
     meta="$(jq -cn --argjson i "$issue" --arg s "$2" --arg p "$pr" \
       '{issue:$i, state:$s, pr:(if $p == "" then null else ($p | tonumber) end)}')"
-    if body="$(event_body "$TYPE_ISSUE_STATE" "#$issue $2" "$meta")"; then enqueue /api/events "$body"
+    # Typed events need an eventId: unique per call, kept in the queued line so a replay dedupes.
+    if body="$(event_body "$TYPE_ISSUE_STATE" "#$issue $2" "$meta")" \
+       && body="$(jq -c --arg e "is-$issue-$NOW_MS-$$" '. + {eventId: $e}' <<<"$body")"; then enqueue /api/events "$body"
     else warn "could not build the event: dropped"; fi
     [ "${MC_NO_FLUSH:-0}" = 1 ] || flush ;;
   --fleet-upsert)
