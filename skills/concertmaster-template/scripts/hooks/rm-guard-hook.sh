@@ -48,7 +48,7 @@ if [ -n "${CM_PATH_MATCH:-}" ] && [ -n "$cwd" ]; then
 fi
 if [ "$in_scope" = 0 ] && [ -n "$cwd" ] && [ -d "$cwd" ] && command -v git >/dev/null 2>&1; then
   url="$(git -C "$cwd" remote get-url origin 2>/dev/null || true)"
-  [ -z "$url" ] || cm_org_slug "$url" >/dev/null 2>&1 && in_scope=1
+  if [ -n "$url" ] && cm_org_slug "$url" >/dev/null 2>&1; then in_scope=1; fi
 fi
 [ "$in_scope" = 1 ] || exit 0
 

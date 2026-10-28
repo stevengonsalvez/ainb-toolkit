@@ -84,6 +84,9 @@ git -C "$GT" init -q && git -C "$GT" remote add origin https://github.com/acme/o
 [ -n "$(CWD="$GT" run 'rm -rf $S/x')" ] && echo "ok   org origin is in scope" || { echo "FAIL org origin"; fail=1; }
 git -C "$GT" remote set-url origin https://github.com/someone-else/x.git
 [ -z "$(CWD="$GT" run 'rm -rf $S/x')" ] && echo "ok   foreign origin untouched" || { echo "FAIL foreign origin"; fail=1; }
+# a checkout with no origin at all is out of scope, not in scope by accident
+git -C "$GT" remote remove origin
+[ -z "$(CWD="$GT" run 'rm -rf $S/x')" ] && echo "ok   no origin untouched" || { echo "FAIL no origin"; fail=1; }
 # a malformed payload and a missing command never block
 [ -z "$(printf 'not json' | "$HOOK")" ] && echo "ok   garbage input allowed" || { echo "FAIL garbage input"; fail=1; }
 # the deny output is valid hook JSON with a reason
