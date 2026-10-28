@@ -84,6 +84,11 @@ sha names the exact head to gate: a different live head makes the marker stale, 
 marker stays listed until a later comment replaces it, so check the PR state first.
 `orca worktree list --json [--environment <host>] | scripts/markers.py` prints the genuine pairs.
 
+Before `cm:done` or any handoff, write the final status (open PR heads, next steps,
+watchers; "none" where empty) into the handover file or send it inline in the same report;
+the concertmaster files it and sets `workers.<id>.handoverFile` (SKILL.md § Retire and
+teardown, check 3). A `cm:done` with no filed status is sent back for it.
+
 Workers never use AskUserQuestion: nobody is there to answer the menu, and
 concertmaster never types into one. A worker that needs a decision writes
 `cm:blocked <question>`, prints the question with its options and a
