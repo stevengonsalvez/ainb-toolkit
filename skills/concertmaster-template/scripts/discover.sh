@@ -11,12 +11,20 @@
 #   git worktree list --porcelain                local org checkouts only
 #                                                (catches git-only worktrees)
 #   gh pr list                                   open PRs + branch PR state
+#   orca terminal list [--environment h] --json  per reachable host, only when config
+#                                                agents.forbidden is set (the forbidden-agent check)
 #
 # Filtered to repos of config github.org (github.exclude_repo_patterns left
 # out). The org repo list comes from `gh repo list $CM_ORG`, cached 24h in $CM_HOME/cache.
 # An unreachable host is reported as reachable=false, never as empty data.
 # If `orca host list` itself fails, the hosts named in the ledger are listed
 # as reachable=false (only the local host is queried), so they never vanish.
+#
+# Terminals under config worktrees.path_match are listed in `terminals` with their
+# agentIdentity when agents.forbidden is set; classify.sh turns every one running a
+# forbidden agent into a VIOLATION row. A terminal list that failed or was cut off
+# (truncated) is recorded in `terminalScope.hosts` with ok:false, never as "no
+# terminals"; classify reports it as an incomplete check.
 #
 # Git state (dirty, unpushed) is collected for LOCAL rows only and keyed by
 # host + path; remote rows carry git:null (unknown). Known gap: git-only
@@ -36,7 +44,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 WITH_PRS=1
 case "${1:-}" in
   --no-prs) WITH_PRS=0 ;;
-  -h|--help) sed -n '2,24p' "$0"; exit 0 ;;
+  -h|--help) sed -n '2,/^set -uo/{/^#/p;}' "$0"; exit 0 ;;
   '') ;;
   *) cm_warn "unknown arg: $1"; exit 2 ;;
 esac
@@ -58,6 +66,8 @@ trap 'rm -rf -- "${TMP:?}"' EXIT
 : > "$TMP/git.ndjson"
 : > "$TMP/gitonly.ndjson"
 : > "$TMP/prs-all.ndjson"
+: > "$TMP/terminals.ndjson"
+: > "$TMP/termhosts.ndjson"
 
 err() { jq -cn --arg where "$1" --arg msg "$2" '{where:$where, message:$msg}' >> "$TMP/errors.ndjson"; }
 
@@ -129,6 +139,38 @@ while IFS="$(printf '\t')" read -r kind name; do
     '{name:$name, kind:$kind, selector:$selector, reachable:$reachable,
       error:(if $error == "" then null else $error end), orcaRowCount:$total, truncated:$truncated}' >> "$TMP/hosts.ndjson"
   [ "$reachable" = true ] || continue
+
+  # Terminals on this host, for the forbidden-agent check. A failed, cut-off or unparsable
+  # list is ok:false (the check is incomplete), never "none".
+  if [ -n "$CM_FORBIDDEN_AGENTS" ]; then
+    if [ -z "$CM_PATH_MATCH" ]; then
+      jq -cn --arg host "$hname" '{host:$host, ok:false, error:"worktrees.path_match unset"}' >> "$TMP/termhosts.ndjson"
+    else
+      if [ "$kind" = "local" ]; then set -- "$ORCA" terminal list --limit 500 --json
+      else set -- "$ORCA" terminal list --environment "$name" --limit 500 --json; fi
+      tl="$TMP/term-$i.json"
+      trc=0
+      cm_timeout "$HOST_TIMEOUT" "$@" </dev/null 2>"$TMP/term-$i.err" | "$HERE/jsanitize" > "$tl" || trc=$?
+      if [ "$trc" -eq 0 ] && jq -e '.ok == true and (.result.terminals | type == "array")' "$tl" >/dev/null 2>&1 \
+         && jq -c --arg host "$hname" --arg re "$CM_PATH_MATCH" '
+              .result.terminals[] | select((.worktreePath // "") | test($re))
+              | {host: $host, handle: (.handle // null), worktreePath: .worktreePath,
+                 worktreeId: (.worktreeId // null), title: (.title // null),
+                 agentIdentity: (.agentIdentity // null)}' "$tl" >> "$TMP/terminals.ndjson" 2>/dev/null; then
+        # Rows already listed are kept; a cut-off list makes the host incomplete, never clean.
+        if jq -e '.result.truncated == true' "$tl" >/dev/null 2>&1; then
+          jq -cn --arg host "$hname" '{host:$host, ok:false, error:"terminal list truncated at 500, some terminals not listed"}' >> "$TMP/termhosts.ndjson"
+          err "terminal list $hname" "truncated; forbidden-agent check incomplete on this host"
+        else
+          jq -cn --arg host "$hname" '{host:$host, ok:true, error:null}' >> "$TMP/termhosts.ndjson"
+        fi
+      else
+        jq -cn --arg host "$hname" --arg e "terminal list failed or unreadable rc=$trc $(head -c 200 "$TMP/term-$i.err")" \
+          '{host:$host, ok:false, error:$e}' >> "$TMP/termhosts.ndjson"
+        err "terminal list $hname" "forbidden-agent check incomplete on this host"
+      fi
+    fi
+  fi
 
   # Normalise rows; keep only configured-org repos (matched on Orca's repo
   # display name, case-insensitive). Null-safe: remote rows often lack
@@ -274,6 +316,10 @@ jq -n \
   --slurpfile git "$TMP/git.ndjson" \
   --slurpfile prsAll "$TMP/prs-all.ndjson" \
   --slurpfile open "$TMP/open.json" \
+  --slurpfile terms "$TMP/terminals.ndjson" \
+  --slurpfile termHosts "$TMP/termhosts.ndjson" \
+  --arg pathMatch "$CM_PATH_MATCH" \
+  --arg forbidden "$CM_FORBIDDEN_AGENTS" \
   --slurpfile errors "$TMP/errors.ndjson" '
   ($git | map({key: (.host + "\u0000" + .path), value: (del(.path, .host))}) | from_entries) as $g
   | ($prsAll | group_by([.repo, .headRefName])
@@ -297,5 +343,9 @@ jq -n \
                  else ($pr[$r.repo + "\u0000" + $r.branch] // null) end) ],
       prs: { open: [ $open[0][] | {number, title, isDraft, createdAt, updatedAt, url,
                                    headRefName, headRefOid, author: (.author.login // null)} ] },
+      terminals: $terms,
+      terminalScope: {enabled: ($forbidden != ""),
+                      pathMatch: (if $pathMatch == "" then null else $pathMatch end),
+                      hosts: $termHosts},
       errors: $errors
     }'

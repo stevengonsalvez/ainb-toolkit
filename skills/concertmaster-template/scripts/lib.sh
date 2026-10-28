@@ -78,6 +78,9 @@ CM_TZ_LABEL="${CM_TZ_LABEL:-$(cm_cfg .schedule.timezone_label "$CM_TZ")}"
 CM_EXCLUDE_REPOS="${CM_EXCLUDE_REPOS-$(cm_cfg .github.exclude_repo_patterns)}"
 # Extended regex matched against worktree paths (abrupt.sh, waiting.sh).
 CM_PATH_MATCH="${CM_PATH_MATCH:-$(cm_cfg .worktrees.path_match)}"
+# Space-separated, lowercase agent types that must not run on this project's work
+# (config agents.forbidden). Empty = the forbidden-agent census is off.
+CM_FORBIDDEN_AGENTS="${CM_FORBIDDEN_AGENTS-$(cm_cfg .agents.forbidden | tr '[:upper:]' '[:lower:]')}"
 # The concertmaster's own worktree name: never torn down.
 CM_SELF_WORKTREE="${CM_SELF_WORKTREE:-$(cm_cfg .worktrees.self_name concertmaster)}"
 

@@ -45,6 +45,13 @@ hosts:
     local: { role: general, maxWorkers: 6 }
     # build-mac: { role: native, maxWorkers: 2, hostname: build-mac }   # hostname = `hostname -s` over ssh
 
+# Agent types the project does not allow. Each census (discover.sh, classify.sh) lists every
+# terminal under worktrees.path_match whose Orca agentIdentity is one of these as a
+# violation, and says CHECK INCOMPLETE (never "none") when a host could not be read.
+# Empty (the default) turns the census off. Example: [codex]
+agents:
+  forbidden: []                    # [script] lowercase Orca agentIdentity values; CM_FORBIDDEN_AGENTS overrides
+
 schedule:
   timezone: Europe/London          # [script] digest times and deploy windows use this zone
   timezone_label: UK               # [script] printed after times in the digest

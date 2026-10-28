@@ -8,13 +8,19 @@
 # ($CM_HOME/ledger.json): standing and beads epics come from it alone.
 # Without a readable ledger every item is flagged standing-unknown (no retire
 # or teardown suggested); names never decide.
+# Forbidden agents (config agents.forbidden, env CM_FORBIDDEN_AGENTS): each terminal in
+# discover's `terminals` running one is a `.violations` row (host, worktree, handle, title,
+# agent); --table prints a `violations:` line and one VIOLATION row each. Unlisted, offline,
+# cut-off or failed hosts make the check incomplete (CHECK INCOMPLETE), never "none".
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=SCRIPTDIR/lib.sh
+. "$HERE/lib.sh"
 MODE=json
 case "${1:-}" in
   --table) MODE=table ;;
-  -h|--help) sed -n '2,10p' "$0"; exit 0 ;;
+  -h|--help) sed -n '2,/^set -euo/{/^#/p;}' "$0"; exit 0 ;;
   '') ;;
   *) printf 'classify.sh: unknown arg: %s\n' "$1" >&2; exit 2 ;;
 esac
@@ -27,7 +33,8 @@ else
   LEDGER_ARGS=(--argjson ledger '[]')
 fi
 
-OUT="$(jq --argjson stuckMin "${CM_STUCK_MIN:-45}" "${LEDGER_ARGS[@]}" -f "$HERE/classify.jq")"
+FORBIDDEN="$(jq -nc --arg s "$CM_FORBIDDEN_AGENTS" '$s | split(" ") | map(select(length > 0))')"
+OUT="$(jq --argjson stuckMin "${CM_STUCK_MIN:-45}" --argjson forbidden "$FORBIDDEN" "${LEDGER_ARGS[@]}" -f "$HERE/classify.jq")"
 
 if [ "$MODE" = json ]; then
   printf '%s\n' "$OUT"
@@ -35,6 +42,13 @@ if [ "$MODE" = json ]; then
 fi
 
 printf '%s\n' "$OUT" | jq -r '"summary: " + (.summary | to_entries | map("\(.key)=\(.value)") | join(" "))'
+# A forbidden agent on project work: always a line when the census is on, never silent.
+printf '%s\n' "$OUT" | jq -r 'if .violationCheck.enabled | not then "violations: off (agents.forbidden is empty)"
+  else "violations: \(.violations | length)"
+    + (if .violationCheck.complete then "" else " (CHECK INCOMPLETE: \(.violationCheck.gaps | join("; ")))" end) end'
+printf '%s\n' "$OUT" | jq -r '.violations[] | ["VIOLATION", .agent, .host, .worktree, (.handle // "-"), (.title // "-")] | @tsv' | {
+  if command -v column >/dev/null 2>&1; then column -t -s "$(printf '\t')"; else cat; fi
+}
 printf '%s\n' "$OUT" | jq -r '
   (["host", "class", "worktree", "branch", "pr", "idle", "suggest"] | @tsv),
   (.items | sort_by(.class, .host)[]

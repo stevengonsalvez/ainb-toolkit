@@ -200,6 +200,16 @@ BEFORE asking.
    by a restart) and `scripts/waiting.sh` (sessions blocked on a question menu).
    Then `scripts/runtime-check.sh` (an Orca runtime restart that left a lane
    without its `/loop`, § Resume; call timeout 600000 ms).
+   **Forbidden-agent check** (only when `cfg.agents.forbidden` is set): `classify.sh`
+   prints a `violations: <n>` line and one `VIOLATION <agent> <host> <worktree> <handle>
+   <title>` row per terminal under `cfg.worktrees.path_match`, on any host, whose
+   `agentIdentity` is a forbidden agent (the same rows are in the JSON `.violations`).
+   Give each row its own line in the report; have the lane write a handover and restart
+   it on an allowed agent, or leave it closed and flag it to the owner. Write the rows to
+   `ledger.violations` (`[]` when none) and classify's `.violationCheck` with `checkedAt`
+   to `ledger.violationCheck` so the digest lists them. A `(CHECK INCOMPLETE: ...)` suffix
+   means a host is offline, its terminal list failed or was cut off (`truncated`), or the
+   document had no terminal data: say so and never report "none found".
 3. **Reconcile.** Match classify items to ledger workers by host + path. New
    in-scope worktrees not in the ledger: adopt (`adopted: true`). A ledger worker
    with no row is marked `gone` ONLY when its host was reached this tick and
@@ -804,8 +814,8 @@ shellcheck clean.
 | script | does |
 |---|---|
 | `scripts/lib.sh` | shared helpers: config loader (`cm_cfg`), ORCA resolution, portable timeout, org filter |
-| `scripts/discover.sh` | every host's Orca worktrees, local git-only worktrees, PR state, to one JSON doc; unreachable host = `reachable:false` |
-| `scripts/classify.sh [--table]` | one class per item (rules in `classify.jq`), ledger-aware: `standing-idle` for idle sweepers and leads, beads-gate suggest for epic owners; `CM_STUCK_MIN` default 45 |
+| `scripts/discover.sh` | every host's Orca worktrees, local git-only worktrees, PR state, to one JSON doc; unreachable host = `reachable:false`. With `agents.forbidden` set it also lists the terminals under `path_match` with their `agentIdentity`; a failed or cut-off terminal list = `terminalScope.hosts[].ok:false` |
+| `scripts/classify.sh [--table]` | one class per item (rules in `classify.jq`), ledger-aware: `standing-idle` for idle sweepers and leads, beads-gate suggest for epic owners; `CM_STUCK_MIN` default 45. Forbidden-agent check: `.violations` rows and `.violationCheck`, printed by `--table` as `violations: <n>` plus `VIOLATION` rows (§ The tick, step 2) |
 | `scripts/abrupt.sh` | sessions cut off by a restart (background work killed, `/loop` resume pending, agent fell back to a shell) and duplicate live agents in one worktree; TSV |
 | `scripts/waiting.sh` | sessions showing a question menu, with minutes waiting and the question; TSV |
 | `scripts/jsanitize`, `scripts/jstrings` | Orca JSON helpers (python3): `jsanitize` re-emits JSON with lone UTF-16 surrogates replaced so `jq` can parse remote-host replies; `jstrings` prints every string of a reply (pane text), tolerating the same. `abrupt.sh`, `waiting.sh` and the census in `discover.sh` pipe Orca output through them |
@@ -820,9 +830,9 @@ shellcheck clean.
 | `scripts/hooks/rm-guard-hook.sh` | PreToolUse hook: denies an unguarded variable path under a recursive `rm` at once (`references/prompt-stalls.md`) |
 | `scripts/sync-from-toolkit.sh <project-skill-dir>` | copies this engine into a project's skill directory without touching its `config.yaml` or `references/project-local.md` (README, "Update a project") |
 | `scripts/hooks/mc-worker-hook.sh` | Claude Code hook for workers, in-scope repos only (optional) |
-| `scripts/digest.sh [--full] [--since-hours n]` | digest text, stdout only, `- ` bullets, no Needs, Stuck or Fleet section (`--full` adds them for the terminal report): Merged (merged since `digests.lastSentAt`, else 12h) from `gh pr list`, and in `--full` the open PR count (a failed gh prints "unknown (gh failed)", never 0), every other section from the ledger; read-only |
+| `scripts/digest.sh [--full] [--since-hours n]` | digest text, stdout only, `- ` bullets, no Needs, Stuck or Fleet section (`--full` adds them for the terminal report): Merged (merged since `digests.lastSentAt`, else 12h) from `gh pr list`, and in `--full` the open PR count (a failed gh prints "unknown (gh failed)", never 0), every other section from the ledger; read-only; `--full` also lists `ledger.violations` and an incomplete `ledger.violationCheck` |
 | `scripts/intake.sh <cmd>` | the deterministic half of `intake` (rules in `scripts/intake.jq`) |
-| `scripts/test/*.sh` | `classify-standing`, `teardown-gates`, `resume-flow`, `intake`, `mc-emit`, `boot-sweep`, `runtime-check`, `ci-queue-alert`, `cred-check`, `rm-guard-hook`, `digest-gh`, `orca-json-helpers`: hermetic tests against `scripts/test/fixtures/config.test.yaml`; run the matching one after any script change |
+| `scripts/test/*.sh` | `classify-standing`, `classify-violations`, `teardown-gates`, `resume-flow`, `intake`, `mc-emit`, `boot-sweep`, `runtime-check`, `ci-queue-alert`, `cred-check`, `rm-guard-hook`, `digest-gh`, `orca-json-helpers`: hermetic tests against `scripts/test/fixtures/config.test.yaml`; run the matching one after any script change |
 
 <!-- project-local: scripts -->
 

@@ -229,6 +229,8 @@ Test: `scripts/test/ledger-write.sh`.
 | `asks[].kind` | set only for asks that unlock a teardown override: `remove-standing` (`--force-standing`) or `accept-unmerged-beads` (`--accept-unmerged-beads`). Such an ask also carries `host`, `path` (canonical) and/or `worker` naming exactly one worktree, `decision` (`approved` or `declined`, from the owner's answer) and `usedAt` (set by concertmaster after the `--apply` that used it; a used ask never unlocks again). `teardown.sh` accepts it only when `state` is `answered`, `decision` is `approved`, `usedAt` is null, and host + path/worker match the worktree. Any other answered ask unlocks nothing |
 | `digests.lastCollaboratorDmAt` | map of collaborator github handle to last daily DM time |
 | `digests.lastSentAt` | last digest send (`cfg.schedule.digest_times`) |
+| `violations[]` | the forbidden-agent rows of the last census (`cfg.agents.forbidden`): classify's `.violations` (`host`, `worktree`, `handle`, `title`, `agent`), replaced every tick, `[]` when none; `scripts/digest.sh` lists them as "Forbidden agents" |
+| `violationCheck` | classify's `.violationCheck` (`enabled`, `complete`, `gaps[]`) plus `checkedAt` (UTC, this tick), replaced every tick; an incomplete check (offline host, failed or cut-off terminal list, no terminal data) is listed in the digest as `CHECK INCOMPLETE`, never read as "none found" |
 
 ## `outbox.jsonl`
 
