@@ -111,6 +111,14 @@ lanes:
   - { name: "epic:<name>", standing: true, spawn_at: 1, agent: claude, model: null, max_parallel: 3 }
 single_task_workers: [deploy, ops-fix, sweep, native-release, one-pr]
 
+# scripts/spawn-verify.sh: what a freshly started Claude pane must show before a brief is sent. [script]
+# Display forms, as the pane prints them: the banner reads "<Model> <ver> with <effort> effort",
+# the status line "<model>-<ver> · eff <effort>". --model and --effort on the command line win.
+# Leave empty and `spawn-verify.sh check` exits 2 unless both flags are given.
+spawn:
+  expected_model: sonnet-5.5       # the model your spawn command pins, in display form (dot in the version)
+  expected_effort: high            # the effort level your spawn command pins
+
 ops:
   # Skills the ops-sweeper routes to. Leave empty and it investigates itself.
   route:
