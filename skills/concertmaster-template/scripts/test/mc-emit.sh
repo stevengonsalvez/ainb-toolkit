@@ -15,6 +15,9 @@ STUB="$ROOT/stub"
 mkdir -p "$ROOT/bin" "$ROOT/home" "$ROOT/tmp" "$STUB"
 unset MC_TENANT_ID MC_PROJECT_ID MC_BASE_URL MC_QUIET MC_FLUSH_BATCH MC_FLUSH_SECS MC_OUTBOX_MAX CM_INSTALLED_EMIT
 export HOME="$ROOT/home" TMPDIR="$ROOT/tmp" CM_HOME="$ROOT/cm"
+# Pin the config: a config.yaml next to the scripts (or in CM_HOME) would otherwise
+# supply telemetry.base_url / project_id and change the "unset" cases.
+export CM_CONFIG="$HERE/fixtures/config.test.yaml"
 export MC_BASE_URL="http://mc.stub.invalid" MC_TOKEN_FILE="$ROOT/token" STUB_DIR="$STUB"
 export PATH="$ROOT/bin:$PATH"
 TOKEN="tok-$$-secret-value"
@@ -358,7 +361,7 @@ reset; unset MC_PROJECT_ID; printf 'MC_PROJECT_ID="p_from-file"\n' > "$CM_HOME/m
 emit worker.done x >/dev/null
 check "project id: read from mc.env" "$(jq -r '.projectId' "$STUB/bodies.jsonl")" "p_from-file"
 reset; printf 'telemetry:\n  project_id: p_from-cfg\n' > "$CM_HOME/config.yaml"
-emit worker.done x >/dev/null
+CM_CONFIG="$CM_HOME/config.yaml" emit worker.done x >/dev/null   # this case reads its own config file
 check "project id: read from config telemetry.project_id" "$(jq -r '.projectId' "$STUB/bodies.jsonl")" "p_from-cfg"
 
 # ---- project id unset or invalid: no projectId key at all ----------------------
