@@ -27,19 +27,76 @@ Host-local, outside git. The directory is `cfg.state_dir` (default
 
 ## Write rules
 
+- **EVERY ledger write goes through `cm_ledger_write`** (`scripts/lib.sh`). Never
+  `jq ... > ledger.json`, `mv ... ledger.json`, `cp ... ledger.json` or an editor on the live
+  file. The one sanctioned exception is the restore command below, run by an operator on a lost
+  ledger. A new script or tick step that writes the ledger MUST call `cm_ledger_write`; do not
+  copy the temp-file-and-`mv` pattern, which has no output check and no backup.
 - One writer: the concertmaster session. Workers never touch it; they report
   through their Orca worktree comment.
-- Atomic: write a temp file in the same directory, then `mv` it over.
 - Times are UTC ISO-8601 without fractions: `2026-10-04T11:00:00Z`.
 - Unknown is `null`, never an invented value.
-- Missing file on boot means first boot (SKILL.md § First boot).
+- Missing file on boot means first boot (SKILL.md § First boot), but only when `ledger.bak/`
+  holds no copies. A missing or empty ledger WITH backups was lost: restore it (below).
+
+`cm_ledger_write [--init] <jq-filter> [jq args...]` runs the filter against the current
+`$CM_HOME/ledger.json` and replaces the ledger with the result. It returns non-zero, leaves the
+ledger untouched and says why on stderr when ANY of these fails:
+
+| refusal | rule |
+|---|---|
+| not one object with `workers` | the output must pass `jq -e 'type=="object" and has("workers")'` and be a single document whose `workers` is an object: no output, a string, an array, several documents (a stray top-level `,`), no `workers` key, or `workers: null` is refused |
+| shrunk | the output must be at least half the old file's bytes. A deliberate cut of more than half is done in steps, each at most halving, or by restoring a smaller copy |
+| no old ledger | a missing or empty ledger is refused, never created. `--init` is the one way to create it (first boot): the filter runs with no input (`jq -n`) and builds the whole document. `--init` refuses when a non-empty ledger exists, and when `ledger.bak/` holds copies (the ledger was lost: restore it; `CM_LEDGER_INIT_FORCE=1` overrides, only on the owner's word), because a fresh history would push every good copy out of the ring |
+| jq failed | a runtime or syntax error in the filter |
+| lock busy | `ledger.json.lock` held by another writer for 5 seconds |
+| no backup | the old file could not be copied into the ring |
+
+On success the OLD file is first copied into the backup ring, then the new file (a temp file in
+the same directory) is moved over with `mv`, so a reader sees the old or the new ledger, never
+half of one, and a refusal leaves no temp file behind.
 
 ```bash
-L=$CM_HOME/ledger.json
-jq --arg id w-dev-101 --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-  '.workers[$id].state = "stuck" | .workers[$id].updatedAt = $now | .updatedAt = $now' \
-  "$L" > "$L.tmp" && mv "$L.tmp" "$L"
+. "$SKILL/scripts/lib.sh"      # $SKILL = the concertmaster skill directory; CM_HOME comes from the config
+cm_ledger_write '.workers[$id].state = "stuck" | .workers[$id].updatedAt = $now | .updatedAt = $now' \
+  --arg id w-dev-101 --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  || echo "ledger NOT written (reason above): fix the filter, do not write the file by hand"
 ```
+
+Under `set -e` a refusal stops the caller; add `|| ...` where the script goes on. A caller that
+reads, plans and writes in one pass takes the lock first with `cm_ledger_lock` (release with
+`cm_ledger_unlock`, e.g. in an EXIT trap); `cm_ledger_write` inside it re-enters the lock.
+
+**Lock.** `ledger.json.lock`, a `mkdir` lock whose `pid` file holds the owner's token (not a bare
+pid: `$$` is the same in every subshell). Re-entry is for the same shell (bash 4+; on bash 3.2 a
+subshell counts as the holder): never run background writers while holding the lock. A lock older
+than 2 minutes is stale: it is renamed away (`mv`, so only one waiter wins), then the take is
+retried. A `mkdir` lock rather than `flock`: `flock` is absent on macOS (bash 3.2), and the lock
+must exclude every writer on every host.
+
+**Backup ring.** `$CM_HOME/ledger.bak/<UTC yyyymmddThhmmssZ>.json` (`~/.concertmaster/ledger.bak/`
+by default), the OLD ledger as it stood before each write. A second write in the same second is
+`<ts>_002.json`, so name order is write order; only timestamp-named files are pruned or picked, so a
+copy you place there by hand is left alone. The newest 20 are kept (`CM_LEDGER_BAK_KEEP`), older
+ones are deleted. The newest copy is the ledger before the last write. `CM_LEDGER` (a path) and
+`CM_LEDGER_BAK` (a directory) override the ledger file and the ring location.
+
+**Restore** (the ledger is empty, missing or damaged; copies the newest backup back):
+
+```bash
+cp "$(ls -1 "${CM_HOME:-$HOME/.concertmaster}"/ledger.bak/[0-9]*T*Z*.json | LC_ALL=C sort | tail -1)" "${CM_HOME:-$HOME/.concertmaster}/ledger.json"
+```
+
+To go further back, list the ring (`ls -1 ~/.concertmaster/ledger.bak/`) and `cp` an older file.
+`cm_ledger_restore_hint` prints the same command for the paths in use; `cm_ledger_write` prints it
+when it refuses on a lost ledger.
+
+**Why (25 Oct 2026, 22:33Z).** A concertmaster jq filter produced no output, and the write guard
+`jq -s 'length == 1' l.tmp >/dev/null` exits 0 even when it prints `false`, so an empty `l.tmp`
+replaced `ledger.json`, with no copy of the old one to restore. The checks above read `jq -e` exit
+codes, and the ring keeps a way back.
+
+Test: `scripts/test/ledger-write.sh`.
 
 ## Schema: `ledger.json` (`concertmaster.ledger/v1`)
 
