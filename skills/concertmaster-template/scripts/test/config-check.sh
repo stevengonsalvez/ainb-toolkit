@@ -62,6 +62,13 @@ doctor "an unknown outward_messages value fails"                "$ROOT/bad-outwa
 variant bad-since 's/^  since: .*/  since: "last week"/'
 doctor "unlinked_prs.since that is not a UTC time fails"        "$ROOT/bad-since.yaml" 1 'FAIL unlinked_prs.since'
 
+variant bad-forbidden 's/^  forbidden_agents: \[\]/  forbidden_agents: codex/'
+doctor "automations.forbidden_agents that is not a list fails"  "$ROOT/bad-forbidden.yaml" 1 'FAIL automations.forbidden_agents'
+variant bad-path-match 's|^  path_match: "[^"]*"|  path_match: "([unclosed"|'
+doctor "a worktrees.path_match that does not compile fails"     "$ROOT/bad-path-match.yaml" 1 'FAIL worktrees.path_match'
+variant bad-dup-pattern 's/^  duplicate_pattern: "[^"]*"/  duplicate_pattern: "([unclosed"/'
+doctor "an automations.duplicate_pattern that does not compile fails" "$ROOT/bad-dup-pattern.yaml" 1 'FAIL automations.duplicate_pattern'
+
 variant http-url 's|^  base_url: ""|  base_url: "http://mc.example.com"|'
 doctor "an http telemetry.base_url fails"                       "$ROOT/http-url.yaml" 1 'FAIL telemetry.base_url'
 variant https-url 's|^  base_url: ""|  base_url: "https://mc.example.com"|'

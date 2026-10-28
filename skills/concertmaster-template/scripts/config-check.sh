@@ -92,6 +92,10 @@ opt "unlinked_prs.since is an ISO-8601 UTC time"        '.unlinked_prs.since' 't
 opt "unlinked_prs.skip_authors is a list of strings"    '.unlinked_prs.skip_authors' 'type == "array" and all(.[]; type == "string" and length > 0)'
 opt "unlinked_prs.include_drafts is a boolean"          '.unlinked_prs.include_drafts' 'type == "boolean"'
 opt "unlinked_prs.timeout_s is a positive number"       '.unlinked_prs.timeout_s' 'type == "number" and . > 0'
+opt "automations.names is a list of strings"            '.automations.names' 'type == "array" and all(.[]; type == "string" and length > 0)'
+opt "automations.expected is a list of strings"         '.automations.expected' 'type == "array" and all(.[]; type == "string" and length > 0)'
+opt "automations.forbidden_agents is a list of strings" '.automations.forbidden_agents' 'type == "array" and all(.[]; type == "string" and length > 0)'
+opt "automations.duplicate_pattern compiles as a regex" '.automations.duplicate_pattern' 'type == "string" and (. as $re | try ("" | test($re) | true) catch false)'
 
 # Secrets and house style, on the raw text. Pieces are split so this file never
 # holds a literal token prefix itself.
