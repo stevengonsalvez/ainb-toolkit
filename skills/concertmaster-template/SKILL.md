@@ -174,6 +174,14 @@ and never writes it again.
 
 ## The tick
 
+**No blocking ask in a tick turn.** Never call `AskUserQuestion` in a tick turn (one that
+started from `/loop /concertmaster tick`): the picker holds the turn open, `ScheduleWakeup`
+cannot fire, and every tick stops until the owner answers. Put the decision in the tick
+table as `WAITING: <owner>, <question>, <age>` with the recommended option in the question,
+name it in the `next:` line, and keep ticking. Use `AskUserQuestion` only in a turn the
+owner started (they just wrote to the concertmaster), and even then call `ScheduleWakeup`
+BEFORE asking.
+
 ```text
 ┌─────────┐  ┌──────────────┐  ┌────────────┐  ┌───────────┐  ┌──────────┐
 │ wake    │─▶│ discover     │─▶│ reconcile  │─▶│ act       │─▶│ report + │
@@ -212,7 +220,8 @@ and never writes it again.
    `absent` with the tick that will spawn it.
 4. **Act**, in this order, each bounded:
    - `cm:blocked` comments and `awaiting-input` flags: answer what is factual
-     or already decided; the rest becomes one AskUserQuestion to the owner.
+     or already decided; the rest becomes a `WAITING: <owner>, <question>, <age>`
+     row in the tick table (no AskUserQuestion in a tick turn).
    - `abrupt.sh` rows: nudge or resume each (§ Resume), never while
      `resume.lock` exists. `waiting.sh` rows: list each with its wait time.
    - **stuck**: § Stuck rule.
@@ -277,7 +286,7 @@ queued ─▶ spawning ─▶ running ─▶ done ─▶ retired ─▶ teardown
                       stuck ──2h or 2 nudges──▶ respawn w/ handover
                         │                       or ASK the owner
                         ▼
-                  blocked-on-owner ─▶ AskUserQuestion in concertmaster
+                  blocked-on-owner ─▶ WAITING row in the tick table
 ```
 
 Timings come from `cfg.schedule` (`stuck_minutes`, `max_nudges`,
@@ -438,7 +447,8 @@ idle 45m ─▶ read pane (--screen) ─▶ question? ─▶ answer if factual/d
    subagent reads long scrollback and returns the state in two lines.
 2. Question showing: rule 3 (never type into a menu). Factual or already
    decided: answer with menu keys or a typed reply at a free-text prompt.
-   Otherwise `blocked-on-owner` and one AskUserQuestion.
+   Otherwise `blocked-on-owner`: a `WAITING: <owner>, <question>, <age>` row, no
+   AskUserQuestion in a tick turn (§ The tick, "No blocking ask").
 3. Otherwise **nudge** with something specific, not "continue": "Status check:
    your last output was <x> 52m ago. What blocks you? Set your worktree
    comment and carry on with <next step>." `nudges += 1`, `lastNudgeAt`.
@@ -493,8 +503,9 @@ Output is a table of lane, status, action. Details, the live-agent test and the
 safety rules: `references/resume.md`.
 
 After a host restart, `scripts/boot-sweep.sh` (run by systemd after the host's
-resume unit) nudges every lane that is still cut off to re-arm its `/loop`:
-`references/boot-sweep.md`.
+resume unit) nudges every lane that is still cut off to re-arm its `/loop`, and
+the concertmaster session itself (the `cfg.worktrees.self_name` worktree) with
+`/loop /concertmaster tick`: `references/boot-sweep.md`.
 
 ## Autonomy and guardrails
 
@@ -516,8 +527,10 @@ resume unit) nudges every lane that is still cut off to re-arm its `/loop`:
 | kill a pre-existing session | ASK once | first boot only |
 | production data write | ASK | through the runbook in `cfg.ops.route.data_repair` only |
 
-ASK means one AskUserQuestion with a recommended option first; work that does
-not depend on the answer carries on.
+ASK means one decision with a recommended option first; work that does
+not depend on the answer carries on. In a tick turn the ASK is a
+`WAITING: <owner>, <question>, <age>` row, never an AskUserQuestion (§ The tick,
+"No blocking ask"); the picker is for a turn the owner started, after `ScheduleWakeup`.
 
 ## Merge gate
 
@@ -715,10 +728,20 @@ When there is no ledger:
 
 ## Messaging
 
-- **Owner digest** at `cfg.schedule.digest_times`:
+- **Owner digest** at `cfg.schedule.digest_times`. The text is terse `- ` bullets, no
+  greeting, and carries only Merged and Deployed, so it is safe for a chat group: Needs
+  <owner>, Stuck and the Fleet footer name workers and hosts, so put those in your
+  terminal report with `scripts/digest.sh --full`, never in the sent text. Send steps:
   `scripts/digest.sh > $CM_HOME/digest.txt`, read it, then send with
   `cfg.messaging.owner_digest.send` (`{to}` = `cfg.messaging.owner_digest.to`,
-  `{text}` = the file). Set `digests.lastSentAt`. With the wacli adapter: never
+  `{text}` = the file). Set `digests.lastSentAt` only after a send that succeeded, to
+  the UTC time just before you ran `digest.sh` (take it with `date -u +%FT%TZ`; not the
+  time the send finished), so a PR that merges during the send shows in the next digest.
+  Do not send it if a PR title or deploy reason carries a secret or personal data.
+  The Merged section is the PRs `gh` reports merged since `digests.lastSentAt` exactly
+  (else 12h; `--since-hours` wins), and the open PR count (`--full` only) is `gh`'s: the
+  ledger is not their source, and "unknown (gh failed)" in either is a failed read, never
+  a zero (say so in the tick report). With the wacli adapter: never
   pass `--download-media`; `wacli sync --once` only, never `--follow`.
 - **Collaborators** (`cfg.messaging.collaborators`): pr-sweeper workers post a
   PR comment to the author on every push to, or merge of, their PR when
@@ -733,8 +756,9 @@ When there is no ledger:
 
 ## Reporting
 
-Every tick and every turn ends with the owner's turn-end block, nothing after it
-except an AskUserQuestion:
+Every tick and every turn ends with the owner's turn-end block, nothing after it.
+A tick turn never ends with an AskUserQuestion (§ The tick, "No blocking ask"); in a
+turn the owner started, an AskUserQuestion may follow the block, after `ScheduleWakeup`:
 
 ```text
 | thread              | state                               | next             |
@@ -756,7 +780,10 @@ next: trigger prod for the 16:00 window
 - At most 5 bullets, one line each, under 15 words, tagged `[fact]` or `[inference]`.
 - No prose paragraphs, no em-dashes. Thread titles are human names with the PR
   number in `state`, not bare numbers.
-- A decision goes straight into AskUserQuestion, recommended option first.
+- A decision for the owner is a `WAITING: <owner>, <question>, <age>` row with the
+  recommended option in the question, and `next:` names it. Outside a tick, in a turn
+  the owner started, it may go into AskUserQuestion, recommended option first, after
+  `ScheduleWakeup`.
 - Quiet tick (nothing changed): one row per lane plus `next:`.
 - Every session blocked on a menu (`waiting.sh`) gets a row with its wait time.
 
@@ -782,9 +809,9 @@ shellcheck clean.
 | `scripts/hooks/rm-guard-hook.sh` | PreToolUse hook: denies an unguarded variable path under a recursive `rm` at once (`references/prompt-stalls.md`) |
 | `scripts/sync-from-toolkit.sh <project-skill-dir>` | copies this engine into a project's skill directory without touching its `config.yaml` or `references/project-local.md` (README, "Update a project") |
 | `scripts/hooks/mc-worker-hook.sh` | Claude Code hook for workers, in-scope repos only (optional) |
-| `scripts/digest.sh [--since-hours n]` | digest text from the ledger, stdout only |
+| `scripts/digest.sh [--full] [--since-hours n]` | digest text, stdout only, `- ` bullets, no Needs, Stuck or Fleet section (`--full` adds them for the terminal report): Merged (merged since `digests.lastSentAt`, else 12h) from `gh pr list`, and in `--full` the open PR count (a failed gh prints "unknown (gh failed)", never 0), every other section from the ledger; read-only |
 | `scripts/intake.sh <cmd>` | the deterministic half of `intake` (rules in `scripts/intake.jq`) |
-| `scripts/test/*.sh` | `classify-standing`, `teardown-gates`, `resume-flow`, `intake`, `mc-emit`, `boot-sweep`, `ci-queue-alert`, `cred-check`, `rm-guard-hook`: hermetic tests against `scripts/test/fixtures/config.test.yaml`; run the matching one after any script change |
+| `scripts/test/*.sh` | `classify-standing`, `teardown-gates`, `resume-flow`, `intake`, `mc-emit`, `boot-sweep`, `ci-queue-alert`, `cred-check`, `rm-guard-hook`, `digest-gh`: hermetic tests against `scripts/test/fixtures/config.test.yaml`; run the matching one after any script change |
 
 <!-- project-local: scripts -->
 
