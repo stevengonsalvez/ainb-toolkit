@@ -108,6 +108,10 @@ deploy:
       paths: [".github/workflows/deploy-*.yml"]
       note: "secret lines in deploy workflows, payments, auth flows"
 
+queue:                             # scripts/queue.sh (references/queue.md)
+  cap: 12                          # [script] total live agent sessions across hosts; no cap means nothing is granted
+  grant_hold_minutes: 30           # [script] a fresh grant counts as live on its host for this long
+
 merge:
   # The pr-sweeper is the only merger. {pr} {org} {repo} are filled at run time.
   command: "gh pr merge {pr} -R {org}/{repo} --merge"
@@ -198,7 +202,13 @@ telemetry:                         # optional mission-control style sink
 # A session that waited this long on a human for a decision inside its own scope stops waiting
 # (SKILL.md hard rule 16). Never covers merges, deploys, secrets, data or releases.
 away:
-  timeout_minutes: 30
+  timeout_minutes: 30              # [script] scripts/ask-timeout.sh (references/away-timeout.md)
+  own_scope_kinds: [code, design, test, scope, product]   # [script] ask kinds a verdict may cover
+  repo: null                       # [script] where verdict comments live; default github.org/github.main_repo
+  verdict_by: verdict-agent        # [script] decidedBy written when a verdict is recorded
+  deny_extra: []                   # [script] regex fragments added to the owner-only subject scan, e.g. ["warehouse"]
+  allow_paths: []                  # [script] regex fragments; non-empty replaces the default allowlist (src/ tests e2e docs public root *.md)
+  never_paths: []                  # [script] regex fragments added to the never-list of changed paths
 
 # Read-only production test after each release (lane release-tester in references/lanes.md).
 # Only used when the lane is listed under lanes. Holds names and routes, never a credential.

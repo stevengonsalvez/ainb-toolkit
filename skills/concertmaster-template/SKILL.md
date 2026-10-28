@@ -119,6 +119,8 @@ The lane set above is the default; `cfg.lanes` is the list in use.
     production access or data, a migration, auth, RLS, payments or secrets, a
     release, a merge, a deploy, a teardown, a killed session or a message to a
     human: those still wait for the owner.
+    `scripts/ask-timeout.sh` lists the asks that qualify and records the verdict
+    (`references/away-timeout.md`).
 17. **Cut-off lanes resume themselves.** A lane session cut off by a restart,
     crash or reaper is resumed by the tick (`scripts/resume.sh` for a dead
     lane, the abrupt-session nudge for a live one), every tick, with no human
@@ -447,7 +449,7 @@ Lead rules:
 - Caps: `hosts.<name>.maxWorkers` per host (seeded from `cfg.hosts.per_host`,
   else `cfg.hosts.defaults`), read every tick; spawn on the host with the most
   free slots among `general` hosts, `native` hosts only for native-build work
-  or overflow. Never exceed the cap; queue instead.
+  or overflow. Never exceed the cap; queue instead (`scripts/queue.sh`, `references/queue.md`).
 
 ## Handing work
 
@@ -775,6 +777,15 @@ GitHub says MERGED. Salvage lands in `$CM_HOME/salvage/<host>/<branch>-<ts>/`
 on that host. On a remote host the ssh target must answer with
 `hosts.<name>.hostname`.
 
+`teardown.sh` covers the local host. Before removing a worktree that lives on a
+remote host, run `scripts/salv3.sh` on that host (it reads the local filesystem
+only): `ssh <hostname> 'CM_WORKTREE_BASE=<dir holding the worktrees> bash -s -- <name>' < scripts/salv3.sh`.
+It prints one `RESULT` line per worktree and writes untracked files, ignored
+files (never credential paths), the tracked diff and a bundle of commits not on
+`origin/main` under `$CM_HOME/salvage/`. Any non-zero exit (ABSENT, NO-BASE,
+FAILED): do not run `orca worktree rm`. Remove only worktrees whose line shows
+`dirty=0` and `ahead_main=0`.
+
 <!-- project-local: teardown -->
 
 ## First boot (adoption)
@@ -910,13 +921,18 @@ shellcheck clean.
 | `scripts/runtime-check.sh [--dry-run]` | tick step after an Orca runtime restart: refreshes standing lanes' ledger handles by worktree path and nudges lanes whose `/loop` wake died, via `boot-sweep.sh --since --lanes` (`references/runtime-check.md`) |
 | `scripts/ci-queue-alert.sh [--dry-run]` | alerts when too many workflow runs stay queued, once per episode (`references/ci-capacity.md`) |
 | `scripts/cred-check.sh [--dry-run] [--publish [FILE]]` | weekly validity probe of the credentials in a names-only index (`references/credentials.md`) |
+| `scripts/ask-timeout.sh [--ledger <path>] [--all] [--stamp] [--claim <ask-id>] [--record <ask-id> <comment-url>]` | away timeout (rule 16): lists open asks past `timeoutAt` that are own-scope and safe for an independent verdict, claims and records it; fails closed; the write modes need `cm_ledger_write` in `lib.sh` (`references/away-timeout.md`) |
+| `scripts/queue.sh list [--json] \| add <issue> <lane> [--priority P0\|urgent\|normal] [--host <h>] \| grant (--discover <file> \| --live <h>=<n>,...) [--dry-run] \| mark <id> done\|dropped\|queued \| depth` | the work queue in the ledger: new work waits for a free slot, granted P0, then urgent, then oldest, under the total and per-host caps; the write commands need `cm_ledger_write` in `lib.sh` (`references/queue.md`) |
+| `scripts/queue-audit.sh` | flags granted or queued items with no PR and no worktree comment naming the issue after `CM_QUEUE_STALL_MIN` minutes (STALLED, UNVERIFIED, UNKNOWN-AGE, NO-ISSUE); exit 3 when `gh` fails |
+| `scripts/salv3.sh <worktree-name-or-path>...` | salvage a worktree's unsaved work (untracked and ignored files minus credential paths, tracked diff, commits ahead of `origin/main`) before a remote `orca worktree rm`; run on the owning host, standalone so it can be streamed over ssh; non-zero exit means do not remove; `CM_SALVAGE_EXCLUDE` adds paths never copied |
+| `scripts/markers.py` | stdin: an `orca worktree list --json` reply; prints `worktree<TAB>#pr<TAB>sha` for every genuine `cm:merge-ready` marker (`references/lanes.md`, Reporting contract) |
 | `scripts/hooks/rm-guard-hook.sh` | PreToolUse hook: denies an unguarded variable path under a recursive `rm` at once (`references/prompt-stalls.md`) |
 | `scripts/spawn-verify.sh` | guards for a claude session started in a terminal: `resolve [--ssh <target>]` prints an absolute, non-stub claude path (exit 1 with the npm fix otherwise); `check (--terminal <h> [--environment <host>] [--wait <s>] \| --file <screen>) [--model <m>] [--effort <e>]` exits 0 only when the bottom of the pane shows the expected model (`cfg.spawn.expected_model` / `expected_effort`) on a Claude footer, else `verify: FAIL <reason>` (send no brief) |
 | `scripts/sync-from-toolkit.sh <project-skill-dir>` | copies this engine into a project's skill directory without touching its `config.yaml` or `references/project-local.md` (README, "Update a project") |
 | `scripts/hooks/mc-worker-hook.sh` | Claude Code hook for workers, in-scope repos only (optional) |
 | `scripts/digest.sh [--full] [--since-hours n]` | digest text, stdout only, `- ` bullets, no Needs, Stuck or Fleet section (`--full` adds them for the terminal report): Merged (merged since `digests.lastSentAt`, else 12h) from `gh pr list`, and in `--full` the open PR count (a failed gh prints "unknown (gh failed)", never 0), every other section from the ledger; read-only; `--full` also lists `ledger.violations` and an incomplete `ledger.violationCheck` |
 | `scripts/intake.sh <cmd>` | the deterministic half of `intake` (rules in `scripts/intake.jq`) |
-| `scripts/test/*.sh` | `classify-standing`, `classify-violations`, `teardown-gates`, `resume-flow`, `intake`, `mc-emit`, `boot-sweep`, `runtime-check`, `ci-queue-alert`, `cred-check`, `rm-guard-hook`, `digest-gh`, `orca-json-helpers`, `waiting-autocompact`, `spawn-verify`, `classify-ownership`: hermetic tests against `scripts/test/fixtures/config.test.yaml`; run the matching one after any script change |
+| `scripts/test/*.sh` | `classify-standing`, `classify-violations`, `teardown-gates`, `resume-flow`, `intake`, `mc-emit`, `boot-sweep`, `runtime-check`, `ci-queue-alert`, `cred-check`, `rm-guard-hook`, `digest-gh`, `orca-json-helpers`, `waiting-autocompact`, `spawn-verify`, `classify-ownership`, `ask-timeout`, `queue`, `queue-audit`, `salv3`, `markers`: hermetic tests against `scripts/test/fixtures/config.test.yaml`; run the matching one after any script change |
 
 <!-- project-local: scripts -->
 
