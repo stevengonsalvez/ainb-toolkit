@@ -108,6 +108,10 @@ deploy:
       paths: [".github/workflows/deploy-*.yml"]
       note: "secret lines in deploy workflows, payments, auth flows"
 
+queue:                             # scripts/queue.sh (references/queue.md)
+  cap: 12                          # [script] total live agent sessions across hosts; no cap means nothing is granted
+  grant_hold_minutes: 30           # [script] a fresh grant counts as live on its host for this long
+
 merge:
   # The pr-sweeper is the only merger. {pr} {org} {repo} are filled at run time.
   command: "gh pr merge {pr} -R {org}/{repo} --merge"
