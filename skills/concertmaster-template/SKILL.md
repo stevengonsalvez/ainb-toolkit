@@ -279,14 +279,17 @@ BEFORE asking.
    - Digest due (`cfg.schedule.digest_times`): § Messaging.
    - Project addenda: the `tick-extra` steps of `references/project-local.md`.
      <!-- project-local: tick-extra -->
-5. **Report** in the turn-end format (§ Reporting). Emit
-   `scripts/mc-emit.sh --tick '<fleet summary json>'` (a `summary` field becomes
-   the message) and a fleet upsert for concertmaster itself; on an issue's
-   state change, `scripts/mc-emit.sh --issue-state <issue> <state> [pr]`.
-   Several emits in one tick: `MC_NO_FLUSH=1` on all but the last. Nothing is
+5. **Report** in the turn-end format (§ Reporting). Then emit telemetry, every tick:
+   `scripts/classify.sh < "${CM_HOME:-$HOME/.concertmaster}/last-discover.json" | scripts/tick-emit.sh`
+   (it builds the fleet summary, queues `mc-emit.sh --tick`, then sends the fleet upsert
+   for concertmaster itself, which flushes; it always exits 0). On an issue's state
+   change first `MC_NO_FLUSH=1 scripts/mc-emit.sh --issue-state <issue> <state> [pr]`;
+   several emits in one tick: `MC_NO_FLUSH=1` on all but the last. Nothing is
    sent while `cfg.telemetry.base_url` or `cfg.telemetry.tenant_id` is empty
-   (the lines queue, capped). With `cfg.telemetry.project_id` set the fleet
-   upsert is skipped with one log line (a project-bound token may not call it).
+   (the lines queue, capped, and wait for `mc-emit.sh --requeue-dead`). With
+   `cfg.telemetry.project_id` set the fleet upsert is skipped with one log line (a
+   project-bound token may not call it) and tick-emit flushes the tick itself; a
+   403-refused upsert is dead-lettered once and not retried for 24h.
 6. **Schedule.** ScheduleWakeup (via the dynamic `/loop`) with
    `cfg.schedule.tick_delays_s`:
 
@@ -924,7 +927,9 @@ shellcheck clean.
 | `scripts/mc-emit.sh <type> <msg> [meta]` / `--fleet-upsert ...` / `--tick <json>` / `--issue-state <issue> <state> [pr]` / `--flush` / `--requeue-dead` | outbox + telemetry POST, always exit 0; base URL or tenant not configured: sends nothing, lines stay queued (capped); `--requeue-dead [--any-tenant]` puts dead 400 lines with tenantId null (or any tenant; with a project id, also any without a projectId) back in front of the outbox, newest fleet upsert per agent only (backup kept, refused past the cap), events stamped with the project id and a deterministic eventId so a replay dedupes; with a project id every event carries projectId and fleet upserts are skipped; a 403 on an upsert, or on an event naming another project, dead-letters it; never sends an upsert older than one accepted (`fleet.sent.json`); unsent lines go back in front; write lock on every append and rewrite; `MC_NO_FLUSH=1` queues only; warns when the installed copy is older |
 | `scripts/boot-sweep.sh [--dry-run] [--no-wait] [--since <epoch> [--lanes <paths>]]` | after a host restart, nudges standing lanes that ran no turn since boot to re-arm their `/loop` (`references/boot-sweep.md`) |
 | `scripts/runtime-check.sh [--dry-run]` | tick step after an Orca runtime restart: refreshes standing lanes' ledger handles by worktree path and nudges lanes whose `/loop` wake died, via `boot-sweep.sh --since --lanes` (`references/runtime-check.md`) |
-| `scripts/ci-queue-alert.sh [--dry-run]` | alerts when too many workflow runs stay queued, once per episode (`references/ci-capacity.md`) |
+
+| `scripts/tick-emit.sh [--classify <file>] [--status s] [--task t] [--extra <json>]` | tick step 5: fleet summary from classify JSON (stdin or file) plus the `unlinked-prs.json` count, then `mc-emit.sh --tick` (`MC_NO_FLUSH=1`) and the concertmaster `--fleet-upsert` (flushes); `CM_AGENT_ID`, `CM_WORKSPACE`; always exits 0, prints one line about its own two lines (sent, queued, dead, skipped or refused), never the token or tenant |
+| `scripts/boot-sweep.sh [--dry-run] [--no-wait]` | after a host restart, nudges standing lanes that ran no turn since boot to re-arm their `/loop` (`references/boot-sweep.md`) || `scripts/ci-queue-alert.sh [--dry-run]` | alerts when too many workflow runs stay queued, once per episode (`references/ci-capacity.md`) |
 | `scripts/cred-check.sh [--dry-run] [--publish [FILE]]` | weekly validity probe of the credentials in a names-only index (`references/credentials.md`) |
 | `scripts/ask-timeout.sh [--ledger <path>] [--all] [--stamp] [--claim <ask-id>] [--record <ask-id> <comment-url>]` | away timeout (rule 16): lists open asks past `timeoutAt` that are own-scope and safe for an independent verdict, claims and records it; fails closed; the write modes need `cm_ledger_write` in `lib.sh` (`references/away-timeout.md`) |
 | `scripts/queue.sh list [--json] \| add <issue> <lane> [--priority P0\|urgent\|normal] [--host <h>] \| grant (--discover <file> \| --live <h>=<n>,...) [--dry-run] \| mark <id> done\|dropped\|queued \| depth` | the work queue in the ledger: new work waits for a free slot, granted P0, then urgent, then oldest, under the total and per-host caps; the write commands need `cm_ledger_write` in `lib.sh` (`references/queue.md`) |
@@ -938,7 +943,7 @@ shellcheck clean.
 | `scripts/hooks/mc-worker-hook.sh` | Claude Code hook for workers, in-scope repos only (optional) |
 | `scripts/digest.sh [--full] [--since-hours n]` | digest text, stdout only, `- ` bullets, no Needs, Stuck or Fleet section (`--full` adds them for the terminal report): Merged (merged since `digests.lastSentAt`, else 12h) from `gh pr list`, and in `--full` the open PR count (a failed gh prints "unknown (gh failed)", never 0), every other section from the ledger; read-only; `--full` also lists `ledger.violations` and an incomplete `ledger.violationCheck` |
 | `scripts/intake.sh <cmd>` | the deterministic half of `intake` (rules in `scripts/intake.jq`) |
-| `scripts/test/*.sh` | `classify-standing`, `classify-violations`, `teardown-gates`, `resume-flow`, `intake`, `mc-emit`, `boot-sweep`, `runtime-check`, `ci-queue-alert`, `cred-check`, `rm-guard-hook`, `digest-gh`, `orca-json-helpers`, `waiting-autocompact`, `spawn-verify`, `classify-ownership`, `ask-timeout`, `queue`, `queue-audit`, `salv3`, `markers`, `unlinked-prs`: hermetic tests against `scripts/test/fixtures/config.test.yaml`; run the matching one after any script change |
+| `scripts/test/*.sh` | `classify-standing`, `classify-violations`, `teardown-gates`, `resume-flow`, `intake`, `mc-emit`, `boot-sweep`, `runtime-check`, `ci-queue-alert`, `cred-check`, `rm-guard-hook`, `digest-gh`, `orca-json-helpers`, `waiting-autocompact`, `spawn-verify`, `classify-ownership`, `ask-timeout`, `queue`, `queue-audit`, `salv3`, `markers`, `unlinked-prs`, `tick-emit`: hermetic tests against `scripts/test/fixtures/config.test.yaml`; run the matching one after any script change |
 
 <!-- project-local: scripts -->
 
