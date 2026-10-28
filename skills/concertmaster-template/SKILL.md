@@ -438,6 +438,20 @@ $ORCA worktree create $ENV --repo name:<cfg.worktrees.orca_repo> \
   and send the brief only when `wait.satisfied` is true (pr-sweep `adapters/orca.md`).
 - Next tick: the worker's comment should read `cm:running`; if the pane still
   shows `[Pasted text` with no turn started, send Enter once.
+- Starting claude from a terminal instead (a respawn, or a model-pinned spawn): resolve
+  the binary with `CLAUDE=$(scripts/spawn-verify.sh resolve [--ssh <target>])`, which
+  prints an absolute, non-stub path (a new terminal can have a PATH without claude, and a
+  half-finished self-update can leave a stub), and send the brief only after
+  `scripts/spawn-verify.sh check --terminal <h> [--environment <host>] --wait 45` exits 0.
+  `terminal wait --for tui-idle` is not proof: a plain shell prompt satisfies it and the
+  brief would be typed into the shell. The check judges only the bottom of the pane (the
+  last 12 non-empty lines), trusts only the bottom-most model line, needs a Claude footer
+  under it, and works in the C locale. It compares against `cfg.spawn.expected_model` and
+  `cfg.spawn.expected_effort` (flags `--model`/`--effort` override). On `verify: FAIL
+  <reason>` (`shell-prompt`, `command-not-found`, `wrong-model`, `claude-not-running`,
+  `claude-dialog`, `no-banner`) send nothing: read the pane, fix the cause, close the failed
+  terminal by its handle first, retry once, then report. For `claude-dialog` Claude is live
+  behind an open menu: answer or cancel it, do not close the terminal.
 
 ## Stuck rule
 
@@ -832,11 +846,12 @@ shellcheck clean.
 | `scripts/ci-queue-alert.sh [--dry-run]` | alerts when too many workflow runs stay queued, once per episode (`references/ci-capacity.md`) |
 | `scripts/cred-check.sh [--dry-run] [--publish [FILE]]` | weekly validity probe of the credentials in a names-only index (`references/credentials.md`) |
 | `scripts/hooks/rm-guard-hook.sh` | PreToolUse hook: denies an unguarded variable path under a recursive `rm` at once (`references/prompt-stalls.md`) |
+| `scripts/spawn-verify.sh` | guards for a claude session started in a terminal: `resolve [--ssh <target>]` prints an absolute, non-stub claude path (exit 1 with the npm fix otherwise); `check (--terminal <h> [--environment <host>] [--wait <s>] \| --file <screen>) [--model <m>] [--effort <e>]` exits 0 only when the bottom of the pane shows the expected model (`cfg.spawn.expected_model` / `expected_effort`) on a Claude footer, else `verify: FAIL <reason>` (send no brief) |
 | `scripts/sync-from-toolkit.sh <project-skill-dir>` | copies this engine into a project's skill directory without touching its `config.yaml` or `references/project-local.md` (README, "Update a project") |
 | `scripts/hooks/mc-worker-hook.sh` | Claude Code hook for workers, in-scope repos only (optional) |
 | `scripts/digest.sh [--full] [--since-hours n]` | digest text, stdout only, `- ` bullets, no Needs, Stuck or Fleet section (`--full` adds them for the terminal report): Merged (merged since `digests.lastSentAt`, else 12h) from `gh pr list`, and in `--full` the open PR count (a failed gh prints "unknown (gh failed)", never 0), every other section from the ledger; read-only; `--full` also lists `ledger.violations` and an incomplete `ledger.violationCheck` |
 | `scripts/intake.sh <cmd>` | the deterministic half of `intake` (rules in `scripts/intake.jq`) |
-| `scripts/test/*.sh` | `classify-standing`, `classify-violations`, `teardown-gates`, `resume-flow`, `intake`, `mc-emit`, `boot-sweep`, `runtime-check`, `ci-queue-alert`, `cred-check`, `rm-guard-hook`, `digest-gh`, `orca-json-helpers`, `waiting-autocompact`: hermetic tests against `scripts/test/fixtures/config.test.yaml`; run the matching one after any script change |
+| `scripts/test/*.sh` | `classify-standing`, `classify-violations`, `teardown-gates`, `resume-flow`, `intake`, `mc-emit`, `boot-sweep`, `runtime-check`, `ci-queue-alert`, `cred-check`, `rm-guard-hook`, `digest-gh`, `orca-json-helpers`, `waiting-autocompact`, `spawn-verify`: hermetic tests against `scripts/test/fixtures/config.test.yaml`; run the matching one after any script change |
 
 <!-- project-local: scripts -->
 

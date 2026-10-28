@@ -387,3 +387,7 @@ _cm_ledger_write_locked() {
 # permissions line, the shortcuts hint, or a subagent/task row. A shell prompt (any style) or an error never does.
 # shellcheck disable=SC2034  # read by boot-sweep.sh
 CM_FOOTER_RE='⏵⏵|⏸|plan mode on|bypass permissions|accept edits on|auto-accept|\? for shortcuts|esc to interrupt|(·|•)[[:space:]]+eff(ort)?[[:space:]]+[a-z]+|ctx \[|^[[:space:]]*(◯|●|◐|◑|⎿|✻|✢|✳|✶|✽)[[:space:]]'
+# One model/effort line of a Claude pane: the banner ("<Model> <ver> with <effort> effort") or the status line
+# ("<model>-<ver> · eff <effort>"). spawn-verify.sh judges the bottom-most such line against the expected model.
+# shellcheck disable=SC2034  # read by spawn-verify.sh
+CM_ANY_MODEL_RE='[[:alpha:]]+[ -]?[0-9]+(\.[0-9]+)?[^[:alnum:]]{1,6}(with )?[a-z]*[ ]?(effort|eff )'
