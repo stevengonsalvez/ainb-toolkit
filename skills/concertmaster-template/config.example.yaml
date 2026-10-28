@@ -236,6 +236,21 @@ credentials:
   index_key: CONCERTMASTER-CREDENTIALS-INDEX   # name of the Bitwarden secret holding the index (names only)
   bws_project: null                # Bitwarden project the index secret lives in (needed only for --publish)
 
+# scripts/unlinked-prs.sh: flag open PRs with no linked issue, one gh call per run. [script]
+unlinked_prs:
+  repo: null                       # default github.org/github.main_repo
+  since: "2026-01-01T00:00:00Z"    # only PRs created at or after this are checked; set to your adoption date
+  skip_authors: [dependabot, app/dependabot, renovate, app/renovate, github-actions]
+  include_drafts: false
+  timeout_s: 60
+
+# scripts/automations-audit.sh: audit Orca automations that match the project or a lane. [script]
+automations:
+  names: []                        # extra name fragments to match besides project.name and the lane names
+  expected: []                     # exact names of deliberate automations: never flagged DUPLICATE
+  forbidden_agents: []             # an enabled automation running one of these is flagged FORBIDDEN, e.g. [codex]
+  duplicate_pattern: "sweeper|lead|recovery|resume"   # regex on the name: a lane-recovery timer
+
 terminology:
   rules: []                        # e.g. { use: Member, never: User, scope: user-facing copy }
   no_em_dashes: true

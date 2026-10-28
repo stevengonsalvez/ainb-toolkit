@@ -127,7 +127,7 @@ needs `telemetry.project_id` (a `p_<owner>` id), else the sink refuses every eve
    copy rules under `## brief-footer`, per-lane addenda under `## lane: <label>`,
    extra tick steps under `## tick-extra`. `references/overlay.md` lists every hook
    point and what must be a toolkit PR instead. Commit the overlay with the project.
-6. **Test.** `for t in scripts/test/*.sh; do bash "$t" || echo "FAIL $t"; done`
+6. **Test.** `scripts/config-check.sh` (the config doctor), then `for t in scripts/test/*.sh; do bash "$t" || echo "FAIL $t"; done`
    and `shellcheck -x scripts/*.sh scripts/hooks/*.sh scripts/test/*.sh`. Then a
    read-only dry run with the real config: `scripts/discover.sh --no-prs | scripts/classify.sh --table`.
 7. **Boot.** In an Orca terminal on `cfg.hosts.home`, in the
