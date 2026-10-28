@@ -84,6 +84,15 @@ git -C "$GT" init -q && git -C "$GT" remote add origin https://github.com/acme/o
 [ -n "$(CWD="$GT" run 'rm -rf $S/x')" ] && echo "ok   org origin is in scope" || { echo "FAIL org origin"; fail=1; }
 git -C "$GT" remote set-url origin https://github.com/someone-else/x.git
 [ -z "$(CWD="$GT" run 'rm -rf $S/x')" ] && echo "ok   foreign origin untouched" || { echo "FAIL foreign origin"; fail=1; }
+# a git checkout with NO origin, and a plain non-git directory, both outside the path match, stay out
+# of the way (an empty origin URL must not put a directory in scope: the global hook must not change
+# other projects)
+NG="$(mktemp -d "${TMPDIR:-/tmp}/cm-rmguard-nogit.XXXXXX")" || exit 1
+NO="$(mktemp -d "${TMPDIR:-/tmp}/cm-rmguard-noorigin.XXXXXX")" || exit 1
+trap 'rm -rf -- "${GT:?}" "${NG:?}" "${NO:?}"' EXIT
+git -C "$NO" init -q
+if [ -z "$(CWD="$NG" run 'rm -rf $S/x')" ]; then echo "ok   non-git dir outside the path match untouched"; else echo "FAIL non-git dir"; fail=1; fi
+if [ -z "$(CWD="$NO" run 'rm -rf $S/x')" ]; then echo "ok   git dir with no origin untouched"; else echo "FAIL no-origin dir"; fail=1; fi
 # a malformed payload and a missing command never block
 [ -z "$(printf 'not json' | "$HOOK")" ] && echo "ok   garbage input allowed" || { echo "FAIL garbage input"; fail=1; }
 # the deny output is valid hook JSON with a reason
