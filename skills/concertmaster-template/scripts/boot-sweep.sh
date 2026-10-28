@@ -19,12 +19,17 @@
 #   no readable screen, a question menu, a shell prompt or no sign of Claude at the bottom: not sent
 #   mid-turn ("esc to interrupt"): not sent
 #   duplicate live agents in one worktree: not sent (resume.sh and the concertmaster own that)
+#   the concertmaster session itself IS nudged (worktree path ending /<worktrees.self_name>, or the
+#   ledger row workers.<worktrees.self_name> with standing true), with the exact text "/loop /concertmaster tick"
+#   instead of the generic lane text, under every check and cap above; if it cannot be re-armed the
+#   unit log and the top of the inbox note say so for a human
 #   at most TWO nudges per lane per boot; a nudge counts as done only when the transcript advances
 #   within CM_BOOT_CONFIRM_S (60 s); otherwise it is reported `unconfirmed` and retried once later
 # Output: TSV on stdout and $CM_HOME/inbox/boot-sweep-<UTC with seconds>.md. Exit 0 always except
 # bad usage (2): a failed sweep must never fail the boot. Install: references/boot-sweep.md.
 # Env: CM_HOME, CM_BOOT_SETTLE_S (45), CM_BOOT_ORCA_WAIT_S (300), CM_BOOT_CONFIRM_S (60),
-#      CM_BOOT_NUDGE (text), CM_BOOT_EPOCH (test hook), CM_CLAUDE_PROJECTS (default ~/.claude/projects).
+#      CM_BOOT_NUDGE (text), CM_SELF_PATH_RE (concertmaster worktree path regex, default built from
+#      worktrees.self_name), CM_BOOT_EPOCH (test hook), CM_CLAUDE_PROJECTS (default ~/.claude/projects).
 # Scope: terminals whose worktree path matches config worktrees.path_match (CM_PATH_MATCH).
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -36,7 +41,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY=1 ;;
     --no-wait) WAIT=0 ;;
-    -h|--help) sed -n '2,27p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,32p' "$0"; exit 0 ;;
     *) cm_warn "boot-sweep.sh: unknown arg: $1"; exit 2 ;;
   esac
   shift
@@ -53,6 +58,9 @@ WAIT_MAX="${CM_BOOT_ORCA_WAIT_S:-300}"
 CONFIRM_S="${CM_BOOT_CONFIRM_S:-60}"
 PROJECTS="${CM_CLAUDE_PROJECTS:-$HOME/.claude/projects}"
 NUDGE="${CM_BOOT_NUDGE:-The VM restarted. Any /loop or ScheduleWakeup timer you had died with it. Check git status and your worktree comment, re-arm your standing /loop now with the same prompt as before (your brief under ~/.concertmaster/briefs lists it if you lost it), and carry on.}"
+NUDGE_CM="/loop /concertmaster tick"   # the concertmaster re-arms by running its own loop, not by being told to
+# the concertmaster's own worktree: a path ending /<worktrees.self_name> (ERE metacharacters escaped)
+CM_PATH_RE="${CM_SELF_PATH_RE:-/$(printf '%s' "$CM_SELF_WORKTREE" | sed 's#[][\\.^$*+?(){}|]#\\&#g')/*\$}"
 STATE_DIR="$CM_HOME/cache"
 boot="${CM_BOOT_EPOCH:-$(awk '$1=="btime"{print $2; exit}' /proc/stat 2>/dev/null)}"
 if [ -z "$boot" ]; then cm_warn "boot-sweep.sh: cannot read boot time, nothing to do"; exit 0; fi
@@ -97,7 +105,7 @@ set_attempts() { # $1 handle $2 n  (awk, not grep: the handle is data, never a p
   { awk -F'\t' -v h="$1" '$1 != h' "$STATE" 2>/dev/null; printf '%s\t%s\n' "$1" "$2"; } > "$STATE.new" 2>/dev/null && mv "$STATE.new" "$STATE"
 }
 
-out=""; sent=0; kept=0
+out=""; sent=0; kept=0; CM_HANDLES=""
 add() { out="$out$1|$2|$3|$4"$'\n'; } # session | handle | result | detail
 
 terms="$(cm_timeout 60 "$ORCA" terminal list --json </dev/null 2>/dev/null | jq -r --arg re "$CM_PATH_MATCH" '.result.terminals[]? | select((.worktreePath // "") | test($re)) | select((.agentIdentity // "") == "claude") | "\(.handle)|\(.worktreePath)"' 2>/dev/null)"
@@ -107,11 +115,12 @@ if [ -z "$terms" ]; then
 fi
 
 # only STANDING lanes of this host (ledger rows with standing==true and host local/unset) are ever
-# nudged: a dev or epic worker has no standing /loop to re-arm, and the concertmaster itself is not a lane.
-# No readable ledger = send nothing.
+# nudged: a dev or epic worker has no standing /loop to re-arm. The concertmaster session is nudged too
+# (below), by path or by its own ledger row. No readable ledger and no concertmaster terminal = send nothing.
 LEDGER="$CM_HOME/ledger.json"
+CM_LEDGER_PATH="$(jq -r --arg self "$CM_SELF_WORKTREE" '.workers[$self] // empty | select(.standing == true and ((.host // "local") == "local")) | (.path // .worktree // .worktreePath // empty)' "$LEDGER" 2>/dev/null | sed -E 's#/\.(/|$)#/#g; s#//+#/#g; s#(.)/+$#\1#' )"
 STANDING="$(jq -r '.workers // {} | to_entries[] | .value | select(.standing == true and ((.host // "local") == "local")) | (.path // .worktree // .worktreePath // empty)' "$LEDGER" 2>/dev/null | sed -E 's#/\.(/|$)#/#g; s#//+#/#g; s#(.)/+$#\1#' )"
-if [ -z "$STANDING" ]; then
+if [ -z "$STANDING" ] && ! awk -F'|' '{print $2}' <<<"$terms" | grep -qE "$CM_PATH_RE"; then
   early_note "No standing local lanes found in $LEDGER (missing or unreadable ledger): nothing was nudged."
   echo "boot-sweep: no standing local lanes in the ledger, nothing to do"; exit 0
 fi
@@ -124,8 +133,12 @@ while IFS='|' read -r handle wt; do
   name="$(basename "$wt")"
   if grep -qxF -- "$wt" <<<"$dups"; then add "$name" "$handle" report "duplicate terminals in one worktree: left to resume.sh and the concertmaster"; kept=$((kept+1)); continue; fi
   normwt="$(printf '%s' "$wt" | sed -E 's#/\.(/|$)#/#g; s#//+#/#g; s#(.)/+$#\1#')"
-  if ! grep -qxF -- "$normwt" <<<"$STANDING"; then add "$name" "$handle" not-standing "not a standing lane in the ledger: never nudged"; continue; fi
-  m="$(transcript_mtime "$wt")"
+  is_cm=0; text="$NUDGE"
+  if [ -n "$CM_LEDGER_PATH" ] && [ "$normwt" = "$CM_LEDGER_PATH" ] || grep -qE "$CM_PATH_RE" <<<"$normwt"; then is_cm=1; text="$NUDGE_CM"; fi
+  [ "$is_cm" = 1 ] && CM_HANDLES="$CM_HANDLES $handle"
+  if [ "$is_cm" = 0 ] && [ -z "$STANDING" ]; then add "$name" "$handle" no-ledger "ledger missing or unreadable: lane not considered, restore $LEDGER"; continue; fi
+  if [ "$is_cm" = 0 ] && ! grep -qxF -- "$normwt" <<<"$STANDING"; then add "$name" "$handle" not-standing "not a standing lane in the ledger: never nudged"; continue; fi
+  m="$(transcript_mtime "$normwt")"
   if [ "$m" = unknown ]; then add "$name" "$handle" unknown "no Claude transcript visible for this worktree: not nudged"; kept=$((kept+1)); continue; fi
   if [ "$m" -ge "$boot" ]; then add "$name" "$handle" skipped "active since boot"; continue; fi
   tries="$(attempts_of "$handle")"; tries="${tries:-0}"
@@ -139,23 +152,35 @@ while IFS='|' read -r handle wt; do
   if grep -qE 'esc to interrupt' <<<"$bottom"; then add "$name" "$handle" busy "mid-turn"; kept=$((kept+1)); continue; fi
   if [ "$DRY" = 1 ]; then add "$name" "$handle" would-nudge "no turn since boot (transcript $((boot - m))s before boot)"; continue; fi
   t0="$(now_s)"
-  resp="$(cm_timeout 60 "$ORCA" terminal send --terminal "$handle" --text "$NUDGE" --enter --json </dev/null 2>/dev/null)"
+  resp="$(cm_timeout 60 "$ORCA" terminal send --terminal "$handle" --text "$text" --enter --json </dev/null 2>/dev/null)"
   if [ "$(printf '%s' "$resp" | jq -r '.ok // false' 2>/dev/null)" != true ]; then add "$name" "$handle" send-failed "orca did not accept the input"; kept=$((kept+1)); continue; fi
   set_attempts "$handle" $((tries + 1))
   ok=0; waited=0
   while [ "$waited" -lt "$CONFIRM_S" ]; do
     sleep 3; waited=$((waited + 3))
-    cur="$(transcript_mtime "$wt")"; [ "$cur" != unknown ] && [ "$cur" -ge "$t0" ] && { ok=1; break; }
+    cur="$(transcript_mtime "$normwt")"; [ "$cur" != unknown ] && [ "$cur" -ge "$t0" ] && { ok=1; break; }
   done
   if [ "$ok" = 1 ]; then add "$name" "$handle" nudged "turn started ${waited}s after the nudge"; sent=$((sent+1))
   else add "$name" "$handle" unconfirmed "input accepted, no turn within ${CONFIRM_S}s: one retry on the next sweep"; kept=$((kept+1)); fi
 done <<<"$terms"
 
+# the concertmaster tick reads the inbox, and a concertmaster that failed to re-arm is the one reader
+# that is dead: say so in the unit log and at the top of the note, for a human
+cm_bad=""
+for h in $CM_HANDLES; do
+  r="$(printf '%s' "$out" | awk -F'|' -v h="$h" '$2==h{print $3}' | tail -n 1)"
+  case "$r" in nudged|skipped|would-nudge) ;; *) cm_bad="$cm_bad $h($r)" ;; esac
+done
+[ -n "$cm_bad" ] && cm_warn "boot-sweep: CONCERTMASTER NOT RE-ARMED:$cm_bad: a human must run /loop /concertmaster tick in that session"
 printf '%s' "$out" | awk -F'|' '{printf "%s\t%s\t%s\t%s\n",$1,$2,$3,$4}'
 if [ "$DRY" = 0 ]; then
   note="$CM_HOME/inbox/boot-sweep-$(date -u +%Y%m%dT%H%M%SZ)-$$.md"
   {
     printf '# boot-sweep %s (boot %s): %s nudged, %s not nudged\n\n' "$(date -u +%FT%TZ)" "$boot" "$sent" "$kept"
+    # shellcheck disable=SC2016  # the backticks are markdown, not command substitution
+    [ -n "$cm_bad" ] && printf '**NEEDS A HUMAN: the concertmaster loop was not re-armed (%s). Run `/loop /concertmaster tick` in the concertmaster session.**\n\n' "${cm_bad# }"
+    # shellcheck disable=SC2016
+    [ -z "$STANDING" ] && printf '**Ledger missing or unreadable (%s): only the concertmaster was considered, every other lane is `no-ledger`.**\n\n' "$LEDGER"
     printf 'session | terminal | result | detail\n--- | --- | --- | ---\n'
     printf '%s' "$out" | awk -F'|' '{printf "%s | %s | %s | %s\n",$1,$2,$3,$4}'
   } > "$note" 2>/dev/null

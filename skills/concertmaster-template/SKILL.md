@@ -154,6 +154,14 @@ when the owner calls it).
 
 ## The tick
 
+**No blocking ask in a tick turn.** Never call `AskUserQuestion` in a tick turn (one that
+started from `/loop /concertmaster tick`): the picker holds the turn open, `ScheduleWakeup`
+cannot fire, and every tick stops until the owner answers. Put the decision in the tick
+table as `WAITING: <owner>, <question>, <age>` with the recommended option in the question,
+name it in the `next:` line, and keep ticking. Use `AskUserQuestion` only in a turn the
+owner started (they just wrote to the concertmaster), and even then call `ScheduleWakeup`
+BEFORE asking.
+
 ```text
 ┌─────────┐  ┌──────────────┐  ┌────────────┐  ┌───────────┐  ┌──────────┐
 │ wake    │─▶│ discover     │─▶│ reconcile  │─▶│ act       │─▶│ report + │
@@ -192,7 +200,8 @@ when the owner calls it).
    `absent` with the tick that will spawn it.
 4. **Act**, in this order, each bounded:
    - `cm:blocked` comments and `awaiting-input` flags: answer what is factual
-     or already decided; the rest becomes one AskUserQuestion to the owner.
+     or already decided; the rest becomes a `WAITING: <owner>, <question>, <age>`
+     row in the tick table (no AskUserQuestion in a tick turn).
    - `abrupt.sh` rows: nudge or resume each (§ Resume), never while
      `resume.lock` exists. `waiting.sh` rows: list each with its wait time.
    - **stuck**: § Stuck rule.
@@ -255,7 +264,7 @@ queued ─▶ spawning ─▶ running ─▶ done ─▶ retired ─▶ teardown
                       stuck ──2h or 2 nudges──▶ respawn w/ handover
                         │                       or ASK the owner
                         ▼
-                  blocked-on-owner ─▶ AskUserQuestion in concertmaster
+                  blocked-on-owner ─▶ WAITING row in the tick table
 ```
 
 Timings come from `cfg.schedule` (`stuck_minutes`, `max_nudges`,
@@ -416,7 +425,8 @@ idle 45m ─▶ read pane (--screen) ─▶ question? ─▶ answer if factual/d
    subagent reads long scrollback and returns the state in two lines.
 2. Question showing: rule 3 (never type into a menu). Factual or already
    decided: answer with menu keys or a typed reply at a free-text prompt.
-   Otherwise `blocked-on-owner` and one AskUserQuestion.
+   Otherwise `blocked-on-owner`: a `WAITING: <owner>, <question>, <age>` row, no
+   AskUserQuestion in a tick turn (§ The tick, "No blocking ask").
 3. Otherwise **nudge** with something specific, not "continue": "Status check:
    your last output was <x> 52m ago. What blocks you? Set your worktree
    comment and carry on with <next step>." `nudges += 1`, `lastNudgeAt`.
@@ -471,8 +481,9 @@ Output is a table of lane, status, action. Details, the live-agent test and the
 safety rules: `references/resume.md`.
 
 After a host restart, `scripts/boot-sweep.sh` (run by systemd after the host's
-resume unit) nudges every lane that is still cut off to re-arm its `/loop`:
-`references/boot-sweep.md`.
+resume unit) nudges every lane that is still cut off to re-arm its `/loop`, and
+the concertmaster session itself (the `cfg.worktrees.self_name` worktree) with
+`/loop /concertmaster tick`: `references/boot-sweep.md`.
 
 ## Autonomy and guardrails
 
@@ -494,8 +505,10 @@ resume unit) nudges every lane that is still cut off to re-arm its `/loop`:
 | kill a pre-existing session | ASK once | first boot only |
 | production data write | ASK | through the runbook in `cfg.ops.route.data_repair` only |
 
-ASK means one AskUserQuestion with a recommended option first; work that does
-not depend on the answer carries on.
+ASK means one decision with a recommended option first; work that does
+not depend on the answer carries on. In a tick turn the ASK is a
+`WAITING: <owner>, <question>, <age>` row, never an AskUserQuestion (§ The tick,
+"No blocking ask"); the picker is for a turn the owner started, after `ScheduleWakeup`.
 
 ## Merge gate
 
@@ -715,8 +728,9 @@ When there is no ledger:
 
 ## Reporting
 
-Every tick and every turn ends with the owner's turn-end block, nothing after it
-except an AskUserQuestion:
+Every tick and every turn ends with the owner's turn-end block, nothing after it.
+A tick turn never ends with an AskUserQuestion (§ The tick, "No blocking ask"); in a
+turn the owner started, an AskUserQuestion may follow the block, after `ScheduleWakeup`:
 
 ```text
 | thread              | state                               | next             |
@@ -738,7 +752,10 @@ next: trigger prod for the 16:00 window
 - At most 5 bullets, one line each, under 15 words, tagged `[fact]` or `[inference]`.
 - No prose paragraphs, no em-dashes. Thread titles are human names with the PR
   number in `state`, not bare numbers.
-- A decision goes straight into AskUserQuestion, recommended option first.
+- A decision for the owner is a `WAITING: <owner>, <question>, <age>` row with the
+  recommended option in the question, and `next:` names it. Outside a tick, in a turn
+  the owner started, it may go into AskUserQuestion, recommended option first, after
+  `ScheduleWakeup`.
 - Quiet tick (nothing changed): one row per lane plus `next:`.
 - Every session blocked on a menu (`waiting.sh`) gets a row with its wait time.
 
