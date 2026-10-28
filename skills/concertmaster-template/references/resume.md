@@ -131,6 +131,9 @@ or briefs.
       Ledger text passes a character allow-list first (letters, digits, space and
       `# : . , _ / ( ) + @ = -`), so no shell metacharacter, quote or backtick is
       ever typed. A send that is not accepted is **held**.
+      For a standing lane's own agent on this host, the nudge also carries the
+      newest 1200 characters of the lane journal (`references/ledger.md` § Lane
+      journal), through the same allow-list and marked as data.
 6. **Print the table** (lane, status, action), then one `ask <owner>:` line per
    duplicate or missing row. Exit 0 when every row is live, resumed or offline;
    exit 3 when any row needs attention (failed, held, missing, unknown, manual,

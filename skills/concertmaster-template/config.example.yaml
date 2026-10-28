@@ -144,6 +144,13 @@ lanes:
   - { name: "epic:<name>", standing: true, spawn_at: 1, agent: claude, model: null, max_parallel: 3 }
 single_task_workers: [deploy, ops-fix, sweep, native-release, one-pr]
 
+# Per-lane journal ($CM_HOME/lanes/<lane>/journal.md, scripts/lane-journal.sh). Not under `lanes:`, which is the list above.
+journal:
+  tail_lines: 20                   # [script] entries `tail` prints without a count
+  max_chars: 1500                  # [script] longest entry text
+  keep_lines: 500                  # [script] `rotate` keeps the last N entries per lane
+  keep_days: 90                    # [script] `rotate` drops entries older than this
+
 # scripts/spawn-verify.sh: what a freshly started Claude pane must show before a brief is sent. [script]
 # Display forms, as the pane prints them: the banner reads "<Model> <ver> with <effort> effort",
 # the status line "<model>-<ver> · eff <effort>". --model and --effort on the command line win.
