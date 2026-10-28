@@ -30,9 +30,18 @@ owner hands issue ─▶ queue.sh add ─▶ queued ─▶ queue.sh grant ─▶
   configured host missing from the census counts 0 and gets no grant (`-`).
 - `list [--json]` and `depth` read only.
 
+## Audit
+
+`scripts/queue-audit.sh` flags granted or queued items that show no progress: no pull request created
+since the grant that names the issue and no worktree comment (any host) that names it, after
+`CM_QUEUE_STALL_MIN` (default 30) minutes. A fresh-looking lane comment is not proof of progress. It
+needs `gh` and the Orca CLI, makes one `gh` call plus one worktree listing per host, and exits 3 with
+`STALE gh call failed, no verdicts` rather than read "no PRs" as "no progress". Run it after the
+tick's rate-limit check.
+
 ## Requirement
 
 `add`, `mark` and a real `grant` write the ledger through `cm_ledger_write`, `cm_ledger_lock` and
 `cm_ledger_unlock` from `scripts/lib.sh` (the guarded ledger writer, `references/ledger.md`). A
 `lib.sh` without them makes those commands refuse with a message and exit 1. Tests:
-`scripts/test/queue.sh`.
+`scripts/test/queue.sh`, `scripts/test/queue-audit.sh` (the audit is read-only and needs no writer).
