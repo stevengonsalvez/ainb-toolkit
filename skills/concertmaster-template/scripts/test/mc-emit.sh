@@ -458,5 +458,15 @@ check "requeue, no project id: no projectId stamped, eventId still set" \
 check "requeue, no project id: line naming a project stays dead, upsert moves" \
   "$(jq -r '.body.type // .body.agentId' "$DEADF" | tr '\n' ' ')$(jq -r 'select(.endpoint == "/api/fleet/upsert") | .body.agentId' "$CM_HOME/outbox.jsonl")" "c u"
 
+# ---- --issue-state carries an eventId (the sink requires one on typed events) -----
+reset; for _ in 1 2; do MC_NO_FLUSH=1 "$EMIT" --issue-state 44 in-review 2>/dev/null; done
+check "issue.state carries an eventId in the sink's charset" \
+  "$(jq -r '.body.eventId | test("^is-44-[0-9]+-[0-9]+$")' "$CM_HOME/outbox.jsonl" | sort -u)" "true"
+check "two issue.state calls, two eventIds" "$(jq -r '.body.eventId' "$CM_HOME/outbox.jsonl" | sort -u | wc -l | tr -d ' ')" "2"
+MC_TENANT_ID="t-mc" emit --flush >/dev/null
+check "issue.state eventId sent as queued" "$(jq -r '.eventId | startswith("is-44-")' "$STUB/bodies.jsonl" | sort -u)" "true"
+check "token never in argv, queued or dead lines" \
+  "$(cat "$STUB/curl.args" "$CM_HOME"/outbox*.jsonl 2>/dev/null | grep -c -- "$TOKEN")" "0"
+
 echo "passed=$PASS failed=$FAIL"
 [ "$FAIL" = 0 ]
