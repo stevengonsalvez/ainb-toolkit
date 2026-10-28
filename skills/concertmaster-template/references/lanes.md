@@ -77,6 +77,13 @@ orca worktree set --worktree active --comment "cm:<state> <detail>" --json
 | `cm:retire <why>` | set by the concertmaster or the owner on a worktree whose work is finished | classify treats every agent as done: retire, then teardown once clean and merged or closed |
 | `cm:keep <why, until when>` | set by the concertmaster or the owner to hold a finished worktree on purpose | classify holds it as standing-idle: never retired or torn down; chase the owner once the until-when has passed |
 
+A `cm:merge-ready` marker is genuine only at the start of the comment or right after ` | `, as the
+whole token, followed by `#<pr> <sha>` (the first pair may follow some prose, but only before the
+next `cm:` token; further pairs only across whitespace, `|`, commas or parenthesised notes). The
+sha names the exact head to gate: a different live head makes the marker stale, and a merged PR's
+marker stays listed until a later comment replaces it, so check the PR state first.
+`orca worktree list --json [--environment <host>] | scripts/markers.py` prints the genuine pairs.
+
 Workers never use AskUserQuestion: nobody is there to answer the menu, and
 concertmaster never types into one. A worker that needs a decision writes
 `cm:blocked <question>`, prints the question with its options and a
