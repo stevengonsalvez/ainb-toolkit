@@ -37,6 +37,13 @@
 # records it. Items whose ledger worker owns a beadsEpic get flag
 # beads-epic:<id> and a done suggest that runs the beads gate first.
 #
+# A worktree comment starting `cm:retire` counts as every agent done (done-
+# selfreported: retire, then teardown once clean and merged or closed); one
+# starting `cm:keep` is held as standing-idle (never retire or teardown). A
+# standing lane is not kept asleep: standing-dead still respawns it. Live agents
+# and dirty or unpushed work keep their own class; a ledger-unknown worktree
+# keeps its standing-unknown flag until the ledger records standing:false.
+#
 # Flag has-child-agent (child worktrees, a pane with a parent pane, or more
 # than one agent pane) overrides the action to "investigate" and the item is
 # never a teardown candidate.
@@ -165,11 +172,15 @@ def nrm: ascii_downcase | gsub("[^a-z0-9]"; "-");
       | ([ $lw[] | .value.beadsEpic // empty | select(type == "string") ] | unique) as $epics
       | ((($w.comment // "") | startswith("cm:idle"))
          and ([ $w.agents[]? | select(.state == "working") ] | length) == 0) as $cmIdle
+      | (($w.comment // "") | test("^cm:retire(\\s|$)")) as $cmRetire
+      | (($w.comment // "") | test("^cm:keep(\\s|$)")) as $cmKeep
       | ([
           (if $standing then "standing" else empty end),
           (if $standingUnknown then "standing-unknown" else empty end),
           ($epics[] | "beads-epic:\(.)"),
           (if $cmIdle then "cm:idle" else empty end),
+          (if $cmRetire then "cm:retire" else empty end),
+          (if $cmKeep then "cm:keep" else empty end),
           (if ($live | length) > 1 then "multi-agent" else empty end),
           (if ($w.childWorktreeIds | length) > 0 then "has-children" else empty end),
           (if $childAgent then "has-child-agent" else empty end),
@@ -205,8 +216,9 @@ def nrm: ascii_downcase | gsub("[^a-z0-9]"; "-");
             suggest: "never delete; escalate with diff summary"}
          elif $prDone then
            {class: "done-merged", reason: "PR #\($w.pr.number) \($prState)", suggest: "teardown"}
-         elif $allDone then
-           {class: "done-selfreported", reason: "all \($w.agents | length) agent(s) report done",
+         elif $allDone or $cmRetire then
+           {class: "done-selfreported",
+            reason: (if $allDone then "all \($w.agents | length) agent(s) report done" else "comment cm:retire" end),
             suggest: (if $w.pr != null and $prState == "OPEN" then "retire worker; PR #\($w.pr.number) to pr-sweeper"
                       else "retire worker; confirm deliverable; teardown only if the owner approves" end)}
          elif $w.source == "git" then
@@ -222,15 +234,17 @@ def nrm: ascii_downcase | gsub("[^a-z0-9]"; "-");
            {class: "standing-dead", reason: ("standing lane, no live agent; " + $c0.reason),
             suggest: ((if $prState == "OPEN" then "hand PR #\($w.pr.number) to pr-sweeper; " else "" end)
                       + "respawn in place (claude --continue in its worktree); never retire or teardown")}
-         elif $standing and $c0.class != "main-checkout" then
+         elif ($standing or $cmKeep) and $c0.class != "main-checkout" then
            (if ($c0.class == "stuck" and $cmIdle)
                or (["done-merged", "done-selfreported", "orphan-git-only", "idle"] | index($c0.class)) then
-              {class: "standing-idle", reason: ("standing lane; " + $c0.reason),
+              {class: "standing-idle", reason: ((if $standing then "standing lane; " else "kept by cm:keep; " end) + $c0.reason),
                suggest: ((if $prState == "OPEN" then "hand PR #\($w.pr.number) to pr-sweeper; " else "" end)
-                         + (if ($epics | length) > 0
+                         + (if $cmKeep
+                            then "kept by comment (cm:keep <why, until when>): chase the owner once its until-when has passed; never retire, teardown or respawn"
+                            elif ($epics | length) > 0
                             then "standing lane: count open beads under \($epics | join(",")); open: nudge to continue; never retire, teardown or respawn"
                             else "standing lane: idle; hand it work; never retire, teardown or respawn" end))}
-            elif $c0.class == "stuck" then
+            elif $c0.class == "stuck" and $standing then
               $c0 + {suggest: "standing lane: read pane, nudge (max 2); respawn in place only, never retire or teardown"}
             else $c0 end)
          elif $standingUnknown and (["done-merged", "done-selfreported", "orphan-git-only", "idle"] | index($c0.class)) then
