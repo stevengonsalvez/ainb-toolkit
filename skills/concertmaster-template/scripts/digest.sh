@@ -7,7 +7,8 @@
 # Default output is the text for a chat group: terse "- " bullets, no greeting. Sections:
 # merged, deployed (and stopped deploys). Nothing in it names a host or a worker.
 # --full adds the rest, for the concertmaster's terminal report and never for a group:
-# needs <owner>, stuck, and a one-line fleet footer (running, hosts, open PRs).
+# needs <owner>, open follow-ups (ledger followUps[], scripts/followups.sh), stuck, and a
+# one-line fleet footer (running, hosts, open PRs).
 # Window: --since-hours <n>, else the time since ledger digests.lastSentAt, else 12h
 # (a lastSentAt that is missing, unparseable or in the future counts as missing). The
 # window starts exactly there: a PR merged before lastSentAt is not listed twice; the header
@@ -111,6 +112,8 @@ TZ="$CM_TZ" jq -r --argjson sinceH "$SINCE_H" --argjson since "$SINCE_EPOCH" --a
     ( if $full | not then empty else section("Needs \($owner)"; [ $workers[] | select(.state == "blocked-on-owner")
         | "\(.lane // "-") \(.task // .id | .[0:60]): \(.blockedQuestion // "see concertmaster")" ]
       + [ $asks[] | select(.state == "open") | "ask: \(.question | .[0:80]) (open \(.askedAt | ago))" ]) end ),
+    ( if $full | not then empty else section("Open follow-ups"; [ (.followUps // [])[] | select(.state != "done")
+        | "\(.lane // "-")/\(.id) owner \(.owner // "?"), posted by \(.worker // "?"): \(.text // "" | gsub("[[:cntrl:]]+"; " ") | .[0:80]) (open \(.openedAt | ago))" ]) end ),
     ( if $full | not then empty else section("Stuck"; [ $workers[] | select(.state == "stuck")
         | "\(.task // .id | .[0:50]) on \(.host // "?"), idle \(.lastOutputAt | ago), nudges \(.nudges // 0)/2" ]) end ),
     ( if $full | not then empty else def clean: tostring | gsub("[[:cntrl:]]+"; " ");

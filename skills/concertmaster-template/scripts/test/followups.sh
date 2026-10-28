@@ -47,15 +47,15 @@ echo "== reconcile: child, follow-up, owner ask"
 seed
 census "lead-a:cm:running 2 workers
 cm:child child-a
-cm:followup validate-load owner=lane-a validation after the load
-cm:followup item-generic owner=owner 4 generic mappings: keep or delete" \
+cm:followup check-report owner=lane-a re-run the checks after the batch
+cm:followup pick-option owner=owner choose option a or b" \
   "child-a:cm:done" > "$ROOT/d1.json"
 "$FU" reconcile --discover "$ROOT/d1.json" >/dev/null 2>&1
 check "cm:child sets workers.<child>.parent"             '.workers["w-iso"].parent == "w-lead"'
 check "cm:followup opens a row"                          '[.followUps[] | select(.state == "open")] | length == 2'
-check "row carries worker, lane, owner, text"            '.followUps[] | select(.id == "validate-load") | .worker == "w-lead" and .lane == "lane-a" and .owner == "lane-a" and .text == "validation after the load" and .closedAt == null and (.openedAt | length > 0)'
-check "an item owned by the project owner also becomes an asks[] row"          '[.asks[] | select(.kind == "owner" and .state == "open" and .id == "fu-lane-a-item-generic")] | length == 1'
-check "an owner that is a lane gets no ask"              '[.asks[] | select(.id == "fu-lane-a-validate-load")] | length == 0'
+check "row carries worker, lane, owner, text"            '.followUps[] | select(.id == "check-report") | .worker == "w-lead" and .lane == "lane-a" and .owner == "lane-a" and .text == "re-run the checks after the batch" and .closedAt == null and (.openedAt | length > 0)'
+check "an item owned by the project owner also becomes an asks[] row"          '[.asks[] | select(.kind == "owner" and .state == "open" and .id == "fu-lane-a-pick-option")] | length == 1'
+check "an owner that is a lane gets no ask"              '[.asks[] | select(.id == "fu-lane-a-check-report")] | length == 0'
 
 echo "== reconcile: idempotent (d)"
 cp "$L" "$ROOT/before.json"; B1="$(baks)"
@@ -78,16 +78,16 @@ check "malformed lines add nothing"                      '.followUps | length ==
 
 echo "== reconcile: cm:followup-done closes"
 rec "lead-a:cm:running
-cm:followup validate-load owner=lane-a validation after the load
-cm:followup-done validate-load"
-check "cm:followup-done closes the row"                  '.followUps[] | select(.id == "validate-load") | .state == "done" and (.closedAt | length > 0)'
+cm:followup check-report owner=lane-a re-run the checks after the batch
+cm:followup-done check-report"
+check "cm:followup-done closes the row"                  '.followUps[] | select(.id == "check-report") | .state == "done" and (.closedAt | length > 0)'
 rec "lead-a:cm:running
-cm:followup validate-load owner=lane-a validation after the load"
-check "a stale cm:followup line does not reopen it"      '.followUps[] | select(.id == "validate-load") | .state == "done"'
+cm:followup check-report owner=lane-a re-run the checks after the batch"
+check "a stale cm:followup line does not reopen it"      '.followUps[] | select(.id == "check-report") | .state == "done"'
 rec "lead-a:cm:running
-cm:followup-done item-generic"
-check "done closes the owner row"                       '.followUps[] | select(.id == "item-generic") | .state == "done"'
-check "done answers the owner ask"                      '.asks[] | select(.id == "fu-lane-a-item-generic") | .state == "answered" and .decision == "followup-closed"'
+cm:followup-done pick-option"
+check "done closes the owner row"                       '.followUps[] | select(.id == "pick-option") | .state == "done"'
+check "done answers the owner ask"                      '.asks[] | select(.id == "fu-lane-a-pick-option") | .state == "answered" and .decision == "followup-closed"'
 check "every row is closed at this point"    '([.followUps[] | select(.state == "open")] | length) == 0'
 seed
 rec "lead-a:cm:running
@@ -160,8 +160,8 @@ if ! grep -q '^orphaned' "$ROOT/report.tsv"; then ok "e2: another live worker po
 cp "$ROOT/keep.json" "$L"
 "$FU" close item-codes >/dev/null 2>&1
 "$FU" report > "$ROOT/report.tsv"
-if ! grep -q 'item-codes' "$ROOT/report.tsv"; then ok "e2: closing removes the row"; else bad "e2 close" "$(cat "$ROOT/report.tsv")"; fi
-for st in done retired queued; do
+if ! grep -q 'item-ids' "$ROOT/report.tsv"; then ok "e2: closing removes the row"; else bad "e2 close" "$(cat "$ROOT/report.tsv")"; fi
+for st in "done" retired queued; do
   seed; rec "child-a:cm:running
 cm:followup x1 owner=lane-a t"
   jq --arg s "$st" '.workers["w-iso"].state = $s' "$L" > "$ROOT/p.json" && mv "$ROOT/p.json" "$L"
@@ -177,13 +177,13 @@ done
 echo "== report: owner-answered, malformed, unmatched, parentWorktreeId, open --lane"
 seed
 rec "lead-a:cm:running
-cm:followup item-generic owner=Owner 4 generic mappings"
+cm:followup pick-option owner=Owner choose option a or b"
 check "owner is lowercased"                              '.followUps[0].owner == "owner"'
 "$FU" report > "$ROOT/report.tsv"
-if ! grep -q 'item-generic' "$ROOT/report.tsv"; then ok "owner-id item with an open ask: no row"; else bad "owner-id row too early" "$(cat "$ROOT/report.tsv")"; fi
+if ! grep -q 'pick-option' "$ROOT/report.tsv"; then ok "owner-id item with an open ask: no row"; else bad "owner-id row too early" "$(cat "$ROOT/report.tsv")"; fi
 jq '.asks[0].state = "answered"' "$L" > "$ROOT/p.json" && mv "$ROOT/p.json" "$L"
 "$FU" report > "$ROOT/report.tsv"
-if grep -q '^followup	item-generic	w-lead	lane-a	owner	owner-answered' "$ROOT/report.tsv"; then ok "answered ask: row with owner state owner-answered"; else bad "owner-answered" "$(cat "$ROOT/report.tsv")"; fi
+if grep -q '^followup	pick-option	w-lead	lane-a	owner	owner-answered' "$ROOT/report.tsv"; then ok "answered ask: row with owner state owner-answered"; else bad "owner-answered" "$(cat "$ROOT/report.tsv")"; fi
 check "an answered ask does not close the item"          '.followUps[0].state == "open"'
 OUT="$(census "lead-a:cm:running
 cm:followup Bad_Id owner=x t
@@ -246,7 +246,7 @@ rec "lead-a:cm:running
 cm:followup v owner=ops first
 cm:followup-done v"
 OUT="$(census "lead-a:cm:running
-cm:followup v owner=ops second load, new item" | "$FU" reconcile 2>&1)"
+cm:followup v owner=ops second pass, new item" | "$FU" reconcile 2>&1)"
 if printf '%s\n' "$OUT" | grep -q 'followups: reused-id w-lead v'; then ok "a closed id posted with new text is reported as reused-id"; else bad "no reused-id line" "$OUT"; fi
 check "and the closed row is not reopened" '.followUps[0].state == "done"'
 OUT="$(census "lead-a:cm:running
@@ -309,6 +309,12 @@ check "close <id> closes the row"                        '.followUps[] | select(
 if [ "$rc" != 0 ]; then ok "close of an unknown id fails"; else bad "close of an unknown id returned 0"; fi
 "$FU" close c-three >/dev/null 2>&1
 check "close answers the owner ask"                     '.asks[] | select(.id == "fu-lane-a-c-three") | .state == "answered"'
+
+echo "== digest --full lists open follow-ups"
+OUT="$(CM_DIGEST_GH_TIMEOUT=1 "$HERE/../digest.sh" --full --ledger "$L" 2>/dev/null)"
+if printf '%s' "$OUT" | grep -q 'Open follow-ups (1)' && printf '%s' "$OUT" | grep -q 'lane-a/a-one'; then ok "--full has the section"; else bad "--full lacks the section" "$OUT"; fi
+OUT="$(CM_DIGEST_GH_TIMEOUT=1 "$HERE/../digest.sh" --ledger "$L" 2>/dev/null)"
+if ! printf '%s' "$OUT" | grep -q 'follow-up'; then ok "the group digest omits follow-ups"; else bad "group digest shows follow-ups" "$OUT"; fi
 
 echo "== bad input"
 seed
