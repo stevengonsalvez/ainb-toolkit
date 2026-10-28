@@ -35,7 +35,7 @@ those keys; nothing in them names an org, repo, host, person or chat.
 | `references/resume.md` | restart recovery |
 | `references/hooks-install.md` | optional telemetry hooks |
 | `references/boot-sweep.md`, `references/runtime-check.md`, `references/systemd/` | re-arm lanes after a host restart or an Orca runtime restart; unit and timer files for the boot sweep, CI queue alert and credential check (`@USER@` and `@HOME@` tokens) |
-| `references/ci-capacity.md` | CI queue alert and the shared-token budget |
+| `references/ci-capacity.md` | CI queue alert, the GitHub API budget rule and the shared-token budget |
 | `references/credentials.md`, `references/credentials-index.seed.json` | credential index (names only) and the weekly validity check |
 | `references/prompt-stalls.md` | the guarded-`rm` rule, the rm-guard hook and an optional allowlist |
 | `references/away-timeout.md` | the away timeout (hard rule 16) and `scripts/ask-timeout.sh`: which asks may get an independent verdict |

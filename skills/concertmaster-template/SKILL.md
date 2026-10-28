@@ -129,6 +129,13 @@ The lane set above is the default; `cfg.lanes` is the list in use.
     `rm -rf -- "${VAR:?}/path"`, so an empty or unset variable aborts instead
     of deleting from `/`. The rm-guard hook (`scripts/hooks/rm-guard-hook.sh`)
     denies the unguarded form on sight.
+19. **GitHub calls spend shared budgets.** Check `gh api rate_limit` (free; both
+    `core` and `graphql`, since `gh pr` spends GraphQL) at the start of every
+    tick, poll no faster than 180 s with ONE watcher per run, send conditional
+    requests (a 304 is free), back off under 800 remaining in either bucket,
+    make no PR calls under 500 until reset, never retry-loop a 403 or 429, and
+    use one `gh pr list` rather than many `gh pr view`
+    (`references/ci-capacity.md` section 2).
 
 <!-- project-local: hard-rules -->
 
@@ -198,7 +205,7 @@ BEFORE asking.
                                                └───────────┘
 ```
 
-1. **Wake.** Read the ledger. `df -h /` locally: under
+1. **Wake.** Read the ledger. Check `gh api rate_limit` (hard rule 19). `df -h /` locally: under
    `cfg.hosts.min_free_disk_gb` free, spawn nothing.
 2. **Discover.** `scripts/discover.sh > $CM_HOME/last-discover.json`
    then `scripts/classify.sh --table < $CM_HOME/last-discover.json`.
