@@ -328,6 +328,61 @@ jq --arg p "$PROCWT" '.workers["w-proc"] = {lane: "proc-lane", host: "local", ag
 OUT="$(env -u CM_TEST_CLAUDE_CWDS_CMD "$SCRIPTS/resume.sh" --lane proc-lane 2>/dev/null)"; CALLS="$(cat "$STUB/calls.log")"
 check "real process check: a process named claude with its cwd in the worktree is live" 'has_line "proc-lane +live +left alone" && [ "$(creates)" = 0 ]'
 
+echo "--- the respawn nudge carries the lane journal (standing lane agent only)"
+# w-dev is the standing lane-a agent; w-wk is a worker the lane spawned (same lane name, not standing)
+cat > "$CM_HOME/ledger.json" <<'J'
+{"updatedAt": "2026-10-13T09:00:00Z",
+ "workers": {"w-dev": {"lane": "lane-a", "standing": true, "host": "local", "agent": "claude", "path": "/x/dev-sweeper", "task": "#13 report export", "lastComment": "cm:running"},
+             "w-wk": {"lane": "lane-a", "host": "local", "agent": "claude", "path": "/x/idle-lane", "task": "#14 child task", "lastComment": "cm:running"}}}
+J
+rm -rf -- "${CM_HOME:?}/lanes"
+"$SCRIPTS/lane-journal.sh" append lane-a 'relayed #12 to merge-ready; next: rebase and check ; ls | tee x && echo $(id) `id` "q"'
+"$SCRIPTS/lane-journal.sh" append lane-a 'decided to keep the report export behind a flag'
+jrun() { # jrun <path>: one resume run for that worktree, clean stub state
+  : > "$STUB/calls.log"; rm -f -- "${STUB:?}"/handle-* "${STUB:?}/n" "${STUB:?}"/pscount-*; rm -rf -- "${CM_HOME:?}/resume.attempts"
+  OUT="$("$SCRIPTS/resume.sh" --path "$1" 2>/dev/null)"; CALLS="$(cat "$STUB/calls.log")"
+}
+jrun /x/dev-sweeper
+check "standing lane agent: the nudge carries the journal tail, oldest first, joined by //" 'line="$(printf "%s\n" "$CALLS" | grep "^terminal send" | grep "Your lane journal")"; [ -n "$line" ] && printf "%s" "$line" | grep -q "relayed #12 to merge-ready" && printf "%s" "$line" | grep -q "decided to keep the report export behind a flag" && printf "%s" "$line" | grep -q " // "'
+check "journal text in the nudge is allow-listed: no metacharacter, quote, backtick or dollar" 'line="$(printf "%s\n" "$CALLS" | grep "^terminal send" | grep "Your lane journal")"; [ -n "$line" ] && ! printf "%s" "$line" | grep -q "[;|&<>\`$\"]"'
+jrun /x/idle-lane
+check "a worker the lane spawned (same lane name, not standing) gets no journal" '[ "$(sends)" = 1 ] && ! printf "%s\n" "$CALLS" | grep -q "Your lane journal"'
+"$SCRIPTS/lane-journal.sh" append lane-a "OLDMARK $(printf 'filler %.0s' $(seq 1 140))"
+"$SCRIPTS/lane-journal.sh" append lane-a "$(printf 'filler %.0s' $(seq 1 140)) NEWMARK"
+jrun /x/dev-sweeper
+check "a long journal: only the newest 1200 characters ride in the nudge (NEWMARK in, OLDMARK out)" 'line="$(printf "%s\n" "$CALLS" | grep "^terminal send" | grep NEWMARK)"; [ -n "$line" ] && ! printf "%s" "$line" | grep -q OLDMARK && [ "$(printf "%s" "$line" | sed "s/.*Your lane journal//" | wc -c)" -le 1400 ]'
+rm -rf -- "${CM_HOME:?}/lanes"
+jrun /x/dev-sweeper
+check "no journal: the nudge is unchanged" '[ "$(sends)" = 1 ] && ! printf "%s\n" "$CALLS" | grep -q "Your lane journal"'
+# a retired standing lane left a record at a path that is now another lane's worker: its journal is not that worker's
+cat > "$CM_HOME/ledger.json" <<'J'
+{"updatedAt": "2026-10-13T09:00:00Z",
+ "workers": {"w-old": {"lane": "lane-a", "standing": true, "state": "gone", "host": "local", "agent": "claude", "path": "/x/idle-lane", "task": "old", "lastComment": "cm:done"},
+             "w-new": {"lane": "lane-b", "host": "local", "agent": "claude", "path": "/x/idle-lane", "task": "#14 new tenant", "lastComment": "cm:running"}}}
+J
+"$SCRIPTS/lane-journal.sh" append lane-a 'PRIVATE note of the retired lane'
+jrun /x/idle-lane
+check "a gone standing record at a reused path: the new tenant gets no journal" '[ "$(sends)" = 1 ] && ! printf "%s\n" "$CALLS" | grep -q "PRIVATE note"'
+rm -rf -- "${CM_HOME:?}/lanes"
+# a standing row with no lane name must not fall back to its worker id (a worker id is not a lane name)
+cat > "$CM_HOME/ledger.json" <<'J'
+{"updatedAt": "2026-10-13T09:00:00Z",
+ "workers": {"w-nolane": {"standing": true, "host": "local", "agent": "claude", "path": "/x/idle-lane", "task": "#14 no lane", "lastComment": "cm:running"}}}
+J
+"$SCRIPTS/lane-journal.sh" append w-nolane 'note under the worker id'
+jrun /x/idle-lane
+check "a standing row with no lane name gets no journal (no fallback to the worker id)" '[ "$(sends)" = 1 ] && ! printf "%s\n" "$CALLS" | grep -q "note under the worker id"'
+rm -rf -- "${CM_HOME:?}/lanes"
+cat > "$CM_HOME/ledger.json" <<'J'
+{"updatedAt": "2026-10-13T09:00:00Z",
+ "workers": {"w-rem": {"lane": "remote-lane", "standing": true, "host": "remote-1", "agent": "claude", "path": "/y/remote-dead", "task": "#15 remote", "lastComment": "cm:running"}}}
+J
+"$SCRIPTS/lane-journal.sh" append remote-lane 'a note written on this host'
+jrun /y/remote-dead
+check "a standing agent on another host is nudged but gets no journal (its journal lives on that host)" '[ "$(sends)" = 1 ] && ! printf "%s\n" "$CALLS" | grep -q "Your lane journal"'
+rm -rf -- "${CM_HOME:?}/lanes"
+
+
 echo "--- lock ownership is checked again right before a create"
 cat > "$CM_HOME/ledger.json" <<'J'
 {"updatedAt": "2026-10-13T09:00:00Z",
