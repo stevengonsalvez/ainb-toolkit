@@ -481,8 +481,9 @@ Output is a table of lane, status, action. Details, the live-agent test and the
 safety rules: `references/resume.md`.
 
 After a host restart, `scripts/boot-sweep.sh` (run by systemd after the host's
-resume unit) nudges every lane that is still cut off to re-arm its `/loop`:
-`references/boot-sweep.md`.
+resume unit) nudges every lane that is still cut off to re-arm its `/loop`, and
+the concertmaster session itself (the `cfg.worktrees.self_name` worktree) with
+`/loop /concertmaster tick`: `references/boot-sweep.md`.
 
 ## Autonomy and guardrails
 

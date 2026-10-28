@@ -29,7 +29,9 @@ that orca-resume already got going has a newer transcript and is skipped, so it 
 
 | Lane state | Action |
 |---|---|
-| not a standing local lane in `~/.concertmaster/ledger.json` (a dev or epic worker, the concertmaster itself), or no readable ledger | never read or nudged, `not-standing` (no ledger: nothing is sent and an inbox note says why) |
+| the concertmaster session itself (worktree path ending `/<worktrees.self_name>`, or the ledger row `workers.<worktrees.self_name>` with `standing: true`) | treated as a lane and sent exactly `/loop /concertmaster tick`, under every check below. A lost ledger does not exempt it. If it cannot be re-armed (menu, busy, unconfirmed...) the unit log says `CONCERTMASTER NOT RE-ARMED` and the inbox note opens with `NEEDS A HUMAN` |
+| not a standing local lane in `~/.concertmaster/ledger.json` (a dev or epic worker) | never read or nudged, `not-standing` |
+| no readable ledger | every lane except the concertmaster is `no-ledger` and never nudged; the inbox note says the ledger is missing. With no concertmaster terminal either, nothing is sent and a note says why |
 | no Claude transcript visible for the worktree | `unknown`, not nudged (a lane we cannot see is never treated as idle) |
 | transcript written since boot | skipped, `active since boot` |
 | question menu at the bottom of the screen | not typed into, `menu` |
@@ -67,5 +69,5 @@ real boot; run the dry run first).
 
 ## Env
 `CM_BOOT_SETTLE_S` (45), `CM_BOOT_ORCA_WAIT_S` (300), `CM_BOOT_CONFIRM_S` (60), `CM_BOOT_NUDGE` (text),
-`CM_CLAUDE_PROJECTS`, `CM_BOOT_EPOCH` (tests), `CM_PATH_MATCH`, `CM_HOME`. Tests: `scripts/test/boot-sweep.sh` (stubbed
+`CM_SELF_PATH_RE` (concertmaster worktree path regex, default built from `worktrees.self_name`), `CM_CLAUDE_PROJECTS`, `CM_BOOT_EPOCH` (tests), `CM_PATH_MATCH`, `CM_HOME`. Tests: `scripts/test/boot-sweep.sh` (stubbed
 orca and transcripts, no network).
