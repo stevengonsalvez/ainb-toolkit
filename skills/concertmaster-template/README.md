@@ -44,7 +44,7 @@ those keys; nothing in them names an org, repo, host, person or chat.
 
 ## Dependencies
 
-Tools: `bash` (3.2+), `jq`, `yq` (mikefarah v4), `git`, `gh`, `curl`, the Orca
+Tools: `bash` (3.2+), `jq`, `yq` (mikefarah v4), `python3` (the `jsanitize` and `jstrings` Orca JSON helpers), `git`, `gh`, `curl`, the Orca
 CLI (`orca` / `orca-ide`), `bd` (beads), Claude Code with `/loop` and
 ScheduleWakeup. Optional: `wacli` (chat intake and digest), `codex`, `agy`, `bws` (credential check), `systemd` (boot sweep, CI queue alert and credential check timers), `shellcheck` (lint).
 

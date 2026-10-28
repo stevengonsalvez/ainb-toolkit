@@ -41,6 +41,17 @@
 # than one agent pane) overrides the action to "investigate" and the item is
 # never a teardown candidate.
 #
+# Violations (config agents.forbidden, passed as --argjson forbidden): every terminal in the
+# discover document's `terminals` (discover.sh keeps only worktree paths matching config
+# worktrees.path_match) whose agentIdentity is a forbidden agent (or whose title is
+# "resumed <agent>", the resumer's title before Orca has identified the process) becomes a
+# row in `.violations`: host, worktree (name), path, handle, title, agent. Independent of
+# class. The check is `violationCheck.complete` only when discover listed terminals on every
+# reachable host, untruncated; a document without terminal data, an offline host, or a host
+# whose terminal list failed or was cut off, is incomplete and names why, so "no violations"
+# is never claimed unchecked. With agents.forbidden empty the census is off:
+# `violationCheck.enabled` is false and `complete` is true with no gaps.
+#
 # Timestamps are epoch ms; any of them may be null on remote rows.
 
 def live_states: ["working", "waiting", "permission", "blocked", "running"];
@@ -52,6 +63,7 @@ def max_or_null: map(select(. != null and . > 1577836800000)) | if length == 0 t
 def normpath: if type == "string" then sub("/+$"; "") else "" end;
 
 ($stuckMin // 45) as $stuck
+| [ ($forbidden // [])[] | select(type == "string" and length > 0) | ascii_downcase ] as $forbid
 | (($ledger // [])[0] // {}) as $L
 | [ ($L.lanes // {})[]? | .lead? // empty | select(type == "string") ] as $leads
 | .generatedAtMs as $now
@@ -177,10 +189,30 @@ def normpath: if type == "string" then sub("/+$"; "") else "" end;
          pr: (if $w.pr == null then null else {number: $w.pr.number, state: $w.pr.state, author: $w.pr.author} end),
          flags: $flags, reason: $c.reason, suggest: $c.suggest} )
   ] as $items
+| ([ (.terminals // [])[]
+     | (if (.agentIdentity | type) == "string" then (.agentIdentity | ascii_downcase) else "" end) as $id
+     | (if (.title | type) == "string" then (.title | ascii_downcase) else "" end) as $ti
+     | ([ $forbid[] | select(. == $id or "resumed " + . == $ti) ] | first // null) as $hit
+     | select($hit != null)
+     | {host, worktree: ((.worktreePath | normpath | split("/") | last) // ""), path: .worktreePath,
+        handle: (.handle // null), title: (.title // null), agent: $hit, rule: "forbidden-agent"} ]
+   | sort_by(.host, .worktree, .handle)) as $violations
+| (.terminalScope // null) as $ts
+| (if ($forbid | length) == 0 then []
+   elif $ts == null or ($ts.enabled | not) then ["discover document has no terminal data (older discover.sh, or agents.forbidden unset when it ran): forbidden-agent check not run"]
+   elif ($ts.pathMatch // "") == "" then ["worktrees.path_match is unset: forbidden-agent check not run"]
+   else [ ($ts.hosts // [])[] | select(.ok != true) | "\(.host): \(.error // "terminal list failed")" ]
+        + [ $hosts[] | select(.reachable | not) | "\(.name): host offline, terminals not listed" ]
+        + [ $hosts[] | select(.reachable) | .name as $n
+            | select(([($ts.hosts // [])[] | select(.host == $n)] | length) == 0)
+            | "\($n): terminals not listed" ] end) as $vgaps
 | {
     schema: "concertmaster.classify/v1",
     generatedAt: .generatedAt,
     stuckMinutes: $stuck,
     summary: ($items | group_by(.class) | map({key: .[0].class, value: length}) | from_entries),
+    violations: $violations,
+    violationCheck: {enabled: ($forbid | length > 0), forbidden: $forbid,
+                     complete: ($vgaps | length == 0), gaps: $vgaps},
     items: $items
   }

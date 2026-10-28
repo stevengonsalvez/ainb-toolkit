@@ -1,0 +1,16 @@
+#!/usr/bin/env python3
+# Re-emit Orca JSON with lone UTF-16 surrogates replaced, so jq can parse it.
+import sys
+sys.path.pop(0)  # never import a planted module from the script directory
+import json
+raw = sys.stdin.buffer.read().decode("utf-8", "replace")
+try:
+    d = json.loads(raw, strict=False)
+except Exception:
+    sys.stdout.write(raw); sys.exit(0)
+def fix(o):
+    if isinstance(o, str): return o.encode("utf-16", "surrogatepass").decode("utf-16", "replace") if any(0xD800 <= ord(c) <= 0xDFFF for c in o) else o
+    if isinstance(o, dict): return {fix(k): fix(v) for k, v in o.items()}
+    if isinstance(o, list): return [fix(v) for v in o]
+    return o
+sys.stdout.write(json.dumps(fix(d), ensure_ascii=False))

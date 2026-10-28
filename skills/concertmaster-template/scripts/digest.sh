@@ -22,6 +22,8 @@
 # print in config schedule.timezone (CM_TZ), labelled schedule.timezone_label. Plain
 # text, chat friendly, no em-dashes. Read-only: it never writes the ledger (the
 # digests.lastSentAt write after a send is the concertmaster's).
+# --full also lists forbidden agents (host, worktree and handle, so never for a group), only when
+# ledger.violations has rows or ledger.violationCheck is incomplete.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -111,6 +113,14 @@ TZ="$CM_TZ" jq -r --argjson sinceH "$SINCE_H" --argjson since "$SINCE_EPOCH" --a
       + [ $asks[] | select(.state == "open") | "ask: \(.question | .[0:80]) (open \(.askedAt | ago))" ]) end ),
     ( if $full | not then empty else section("Stuck"; [ $workers[] | select(.state == "stuck")
         | "\(.task // .id | .[0:50]) on \(.host // "?"), idle \(.lastOutputAt | ago), nudges \(.nudges // 0)/2" ]) end ),
+    ( if $full | not then empty else def clean: tostring | gsub("[[:cntrl:]]+"; " ");
+      (.violationCheck // {}) as $vc
+      | if $vc.enabled == false then empty else
+        ([ (.violations // [])[] | "\(.agent // "?" | clean) \(.host // "?" | clean) \(.worktree // "?" | clean) \(.handle // "-" | clean) \(.title // "-" | clean | .[0:40])" ]
+         + (if $vc.complete == false then ["CHECK INCOMPLETE, not proof of none: \(($vc.gaps // []) | join("; ") | clean | .[0:160])"] else [] end)
+         + (if ($vc.checkedAt | ts) != null then ["census \($vc.checkedAt | ago) old"] else [] end)) as $lines
+        | if ($lines | map(select(startswith("census ") | not)) | length) == 0 then empty
+          else section("Forbidden agents on \($project) work"; $lines) end end end ),
     ( if $full | not then empty else
       [ $workers[] | select(.state == "running") ] as $run
       | ($run | group_by(.host) | map("\(.[0].host) \(length)") | join(", ")) as $byHost
