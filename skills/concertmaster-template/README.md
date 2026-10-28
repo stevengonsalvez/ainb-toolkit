@@ -29,6 +29,7 @@ those keys; nothing in them names an org, repo, host, person or chat.
 | `SKILL.md` | the runbook: tick, state machine, lanes, merge gate, deploy windows, retire vs teardown, first boot, edge cases, messaging, reporting |
 | `config.example.yaml` | every per-project key, commented; `[script]` marks keys the scripts read |
 | `references/lanes.md` | brief templates with `{{placeholders}}` and a placeholder-to-config map |
+| `references/overlay.md` | the project overlay contract: hook points, `references/project-local.md` format, overlay versus toolkit PR |
 | `references/ledger.md` | ledger, roster and outbox schema |
 | `references/intake.md` | chat intake procedure; wacli is one adapter |
 | `references/resume.md` | restart recovery |
@@ -65,7 +66,11 @@ copy them into the new project or replace them with equivalents.
 ## Update a project (public engine, private config)
 
 The engine lives here; each project keeps its own `config.yaml` (and any other
-`config.*.yaml`) in its own repo. To pull a newer engine into a project's copy:
+`config.*.yaml`) and its overlay, `references/project-local.md`, in its own repo.
+Project rules go in the overlay, never in an engine file: a sync overwrites the
+`SKILL.md` body, `scripts/`, `references/` and `companions/`, so an edit made there
+in place is lost on the next update (`references/overlay.md`). To pull a newer
+engine into a project's copy:
 
 ```bash
 # from a toolkit checkout (or any copy of this tree):
@@ -78,8 +83,21 @@ scripts/sync-from-toolkit.sh --fetch   <repo>/.agents/skills/concertmaster
 It never writes `config.yaml`, keeps the project's `SKILL.md` frontmatter, leaves
 project-only files alone (`--prune` removes engine files the toolkit dropped), and
 prints the config keys that `config.example.yaml` now documents but the project's
-`config.yaml` does not set. Afterwards re-copy the installed hook scripts on each
-host (`references/hooks-install.md`) and run the tests. Telemetry needs two required
+`config.yaml` does not set. `references/project-local.md` is created as a stub
+(one empty section per hook point) when missing and never written or pruned after
+that. Update checklist:
+
+1. `--dry-run` first; it lists `references/project-local.md` as `create` or `keep`.
+2. Sync, then read the overlay report: hook points with no section yet (new places
+   you can add to) and sections that match no hook point (no longer applied: move
+   them to the right hook or delete them).
+3. Add the reported config keys you need to `config.yaml`.
+4. Re-copy the installed hook scripts on each host (`references/hooks-install.md`).
+5. Run the tests (`scripts/test/*.sh`). A fix you need in the engine goes to the
+   toolkit as a PR, not into the synced copy (`references/overlay.md` § Fixing
+   the engine upstream).
+
+Telemetry needs two required
 config values, `telemetry.base_url` and `telemetry.tenant_id`: there is no default
 for either, and nothing is sent until both are set. A project-bound sink token also
 needs `telemetry.project_id` (a `p_<owner>` id), else the sink refuses every event.
@@ -100,11 +118,16 @@ needs `telemetry.project_id` (a `p_<owner>` id), else the sink refuses every eve
    `cfg.merge.gates.*` and `cfg.deploy.ship_verb` at real scripts. A gate with
    no script means a weaker merge gate: write it down in `open_questions`.
 4. **Fill the briefs.** Read `references/lanes.md`; every `{{placeholder}}`
-   maps to a config key or to the handed item. Add project rules (database,
-   secrets, copy) to the common footer.
-5. **Test.** `for t in scripts/test/*.sh; do bash "$t" || echo "FAIL $t"; done`
+   maps to a config key or to the handed item.
+5. **Write the overlay.** From the toolkit checkout, run
+   `scripts/sync-from-toolkit.sh <repo>/.agents/skills/concertmaster` once to
+   create the `references/project-local.md` stub, then put project rules there, never in an engine file: database, secrets and
+   copy rules under `## brief-footer`, per-lane addenda under `## lane: <label>`,
+   extra tick steps under `## tick-extra`. `references/overlay.md` lists every hook
+   point and what must be a toolkit PR instead. Commit the overlay with the project.
+6. **Test.** `for t in scripts/test/*.sh; do bash "$t" || echo "FAIL $t"; done`
    and `shellcheck -x scripts/*.sh scripts/hooks/*.sh scripts/test/*.sh`. Then a
    read-only dry run with the real config: `scripts/discover.sh --no-prs | scripts/classify.sh --table`.
-6. **Boot.** In an Orca terminal on `cfg.hosts.home`, in the
+7. **Boot.** In an Orca terminal on `cfg.hosts.home`, in the
    `cfg.worktrees.self_name` worktree, run `/concertmaster`. First boot shows
    the kill list once; after that it runs on `/loop`.

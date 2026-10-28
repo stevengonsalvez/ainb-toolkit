@@ -13,6 +13,13 @@ worker), save the result to `$CM_HOME/briefs/<worker-id>.md`, and pass it as
                        └──────────────┘
 ```
 
+Project addenda come from `references/project-local.md` (`references/overlay.md`),
+never from edits to this file: its `brief-footer` lines join the rules block of
+every brief, and a `## lane: <label>` section is appended to that lane's brief,
+last, after the footers.
+
+<!-- project-local: lane -->
+
 ## Placeholder map
 
 Config-backed placeholders (fill from `config.yaml`):
@@ -111,6 +118,8 @@ recommended option, and ends its turn. The answer arrives as a typed message.
   sessions by exact name only.
 - Production data: {{production_data_rule}}.
 ```
+
+<!-- project-local: brief-footer -->
 
 ## Standing lead footer (append to every lead brief)
 
