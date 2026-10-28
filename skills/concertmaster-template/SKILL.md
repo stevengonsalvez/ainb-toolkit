@@ -119,6 +119,8 @@ The lane set above is the default; `cfg.lanes` is the list in use.
     production access or data, a migration, auth, RLS, payments or secrets, a
     release, a merge, a deploy, a teardown, a killed session or a message to a
     human: those still wait for the owner.
+    `scripts/ask-timeout.sh` lists the asks that qualify and records the verdict
+    (`references/away-timeout.md`).
 17. **Cut-off lanes resume themselves.** A lane session cut off by a restart,
     crash or reaper is resumed by the tick (`scripts/resume.sh` for a dead
     lane, the abrupt-session nudge for a live one), every tick, with no human
@@ -910,13 +912,14 @@ shellcheck clean.
 | `scripts/runtime-check.sh [--dry-run]` | tick step after an Orca runtime restart: refreshes standing lanes' ledger handles by worktree path and nudges lanes whose `/loop` wake died, via `boot-sweep.sh --since --lanes` (`references/runtime-check.md`) |
 | `scripts/ci-queue-alert.sh [--dry-run]` | alerts when too many workflow runs stay queued, once per episode (`references/ci-capacity.md`) |
 | `scripts/cred-check.sh [--dry-run] [--publish [FILE]]` | weekly validity probe of the credentials in a names-only index (`references/credentials.md`) |
+| `scripts/ask-timeout.sh [--ledger <path>] [--all] [--stamp] [--claim <ask-id>] [--record <ask-id> <comment-url>]` | away timeout (rule 16): lists open asks past `timeoutAt` that are own-scope and safe for an independent verdict, claims and records it; fails closed; the write modes need `cm_ledger_write` in `lib.sh` (`references/away-timeout.md`) |
 | `scripts/hooks/rm-guard-hook.sh` | PreToolUse hook: denies an unguarded variable path under a recursive `rm` at once (`references/prompt-stalls.md`) |
 | `scripts/spawn-verify.sh` | guards for a claude session started in a terminal: `resolve [--ssh <target>]` prints an absolute, non-stub claude path (exit 1 with the npm fix otherwise); `check (--terminal <h> [--environment <host>] [--wait <s>] \| --file <screen>) [--model <m>] [--effort <e>]` exits 0 only when the bottom of the pane shows the expected model (`cfg.spawn.expected_model` / `expected_effort`) on a Claude footer, else `verify: FAIL <reason>` (send no brief) |
 | `scripts/sync-from-toolkit.sh <project-skill-dir>` | copies this engine into a project's skill directory without touching its `config.yaml` or `references/project-local.md` (README, "Update a project") |
 | `scripts/hooks/mc-worker-hook.sh` | Claude Code hook for workers, in-scope repos only (optional) |
 | `scripts/digest.sh [--full] [--since-hours n]` | digest text, stdout only, `- ` bullets, no Needs, Stuck or Fleet section (`--full` adds them for the terminal report): Merged (merged since `digests.lastSentAt`, else 12h) from `gh pr list`, and in `--full` the open PR count (a failed gh prints "unknown (gh failed)", never 0), every other section from the ledger; read-only; `--full` also lists `ledger.violations` and an incomplete `ledger.violationCheck` |
 | `scripts/intake.sh <cmd>` | the deterministic half of `intake` (rules in `scripts/intake.jq`) |
-| `scripts/test/*.sh` | `classify-standing`, `classify-violations`, `teardown-gates`, `resume-flow`, `intake`, `mc-emit`, `boot-sweep`, `runtime-check`, `ci-queue-alert`, `cred-check`, `rm-guard-hook`, `digest-gh`, `orca-json-helpers`, `waiting-autocompact`, `spawn-verify`, `classify-ownership`: hermetic tests against `scripts/test/fixtures/config.test.yaml`; run the matching one after any script change |
+| `scripts/test/*.sh` | `classify-standing`, `classify-violations`, `teardown-gates`, `resume-flow`, `intake`, `mc-emit`, `boot-sweep`, `runtime-check`, `ci-queue-alert`, `cred-check`, `rm-guard-hook`, `digest-gh`, `orca-json-helpers`, `waiting-autocompact`, `spawn-verify`, `classify-ownership`, `ask-timeout`: hermetic tests against `scripts/test/fixtures/config.test.yaml`; run the matching one after any script change |
 
 <!-- project-local: scripts -->
 

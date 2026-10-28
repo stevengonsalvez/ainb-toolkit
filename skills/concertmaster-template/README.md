@@ -38,6 +38,7 @@ those keys; nothing in them names an org, repo, host, person or chat.
 | `references/ci-capacity.md` | CI queue alert and the shared-token budget |
 | `references/credentials.md`, `references/credentials-index.seed.json` | credential index (names only) and the weekly validity check |
 | `references/prompt-stalls.md` | the guarded-`rm` rule, the rm-guard hook and an optional allowlist |
+| `references/away-timeout.md` | the away timeout (hard rule 16) and `scripts/ask-timeout.sh`: which asks may get an independent verdict |
 | `companions/dev-flow.md` | generic copy of the dev-flow skill the dev-sweeper runs |
 | `scripts/` | bash + jq (+ yq) scripts, `lib.sh` holds the config loader. Fleet jobs: `boot-sweep.sh`, `runtime-check.sh`, `ci-queue-alert.sh`, `cred-check.sh`, `hooks/rm-guard-hook.sh`. `sync-from-toolkit.sh` updates a project's copy |
 | `scripts/test/` | hermetic tests, run against `scripts/test/fixtures/config.test.yaml` |
