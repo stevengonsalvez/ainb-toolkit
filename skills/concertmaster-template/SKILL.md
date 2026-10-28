@@ -225,13 +225,14 @@ BEFORE asking.
    `references/lanes.md`), PR state. Last, rewrite the roster:
    `scripts/roster.sh` (active work only, atomic, mode 600; read by `resume`,
    § Resume). A failure is a warning, never a stop.
-   **Ownership accounting.** Every in-scope worktree has exactly one owner: a
-   live ledger worker (a standing lane, a lead's worker or a single-task
-   worker, via `lane` and `path`). After reconcile, count worktrees and owned
+   **Ownership accounting.** Every in-scope worktree has exactly one owner
+   lane (§ Ownership): classify records `owner` and `ownerSource` per row and
+   flags the rest `ORPHAN`. After reconcile, count worktrees and owned
    worktrees per host; each unowned one is adopted into a lane or listed as
    "needs an owner" in the report, never silently ignored and never torn down
-   for lacking one. Every standing lane has a live worker row or is listed
-   `absent` with the tick that will spawn it.
+   for lacking one except as § Ownership allows. Every standing lane has a live
+   worker row or is listed `absent` with the tick that will spawn it. A lane
+   lead flagged `LEAD-DEAD` is respawned in place (§ Ownership).
 4. **Act**, in this order, each bounded:
    - `cm:blocked` comments and `awaiting-input` flags: answer what is factual
      or already decided; the rest becomes a `WAITING: <owner>, <question>, <age>`
@@ -253,6 +254,7 @@ BEFORE asking.
      work or leave it idle. Never retire or tear it down.
    - **unknown-git**, **dirty-or-unpushed**, `has-child-agent`: investigate
      (subagent reads state); never teardown.
+   - **ORPHAN** and **LEAD-DEAD** flags: § Ownership.
    - `cm:merge-ready` from dev/epic workers: make sure the pr-sweeper has the PR.
    - **Fleet alert notes** in `$CM_HOME/inbox/` newer than the last tick:
      `cred-check-*.md` (surface every `INVALID` or `MISSING` row and any `FATAL`;
@@ -323,10 +325,10 @@ Classes from `scripts/classify.sh` map onto it:
 |---|---|---|
 | `running` | running | none; if `awaiting-input`, read pane |
 | `stuck` | stuck | § Stuck rule (a standing lane is respawned in place only, never retired) |
-| `standing-idle` | running (idle) | standing lane with nothing to do, or a `cm:idle` lead with no agent working: hand it work, hand any open PR to pr-sweeper, nudge it on open beads; never retire, teardown or stuck-respawn |
+| `standing-idle` | running (idle) | standing lane with nothing to do, or a `cm:idle` lead with no agent working: hand it work, hand any open PR to pr-sweeper, nudge it on open beads; never retire, teardown or stuck-respawn. A `cm:keep <why, until when>` comment (whole token) on an otherwise done or idle worktree lands here too: chase the owner once its until-when has passed; never retire or teardown |
 | `standing-dead` | running (dead) | standing lane with no agent at all (no agent pane, no live terminal, or git-only): respawn in place with `claude --continue` in its worktree, only by running `scripts/resume.sh --host <host> --worktree-id <id> --path <worktree>` for that one row (never a hand-typed `terminal create`; give the call a 600000 ms Bash timeout, or run it in the background). Exit 4: a resume run is in progress, do nothing for that lane this tick. Exit 5: no roster row matches, respawn that lane by hand. A git-only lane Orca does not list is `missing` there: respawn it by hand. Hand any open PR to pr-sweeper; never retire or teardown |
 | `done-merged` | done | single-task worker with every epic bead closed: teardown worktree (after first boot; honour kill-list decisions). Standing lane: idle, never teardown |
-| `done-selfreported` | done only if every epic bead is closed | open beads: back to running, nudge to continue them. Else: single-task worker retired, open PR to pr-sweeper, teardown only when the PR merges/closes (no PR: after the owner approves); standing lane goes idle |
+| `done-selfreported` | done only if every epic bead is closed | open beads: back to running, nudge to continue them. Else: single-task worker retired, open PR to pr-sweeper, teardown only when the PR merges/closes (no PR: after the owner approves); standing lane goes idle. A `cm:retire` comment (whole token) lands here too, as if every agent had reported done |
 | `unknown-git` | unchanged | investigate (remote git state not collected, a git check failed, or path gone); never teardown |
 | `dirty-or-unpushed` | blocked-on-owner | escalate with a diff summary; never delete |
 | `orphan-git-only` | (adopted) | open PR to pr-sweeper; else ask |
@@ -341,6 +343,69 @@ until then.
 Flag `has-child-agent` (child worktrees, a child pane, or more than one agent
 pane) overrides any class's action with "investigate" and keeps the item off
 every teardown path.
+
+`cm:keep` and `cm:retire` are read from the worktree comment as whole tokens at
+its start (`cm:keepalive` and `cm:retired` are neither). Neither changes a
+live agent's class or dirty or unpushed work, and neither stops a standing lane
+with no agent at all from being respawned (`standing-dead`): a stale keep never
+leaves a dead lane dead. A ledger-unknown worktree keeps its `standing-unknown`
+flag, so record `standing: false` in the ledger before acting on `cm:retire`.
+
+## Ownership
+
+Every in-scope worktree on every host has an owner lane, or classify flags it
+**ORPHAN**. `scripts/classify.sh` records `owner` and `ownerSource` per row; the
+rules live in `classify.jq`, the data in `config.yaml` `ownership` (keys in
+`config.example.yaml`). In scope: the `worktrees.orca_repo` repo, minus main
+checkouts and the `worktrees.never_touch` names.
+
+```text
+┌──────┐  ┌──────┐  ┌─────────┐  ┌────────┐  ┌────────┐  ┌──────────┐  ┌─────────┐
+│ self │─▶│ lead │─▶│ lead's  │─▶│ ledger │─▶│ prefix │─▶│ standing │─▶│ scratch │─▶ ORPHAN
+│cm wt │  │      │  │ comment │  │ lane   │  │ task-  │  │ self-own │  │ dir of  │
+└──────┘  └──────┘  └─────────┘  └────────┘  └────────┘  └──────────┘  │ a worker│
+                                                                        └─────────┘
+```
+
+First hit wins; a lead's comment is fresher than the ledger row, so it wins over
+it. Leads come from `ownership.leads` and the ledger's `lanes.<lane>.lead` only:
+a worktree never becomes a lead by writing "I OWN" in its own comment, and a new
+iteration of a lead is an ordinary worker until it is added to one of them.
+
+A lead lists its workers in its own `cm:` comment under a header marker
+(`ownership.comment_markers`, for example `WORKERS I OWN` or `OWNED`). A marker
+counts only when it starts the comment, a ` | ` section or a sentence (so `PR #7
+owned by x` is prose, not a list) and is written as a header, followed by `(`,
+`[`, `:` or a few words and a colon. Write lists with commas, never pipes. A list
+ends at ` | `, at a `<stop word>:` (`ownership.comment_stop_words`), at the next
+ALL-CAPS header, at the end of the sentence, or at the end. Parenthesised text is
+ignored (`(cm: nudged)` never cuts a list, `(replaced old-x)` never claims
+`old-x`). `NOT OWNED:` and `not-owned:` are negations, not markers. Only names
+that are real worktrees count, so prose and host names never become owners. Two
+leads listing the same worktree flag `owner-contested:<a>,<b>` (the
+alphabetically first lane takes it until one lead drops it). Names are the
+worktree path's last segment, which equals the Orca display name.
+
+| flag | meaning | action |
+|---|---|---|
+| `ORPHAN` | in scope, no owner by any rule | ask the likely lane lead, record `orphanAskedAt` on the worker's ledger row, tear down only after 2 ticks plus the lead's loop interval, and only for the classes the row's suggest names (idle, orphan-git-only, done-merged, done-selfreported, never standing, never `has-child-agent`); every other class is asked about, never torn down on this flag. A family that keeps appearing gets a prefix |
+| `LEAD-DEAD` | a lane lead has no live session while it owns open work (open = class not done-merged and PR not merged or closed); or the ledger records the lead as spawned and its host answered in full yet it has no worktree | respawn in place (only through `scripts/resume.sh`), else hand its items to another lead and report it |
+
+Open work is counted per lead: a lead's own comment claims are its work, and
+label-owned work (prefix, ledger) goes to a lead only while no other lead sharing
+the label has a live session, so a superseded iteration never inherits its
+successor's work. A lead that spawns only at a higher item count and is not in
+the ledger is never called dead for having no worktree. A lead whose agent state
+is `done` with a live terminal is idle, not dead. A lead's host that did not
+answer in full (offline or truncated) never makes it dead.
+
+No readable or valid ownership config: ownership is skipped
+(`.ownership.configured: false`, `.ownership.error` says why), nothing is
+guessed. **That is an alert**: with it, a quiet census means "ownership is off",
+not "nothing is orphaned"; put the error in the turn-end report and fix the
+config. `classify.sh` also prints `.ownership.orphans`, `.ownership.leadDead[]`
+and a per-owner count; `--table` adds an `ownership:` line, the owner column and
+the flags.
 
 ## Lanes
 
@@ -833,7 +898,7 @@ shellcheck clean.
 |---|---|
 | `scripts/lib.sh` | shared helpers: config loader (`cm_cfg`), ORCA resolution, portable timeout, org filter |
 | `scripts/discover.sh` | every host's Orca worktrees, local git-only worktrees, PR state, to one JSON doc; unreachable host = `reachable:false`. With `agents.forbidden` set it also lists the terminals under `path_match` with their `agentIdentity`; a failed or cut-off terminal list = `terminalScope.hosts[].ok:false` |
-| `scripts/classify.sh [--table]` | one class per item (rules in `classify.jq`), ledger-aware: `standing-idle` for idle sweepers and leads, beads-gate suggest for epic owners; `CM_STUCK_MIN` default 45. Forbidden-agent check: `.violations` rows and `.violationCheck`, printed by `--table` as `violations: <n>` plus `VIOLATION` rows (§ The tick, step 2) |
+| `scripts/classify.sh [--table]` | one class per item (rules in `classify.jq`), ledger-aware: `standing-idle` for idle sweepers and leads, beads-gate suggest for epic owners; `CM_STUCK_MIN` default 45. Forbidden-agent check: `.violations` rows and `.violationCheck`, printed by `--table` as `violations: <n>` plus `VIOLATION` rows (§ The tick, step 2). Ownership (§ Ownership): `owner` and `ownerSource` per row, flags `ORPHAN` and `LEAD-DEAD`, `.ownership` summary; `cm:keep` and `cm:retire` comments (§ Session state machine) |
 | `scripts/abrupt.sh` | sessions cut off by a restart (background work killed, `/loop` resume pending, agent fell back to a shell) and duplicate live agents in one worktree; TSV |
 | `scripts/waiting.sh` | sessions showing a question menu or the autocompact prompt (`BLOCKED PROMPT` row, idle 2 minutes or more), with minutes waiting and the question; TSV |
 | `scripts/jsanitize`, `scripts/jstrings` | Orca JSON helpers (python3): `jsanitize` re-emits JSON with lone UTF-16 surrogates replaced so `jq` can parse remote-host replies; `jstrings` prints every string of a reply (pane text), tolerating the same. `abrupt.sh`, `waiting.sh` and the census in `discover.sh` pipe Orca output through them |
@@ -851,7 +916,7 @@ shellcheck clean.
 | `scripts/hooks/mc-worker-hook.sh` | Claude Code hook for workers, in-scope repos only (optional) |
 | `scripts/digest.sh [--full] [--since-hours n]` | digest text, stdout only, `- ` bullets, no Needs, Stuck or Fleet section (`--full` adds them for the terminal report): Merged (merged since `digests.lastSentAt`, else 12h) from `gh pr list`, and in `--full` the open PR count (a failed gh prints "unknown (gh failed)", never 0), every other section from the ledger; read-only; `--full` also lists `ledger.violations` and an incomplete `ledger.violationCheck` |
 | `scripts/intake.sh <cmd>` | the deterministic half of `intake` (rules in `scripts/intake.jq`) |
-| `scripts/test/*.sh` | `classify-standing`, `classify-violations`, `teardown-gates`, `resume-flow`, `intake`, `mc-emit`, `boot-sweep`, `runtime-check`, `ci-queue-alert`, `cred-check`, `rm-guard-hook`, `digest-gh`, `orca-json-helpers`, `waiting-autocompact`, `spawn-verify`: hermetic tests against `scripts/test/fixtures/config.test.yaml`; run the matching one after any script change |
+| `scripts/test/*.sh` | `classify-standing`, `classify-violations`, `teardown-gates`, `resume-flow`, `intake`, `mc-emit`, `boot-sweep`, `runtime-check`, `ci-queue-alert`, `cred-check`, `rm-guard-hook`, `digest-gh`, `orca-json-helpers`, `waiting-autocompact`, `spawn-verify`, `classify-ownership`: hermetic tests against `scripts/test/fixtures/config.test.yaml`; run the matching one after any script change |
 
 <!-- project-local: scripts -->
 
