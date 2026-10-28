@@ -59,10 +59,10 @@ run() { "$SCRIPT" "$@" 2>"$ROOT/err"; }
 reset; ledger
 { pr 201 "first merged" 8; pr 202 "second merged" 2 bob; } | jq -s -c . > "$STUB/merged.json"
 printf '[{"number":1},{"number":2},{"number":3}]' > "$STUB/open.json"
-OUT="$(run)"; RC=$?
+OUT="$(run --full)"; RC=$?
 check "empty ledger: exit 0" "$RC" "0"
 has "empty ledger: Merged lists gh PRs" "$OUT" "Merged (2)"
-has "empty ledger: oldest merge first" "$OUT" "$(printf -- '  #201 first merged (alice)\n  #202 second merged (bob)')"
+has "empty ledger: oldest merge first" "$OUT" "$(printf -- '- #201 first merged (alice)\n- #202 second merged (bob)')"
 has "empty ledger: open count from gh" "$OUT" "open PRs: 3"
 lacks "empty ledger: no ledger-derived tracked count" "$OUT" "open PRs tracked"
 has "header names the project and the zone" "$OUT" "Acme concertmaster digest"
@@ -112,18 +112,18 @@ check "--since-hours abc is a usage error" "$(run --since-hours abc >/dev/null; 
 # 3. gh failures say unknown, never a confident zero ---------------------------------------------------
 reset; ledger
 echo 1 > "$STUB/merged.rc"; echo 1 > "$STUB/open.rc"
-OUT="$(run)"; RC=$?
+OUT="$(run --full)"; RC=$?
 check "gh down: digest still prints, exit 0" "$RC" "0"
 has "gh down: Merged unknown" "$OUT" "Merged: unknown (gh failed)"
 lacks "gh down: no Merged (0)" "$OUT" "Merged (0)"
 has "gh down: open PRs unknown" "$OUT" "open PRs: unknown (gh failed)"
 lacks "gh down: no open PRs: 0" "$OUT" "open PRs: 0"
 reset; ledger; echo '[]' > "$STUB/merged.json"; echo '{"message":"API rate limit exceeded"}' > "$STUB/open.json"
-OUT="$(run)"
-has "merged ok but empty: a real zero is Merged (0) none" "$OUT" "$(printf 'Merged (0)\n  none')"
+OUT="$(run --full)"
+has "merged ok but empty: a real zero is Merged (0) none" "$OUT" "$(printf 'Merged (0)\n- none')"
 has "open answer that is not an array: unknown" "$OUT" "open PRs: unknown (gh failed)"
 reset; ledger; echo 'not json at all' > "$STUB/merged.json"; echo '[]' > "$STUB/open.json"
-OUT="$(run)"
+OUT="$(run --full)"
 has "garbage merged answer: Merged unknown" "$OUT" "Merged: unknown (gh failed)"
 has "garbage merged answer: open still counted" "$OUT" "open PRs: 0"
 reset; ledger; echo '[]' > "$STUB/merged.json"; echo '[]' > "$STUB/open.json"; echo 5 > "$STUB/merged.sleep"; echo 5 > "$STUB/open.sleep"
@@ -139,18 +139,18 @@ check "no repo configured: gh not called" "$(test -e "$STUB/gh.args" && echo cal
 reset; ledger
 jq -nc --arg at "$(ago 1)" '[range(100) | {number: (6000 + .), title: "t", mergedAt: $at, author: {login: "a"}, url: "u"}]' > "$STUB/merged.json"
 jq -nc '[range(1000) | {number: .}]' > "$STUB/open.json"
-OUT="$(run)"
+OUT="$(run --full)"
 has "100 merged PRs: heading says 100+" "$OUT" "Merged (100+)"
 has "1000 open PRs: count says 1000+" "$OUT" "open PRs: 1000+"
 reset; ledger
 jq -nc --arg at "$(ago 1)" '[{number: 7, title: "evil\u001b[31m title\nnewline", mergedAt: $at, author: null, url: "u"}]' > "$STUB/merged.json"; echo '[]' > "$STUB/open.json"
 OUT="$(run)"
-check "title control characters are flattened, missing author is ?" "$(printf '%s\n' "$OUT" | grep -c '^  #7 evil.\[31m title newline (?)$')" "1"
+check "title control characters are flattened, missing author is ?" "$(printf '%s\n' "$OUT" | grep -c '^- #7 evil.\[31m title newline (?)$')" "1"
 reset
 jq -n '{workers: {"w1": {state: "running", host: "local"}, "w2": {state: "stuck", task: "stuck one", host: "host-b", lastOutputAt: "2026-01-01T00:00:00Z"}},
   hosts: {"host-b": {reachable: false}}, prs: {"1": {number: 1, state: "OPEN", mergedAt: null}}}' > "$L"
 echo '[]' > "$STUB/merged.json"; echo '[{"number":9}]' > "$STUB/open.json"
-OUT="$(run)"
+OUT="$(run --full)"
 has "ledger sections still work (stuck)" "$OUT" "stuck one on host-b"
 has "fleet line: ledger running and offline, gh open" "$OUT" "Fleet: 1 running (local 1), open PRs: 1, offline: host-b"
 
@@ -160,6 +160,31 @@ cp "$L" "$ROOT/before.json"
 run >/dev/null
 check "ledger byte-identical after a run" "$(cmp -s "$ROOT/before.json" "$L" && echo same || echo changed)" "same"
 check "no backup ring, lock or temp file created" "$(find "$ROOT/cm" -mindepth 1 ! -name ledger.json | wc -l | tr -d ' ')" "0"
+
+# 6. the default text is terse and has no owner-only sections; --full adds them ---------------------------
+reset; echo '[{"number":5,"title":"merged one","mergedAt":"'"$(ago 1)"'","author":{"login":"al"},"url":"u"}]' > "$STUB/merged.json"; echo '[{"number":1}]' > "$STUB/open.json"
+jq -n --arg at "$(ago 1)" '{schema: "concertmaster.ledger/v1", prs: {},
+  workers: {"w1": {state: "blocked-on-owner", lane: "L1", task: "needs an answer", blockedQuestion: "which way?"},
+            "w2": {state: "stuck", task: "stuck one", host: "host-a", lastOutputAt: "2026-01-01T00:00:00Z"}},
+  asks: [{state: "open", question: "open ask text", askedAt: $at}],
+  deployWindows: [{id: "d1", state: "done", tag: "v9.9.9", finishedAt: $at, prs: [5]}]}' > "$L"
+OUT="$(run)"
+has "terse digest: Merged kept" "$OUT" "- #5 merged one (al)"
+has "terse digest: Deployed kept" "$OUT" "- v9.9.9 at "
+lacks "terse digest: no Needs section" "$OUT" "Needs Owner"
+lacks "terse digest: no blocked question" "$OUT" "which way?"
+lacks "terse digest: no open ask" "$OUT" "open ask text"
+lacks "terse digest: no Stuck section" "$OUT" "Stuck ("
+lacks "terse digest: no Fleet line" "$OUT" "Fleet:"
+lacks "terse digest: no greeting" "$OUT" "Hi "
+check "terse digest: gh not asked for the open PR count" "$(grep -c -- '--state open' "$STUB/gh.args")" "0"
+OUT="$(run --full)"
+has "--full: Merged kept" "$OUT" "- #5 merged one (al)"
+has "--full: Needs section" "$OUT" "Needs Owner (2)"
+has "--full: blocked question" "$OUT" "- L1 needs an answer: which way?"
+has "--full: open ask" "$OUT" "- ask: open ask text"
+has "--full: Stuck section" "$OUT" "Stuck (1)"
+has "--full: Fleet line with the gh open count" "$OUT" "Fleet: 0 running, open PRs: 1"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]

@@ -2,10 +2,12 @@
 # digest.sh: build the twice-daily digest text. Prints to stdout only; sending
 # (config messaging.owner_digest) is the concertmaster's job, see SKILL.md.
 #
-#   scripts/digest.sh [--ledger <path>] [--since-hours <n>]
+#   scripts/digest.sh [--full] [--ledger <path>] [--since-hours <n>]
 #
-# Sections: merged, deployed (and stopped deploys), needs <owner>, stuck, then
-# a one-line fleet footer.
+# Default output is the text for a chat group: terse "- " bullets, no greeting. Sections:
+# merged, deployed (and stopped deploys). Nothing in it names a host or a worker.
+# --full adds the rest, for the concertmaster's terminal report and never for a group:
+# needs <owner>, stuck, and a one-line fleet footer (running, hosts, open PRs).
 # Window: --since-hours <n>, else the time since ledger digests.lastSentAt, else 12h
 # (a lastSentAt that is missing, unparseable or in the future counts as missing). The
 # window starts exactly there: a PR merged before lastSentAt is not listed twice; the header
@@ -28,6 +30,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 
 LEDGER="$CM_HOME/ledger.json"
 SINCE_H=""
+FULL=false
 GH_TIMEOUT="${CM_DIGEST_GH_TIMEOUT:-30}"
 MERGED_LIMIT=100
 OPEN_LIMIT=1000
@@ -35,6 +38,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --ledger) LEDGER="$2"; shift 2 ;;
     --since-hours) SINCE_H="${2:-}"; shift 2 ;;
+    --full) FULL=true; shift ;;
     -h|--help) sed -n '2,/^set -euo/{/^#/p;}' "$0"; exit 0 ;;
     *) cm_warn "unknown arg: $1"; exit 2 ;;
   esac
@@ -72,10 +76,11 @@ gh_json() {
   fi
 }
 MERGED_JSON="$(gh_json --state merged --search "merged:>=$CUTOFF" --json number,title,mergedAt,author,url --limit "$MERGED_LIMIT")"
-OPEN_JSON="$(gh_json --state open --json number --limit "$OPEN_LIMIT")"
+OPEN_JSON=null   # only the --full Fleet line shows the open PR count
+$FULL && OPEN_JSON="$(gh_json --state open --json number --limit "$OPEN_LIMIT")"
 
 TZ="$CM_TZ" jq -r --argjson sinceH "$SINCE_H" --argjson since "$SINCE_EPOCH" --argjson ghMerged "$MERGED_JSON" --argjson ghOpen "$OPEN_JSON" \
-  --argjson mergedLimit "$MERGED_LIMIT" --argjson openLimit "$OPEN_LIMIT" --arg project "$CM_PROJECT" --arg owner "$CM_OWNER_NAME" --arg tzl "$CM_TZ_LABEL" '
+  --argjson full "$FULL" --argjson mergedLimit "$MERGED_LIMIT" --argjson openLimit "$OPEN_LIMIT" --arg project "$CM_PROJECT" --arg owner "$CM_OWNER_NAME" --arg tzl "$CM_TZ_LABEL" '
   def ts: if . == null then null
           else (tostring | sub("\\.[0-9]+"; "") | sub("\\+00:00$"; "Z") | try fromdateiso8601 catch null) end;
   def uk: if . == null then "?" else (localtime | strflocaltime("%a %H:%M")) end;
@@ -84,7 +89,7 @@ TZ="$CM_TZ" jq -r --argjson sinceH "$SINCE_H" --argjson since "$SINCE_EPOCH" --a
              ((now - $t) / 60 | floor) as $m
              | if $m >= 60 then "\($m / 60 | floor)h\($m % 60)m" else "\($m)m" end end;
   def section($title; $lines): ("\($title) (\($lines | length))"),
-    (if ($lines | length) == 0 then "  none" else ($lines[] | "  " + .) end), "";
+    (if ($lines | length) == 0 then "- none" else ($lines[] | "- " + .) end), "";
 
   (.workers // {} | to_entries | map(.value + {id: .key})) as $workers
   | (.deployWindows // []) as $wins
@@ -96,20 +101,21 @@ TZ="$CM_TZ" jq -r --argjson sinceH "$SINCE_H" --argjson since "$SINCE_EPOCH" --a
       else ([ $ghMerged | map(select(.mergedAt | recent)) | sort_by(.mergedAt)[]
           | "#\(.number) \(.title // "" | tostring | gsub("[[:cntrl:]]+"; " ") | .[0:60]) (\(.author.login // "?"))" ]) as $m
         | "Merged (\($m | length)\(if ($ghMerged | length) >= $mergedLimit then "+" else "" end))",
-          (if ($m | length) == 0 then "  none" else ($m[] | "  " + .) end), "" end ),
+          (if ($m | length) == 0 then "- none" else ($m[] | "- " + .) end), "" end ),
     section("Deployed"; [ $wins[] | select(.state == "done" and (.finishedAt | recent))
         | "\(.tag // "?") at \(.finishedAt | ts | uk): \((.prs // []) | map("#\(.)") | join(" "))" ]
       + [ $wins[] | select(.state == "stopped" and ((.finishedAt // .at) | recent))
         | "STOPPED \(.id): \(.blockedReason // "no reason recorded")" ]),
-    section("Needs \($owner)"; [ $workers[] | select(.state == "blocked-on-owner")
+    ( if $full | not then empty else section("Needs \($owner)"; [ $workers[] | select(.state == "blocked-on-owner")
         | "\(.lane // "-") \(.task // .id | .[0:60]): \(.blockedQuestion // "see concertmaster")" ]
-      + [ $asks[] | select(.state == "open") | "ask: \(.question | .[0:80]) (open \(.askedAt | ago))" ]),
-    section("Stuck"; [ $workers[] | select(.state == "stuck")
-        | "\(.task // .id | .[0:50]) on \(.host // "?"), idle \(.lastOutputAt | ago), nudges \(.nudges // 0)/2" ]),
-    ( [ $workers[] | select(.state == "running") ] as $run
+      + [ $asks[] | select(.state == "open") | "ask: \(.question | .[0:80]) (open \(.askedAt | ago))" ]) end ),
+    ( if $full | not then empty else section("Stuck"; [ $workers[] | select(.state == "stuck")
+        | "\(.task // .id | .[0:50]) on \(.host // "?"), idle \(.lastOutputAt | ago), nudges \(.nudges // 0)/2" ]) end ),
+    ( if $full | not then empty else
+      [ $workers[] | select(.state == "running") ] as $run
       | ($run | group_by(.host) | map("\(.[0].host) \(length)") | join(", ")) as $byHost
       | ([ $hosts | to_entries[] | select(.value.reachable == false) | .key ]) as $off
       | (if $ghOpen == null then "unknown (gh failed)"
          else ($ghOpen | length) as $n | "\($n)\(if $n >= $openLimit then "+" else "" end)" end) as $open
-      | "Fleet: \($run | length) running\(if $byHost != "" then " (" + $byHost + ")" else "" end), open PRs: \($open)\(if ($off | length) > 0 then ", offline: " + ($off | join(" ")) else "" end)" )
+      | "Fleet: \($run | length) running\(if $byHost != "" then " (" + $byHost + ")" else "" end), open PRs: \($open)\(if ($off | length) > 0 then ", offline: " + ($off | join(" ")) else "" end)" end )
 ' "$LEDGER"

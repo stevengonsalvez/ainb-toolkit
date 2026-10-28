@@ -687,14 +687,18 @@ When there is no ledger:
 
 ## Messaging
 
-- **Owner digest** at `cfg.schedule.digest_times`:
+- **Owner digest** at `cfg.schedule.digest_times`. The text is terse `- ` bullets, no
+  greeting, and carries only Merged and Deployed, so it is safe for a chat group: Needs
+  <owner>, Stuck and the Fleet footer name workers and hosts, so put those in your
+  terminal report with `scripts/digest.sh --full`, never in the sent text. Send steps:
   `scripts/digest.sh > $CM_HOME/digest.txt`, read it, then send with
   `cfg.messaging.owner_digest.send` (`{to}` = `cfg.messaging.owner_digest.to`,
   `{text}` = the file). Set `digests.lastSentAt` only after a send that succeeded, to
   the UTC time just before you ran `digest.sh` (take it with `date -u +%FT%TZ`; not the
   time the send finished), so a PR that merges during the send shows in the next digest.
+  Do not send it if a PR title or deploy reason carries a secret or personal data.
   The Merged section is the PRs `gh` reports merged since `digests.lastSentAt` exactly
-  (else 12h; `--since-hours` wins), and the open PR count in the Fleet line is `gh`'s: the
+  (else 12h; `--since-hours` wins), and the open PR count (`--full` only) is `gh`'s: the
   ledger is not their source, and "unknown (gh failed)" in either is a failed read, never
   a zero (say so in the tick report). With the wacli adapter: never
   pass `--download-media`; `wacli sync --once` only, never `--follow`.
@@ -760,7 +764,7 @@ shellcheck clean.
 | `scripts/hooks/rm-guard-hook.sh` | PreToolUse hook: denies an unguarded variable path under a recursive `rm` at once (`references/prompt-stalls.md`) |
 | `scripts/sync-from-toolkit.sh <project-skill-dir>` | copies this engine into a project's skill directory without touching its `config.yaml` (README, "Update a project") |
 | `scripts/hooks/mc-worker-hook.sh` | Claude Code hook for workers, in-scope repos only (optional) |
-| `scripts/digest.sh [--since-hours n]` | digest text, stdout only: Merged (merged since `digests.lastSentAt`, else 12h) and the open PR count from `gh pr list` (a failed gh prints "unknown (gh failed)", never 0), every other section from the ledger; read-only |
+| `scripts/digest.sh [--full] [--since-hours n]` | digest text, stdout only, `- ` bullets, no Needs, Stuck or Fleet section (`--full` adds them for the terminal report): Merged (merged since `digests.lastSentAt`, else 12h) from `gh pr list`, and in `--full` the open PR count (a failed gh prints "unknown (gh failed)", never 0), every other section from the ledger; read-only |
 | `scripts/intake.sh <cmd>` | the deterministic half of `intake` (rules in `scripts/intake.jq`) |
 | `scripts/test/*.sh` | `classify-standing`, `teardown-gates`, `resume-flow`, `intake`, `mc-emit`, `boot-sweep`, `ci-queue-alert`, `cred-check`, `rm-guard-hook`, `digest-gh`: hermetic tests against `scripts/test/fixtures/config.test.yaml`; run the matching one after any script change |
 
