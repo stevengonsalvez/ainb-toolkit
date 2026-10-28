@@ -724,7 +724,7 @@ Two different operations. Never improvise a third.
 | **Retire worker** | read the pane (no menu showing, prompt idle), then `scripts/teardown.sh <host> <path> --retire-check` must exit 0 (ledger, standing and beads gates only; it never acts), then `ORCA terminal close --terminal <h> $ENV` for that worker's ONE agent handle; keep the worktree; set `prs.<pr>.driver` to the pr-sweeper for any open PR; ledger state `retired` | a single-task worker is done (`cm:done`, `cm:merge-ready`, done-selfreported) with every epic bead closed, or a stuck worker is being replaced. Never a standing lane |
 | **Teardown worktree** | `scripts/teardown.sh`, dry run first, `--apply` only on a clean plan | single-task worker only, every epic bead closed, and the branch's PR is merged or closed; or, with no PR, after the owner approves that item via AskUserQuestion (then `--allow-no-pr`) |
 
-Before either operation, two checks, every time:
+Before either operation, three checks, every time:
 
 1. **Standing lane?** Sweepers and leads are never retired or torn down;
    idle is their resting state. The ledger alone decides: `standing: true` or
@@ -746,6 +746,16 @@ Before either operation, two checks, every time:
    teardown; nudge it to continue and surface beads that need the owner. (This
    check exists because a feature sweeper was once torn down after "all picked
    items done" with dozens of beads still open in its epic.)
+3. **Final status written?** A lead or worker that is retired, handed off, or respawned
+   under another session first writes its final status to its handover file
+   `$CM_HOME/handovers/<id>-<ts>.md` (the file the stuck rule writes) and records the path
+   in `workers.<id>.handoverFile`: open PR heads (`#n <sha12>`, state), next steps, running
+   watchers, and "none" for any that is empty. A worker on another host cannot write that
+   path: it sends the same text inline in its report and the concertmaster files it. No
+   file with a path in the ledger: no retire, no handoff; ask the worker for it. Checklist
+   line: `[ ] final status filed (PR heads, next steps, watchers) -> handoverFile set`.
+   (Rule only: `teardown.sh --retire-check` does not read the file yet, so the
+   concertmaster checks the ledger field itself before each retire.)
 
 ```bash
 scripts/teardown.sh <host> <path>                          # dry run: checks + plan

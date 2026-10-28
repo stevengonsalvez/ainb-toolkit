@@ -217,6 +217,7 @@ Test: `scripts/test/ledger-write.sh`.
 | `workers.<id>.nudges` | count since the last real progress; reset to 0 when output resumes |
 | `workers.<id>.lastOutputAt` | from Orca `lastOutputAt` (null on some remote rows: fall back to agent `updatedAt`) |
 | `workers.<id>.lastComment` | the worker's Orca comment, `cm:<state> <detail>` (lanes.md § Reporting) |
+| `workers.<id>.handoverFile` | path of the worker's final-status or respawn handover under `$CM_HOME/handovers/` (open PR heads, next steps, watchers), or null. Set by the concertmaster when it files the text; required before a retire, a handoff or a respawn under another session (SKILL.md § Retire and teardown, check 3) |
 | `workers.<id>.adopted` | true for sessions found at first boot rather than spawned |
 | `workers.<id>.standing` | true for sweepers and lane leads, false for single-task workers; set at spawn and at adoption. The ONLY source of standing for `teardown.sh` and `classify.sh` (names never decide): true or being a `lanes.<lane>.lead` refuses teardown and retire, false allows, null or missing refuses as "standing state unknown". Removal of a standing lane needs a `remove-standing` ask (§ asks) |
 | `workers.<id>.beadsEpic` | beads epic id (string) the worker owns, e.g. `acme-epic1`, or null; set at spawn, adoption, or when a lane takes an epic. Any other type refuses teardown. Not done, and `teardown.sh` refuses, while any child bead (dotted `<epic>.N` or `parent-child` linked, recursively) is not closed or tombstoned |
