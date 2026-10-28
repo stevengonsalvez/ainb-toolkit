@@ -127,6 +127,7 @@ The lane set above is the default; `cfg.lanes` is the list in use.
     of deleting from `/`. The rm-guard hook (`scripts/hooks/rm-guard-hook.sh`)
     denies the unguarded form on sight.
 
+<!-- project-local: hard-rules -->
 
 ## Start: `/concertmaster`
 
@@ -151,6 +152,25 @@ bring dead lanes back from the roster), `hand <work>` (§ Handing work), `digest
 (build and send the digest now), `intake <chat> [--since <time>]` (§ Intake: read
 a chat, dedupe, classify, route, create beads, write the tracker, ask once; only
 when the owner calls it).
+
+<!-- project-local: boot -->
+
+## Project overlay
+
+Project rules live in `references/project-local.md`, never in the engine files:
+`scripts/sync-from-toolkit.sh` overwrites this body, `scripts/`, `references/` and
+`companions/` on every sync, creates `project-local.md` as a stub when it is missing,
+and never writes it again.
+
+- Read it at boot right after the config check (Start step 3), and again with the
+  ledger after a compaction or restart. Missing or empty: no addenda.
+- A line `<!-- project-local: <hook> -->` here or in `references/` is a hook point:
+  apply the `## <hook>` section of `project-local.md` there, as if written in place.
+  `## lane: <label>` sections go into that lane's brief (`references/lanes.md`).
+- Addenda add or tighten. One that would loosen a hard rule, the merge gate or a
+  guardrail is not applied: surface it to the owner.
+- Engine changes (scripts, config keys, a wrong engine doc, a new hook point) go to
+  the toolkit as a PR, never as a local edit: `references/overlay.md`.
 
 ## The tick
 
@@ -225,6 +245,8 @@ when the owner calls it).
      below it, within caps.
    - Deploy window due (`cfg.schedule.deploy_windows`): § Deploy windows.
    - Digest due (`cfg.schedule.digest_times`): § Messaging.
+   - Project addenda: the `tick-extra` steps of `references/project-local.md`.
+     <!-- project-local: tick-extra -->
 5. **Report** in the turn-end format (§ Reporting). Emit
    `scripts/mc-emit.sh --tick '<fleet summary json>'` (a `summary` field becomes
    the message) and a fleet upsert for concertmaster itself; on an issue's
@@ -521,6 +543,8 @@ audits each `cm:merged` against GitHub. All required, at the current head sha:
 PRs in `cfg.merge.approved_only_classes` merge on APPROVED only. Any guardrail
 row marked ASK stops the merge until the owner answers.
 
+<!-- project-local: merge-gate -->
+
 ## Deploy windows
 
 `cfg.schedule.deploy_windows` per day in `cfg.schedule.timezone`. Merges
@@ -558,6 +582,8 @@ window due ─▶ delta since last tag? ─ no ─▶ skipped
    comment; surface defects in the turn-end report.
 
 A merge that lands during an in-flight window waits for the next window.
+
+<!-- project-local: deploy -->
 
 ## Retire and teardown
 
@@ -635,6 +661,8 @@ git-only worktrees get `git worktree remove` and a branch delete only when
 GitHub says MERGED. Salvage lands in `$CM_HOME/salvage/<host>/<branch>-<ts>/`
 on that host. On a remote host the ssh target must answer with
 `hosts.<name>.hostname`.
+
+<!-- project-local: teardown -->
 
 ## First boot (adoption)
 
@@ -752,11 +780,13 @@ shellcheck clean.
 | `scripts/ci-queue-alert.sh [--dry-run]` | alerts when too many workflow runs stay queued, once per episode (`references/ci-capacity.md`) |
 | `scripts/cred-check.sh [--dry-run] [--publish [FILE]]` | weekly validity probe of the credentials in a names-only index (`references/credentials.md`) |
 | `scripts/hooks/rm-guard-hook.sh` | PreToolUse hook: denies an unguarded variable path under a recursive `rm` at once (`references/prompt-stalls.md`) |
-| `scripts/sync-from-toolkit.sh <project-skill-dir>` | copies this engine into a project's skill directory without touching its `config.yaml` (README, "Update a project") |
+| `scripts/sync-from-toolkit.sh <project-skill-dir>` | copies this engine into a project's skill directory without touching its `config.yaml` or `references/project-local.md` (README, "Update a project") |
 | `scripts/hooks/mc-worker-hook.sh` | Claude Code hook for workers, in-scope repos only (optional) |
 | `scripts/digest.sh [--since-hours n]` | digest text from the ledger, stdout only |
 | `scripts/intake.sh <cmd>` | the deterministic half of `intake` (rules in `scripts/intake.jq`) |
 | `scripts/test/*.sh` | `classify-standing`, `teardown-gates`, `resume-flow`, `intake`, `mc-emit`, `boot-sweep`, `ci-queue-alert`, `cred-check`, `rm-guard-hook`: hermetic tests against `scripts/test/fixtures/config.test.yaml`; run the matching one after any script change |
+
+<!-- project-local: scripts -->
 
 ## Open config
 
