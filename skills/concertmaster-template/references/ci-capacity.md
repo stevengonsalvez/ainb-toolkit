@@ -1,7 +1,8 @@
 # CI queue alert
 
 A CI backlog can sit queued for hours with nobody told, and a shared GitHub token can hit its hourly
-limit. This covers the first; the second is a note on per-lane tokens at the end.
+limit. This covers the first, the rule that keeps the second from happening (section 2), and a note on
+per-lane tokens (section 3).
 
 ## 1. Queue alert
 `scripts/ci-queue-alert.sh` samples `actions/runs?status=queued` and alerts when MORE than 15 runs have
@@ -45,7 +46,34 @@ sudo systemctl daemon-reload && sudo systemctl enable --now concertmaster-ci-que
 systemctl list-timers concertmaster-ci-queue.timer --no-pager
 ```
 
-## 2. Per-lane tokens or a GitHub App (needs a human)
+## 2. GitHub API budget rule
+Every lane, watcher and script on one token spends from shared 5000/h budgets. There are two
+buckets: REST `core` (spent by `gh api`) and `graphql` (spent by `gh pr list`, `gh pr view` and
+`gh pr checks`). A few lane watchers polling in parallel can exhaust one, and then every call that
+draws on it fails until the reset. These are defaults, not config keys; a script may take its own floor from an environment
+variable (`CM_QUEUE_MIN_BUDGET` for `ci-queue-alert.sh`).
+
+1. **Check the budget first.** `gh api rate_limit --jq '.resources | {core: .core.remaining,
+   graphql: .graphql.remaining}'` is free. Run it at the start of each tick and before arming any
+   watcher.
+2. **Poll no faster than 180 s.** ONE watcher per run or PR; kill duplicates and never run several in
+   parallel. Briefs for verdict agents say "at most a handful of `gh` calls".
+3. **Scripted polls send conditional requests.** Keep the `ETag` from `gh api -i <endpoint>` and repeat
+   with `-H 'If-None-Match: <etag>'`: `HTTP 304 Not Modified` means unchanged, and GitHub does not
+   charge it to the limit (GitHub REST docs, "conditional requests"). Read a 304 as "no change", not
+   as a failure: `gh api` exits 1 on a 304, so branch on the HTTP status line, not the exit code.
+4. **Back off under 800 remaining in either bucket.** Poll every 10 minutes, not 180 s, and skip
+   optional `gh` calls (use the tick's `scripts/discover.sh` output only). Under 500 make no PR calls until that
+   bucket's reset time (`gh api rate_limit --jq .resources.graphql.reset`, or `.core.reset`).
+5. **Never retry-loop a 403 or 429.** Check `rate_limit`, then wait for `reset`.
+6. **One list, not many views.** ONE `gh pr list --state open --json
+   number,headRefOid,mergeable,mergeStateStatus,baseRefName --limit 100` instead of per-PR
+   `gh pr view`.
+
+If it keeps recurring, ask the owner for a second fine-grained token or a GitHub App for the CI
+watchers (section 3).
+
+## 3. Per-lane tokens or a GitHub App (needs a human)
 Every lane sharing one personal token shares one hourly budget. A GitHub App installation token is a
 separate bucket and keeps bot traffic off the personal token. One App is still one bucket, so for
 per-group isolation create one App per group (for example: pr-sweeper, workers, ops).
@@ -56,5 +84,4 @@ permission (it lets a token rewrite workflow files, which is how production secr
 production secrets in GitHub Environments with required reviewers. Store the App ID, installation ID and
 private key in your secret store (see `credentials.md`), never in a repo or a bead. A token minter (JWT,
 then `POST /app/installations/<id>/access_tokens`, cached for 55 minutes) is not included: it cannot be
-tested without a real App. Until then the budget rule stands: one `gh pr list --json` per tick, no
-per-PR loops, check `gh api rate_limit` first (it is free).
+tested without a real App. Until then the budget rule (section 2) stands.
