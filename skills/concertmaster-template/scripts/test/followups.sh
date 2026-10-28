@@ -115,18 +115,18 @@ if printf '%s\n' "$OUT" | grep -q 'followups: unmatched-child w-lead no-such-wor
 echo "== reassign: another live worker posts the same id"
 seed
 rec "child-a:cm:running
-cm:followup item-codes owner=lane-a validate the load"
+cm:followup item-ids owner=lane-a check the output"
 check "worker posts it"                                  '.followUps[0].worker == "w-iso"'
 rec "child-a:cm:running
-cm:followup item-codes owner=lane-a validate the load" "lead-a:cm:running
-cm:followup item-codes owner=lane-a validate the load"
+cm:followup item-ids owner=lane-a check the output" "lead-a:cm:running
+cm:followup item-ids owner=lane-a check the output"
 check "two live posters: the current worker keeps it"    '.followUps[0].worker == "w-iso"'
 rec "lead-a:cm:running
-cm:followup item-codes owner=lane-a validate the load, now with the lead"
+cm:followup item-ids owner=lane-a check the output, now with the lead"
 check "poster only absent (still live): the item stays put"  '.followUps[0].worker == "w-iso"'
 jq '.workers["w-iso"].state = "gone"' "$L" > "$ROOT/p.json" && mv "$ROOT/p.json" "$L"
 rec "lead-a:cm:running
-cm:followup item-codes owner=lane-a validate the load, now with the lead"
+cm:followup item-ids owner=lane-a check the output, now with the lead"
 check "poster gone, another posts: reassigned, text kept current" '.followUps[0].worker == "w-lead" and (.followUps[0].text | endswith("with the lead"))'
 
 seed
@@ -139,26 +139,26 @@ check "live poster present and dropped the line: handed over" '.followUps[0].wor
 echo "== report: orphaned rows (e1, e2)"
 seed
 rec "child-a:cm:running
-cm:followup item-codes owner=lane-a validate the load"
+cm:followup item-ids owner=lane-a check the output"
 "$FU" report > "$ROOT/report.tsv"
 if ! grep -q '^orphaned' "$ROOT/report.tsv"; then ok "a running worker's item is not orphaned"; else bad "running worker listed as orphan" "$(cat "$ROOT/report.tsv")"; fi
 jq '.workers["w-iso"].state = "gone"' "$L" > "$ROOT/p.json" && mv "$ROOT/p.json" "$L"
 "$FU" report > "$ROOT/report.tsv"
-if grep -q '^orphaned	item-codes	w-iso	lane-a	lane-a	gone	validate the load' "$ROOT/report.tsv"; then ok "e1: report lists an orphan for a gone worker"; else bad "e1 gone" "$(cat "$ROOT/report.tsv")"; fi
+if grep -q '^orphaned	item-ids	w-iso	lane-a	lane-a	gone	check the output' "$ROOT/report.tsv"; then ok "e1: report lists an orphan for a gone worker"; else bad "e1 gone" "$(cat "$ROOT/report.tsv")"; fi
 jq '.workers["w-iso"].state = "teardown"' "$L" > "$ROOT/p.json" && mv "$ROOT/p.json" "$L"
 "$FU" report > "$ROOT/report.tsv"
-if grep -q '^orphaned	item-codes	w-iso	lane-a	lane-a	teardown' "$ROOT/report.tsv"; then ok "e1: report lists an orphan for a teardown worker"; else bad "e1 teardown" "$(cat "$ROOT/report.tsv")"; fi
+if grep -q '^orphaned	item-ids	w-iso	lane-a	lane-a	teardown' "$ROOT/report.tsv"; then ok "e1: report lists an orphan for a teardown worker"; else bad "e1 teardown" "$(cat "$ROOT/report.tsv")"; fi
 jq 'del(.workers["w-iso"])' "$L" > "$ROOT/p.json" && mv "$ROOT/p.json" "$L"
 "$FU" report > "$ROOT/report.tsv"
-if grep -q '^orphaned	item-codes	w-iso	lane-a	lane-a	missing' "$ROOT/report.tsv"; then ok "e1: report lists an orphan for a missing worker"; else bad "e1 missing" "$(cat "$ROOT/report.tsv")"; fi
+if grep -q '^orphaned	item-ids	w-iso	lane-a	lane-a	missing' "$ROOT/report.tsv"; then ok "e1: report lists an orphan for a missing worker"; else bad "e1 missing" "$(cat "$ROOT/report.tsv")"; fi
 check "a state is never stored for it"                   '[.workers[] | select(.state == "orphaned-followups")] | length == 0'
 cp "$L" "$ROOT/keep.json"
 rec "lead-a:cm:running
-cm:followup item-codes owner=lane-a validate the load"
+cm:followup item-ids owner=lane-a check the output"
 "$FU" report > "$ROOT/report.tsv"
 if ! grep -q '^orphaned' "$ROOT/report.tsv"; then ok "e2: another live worker posts it: the row is gone"; else bad "e2 reassign" "$(cat "$ROOT/report.tsv")"; fi
 cp "$ROOT/keep.json" "$L"
-"$FU" close item-codes >/dev/null 2>&1
+"$FU" close item-ids >/dev/null 2>&1
 "$FU" report > "$ROOT/report.tsv"
 if ! grep -q 'item-ids' "$ROOT/report.tsv"; then ok "e2: closing removes the row"; else bad "e2 close" "$(cat "$ROOT/report.tsv")"; fi
 for st in "done" retired queued; do

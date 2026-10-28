@@ -13,7 +13,7 @@
 #   add --accept-unmerged-beads <ask-id> ONLY when the owner approved leaving
 #     this worktree's unmerged open beads behind (kind "accept-unmerged-beads",
 #     same binding); it never overrides the epic gate
-#   add --retire-check to run only the ledger, standing and beads gates (the
+#   add --retire-check to run only the ledger, standing, beads and follow-up gates (the
 #     guard before retiring a worker's agent terminal); never acts, and
 #     refuses unless the path resolved and a live ledger worker matched
 #
@@ -62,6 +62,8 @@
 #     never used to allow or refuse (the owner's rule); a sweeper-looking name
 #     with standing:false only prints a note. --force-standing <ask-id>
 #     overrides this one refusal and never the beads gate.
+#   - OPEN FOLLOW-UPS: the worker, or a worker whose parent chain leads to it, has an
+#     open followUps[] row (scripts/followups.sh); same refusal style as the beads gate
 #   - OPEN BEADS: any live worker has beadsEpic (a non-string refuses) and any
 #     child bead is not closed. Only closed and tombstone count as closed;
 #     deferred, pinned, blocked and the rest are open work. Children: dotted
@@ -573,7 +575,20 @@ EOF_K
                   standingUnknown: [ $ws[] | select((.standing | type) != "boolean") | .id ],
                   lead: [ $ws[].id as $k | $k | select($leads | index($k)) ],
                   badEpic: [ $ws[] | select(.beadsEpic != null and ((.beadsEpic | type) != "string" or .beadsEpic == "")) | .id ],
-                  epics: ([ $ws[] | .beadsEpic | select(type == "string" and . != "") ] | unique) }' 2>/dev/null)" \
+                  epics: ([ $ws[] | .beadsEpic | select(type == "string" and . != "") ] | unique),
+                  lanes: [ $ws[] | (.lane // .id) ],
+                  wids: [ $ws[] | .worktreeId | select(type == "string" and . != "") ],
+                  fuBad: ((($r.followUps // []) | type) != "array" or any(($r.followUps // [])[]; type != "object")),
+                  fuOpen: (if ((($r.followUps // []) | type) != "array") then [] else
+                      ( {seen: $ids, frontier: $ids}
+                        | until(.frontier | length == 0;
+                            .seen as $s | .frontier as $f
+                            | ([ $r.workers | to_entries[] | select((.value | type) == "object")
+                                 | select(.value.parent as $p | ($p | type) == "string" and ($f | index($p)) != null) | .key ] | unique - $s) as $new
+                            | {seen: ($s + $new), frontier: $new})
+                        | .seen ) as $fam
+                      | [ ($r.followUps // [])[] | select(type == "object" and .state != "done" and (.worker as $w | $fam | index($w)) != null)
+                          | "\(.worker):\(.id)" ] end) }' 2>/dev/null)" \
            && [ -n "$LW" ]; then
         LEDGER_OK=1
         check ledger "live worker(s) $(printf '%s' "$LW" | jq -r '.ids | join(",")')"
@@ -918,6 +933,56 @@ elif [ -n "$LW" ]; then
   fi
 fi
 
+# ---- follow-up gate -----------------------------------------------------------
+# An open followUps[] row (references/ledger.md) on this worker, or on any worker
+# whose parent chain leads to it, is work that must outlive the worker: not done.
+if [ -n "$LW" ]; then
+  FU_OPEN="$(lw '.fuOpen | join(", ")')"
+  if [ "$(lw '.fuBad')" = true ]; then
+    check followups "UNKNOWN (ledger followUps is not an array of objects)"
+    gate "ledger followUps is not an array of objects: follow-up state unknown"
+  elif [ -n "$FU_OPEN" ]; then
+    check followups "OPEN: $FU_OPEN"
+    gate "open follow-up(s) ($FU_OPEN): finish them, hand them to another owner, or close with cm:followup-done <id> (scripts/followups.sh close <id>) before teardown"
+  else
+    check followups "none open (worker and its children)"
+  fi
+  # The live comment can hold an item the last reconcile has not folded in yet (a lead posts it, then
+  # this runs in the same tick): every open tag in it must already be done in the ledger for this lane.
+  if [ -z "$ROW" ] && [ -n "$(lw '.wids | join("")')" ]; then
+    check followups "UNKNOWN (Orca row missing for a worker with a worktreeId: comment unread)"
+    gate "Orca row missing for $HOST:$WT: live comment unknown, cannot prove no open follow-up"
+  elif [ -n "$ROW" ]; then
+    if ! LIVE_RAW="$(printf '%s' "$ROW" | jq -r '.comment // ""' | "$HERE/followups.sh" comment-open --texts 2>/dev/null)"; then
+      check followups "UNKNOWN (live comment could not be read)"
+      gate "live comment unreadable: open follow-up state unknown"
+    elif [ -n "$LIVE_RAW" ]; then
+      LIVE_BAD="$(printf '%s\n' "$LIVE_RAW" | grep '^bad:' | tr '\n' ';' || true)"
+      LIVE_RAW="$(printf '%s\n' "$LIVE_RAW" | grep -v '^bad:' || true)"
+      if [ -n "$LIVE_BAD" ]; then
+        check followups "MALFORMED in the live comment: ${LIVE_BAD%;}"
+        gate "malformed follow-up line in live comment (${LIVE_BAD%;}): fix it (cm:followup <id> owner=<o> <text>) or remove it"
+      fi
+      # id<TAB>text lines. An id counts as done only when a closed row of this worker's lane holds the SAME text:
+      # a closed id posted again for a new item is still open work held nowhere else.
+      LIVE_IDS="$(printf '%s\n' "$LIVE_RAW" | grep . | jq -R 'split("\t") | {id: .[0], text: (.[1] // "")}' | jq -cs . 2>/dev/null)" || LIVE_IDS=""
+      if [ -z "$LIVE_IDS" ]; then
+        check followups "UNKNOWN (live comment ids could not be read)"
+        gate "live comment ids unreadable: open follow-up state unknown"
+      elif LIVE_OPEN="$(jq -r --argjson ids "$LIVE_IDS" --argjson lanes "$(lw '.lanes')" '
+          . as $L | [ $ids[] | . as $x | select(any(($L.followUps // [])[]?; type == "object" and .id == $x.id and .state == "done" and (.text // "") == $x.text and (.lane as $l | $lanes | index($l)) != null) | not) | .id ] | join(", ")' "$LEDGER" 2>/dev/null)"; then
+        if [ -n "$LIVE_OPEN" ]; then
+          check followups "OPEN in the live comment: $LIVE_OPEN"
+          gate "open follow-up(s) in live comment ($LIVE_OPEN): not in the ledger as done with the same text (a closed id reused for a new item counts as open); run scripts/followups.sh reconcile, then finish or close them, and post a new item under a new id"
+        fi
+      else
+        check followups "UNKNOWN (ledger unreadable for the live comment check)"
+        gate "ledger unreadable: open follow-up state unknown"
+      fi
+    fi
+  fi
+fi
+
 if [ "$RETIRE_CHECK" -eq 1 ]; then
   # Nothing proven is nothing allowed: an unresolved path, an unreachable or
   # wrong host, or no live ledger worker is never "ok".
@@ -928,7 +993,7 @@ if [ "$RETIRE_CHECK" -eq 1 ]; then
     printf 'RETIRE REFUSED:\n%s' "$GATE_REFUSALS"
     exit 3
   fi
-  printf 'retire-check: ok (ledger, standing and beads gates clean; nothing changed)\n'
+  printf 'retire-check: ok (ledger, standing, beads and follow-up gates clean; nothing changed)\n'
   exit 0
 fi
 
@@ -1057,6 +1122,17 @@ exit "$rc"'
   printf 'removed untracked bd runtime files: %s\n' "$(printf '%s\n' "$BDRT" | tr '\n' ' ')"
 }
 if [ -n "$ROW" ]; then
+  # Keep the comment (open follow-up lines, notes): Orca drops it with the worktree.
+  CMT="$(printf '%s' "$ROW" | jq -r '.comment // ""')"
+  if [ -n "$CMT" ]; then
+    CMT_NAME="$(printf '%s' "$ROW" | jq -r '.displayName // empty')"
+    [ -n "$CMT_NAME" ] || CMT_NAME="${WT##*/}"
+    CMT_DIR="$CM_HOME/salvage/comments/$(cm_safe_name "$HOST")"
+    CMT_FILE="$CMT_DIR/$(cm_safe_name "${CMT_NAME:0:100}")-$(date -u +%Y%m%dT%H%M%SZ)-$$.txt"
+    ( umask 077 && mkdir -p -- "$CMT_DIR" && set -C && printf '%s\n' "$CMT" > "$CMT_FILE" ) 2>/dev/null \
+      && chmod 600 "$CMT_FILE" 2>/dev/null \
+      || fail "comment archive (nothing removed)"
+  fi
   rm_bd_runtime
   orca_cmd worktree rm --worktree "id:$WID" --json || fail "orca worktree rm"
 else
