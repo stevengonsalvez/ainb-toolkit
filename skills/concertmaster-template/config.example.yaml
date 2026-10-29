@@ -242,6 +242,7 @@ ci:
 credentials:
   index_key: CONCERTMASTER-CREDENTIALS-INDEX   # name of the Bitwarden secret holding the index (names only)
   bws_project: null                # Bitwarden project the index secret lives in (needed only for --publish)
+  transcript_dirs: []              # scripts/scan-secrets.sh default scan dirs (a list; empty = ~/.claude/projects) [script]
 
 # scripts/unlinked-prs.sh: flag open PRs with no linked issue, one gh call per run. [script]
 unlinked_prs:
