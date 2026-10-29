@@ -41,7 +41,7 @@ those keys; nothing in them names an org, repo, host, person or chat.
 | `references/away-timeout.md` | the away timeout (hard rule 16) and `scripts/ask-timeout.sh`: which asks may get an independent verdict |
 | `references/queue.md` | the work queue: add, grant under caps, mark, audit (`scripts/queue.sh`, `scripts/queue-audit.sh`) |
 | `companions/dev-flow.md` | generic copy of the dev-flow skill the dev-sweeper runs |
-| `scripts/` | bash + jq (+ yq) scripts, `lib.sh` holds the config loader. Fleet jobs: `boot-sweep.sh`, `runtime-check.sh`, `ci-queue-alert.sh`, `cred-check.sh`, `hooks/rm-guard-hook.sh`. `sync-from-toolkit.sh` updates a project's copy |
+| `scripts/` | bash + jq (+ yq) scripts, `lib.sh` holds the config loader. Fleet jobs: `boot-sweep.sh`, `runtime-check.sh`, `ci-queue-alert.sh`, `cred-check.sh`, `scan-secrets.sh`, `hooks/rm-guard-hook.sh`. `sync-from-toolkit.sh` updates a project's copy |
 | `scripts/test/` | hermetic tests, run against `scripts/test/fixtures/config.test.yaml` |
 
 ## Dependencies

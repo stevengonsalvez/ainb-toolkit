@@ -50,6 +50,22 @@ the point. The concertmaster tick surfaces `INVALID` and `FATAL` rows from the n
 Index lookup order: the Bitwarden index secret, `~/.concertmaster/credentials-index.json`,
 `~/.concertmaster/credentials-index.seed.json` (the install copies the seed there), the skill's seed.
 
+## Scan transcripts for leaked secrets (counts only)
+
+`scripts/scan-secrets.sh` counts secret-shaped strings per class and per transcript file and prints
+counts, never the matched text. Strict classes decide the exit code: private key, vendor token prefix,
+JWT, AWS key, URL password, Bearer value. The advisory class (`password=` style assignment) is a noisy
+heuristic that only counts with `--strict`. Run it after a session that touched credentials or env files,
+and when a lane reports a pasted secret.
+
+- Exit 1: a strict class hit. Exit 2: something could not be read, or nothing existed to scan; never read 2 as clean.
+- A hit is a lead, not proof: a transcript that discusses a key shape counts too, and the `jwt` class cannot
+  tell a public anon key or a short session token from a service-role key.
+- Take the file from the `FILE` rows and give it to the owner for rotation. Rotate nothing yourself. Never open
+  the transcript to look at the value and never quote it in an issue, PR or note.
+- Dirs come from config `credentials.transcript_dirs`; pass paths to override; `--since-days n` bounds a run.
+- Test: `scripts/test/scan-secrets.sh` (synthetic secrets are built at run time from split strings).
+
 ## Install on the concertmaster host (Linux with systemd; macOS is out of scope)
 ```bash
 mkdir -p ~/.concertmaster/bin ~/.local/state
