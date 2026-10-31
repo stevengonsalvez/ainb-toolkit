@@ -246,7 +246,11 @@ BEFORE asking.
    Update `hosts`, `lastOutputAt`, `lastComment` (from the worktree `comment`, `cm:<state>` per
    `references/lanes.md`), PR state. Last, rewrite the roster:
    `scripts/roster.sh` (active work only, atomic, mode 600; read by `resume`,
-   § Resume). A failure is a warning, never a stop.
+   § Resume). A failure is a warning, never a stop. Then build the programme table for
+   the report: `scripts/classify.sh < "$CM_HOME/last-discover.json" > "$CM_HOME/last-classify.json"; scripts/programme-rollup.sh --classify "$CM_HOME/last-classify.json" --discover "$CM_HOME/last-discover.json" > "$CM_HOME/programmes.md"`
+   (after the comment fold above, so the ledger comments are this tick's). On a failure the
+   script still prints the table with one `unknown (rollup failed)` row and exits 1: report
+   it, never an empty table.
    **Ownership accounting.** Every in-scope worktree has exactly one owner
    lane (§ Ownership): classify records `owner` and `ownerSource` per row and
    flags the rest `ORPHAN`. After reconcile, count worktrees and owned
@@ -306,7 +310,8 @@ BEFORE asking.
    - Digest due (`cfg.schedule.digest_times`): § Messaging.
    - Project addenda: the `tick-extra` steps of `references/project-local.md`.
      <!-- project-local: tick-extra -->
-5. **Report** in the turn-end format (§ Reporting). Then emit telemetry, every tick:
+5. **Report** in the turn-end format (§ Reporting), led by the programme table
+   (`$CM_HOME/programmes.md`, pasted as is). Then emit telemetry, every tick:
    `scripts/classify.sh < "${CM_HOME:-$HOME/.concertmaster}/last-discover.json" | scripts/tick-emit.sh`
    (it builds the fleet summary, queues `mc-emit.sh --tick`, then sends the fleet upsert
    for concertmaster itself, which flushes; it always exits 0). On an issue's state
@@ -942,6 +947,25 @@ next: trigger prod for the 16:00 window
 - #101 worker likely waiting on a flaky E2E [inference]
 ```
 
+- **Programme table, required in EVERY tick report, above the turn-end block.** One row per
+  programme: an epic or a standing lane, taken from the ledger `lanes`. Columns
+  `programme | lead + host | state | open PRs | waiting on`. It is data, not prose: paste the
+  output of `scripts/programme-rollup.sh` and never hand-write or trim a row. `state` is the
+  first line of the lead's last worktree comment, `no lead` when the lane has none, so no cell
+  is blank. `open PRs` is the `#n` list with its count (a PR whose state classify read this
+  tick wins over the ledger). `waiting on` is the first `cm:blocked`, `cm:followup owner=<x>`
+  or `cm:waiting-owner` text, else `none`. Every cell is read this tick, else marked
+  `(last tick)`: the script appends it itself to a row whose worktree host did not answer in
+  full. A tick report without this table is incomplete.
+
+  ```text
+  | programme       | lead + host            | state                | open PRs     | waiting on |
+  |-----------------|------------------------|----------------------|--------------|------------|
+  | epic:app-a      | epic-app-a @ host-a    | cm:running 2 workers | #101 #102 (2)| none       |
+  | pr-sweeper      | pr-sweeper @ host-a    | cm:running 4 ready   | #98 (1)      | none       |
+  | dev-sweeper     | none                   | no lead              | 0            | none       |
+  ```
+
 - Three columns, `thread | state | next`, one row per live thread. `state` under
   12 words, present tense; `next` 5 words max or `blocked: <what>`.
 - One `next:` line: the single recommended action.
@@ -976,6 +1000,8 @@ shellcheck clean.
 | `scripts/waiting.sh` | sessions showing a question menu or the autocompact prompt (`BLOCKED PROMPT` row, idle 2 minutes or more), with minutes waiting and the question; TSV |
 | `scripts/jsanitize`, `scripts/jstrings` | Orca JSON helpers (python3): `jsanitize` re-emits JSON with lone UTF-16 surrogates replaced so `jq` can parse remote-host replies; `jstrings` prints every string of a reply (pane text), tolerating the same. `abrupt.sh`, `waiting.sh` and the census in `discover.sh` pipe Orca output through them |
 | `scripts/roster.sh [--stdout]` | rewrites `$CM_HOME/roster.yaml` from the ledger, active rows only; atomic, mode 600, exit 1 and roster untouched when the ledger is unreadable |
+| `scripts/programme-rollup.sh [--classify FILE\|-] [--discover FILE] [--json]` | tick step 3, report step 5: the programme table, one row per ledger lane (a `gone` lane is left out): `programme \| lead + host \| state \| open PRs \| waiting on`; state is the lead's comment first line (`no lead`, `unparsed: ...` or `ledger:<state>` when there is none); open PRs are the PRs (not MERGED or CLOSED, judged per repo) driven by a worker of the programme, with the classify JSON state of each worktree winning over the ledger; waiting on is the first `cm:blocked`, `cm:followup owner=<x>` or `cm:waiting-owner` line; read-only; on an unreadable ledger it prints the header and one `unknown (rollup failed)` row and exits 1 |
+| `scripts/test/programme-rollup.sh` | temp `CM_HOME` and synthetic lanes (lane-a, host-a): two programmes with a blocked worker and an idle lead, a lane with no lead and one whose lead is gone, classify PRs merged in, followup order and done ids, malformed and non-string comments, secret scrubbing, empty ledger, hostile ledgers, the failure row, `--json`, bad input; ledger never written |
 | `scripts/resume.sh [--dry-run] [--host <h>] [--worktree-id <id>] [--path <wt>] [--lane <label>]` | `/concertmaster resume`: rewrites the roster, then per row: live, dead (`claude --continue` plus one nudge), offline, duplicate, missing, manual, unknown, held; one run at a time (lock); exit 3 when a row needs attention |
 | `scripts/lane-journal.sh append <lane> <text> / tail <lane> [n] / rotate [--lane <l>] / name <label>` | the per-lane journal `$CM_HOME/lanes/<lane>/journal.md`: append-only, one stamped line per entry, secret-shaped text refused (exit 3), lane name `[a-z0-9._-]`; `tail` is what a lane reads at boot, and the respawn nudge carries it for a standing lane on this host; never sent to a group; `references/ledger.md` § Lane journal |
 | `scripts/teardown.sh <host> <path> [--apply] [--allow-no-pr] [--salvage] [--close-handle <h>] [--force-standing <ask-id>] [--accept-unmerged-beads <ask-id>] [--retire-check]` | safe teardown, dry run by default; refuses standing lanes, unknown standing, open beads and open follow-ups (ledger and live comment; `--apply` archives the comment first), fails closed |
