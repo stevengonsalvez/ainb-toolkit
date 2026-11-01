@@ -8,7 +8,8 @@
 #   stuck              live agent (or status working/permission/waiting) with
 #                      no output for stuckMin+ minutes
 #   running            live agent with recent output
-#   unknown-git        git state not collected (remote host) or a git check
+#   unknown-git        git state not collected (a remote host where Orca and ssh
+#                      both failed; the reason names which and why) or a git check
 #                      failed or the path is gone: investigate, never teardown
 #   dirty-or-unpushed  dirty tree or unpushed commits, whatever the PR state.
 #                      Never delete.
@@ -133,6 +134,7 @@ def nrm: ascii_downcase | gsub("[^a-z0-9]"; "-");
     | {name: (.path | normpath | split("/") | last // ""), label: $e.key, host: (.host // null)} ] as $ledgerLeads
 | .generatedAtMs as $now
 | (.hosts // []) as $hosts
+| ((.gitScope.hosts // []) | map({key: .host, value: .}) | from_entries) as $gitHost
 | [
     ( $hosts[] | select(.reachable | not)
       | {host: .name, class: "host-offline", path: null, repo: null, branch: null,
@@ -205,7 +207,10 @@ def nrm: ascii_downcase | gsub("[^a-z0-9]"; "-");
             suggest: (if ($flags | index("awaiting-input")) then "read pane; answer via menu keys or escalate" else "none" end)}
          elif ($gitKnown | not) then
            {class: "unknown-git",
-            reason: (if $g == null then "git state not collected on \($w.host)"
+            reason: (if $g == null then
+                       (($gitHost[$w.host] // null) as $gh
+                        | if $gh != null and $gh.ok == false then ($gh.error // "git state not collected") + " (host \($w.host))"
+                          else "git state not collected on \($w.host)" end)
                      elif $g.exists == false then "path gone"
                      else "a git check failed" end),
             suggest: (if $g != null and $g.exists == false then "investigate: path gone (git worktree prune candidate)"

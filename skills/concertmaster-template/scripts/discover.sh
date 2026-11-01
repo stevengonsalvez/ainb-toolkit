@@ -26,12 +26,18 @@
 # (truncated) is recorded in `terminalScope.hosts` with ok:false, never as "no
 # terminals"; classify reports it as an incomplete check.
 #
-# Git state (dirty, unpushed) is collected for LOCAL rows only and keyed by
-# host + path; remote rows carry git:null (unknown). Known gap: git-only
-# worktrees on remote hosts are not discovered (SKILL.md § Open config).
+# Git state (dirty, unpushed) is keyed by host + path. Local rows: git runs here. Remote rows:
+# one short-lived `orca terminal create --environment <host>` per host (hosts in parallel) runs
+# a one-line sh script that lists the repo's worktrees and prints raw facts; the terminal is
+# read until its end marker (CM_GIT_TIMEOUT, 30s) and closed by its exact handle. When Orca
+# cannot do it, ssh is tried (the ledger's hosts.<h>.hostname, else the host name). Only when
+# both fail is a remote row's git null, and `gitScope.hosts[]` names the host and both errors,
+# so classify reports unknown-git with the reason: a timeout is listed, never clean, never gone.
+# Untracked tool scratch (census.ignore_untracked) is counted in git.ignoredUntracked, not dirty.
+# Known gap: git-only worktrees on remote hosts are not discovered (SKILL.md § Open config).
 # A failed git check is recorded as null with statusOk:false, never as clean.
 #
-# Env: CM_HOME (~/.concertmaster), CM_HOST_TIMEOUT (25s), CM_ORG, CM_REPO
+# Env: CM_HOME (~/.concertmaster), CM_HOST_TIMEOUT (25s), CM_GIT_TIMEOUT (30s), CM_ORG, CM_REPO
 # (default from config github.org, github.main_repo).
 # Writes nothing except the org-repo cache. Exit 0 whenever a document was
 # printed; 1 only when even the host list could not be read and no doc built.
@@ -68,8 +74,150 @@ trap 'rm -rf -- "${TMP:?}"' EXIT
 : > "$TMP/prs-all.ndjson"
 : > "$TMP/terminals.ndjson"
 : > "$TMP/termhosts.ndjson"
+: > "$TMP/gitscope.ndjson"
 
 err() { jq -cn --arg where "$1" --arg msg "$2" '{where:$where, message:$msg}' >> "$TMP/errors.ndjson"; }
+
+# ---- remote git state ----------------------------------------------------------
+# Runs on the remote host (sh -c, one line: it is typed into an Orca terminal, so no single quote,
+# no tab, no "!" in it). For each repo path given it lists that repo's worktrees and prints raw
+# facts, one per line, behind a marker built at run time so the echoed command never matches it.
+# The filtering (census.ignore_untracked) happens here, on the concertmaster host, in cm_status_dirt.
+# shellcheck disable=SC2016  # single quotes on purpose: the text runs on the remote host
+REMOTE_GIT_SH='m="@@""CMG@@"; for r in "$@"; do git -C "$r" worktree list --porcelain 2>/dev/null | sed -n "s/^worktree //p" | while IFS= read -r p; do echo "$m P $p"; [ -d "$p" ] || { echo "$m GONE"; continue; }; if s=$(git --no-optional-locks -C "$p" status --porcelain --untracked-files=all 2>/dev/null); then echo "$m SOK"; [ -z "$s" ] || printf "%s\n" "$s" | sed "s/^/$m S /"; else echo "$m SERR"; fi; if u=$(git -C "$p" rev-list --count HEAD --not --remotes 2>/dev/null); then echo "$m U $u"; else echo "$m UERR"; fi; echo "$m B $(git -C "$p" branch --show-current 2>/dev/null)"; echo "$m H $(git -C "$p" rev-parse HEAD 2>/dev/null)"; done; done; echo "$m END"'
+GIT_TIMEOUT="${CM_GIT_TIMEOUT:-30}"
+case "$GIT_TIMEOUT" in ''|*[!0-9]*|0) GIT_TIMEOUT=30 ;; esac
+
+# sq <string>: single-quote it for a POSIX shell.
+sq() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
+
+# rgit_orca <host> <i> <root-tsv> <outfile>: git facts through a short-lived Orca terminal on the
+# host. The terminal is always closed by its exact handle. Sets RGIT_ERR on failure.
+rgit_orca() {
+  local h="$1" i="$2" roots="$3" outf="$4" cmd path wid sel resp handle t deadline got=0 msg title stray
+  title="cm-git-census-$$-$i"   # unique per run and host, so a sweep never closes anyone else's terminal
+  cmd="sh -c $(sq "$REMOTE_GIT_SH") sh"
+  while IFS="$(printf '\t')" read -r path wid; do cmd="$cmd $(sq "$path")"; done < "$roots"
+  IFS="$(printf '\t')" read -r path wid < "$roots"
+  if [ -n "$wid" ]; then sel="id:$wid"; else sel="path:$path"; fi
+  resp="$(cm_timeout 20 "$ORCA" terminal create --environment "$h" --worktree "$sel" --title "$title" --command "$cmd" --json </dev/null 2>"$TMP/rgit-$i.err" | "$HERE/jsanitize")"
+  handle="$(printf '%s' "$resp" | jq -r '.result.terminal.handle // .result.handle // .result.startupTerminal.handle // empty' 2>/dev/null)"
+  if [ -z "$handle" ]; then
+    msg="$(printf '%s' "$resp" | jq -r '.error.message? // empty' 2>/dev/null)"
+    RGIT_ERR="terminal create failed: ${msg:-$(head -c 160 "$TMP/rgit-$i.err" | tr '\n' ' ')}"
+    # A create that timed out may still have made the terminal: close any carrying this run's unique title.
+    for stray in $(cm_timeout 15 "$ORCA" terminal list --environment "$h" --json </dev/null 2>/dev/null | "$HERE/jsanitize" \
+        | jq -r --arg t "$title" '.result.terminals[]? | select((.title // "") == $t) | .handle // empty' 2>/dev/null); do
+      cm_timeout 15 "$ORCA" terminal close --terminal "$stray" --environment "$h" --json </dev/null >/dev/null 2>&1 \
+        || err "git census $h" "could not close terminal $stray; close it by hand (orca terminal close --terminal $stray --environment $h)"
+    done
+    return 1
+  fi
+  deadline=$((SECONDS + GIT_TIMEOUT))
+  : > "$outf"
+  while :; do
+    t="$(cm_timeout 15 "$ORCA" terminal read --terminal "$handle" --environment "$h" --limit 5000 --json </dev/null 2>/dev/null | "$HERE/jsanitize" \
+        | jq -r '(.result.terminal.tail // .result.tail // .result.text // .result.output // .result.screen // "") | if type == "array" then join("\n") else tostring end' 2>/dev/null)" || t=""
+    printf '%s\n' "$t" | tr -d '\r' | sed -n 's/^[^@]*@@CMG@@ //p' > "$outf"
+    if grep -qx 'END' "$outf"; then got=1; break; fi
+    [ "$SECONDS" -lt "$deadline" ] || break
+    sleep 1
+  done
+  if ! cm_timeout 15 "$ORCA" terminal close --terminal "$handle" --environment "$h" --json </dev/null >/dev/null 2>&1; then
+    err "git census $h" "could not close terminal $handle; close it by hand (orca terminal close --terminal $handle --environment $h)"
+  fi
+  if [ "$got" -ne 1 ]; then
+    RGIT_ERR="timed out after ${GIT_TIMEOUT}s waiting for git output"
+    return 1
+  fi
+  return 0
+}
+
+# rgit_ssh <host> <root-tsv> <outfile>: the same facts over ssh. Sets RGIT_ERR on failure.
+rgit_ssh() {
+  local h="$1" roots="$2" outf="$3" target args="" path wid rc raw errf
+  errf="$TMP/rgit-ssh-$(printf '%s' "$h" | tr -c 'A-Za-z0-9._-' _).err"   # per host: hosts run in parallel
+  target=""
+  if [ -s "$CM_HOME/ledger.json" ] && cm_ledger_guard "$CM_HOME/ledger.json" 2>/dev/null; then target="$(jq -r --arg h "$h" '.hosts[$h].hostname // empty' "$CM_HOME/ledger.json" 2>/dev/null)"; fi
+  target="${CM_SSH_TARGET:-${target:-$h}}"
+  case "$target" in -*|*[[:space:]]*|'') RGIT_ERR="invalid ssh target '$target'"; return 1 ;; esac
+  while IFS="$(printf '\t')" read -r path wid; do args="$args $(sq "$path")"; done < "$roots"
+  rc=0
+  raw="$(printf '%s\n' "$REMOTE_GIT_SH" | cm_timeout 20 ssh -o BatchMode=yes -o ConnectTimeout=8 -- "$target" "sh -s --$args" 2>"$errf")" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    if [ "$rc" -eq 124 ] || [ "$rc" -eq 142 ]; then RGIT_ERR="timed out after 20s"
+    else RGIT_ERR="exit $rc $(head -c 160 "$errf" | tr '\n' ' ')"; fi
+    return 1
+  fi
+  printf '%s\n' "$raw" | sed -n 's/^[^@]*@@CMG@@ //p' > "$outf"
+  grep -qx 'END' "$outf" || { RGIT_ERR="ssh answered without an end marker"; return 1; }
+  return 0
+}
+
+# rgit_parse <host> <via> <rawfile> <paths-file>: raw facts to git.ndjson-shaped lines on stdout.
+# A row path the host did not list as a worktree is exists:false (unknown, never clean).
+rgit_parse() {
+  local h="$1" via="$2" raw="$3" paths="$4" line tag rest cur="" sok=0 u="" b="" hd="" st="" gone=0 seen
+  seen="$raw.seen"
+  : > "$seen"
+  flush() {
+    [ -n "$cur" ] || return 0
+    printf '%s\n' "$cur" >> "$seen"
+    if [ "$gone" = 1 ]; then
+      jq -cn --arg h "$h" --arg p "$cur" --arg via "$via" '{host:$h, path:$p, exists:false, statusOk:false, dirty:null, unpushed:null, via:$via}'
+    else
+      local dirty=null noise=0 dn unp=null ok=true
+      if [ "$sok" = 1 ]; then dn="$(printf '%s\n' "$st" | cm_status_dirt)"; dirty="${dn% *}"; noise="${dn#* }"; else ok=false; fi
+      case "$u" in ''|*[!0-9]*) ok=false ;; *) unp="$u" ;; esac
+      jq -cn --arg h "$h" --arg p "$cur" --arg via "$via" --argjson dirty "$dirty" --argjson noise "$noise" \
+        --argjson unp "$unp" --argjson ok "$ok" --arg head "$hd" --arg br "$b" \
+        '{host:$h, path:$p, exists:true, statusOk:$ok, dirty:$dirty, ignoredUntracked:$noise, unpushed:$unp,
+          head:(if $head == "" then null else $head end), branch:(if $br == "" then null else $br end), via:$via}'
+    fi
+  }
+  while IFS= read -r line; do
+    tag="${line%% *}"; rest=""
+    case "$line" in *' '*) rest="${line#* }" ;; esac   # a bare "B" (detached HEAD) has an empty value, not "B"
+    case "$tag" in
+      P) flush; cur="$rest"; sok=0; u=""; b=""; hd=""; st=""; gone=0 ;;
+      GONE) gone=1 ;;
+      SOK) sok=1 ;;
+      S) st="$st$rest"$'\n' ;;
+      U) u="$rest" ;;
+      B) b="$rest" ;;
+      H) hd="$rest" ;;
+    esac
+  done < "$raw"
+  flush
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    grep -qxF -- "$line" "$seen" || jq -cn --arg h "$h" --arg p "$line" --arg via "$via" \
+      '{host:$h, path:$p, exists:false, statusOk:false, dirty:null, unpushed:null, via:$via}'
+  done < "$paths"
+  rm -f -- "${seen:?}"
+}
+
+# collect_remote_git <host> <i>: Orca first (it answers wherever the worktree list did), ssh when
+# that fails. Writes $TMP/rgit-<i>.ndjson and one scope line. Both failing is the only way a
+# remote row stays unknown-git, and the scope line says which failed and why.
+collect_remote_git() {
+  local h="$1" i="$2" via="" e1="" e2="" roots paths raw
+  roots="$TMP/roots-$i.tsv"; paths="$TMP/rpaths-$i.txt"; raw="$TMP/rgit-$i.raw"
+  RGIT_ERR=""
+  if rgit_orca "$h" "$i" "$roots" "$raw"; then via=orca
+  else
+    e1="orca terminal: $RGIT_ERR"; RGIT_ERR=""
+    if rgit_ssh "$h" "$roots" "$raw"; then via=ssh; else e2="ssh: $RGIT_ERR"; fi
+  fi
+  if [ -n "$via" ]; then
+    rgit_parse "$h" "$via" "$raw" "$paths" > "$TMP/rgit-$i.ndjson"
+    jq -cn --arg h "$h" --arg via "$via" --arg e "$e1" '{host:$h, ok:true, via:$via, error:(if $e == "" then null else ("fell back to ssh; " + $e) end)}' > "$TMP/rgitscope-$i.ndjson"
+  else
+    : > "$TMP/rgit-$i.ndjson"
+    jq -cn --arg h "$h" --arg e "$e1; $e2" '{host:$h, ok:false, via:null, error:("git state not collected: " + $e)}' > "$TMP/rgitscope-$i.ndjson"
+    err "git census $h" "$e1; $e2"
+  fi
+}
 
 # ---- org repo list (24h cache) ----------------------------------------------
 CACHE="$CM_HOME/cache/org-repos.json"
@@ -114,6 +262,7 @@ fi
 
 jq -r '.result.hosts[] | [.kind, .name] | @tsv' "$TMP/hostlist.json" > "$TMP/hosts.tsv"
 i=0
+RGIT_PIDS=""; RGIT_IDX=""
 while IFS="$(printf '\t')" read -r kind name; do
   i=$((i + 1))
   if [ "$kind" = "local" ]; then
@@ -220,7 +369,29 @@ while IFS="$(printf '\t')" read -r kind name; do
         git: null,
         pr: null
       }' "$ps" >> "$TMP/rows.ndjson" 2>/dev/null || err "normalise $hname" "jq failed on worktree ps output"
+
+  # Remote git state, in the background (hosts answer in parallel). One repo path per Orca repo on
+  # the host (its main checkout when listed); the remote enumerates the repo's worktrees itself.
+  if [ "$kind" = "local" ]; then
+    jq -cn --arg h "$hname" '{host:$h, ok:true, via:"local", error:null}' >> "$TMP/gitscope.ndjson"
+  else
+    jq -r --arg h "$hname" 'select(.host == $h and .path != null) | .path' "$TMP/rows.ndjson" | sort -u > "$TMP/rpaths-$i.txt"
+    jq -rs --arg h "$hname" '[.[] | select(.host == $h and .path != null)] | group_by(.repoId // .repo)
+      | map((map(select(.isMainWorktree)) + .) | .[0]) | .[] | [.path, (.worktreeId // "")] | @tsv' "$TMP/rows.ndjson" > "$TMP/roots-$i.tsv" 2>/dev/null
+    if [ -s "$TMP/roots-$i.tsv" ]; then
+      collect_remote_git "$hname" "$i" &
+      RGIT_PIDS="$RGIT_PIDS $!"
+      RGIT_IDX="$RGIT_IDX $i"
+    else
+      jq -cn --arg h "$hname" '{host:$h, ok:true, via:"none", error:null}' >> "$TMP/gitscope.ndjson"
+    fi
+  fi
 done < "$TMP/hosts.tsv"
+for _pid in $RGIT_PIDS; do wait "$_pid" 2>/dev/null || true; done
+for _i in $RGIT_IDX; do
+  cat "$TMP/rgit-$_i.ndjson" >> "$TMP/git.ndjson" 2>/dev/null || true
+  cat "$TMP/rgitscope-$_i.ndjson" >> "$TMP/gitscope.ndjson" 2>/dev/null || true
+done
 
 # ---- local git state + git-only worktrees ------------------------------------
 # git_state <path>: one JSON object; never mutates (no optional index locks).
@@ -322,6 +493,8 @@ jq -n \
   --slurpfile open "$TMP/open.json" \
   --slurpfile terms "$TMP/terminals.ndjson" \
   --slurpfile termHosts "$TMP/termhosts.ndjson" \
+  --slurpfile gitScope "$TMP/gitscope.ndjson" \
+  --argjson ignoreUntracked "$(jq -nc --arg s "$CM_IGNORE_UNTRACKED" '$s | split(" ") | map(select(length > 0))')" \
   --arg pathMatch "$CM_PATH_MATCH" \
   --arg forbidden "$CM_FORBIDDEN_AGENTS" \
   --slurpfile errors "$TMP/errors.ndjson" '
@@ -348,6 +521,7 @@ jq -n \
       prs: { open: [ $open[0][] | {number, title, isDraft, createdAt, updatedAt, url,
                                    headRefName, headRefOid, author: (.author.login // null)} ] },
       terminals: $terms,
+      gitScope: {hosts: $gitScope, ignoreUntracked: $ignoreUntracked},
       terminalScope: {enabled: ($forbidden != ""),
                       pathMatch: (if $pathMatch == "" then null else $pathMatch end),
                       hosts: $termHosts},
