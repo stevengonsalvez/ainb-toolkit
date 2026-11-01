@@ -505,11 +505,11 @@ check "the poster repo child is adopted under the folder name" '.workers["kid"].
 
 echo "-- a standing lane is never adopted as a single-task child"
 adoptseed
-printf '{"worktrees":[{"host":"local","path":"/w/lane-a","comment":"cm:running\\ncm:child pr-sweeper\\ncm:child dev-sweeper\\ncm:child release-sweeper-gcp2\\ncm:child sweep-77\\ncm:child research-cost-model\\ncm:child plain-kid"},{"host":"local","path":"/w/pr-sweeper","comment":"cm:running"},{"host":"local","path":"/w/dev-sweeper","comment":"cm:running"},{"host":"local","path":"/w/release-sweeper-gcp2","comment":"cm:running"},{"host":"local","path":"/w/sweep-77","comment":"cm:running"},{"host":"local","path":"/w/research-cost-model","comment":"cm:running"},{"host":"local","path":"/w/plain-kid","comment":"cm:running"}]}' > "$ROOT/ad18.json"
+printf '{"worktrees":[{"host":"local","path":"/w/lane-a","comment":"cm:running\\ncm:child pr-sweeper\\ncm:child dev-sweeper\\ncm:child release-sweeper-host-a\\ncm:child sweep-77\\ncm:child research-cost-model\\ncm:child plain-kid"},{"host":"local","path":"/w/pr-sweeper","comment":"cm:running"},{"host":"local","path":"/w/dev-sweeper","comment":"cm:running"},{"host":"local","path":"/w/release-sweeper-host-a","comment":"cm:running"},{"host":"local","path":"/w/sweep-77","comment":"cm:running"},{"host":"local","path":"/w/research-cost-model","comment":"cm:running"},{"host":"local","path":"/w/plain-kid","comment":"cm:running"}]}' > "$ROOT/ad18.json"
 OUT="$("$FU" reconcile --discover "$ROOT/ad18.json" 2>&1)"
 check "pr-sweeper is not adopted"                           '.workers | has("pr-sweeper") | not'
 check "dev-sweeper is not adopted"                          '.workers | has("dev-sweeper") | not'
-check "a release-sweeper-style name is not adopted"         '.workers | has("release-sweeper-gcp2") | not'
+check "a release-sweeper-style name is not adopted"         '.workers | has("release-sweeper-host-a") | not'
 check "sweep-<pr> is a single-task name and is adopted"     '.workers["sweep-77"].standing == false'
 check "research-<slug> is a single-task name and is adopted" '.workers["research-cost-model"].standing == false'
 check "an ordinary child beside them is still adopted"      '.workers["plain-kid"] | .adopted == true and .standing == false'
