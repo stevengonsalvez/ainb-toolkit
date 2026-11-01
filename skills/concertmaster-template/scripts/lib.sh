@@ -272,7 +272,7 @@ CM_CLAUDE_RE='claude code|\? for shortcuts|esc to interrupt|shift\+tab|bypass pe
 # ---- ledger project guard ---------------------------------------------------------------------
 # Two projects can share a host, each with its own state dir (~/.concertmaster, ~/.concertmaster-<other>).
 # A CM_HOME or CM_LEDGER leaked from the other project's session made a lead here read the other
-# project's ledger (1 Nov 2026). cm_ledger_guard refuses a ledger that is not this project's.
+# project's ledger. cm_ledger_guard refuses a ledger that is not this project's.
 #
 # cm_project_state_dir: this project's default state dir (config state_dir, else ~/.concertmaster).
 cm_project_state_dir() {

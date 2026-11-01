@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2016,SC2034,SC1091  # check bodies are single-quoted on purpose: they are eval-ed later
-# ledger-guard.sh (test): a ledger of another project is never read or written. Evidence (1 Nov 2026):
+# ledger-guard.sh (test): a ledger of another project is never read or written. Evidence:
 # CM_HOME leaked in from a second project's session on a shared host and teardown.sh read that
 # project's ledger. Synthetic projects project-a (this one) and project-b. Covers: a project field
 # mismatch is refused, a foreign path without a field is refused, a matching field is accepted, a

@@ -133,7 +133,7 @@ Test: `scripts/test/lane-journal.sh`.
 
 Two projects can share a host, each with its own state dir (`~/.concertmaster`,
 `~/.concertmaster-<other>`). A `CM_HOME` or `CM_LEDGER` leaked from the other project's session made a
-lead read the other project's ledger (1 Nov 2026). The ledger therefore carries `project` (this
+lead read the other project's ledger. The ledger therefore carries `project` (this
 project's id, `cfg.project.id` or `CM_PROJECT_ID`), and `cm_ledger_guard` in `scripts/lib.sh` decides
 before any read or write:
 
