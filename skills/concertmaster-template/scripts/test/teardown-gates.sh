@@ -179,9 +179,9 @@ one "$W4" '"standing":false'
 STUB_NAME=pr-sweeper run "sweeper name + standing:false: ledger wins" 0 'name looks like a lane, ledger wins' "$W4"
 # the folder is ops-b, so only the display name (STUB_NAME) carries the shape under test
 one "$W5" '"standing":false'
-STUB_NAME=release-sweeper-gcp2 run "release-sweeper-style name + standing:false: noted as lane-shaped" 0 'name looks like a lane, ledger wins' "$W5"
+STUB_NAME=release-sweeper-host-a run "release-sweeper-style name + standing:false: noted as lane-shaped" 0 'name looks like a lane, ledger wins' "$W5"
 STUB_NAME=research-notes run "research-<slug> + standing:false: a single-task worker, no lane note" 0 'ledger standing:false, single-task worker' "$W5"
-STUB_NAME=sweep-5585 run "sweep-<pr> + standing:false: a single-task worker, no lane note" 0 'ledger standing:false, single-task worker' "$W5"
+STUB_NAME=sweep-101 run "sweep-<pr> + standing:false: a single-task worker, no lane note" 0 'ledger standing:false, single-task worker' "$W5"
 one "$W2" '"standing":true'
 STUB_NAME=feature-demo-sweeper run "incident shape: standing:true refuses" 3 'standing lane' "$W2"
 ledger "{\"lanes\":{\"dev-sweeper\":{\"lead\":\"w-a\"}},\"workers\":{\"w-a\":$(w "$W1" '"standing":false')}}"

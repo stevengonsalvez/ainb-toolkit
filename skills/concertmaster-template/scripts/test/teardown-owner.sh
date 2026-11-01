@@ -147,13 +147,13 @@ run "a worktree of another repo in the org is not torn down by a lead" 3 'lead m
 git -C "$M" remote set-url origin "$ORIG_URL"
 # lane-shaped names are the same set in both modes (lib.sh cm_lane_shaped): -sweeper, -lead, epic-/epic: prefix.
 # Documented single-task names (sweep-<pr>, research-<slug>) are ordinary children.
-for _ln in release-sweeper-gcp2 feature-lead-x epic-abc; do
+for _ln in release-sweeper-host-a feature-lead-x epic-abc; do
   LS="$(mkwt "$_ln")"
   lists $'cm:running\ncm:child '"$_ln"
   OUT="$(STUB_PATH="$LS" STUB_NAME="$_ln" "$TD" local "$LS" --owner lane-a 2>&1)"; rc=$?
   if [ "$rc" = 3 ] && printf '%s' "$OUT" | grep -q 'lane-shaped name'; then ok "lead mode refuses the lane-shaped name $_ln"; else bad "lane-shaped $_ln not refused" "$OUT"; fi
 done
-for _ln in sweep-5585 research-cost-model; do
+for _ln in sweep-101 research-cost-model; do
   LS="$(mkwt "$_ln")"
   lists $'cm:running\ncm:child '"$_ln"
   OUT="$(STUB_PATH="$LS" STUB_NAME="$_ln" "$TD" local "$LS" --owner lane-a 2>&1)"; rc=$?
