@@ -87,6 +87,22 @@ CM_FORBIDDEN_AGENTS="${CM_FORBIDDEN_AGENTS-$(cm_cfg .agents.forbidden | tr '[:up
 # The concertmaster's own worktree name: never torn down.
 CM_SELF_WORKTREE="${CM_SELF_WORKTREE:-$(cm_cfg .worktrees.self_name concertmaster)}"
 
+# Untracked paths that never make a worktree dirty (census.ignore_untracked): tool scratch that
+# every lane writes. Space-separated globs. A leading "/" anchors at the repo root ("/dir/" is a
+# prefix, "/a/*.x" matches one level, a "*" never crosses a "/"); otherwise a pattern ending in "/"
+# is a directory prefix anywhere, one holding "/" matches the whole path (or its tail), and any
+# other matches the file name. Env wins over config; an explicit empty list ignores nothing; an
+# absent key takes the default.
+CM_IGNORE_UNTRACKED_DEFAULT='/.beads/*.jsonl /.agents/scratch/ /.orca/ /.wrangler/ *.log'
+if [ -z "${CM_IGNORE_UNTRACKED+x}" ]; then
+  _cm_ign="$(cm_cfg_json .census.ignore_untracked)"
+  if [ -z "$_cm_ign" ] || [ "$_cm_ign" = null ]; then
+    CM_IGNORE_UNTRACKED="$CM_IGNORE_UNTRACKED_DEFAULT"
+  else
+    CM_IGNORE_UNTRACKED="$(printf '%s' "$_cm_ign" | jq -r 'if type == "array" then map(select((type == "string") and (length > 0) and (test("[[:space:]]") | not))) | join(" ") else "" end' 2>/dev/null || true)"
+  fi
+fi
+
 # Resolve the Orca CLI per the orca-cli skill: $ORCA_CLI_COMMAND, else
 # orca-ide on Linux outside an Orca terminal (bare `orca` there is the GNOME
 # screen reader), else orca.
@@ -191,6 +207,43 @@ cm_file_fresh() {
 }
 
 cm_now_ms() { printf '%s000\n' "$(date +%s)"; }
+
+# cm_status_dirt: stdin is `git status --porcelain --untracked-files=all`; prints "<real> <ignored>".
+# A tracked change or an untracked source file is real dirt. An untracked path matching
+# CM_IGNORE_UNTRACKED is ignored (counted, never dirty). Tracked changes are never ignored.
+# Pattern forms: "/dir/" and "/a/*.x" are anchored at the repo root (a "*" never crosses a "/");
+# "dir/" is a directory prefix anywhere; another pattern with "/" matches the path or its tail;
+# a bare pattern matches the file name.
+cm_status_dirt() {
+  local line path pat rel hit real=0 ign=0
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    hit=0
+    case "$line" in
+      '?? '*)
+        path="${line#\?\? }"; path="${path#\"}"; path="${path%\"}"
+        set -f
+        for pat in $CM_IGNORE_UNTRACKED; do
+          # the unquoted $pat below is a glob on purpose
+          # shellcheck disable=SC2254
+          case "$pat" in
+            /*/) case "$path" in "${pat#/}"*) hit=1 ;; esac ;;
+            /*) rel="${pat#/}"   # anchored at the repo root; a "*" never crosses a "/"
+                if [ "$(printf '%s' "$rel" | tr -cd / | wc -c)" = "$(printf '%s' "$path" | tr -cd / | wc -c)" ]; then
+                  case "$path" in $rel) hit=1 ;; esac
+                fi ;;
+            */) case "$path" in "$pat"*|*/"$pat"*) hit=1 ;; esac ;;
+            */*) case "$path" in $pat|*/$pat) hit=1 ;; esac ;;
+            *) case "${path##*/}" in $pat) hit=1 ;; esac ;;
+          esac
+          [ "$hit" = 1 ] && break
+        done
+        set +f ;;
+    esac
+    if [ "$hit" = 1 ]; then ign=$((ign + 1)); else real=$((real + 1)); fi
+  done
+  printf '%s %s\n' "$real" "$ign"
+}
 
 # cm_transcript_mtime <worktree path>: newest Claude transcript mtime (epoch seconds) for the
 # worktree, or "unknown" when the project dir or any transcript is missing (a lane we cannot see

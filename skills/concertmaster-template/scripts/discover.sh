@@ -225,13 +225,15 @@ done < "$TMP/hosts.tsv"
 # ---- local git state + git-only worktrees ------------------------------------
 # git_state <path>: one JSON object; never mutates (no optional index locks).
 git_state() {
-  local p="$1" st dirty=null unpushed=null ok=true head url slug
+  local p="$1" st dirty=null noise=0 unpushed=null ok=true head url slug dn
   if ! git -C "$p" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     jq -cn --arg path "$p" '{host:"local", path:$path, exists:false, statusOk:false, dirty:null, unpushed:null}'
     return
   fi
-  if st="$(git --no-optional-locks -C "$p" status --porcelain 2>/dev/null)"; then
-    dirty="$(printf '%s' "$st" | grep -c . || true)"
+  if st="$(git --no-optional-locks -C "$p" status --porcelain --untracked-files=all 2>/dev/null)"; then
+    # Untracked tool scratch (census.ignore_untracked) is noise, not dirt: counted apart.
+    dn="$(printf '%s\n' "$st" | cm_status_dirt)"
+    dirty="${dn% *}"; noise="${dn#* }"
   else
     ok=false
   fi
@@ -240,9 +242,9 @@ git_state() {
   head="$(git -C "$p" rev-parse HEAD 2>/dev/null || echo '')"
   url="$(git -C "$p" remote get-url origin 2>/dev/null || echo '')"
   slug="$(cm_org_slug "$url" || true)"
-  jq -cn --arg path "$p" --argjson dirty "$dirty" --argjson unpushed "$unpushed" --argjson ok "$ok" \
+  jq -cn --arg path "$p" --argjson dirty "$dirty" --argjson noise "$noise" --argjson unpushed "$unpushed" --argjson ok "$ok" \
     --arg head "$head" --arg slug "$slug" \
-    '{host:"local", path:$path, exists:true, statusOk:$ok, dirty:$dirty, unpushed:$unpushed,
+    '{host:"local", path:$path, exists:true, statusOk:$ok, dirty:$dirty, ignoredUntracked:$noise, unpushed:$unpushed,
       head:(if $head == "" then null else $head end),
       slug:(if $slug == "" then null else $slug end)}'
 }

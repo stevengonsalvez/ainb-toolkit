@@ -67,6 +67,16 @@ ownership:
     study-: research-sweeper
     pr-: pr-sweeper
 
+# The census (scripts/discover.sh, scripts/classify.sh --census). [script]
+census:
+  # Untracked paths that never make a worktree dirty: tool scratch every lane writes. A tracked
+  # change or an untracked source file is still dirt. A pattern starting with "/" is anchored at
+  # the repo root (a "*" never crosses a "/"), so "/.orca/" does not hide src/.orca/x.ts; one
+  # ending in "/" is a directory prefix anywhere; one holding "/" matches the whole path (or its
+  # tail); any other matches the file name. Absent: these five. [] ignores nothing. Env
+  # CM_IGNORE_UNTRACKED (space separated) wins.
+  ignore_untracked: ["/.beads/*.jsonl", "/.agents/scratch/", "/.orca/", "/.wrangler/", "*.log"]
+
 hosts:
   home: local                      # host the concertmaster runs on
   min_free_disk_gb: 8              # under this, spawn nothing on that host
