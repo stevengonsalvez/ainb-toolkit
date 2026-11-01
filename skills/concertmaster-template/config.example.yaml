@@ -205,6 +205,12 @@ outward_messages:
   collaborator_pr_comments: autonomous
   everything_else: draft_first     # shown to the owner as a draft, sent only after OK
 
+# Follow-ups that outlive a worker (scripts/followups.sh escalate): an open one older than the limit, or one
+# whose owner lane differs from the lane that posted it, becomes ONE issue in github.main_repo.
+followups:
+  escalate_after_hours: 24         # [script] age at which an open follow-up gets an issue
+  issue_labels: []                 # [script] labels put on those issues; none by default
+
 intake:
   adapter: wacli                   # the chat source; another adapter writes a wacli-shaped export
   source_label: chat               # [script] word used for the chat in trackers and bead bodies
