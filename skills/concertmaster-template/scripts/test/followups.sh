@@ -165,12 +165,14 @@ for st in "done" retired queued; do
   seed; rec "child-a:cm:running
 cm:followup x1 owner=lane-a t"
   jq --arg s "$st" '.workers["w-iso"].state = $s' "$L" > "$ROOT/p.json" && mv "$ROOT/p.json" "$L"
+  # shellcheck disable=SC2015  # ok and bad only print; neither fails, so the || branch cannot misfire
   "$FU" report | grep -q '^orphaned	x1' && ok "worker state $st counts as not alive" || bad "state $st not orphaned"
 done
 for st in spawning stuck blocked-on-owner idle; do
   seed; rec "child-a:cm:running
 cm:followup x1 owner=lane-a t"
   jq --arg s "$st" '.workers["w-iso"].state = $s' "$L" > "$ROOT/p.json" && mv "$ROOT/p.json" "$L"
+  # shellcheck disable=SC2015  # ok and bad only print; neither fails, so the || branch cannot misfire
   "$FU" report | grep -q '^orphaned' && bad "state $st wrongly orphaned" || ok "worker state $st is alive"
 done
 
@@ -323,6 +325,260 @@ if [ "$rc" != 0 ]; then ok "a bad discover document fails"; else bad "bad discov
 jq '.followUps = {"x":1}' "$L" > "$ROOT/p.json" && mv "$ROOT/p.json" "$L"
 census "lead-a:cm:followup z owner=x t" | "$FU" reconcile >/dev/null 2>&1; rc=$?
 if [ "$rc" != 0 ] && jq -e '.followUps | type == "object"' "$L" >/dev/null; then ok "followUps that is not an array: refused, ledger untouched"; else bad "non-array followUps was rewritten"; fi
+
+echo "== child adoption (cm:child names a worktree with no ledger row)"
+# lane-a posts its children; child rows carry their own comment, host-a style synthetic names
+adoptseed() { printf '%s' '{"workers":{
+  "lane-a":{"host":"local","path":"/w/lane-a","lane":"lane-a","state":"running","standing":true},
+  "kept":{"host":"local","path":"/w/kept","lane":"lane-a","state":"running","standing":true,"beadsEpic":"ep-1","marker":"mine"},
+  "old-gone":{"host":"local","path":"/w/old-gone","lane":"lane-a","state":"gone","standing":false}},
+  "lanes":{"lane-a":{"lead":"lane-a","state":"running"}},"asks":[]}' > "$L"; }
+adoptseed
+census "lane-a:cm:running 3 workers
+cm:child kid-run
+cm:child kid-blocked
+cm:child kid-fresh
+cm:child kept
+cm:child old-gone
+cm:child nowhere" \
+  "kid-run:cm:running fixing the thing" \
+  "kid-blocked:cm:blocked need a decision | cm:ask which one" \
+  "kid-fresh:" \
+  "kept:cm:running" \
+  "old-gone:cm:running" > "$ROOT/ad1.json"
+OUT="$("$FU" reconcile --discover "$ROOT/ad1.json" 2>&1)"
+check "adopts a running child: standing false"          '.workers["kid-run"] | .standing == false and .state == "running" and .adopted == true'
+check "adopted child: host, path and lane from census"  '.workers["kid-run"] | .host == "local" and .path == "/w/kid-run" and .lane == "lane-a"'
+check "adopted child: parent is the poster"             '.workers["kid-run"].parent == "lane-a"'
+check "adopted child: beadsEpic null"                   '.workers["kid-run"].beadsEpic == null'
+check "state comes from the child own first line"       '.workers["kid-blocked"].state == "blocked-on-owner"'
+check "a child with no comment yet is spawning"         '.workers["kid-fresh"].state == "spawning"'
+check "lastComment holds the child first line"          '.workers["kid-run"].lastComment == "cm:running fixing the thing"'
+check "an existing ledger worker is never overwritten"  '.workers.kept | .marker == "mine" and .standing == true and .beadsEpic == "ep-1" and .state == "running" and .host == "local" and .path == "/w/kept" and .lane == "lane-a"'
+check "a dead row holding the id is not replaced"       '.workers["old-gone"].state == "gone" and (.workers["old-gone"] | has("adopted") | not)'
+check "a child with no census row adds nothing"         '.workers | has("nowhere") | not'
+if printf '%s' "$OUT" | grep -q 'followups: adopted kid-run (child of lane-a, standing false, state running)'; then ok "reports the adoption"; else bad "no adopted line" "$OUT"; fi
+if printf '%s' "$OUT" | grep -q 'followups: adopt-skipped old-gone'; then ok "reports the skipped dead id"; else bad "no adopt-skipped line" "$OUT"; fi
+if printf '%s' "$OUT" | grep -q 'followups: unmatched-child lane-a nowhere'; then ok "still reports a child with no worktree"; else bad "no unmatched-child line" "$OUT"; fi
+echo "-- second run writes nothing"
+B1="$(baks)"; M1="$(jq -c . "$L")"
+"$FU" reconcile --discover "$ROOT/ad1.json" >/dev/null 2>&1
+if [ "$(jq -c . "$L")" = "$M1" ] && [ "$(baks)" = "$B1" ]; then ok "adoption is idempotent: ledger and backups unchanged"; else bad "second run changed the ledger"; fi
+echo "-- the ledger helper writes it (the newest backup is the ledger as it was before)"
+adoptseed
+"$FU" reconcile --discover "$ROOT/ad1.json" >/dev/null 2>&1
+NEWEST="$(find "$CM_HOME/ledger.bak" -type f -name '[0-9]*T*Z*.json' | LC_ALL=C sort | tail -1)"
+if [ -n "$NEWEST" ] && jq -e '(.workers | has("kept")) and (.workers | has("kid-run") | not)' "$NEWEST" >/dev/null 2>&1 \
+   && jq -e '.workers | has("kid-run")' "$L" >/dev/null 2>&1; then ok "adoption went through cm_ledger_write (pre-write backup taken)"; else bad "no pre-write backup of the seeded ledger"; fi
+echo "-- a poster that is not a live ledger worker adopts nothing"
+adoptseed
+census "stranger:cm:running
+cm:child kid-run" "kid-run:cm:running" > "$ROOT/ad2.json"
+"$FU" reconcile --discover "$ROOT/ad2.json" >/dev/null 2>&1
+check "an unknown poster adopts nothing"                '.workers | has("kid-run") | not'
+echo "-- a hostile child name is not adopted"
+adoptseed
+census "lane-a:cm:running
+cm:child ../etc" "../etc:cm:running" > "$ROOT/ad3.json"
+"$FU" reconcile --discover "$ROOT/ad3.json" >/dev/null 2>&1
+check "a path-like child name adds nothing"             '.workers | keys == ["kept","lane-a","old-gone"]'
+echo "-- two posters claim one child: adopted once, parent conflict reported, none set"
+adoptseed
+jq '.workers["lane-b"] = {"host":"local","path":"/w/lane-b","lane":"lane-b","state":"running","standing":true}' "$L" > "$ROOT/p.json" && mv "$ROOT/p.json" "$L"
+census "lane-a:cm:running
+cm:child kid-run" "lane-b:cm:running
+cm:child kid-run" "kid-run:cm:running" > "$ROOT/ad4.json"
+OUT="$("$FU" reconcile --discover "$ROOT/ad4.json" 2>&1)"
+check "adopted once with no parent chosen"              '.workers["kid-run"] | .standing == false and .parent == null'
+if printf '%s' "$OUT" | grep -q 'followups: parent-conflict kid-run lane-a,lane-b'; then ok "reports the parent conflict"; else bad "no parent-conflict line" "$OUT"; fi
+echo "-- the adopted child passes the standing gate teardown reads"
+adoptseed
+"$FU" reconcile --discover "$ROOT/ad1.json" >/dev/null 2>&1
+check "teardown sees standing:false (not unknown)"       '.workers["kid-run"].standing == false'
+
+echo "-- a declared epic (epic=<bead-id> on the cm:child line) is kept on the adopted worker"
+adoptseed
+census "lane-a:cm:running
+cm:child kid-epic epic=ep-1
+cm:child kid-noepic
+cm:child kid-odd epic=a;b" "kid-epic:cm:running" "kid-noepic:cm:running" "kid-odd:cm:running" > "$ROOT/ad5.json"
+"$FU" reconcile --discover "$ROOT/ad5.json" >/dev/null 2>&1
+check "epic=ep-1 becomes beadsEpic"                     '.workers["kid-epic"].beadsEpic == "ep-1"'
+check "no epic token: beadsEpic stays null"             '.workers["kid-noepic"].beadsEpic == null'
+check "a hostile epic token is cut at the first bad character" '.workers["kid-odd"].beadsEpic == "a"'
+check "the epic child is still adopted as non-standing" '.workers["kid-epic"] | .standing == false and .adopted == true and .parent == "lane-a"'
+
+echo "-- an epic= added after the child was adopted still reaches the ledger"
+adoptseed
+census "lane-a:cm:running
+cm:child kid-late
+cm:child kid-set epic=ep-1" "kid-late:cm:running" "kid-set:cm:running" > "$ROOT/ad5a.json"
+"$FU" reconcile --discover "$ROOT/ad5a.json" >/dev/null 2>&1
+check "first reconcile: kid-late adopted with no epic"      '.workers["kid-late"].beadsEpic == null and .workers["kid-set"].beadsEpic == "ep-1"'
+census "lane-a:cm:running
+cm:child kid-late epic=ep-open
+cm:child kid-set epic=ep-2" "kid-late:cm:running" "kid-set:cm:running" > "$ROOT/ad5b.json"
+"$FU" reconcile --discover "$ROOT/ad5b.json" >/dev/null 2>&1
+check "epic=ep-open added later becomes beadsEpic"          '.workers["kid-late"].beadsEpic == "ep-open"'
+check "an epic already set is never replaced"               '.workers["kid-set"].beadsEpic == "ep-1"'
+check "a different epic declared against a set one is a recorded conflict" '.workers["kid-set"].epicConflict == ["ep-1","ep-2"]'
+census "lane-a:cm:running
+cm:child kid-late epic=ep-open
+cm:child kid-set epic=ep-1" "kid-late:cm:running" "kid-set:cm:running" > "$ROOT/ad5f.json"
+"$FU" reconcile --discover "$ROOT/ad5f.json" >/dev/null 2>&1
+check "the declaration agrees with the set epic again: conflict cleared" '.workers["kid-set"] | .beadsEpic == "ep-1" and (has("epicConflict") | not)'
+check "the late fill leaves the other worker fields alone"  '.workers["kid-late"] | .standing == false and .adopted == true and .parent == "lane-a" and .state == "running"'
+adoptseed
+jq '.workers["lane-b"] = {"host":"local","path":"/w/lane-b","lane":"lane-b","state":"running","standing":true}' "$L" > "$ROOT/p.json" && mv "$ROOT/p.json" "$L"
+census "lane-a:cm:running
+cm:child kid-late2" "kid-late2:cm:running" > "$ROOT/ad5c.json"
+"$FU" reconcile --discover "$ROOT/ad5c.json" >/dev/null 2>&1
+census "lane-a:cm:running
+cm:child kid-late2 epic=ep-1" "lane-b:cm:running
+cm:child kid-late2 epic=ep-8" "kid-late2:cm:running" > "$ROOT/ad5d.json"
+OUT="$("$FU" reconcile --discover "$ROOT/ad5d.json" 2>&1)"
+check "two different epics added later: none is filled in"  '.workers["kid-late2"].beadsEpic == null'
+check "the late conflict is recorded on the worker"         '.workers["kid-late2"].epicConflict == ["ep-1","ep-8"]'
+if printf '%s' "$OUT" | grep -q 'followups: epic-conflict kid-late2'; then ok "reports the late epic-conflict"; else bad "no epic-conflict line" "$OUT"; fi
+census "lane-a:cm:running
+cm:child kid-late2 epic=ep-1" "kid-late2:cm:running" > "$ROOT/ad5g.json"
+"$FU" reconcile --discover "$ROOT/ad5g.json" >/dev/null 2>&1
+check "one claimant read, the other host unreadable: conflict stays" '.workers["kid-late2"] | .beadsEpic == null and .epicConflict == ["ep-1","ep-8"]'
+census "kid-late2:cm:running" > "$ROOT/ad5h.json"
+"$FU" reconcile --discover "$ROOT/ad5h.json" >/dev/null 2>&1
+check "empty census: conflict stays"                        '.workers["kid-late2"].epicConflict == ["ep-1","ep-8"]'
+census "lane-a:cm:running
+cm:child kid-late2 epic=ep-1" "lane-b:cm:running
+cm:child kid-late2 epic=ep-1" "kid-late2:cm:running" > "$ROOT/ad5e.json"
+"$FU" reconcile --discover "$ROOT/ad5e.json" >/dev/null 2>&1
+check "leads agree later: epic filled, conflict cleared"    '.workers["kid-late2"] | .beadsEpic == "ep-1" and (has("epicConflict") | not)'
+
+echo "-- a child that declares a grandchild: both are adopted in one reconcile and the follow-up is seen"
+adoptseed
+census "lane-a:cm:running
+cm:child kid-top" "kid-top:cm:done finished
+cm:child kid-gk" "kid-gk:cm:running
+cm:followup gk-fu owner=owner-b keep this alive" > "$ROOT/ad9.json"
+"$FU" reconcile --discover "$ROOT/ad9.json" >/dev/null 2>&1
+check "the grandchild is adopted too"                       '.workers["kid-gk"] | .adopted == true and .standing == false and .parent == "kid-top"'
+check "the grandchild's open follow-up is in the ledger"    '[.followUps[] | select(.id == "gk-fu" and .state == "open")] | length == 1'
+
+echo "-- one worktree named by its display name and its folder is adopted once"
+adoptseed
+printf '{"worktrees":[{"host":"local","path":"/w/lane-a","comment":"cm:running\\ncm:child friendly\\ncm:child kid-dir"},{"host":"local","path":"/w/kid-dir","displayName":"friendly","comment":"cm:running"}]}' > "$ROOT/ad10.json"
+OUT="$("$FU" reconcile --discover "$ROOT/ad10.json" 2>&1)"
+check "one ledger worker for the two names"                 '[.workers | to_entries[] | select(.value.path == "/w/kid-dir")] | length == 1'
+check "it is keyed by its folder name"                      '.workers | has("kid-dir") and (has("friendly") | not)'
+echo "-- two leads claim one child by its display name and its folder name: a parent conflict, not one winner"
+adoptseed
+jq '.workers["lane-b"] = {"host":"local","path":"/w/lane-b","lane":"lane-b","state":"running","standing":true}' "$L" > "$ROOT/p.json" && mv "$ROOT/p.json" "$L"
+printf '{"worktrees":[{"host":"local","path":"/w/lane-a","comment":"cm:running\\ncm:child pretty-child"},{"host":"local","path":"/w/lane-b","comment":"cm:running\\ncm:child folder-child"},{"host":"local","path":"/w/folder-child","displayName":"pretty-child","comment":"cm:running"}]}' > "$ROOT/ad13.json"
+OUT="$("$FU" reconcile --discover "$ROOT/ad13.json" 2>&1)"
+check "adopted once under the folder name, no parent chosen"  '.workers["folder-child"] | .adopted == true and .parent == null'
+if printf '%s' "$OUT" | grep -q 'followups: parent-conflict folder-child lane-a,lane-b'; then ok "reports the parent conflict across the two names"; else bad "alias claimant dropped" "$OUT"; fi
+
+echo "-- a stale cm:child line never adopts a same-named worktree of another repo"
+adoptseed
+printf '{"worktrees":[{"host":"local","repo":"app","path":"/w/lane-a","comment":"cm:running\\ncm:child kid-x"},{"host":"local","repo":"other-app","path":"/w/kid-x","comment":"cm:running"}]}' > "$ROOT/ad14.json"
+"$FU" reconcile --discover "$ROOT/ad14.json" >/dev/null 2>&1
+check "a worktree of another repo is not adopted"            '.workers | has("kid-x") | not'
+printf '{"worktrees":[{"host":"local","repo":"app","path":"/w/lane-a","comment":"cm:running\\ncm:child kid-x"},{"host":"local","repo":"app","path":"/w/kid-x","comment":"cm:running"}]}' > "$ROOT/ad15.json"
+"$FU" reconcile --discover "$ROOT/ad15.json" >/dev/null 2>&1
+check "the same name in the poster's repo is adopted"        '.workers["kid-x"].adopted == true'
+
+echo "-- a display-name claim never reaches a live worker of another repo"
+adoptseed
+jq '.workers["otherw"] = {"host":"local","path":"/w/otherw","lane":"lane-x","state":"running","standing":false,"adopted":true}' "$L" > "$ROOT/p.json" && mv "$ROOT/p.json" "$L"
+printf '{"worktrees":[{"host":"local","repo":"app","path":"/w/lane-a","comment":"cm:running\\ncm:child friendly epic=ep-x"},{"host":"local","repo":"other-app","path":"/w/otherw","displayName":"friendly","comment":"cm:running"}]}' > "$ROOT/ad16.json"
+"$FU" reconcile --discover "$ROOT/ad16.json" >/dev/null 2>&1
+check "the other repo worker gets no parent"                '.workers["otherw"].parent == null'
+check "the other repo worker gets no epic"                  '.workers["otherw"].beadsEpic == null'
+
+echo "-- a folder-name claim never reaches a live worker of another repo, and the poster's own child is still adopted"
+adoptseed
+jq '.workers["kid-other"] = {"host":"local","path":"/w/other/kid","lane":"lane-x","state":"running","standing":false,"adopted":true}' "$L" > "$ROOT/p.json" && mv "$ROOT/p.json" "$L"
+printf '{"worktrees":[{"host":"local","repo":"app","path":"/w/lane-a","comment":"cm:running\\ncm:child kid epic=ep-x"},{"host":"local","repo":"other-app","path":"/w/other/kid","comment":"cm:running"},{"host":"local","repo":"app","path":"/w/app/kid","comment":"cm:running"}]}' > "$ROOT/ad17.json"
+"$FU" reconcile --discover "$ROOT/ad17.json" >/dev/null 2>&1
+check "the other repo worker gets no parent"                '.workers["kid-other"].parent == null'
+check "the other repo worker gets no epic"                  '.workers["kid-other"].beadsEpic == null'
+check "the poster repo child is adopted under the folder name" '.workers["kid"].adopted == true and .workers["kid"].path == "/w/app/kid"'
+
+echo "-- a standing lane is never adopted as a single-task child"
+adoptseed
+printf '{"worktrees":[{"host":"local","path":"/w/lane-a","comment":"cm:running\\ncm:child pr-sweeper\\ncm:child dev-sweeper\\ncm:child release-sweeper-gcp2\\ncm:child sweep-77\\ncm:child research-cost-model\\ncm:child plain-kid"},{"host":"local","path":"/w/pr-sweeper","comment":"cm:running"},{"host":"local","path":"/w/dev-sweeper","comment":"cm:running"},{"host":"local","path":"/w/release-sweeper-gcp2","comment":"cm:running"},{"host":"local","path":"/w/sweep-77","comment":"cm:running"},{"host":"local","path":"/w/research-cost-model","comment":"cm:running"},{"host":"local","path":"/w/plain-kid","comment":"cm:running"}]}' > "$ROOT/ad18.json"
+OUT="$("$FU" reconcile --discover "$ROOT/ad18.json" 2>&1)"
+check "pr-sweeper is not adopted"                           '.workers | has("pr-sweeper") | not'
+check "dev-sweeper is not adopted"                          '.workers | has("dev-sweeper") | not'
+check "a release-sweeper-style name is not adopted"         '.workers | has("release-sweeper-gcp2") | not'
+check "sweep-<pr> is a single-task name and is adopted"     '.workers["sweep-77"].standing == false'
+check "research-<slug> is a single-task name and is adopted" '.workers["research-cost-model"].standing == false'
+check "an ordinary child beside them is still adopted"      '.workers["plain-kid"] | .adopted == true and .standing == false'
+if printf '%s' "$OUT" | grep -q 'followups: adopt-skipped pr-sweeper (lane-shaped name'; then ok "the lane-shaped claim is reported as adopt-skipped"; else bad "no adopt-skipped line" "$OUT"; fi
+{ cat "$HERE/fixtures/config.test.yaml"; printf 'lanes:\n  - { name: triage, standing: true }\nownership:\n  leads:\n    demo-weird-name: demo-lane\n'; } > "$ROOT/config-lanes.yaml"
+adoptseed
+printf '{"worktrees":[{"host":"local","path":"/w/lane-a","comment":"cm:running\\ncm:child triage\\ncm:child demo-weird-name"},{"host":"local","path":"/w/triage","comment":"cm:running"},{"host":"local","path":"/w/demo-weird-name","comment":"cm:running"}]}' > "$ROOT/ad19.json"
+CM_CONFIG="$ROOT/config-lanes.yaml" "$FU" reconcile --discover "$ROOT/ad19.json" >/dev/null 2>&1
+check "a configured lane name is not adopted"               '.workers | has("triage") | not'
+check "a configured ownership lead is not adopted"          '.workers | has("demo-weird-name") | not'
+
+echo "-- two unledgered worktrees with one name are ambiguous: neither is adopted"
+adoptseed
+printf '{"worktrees":[{"host":"local","path":"/w/lane-a","comment":"cm:running\\ncm:child twin"},{"host":"local","path":"/w/a/twin","comment":"cm:running"},{"host":"local","path":"/w/b/twin","comment":"cm:running"}]}' > "$ROOT/ad20.json"
+OUT="$("$FU" reconcile --discover "$ROOT/ad20.json" 2>&1)"
+check "neither twin is adopted"                             '.workers | has("twin") | not'
+if printf '%s' "$OUT" | grep -q 'followups: adopt-ambiguous twin'; then ok "the ambiguous name is reported"; else bad "no adopt-ambiguous line" "$OUT"; fi
+
+echo "-- an epic declared under the display name of an adopted child"
+adoptseed
+census "lane-a:cm:running
+cm:child kid-dir" > /dev/null
+printf '{"worktrees":[{"host":"local","path":"/w/lane-a","comment":"cm:running\\ncm:child kid-dir"},{"host":"local","path":"/w/kid-dir","displayName":"friendly","comment":"cm:running"}]}' > "$ROOT/ad11a.json"
+"$FU" reconcile --discover "$ROOT/ad11a.json" >/dev/null 2>&1
+printf '{"worktrees":[{"host":"local","path":"/w/lane-a","comment":"cm:running\\ncm:child friendly epic=ep-open"},{"host":"local","path":"/w/kid-dir","displayName":"friendly","comment":"cm:running"}]}' > "$ROOT/ad11b.json"
+"$FU" reconcile --discover "$ROOT/ad11b.json" >/dev/null 2>&1
+check "epic=ep-open declared under the display name reaches the worker" '.workers["kid-dir"].beadsEpic == "ep-open"'
+
+echo "-- two leads claim one child: a declared epic is kept, different epics are a conflict"
+adoptseed
+jq '.workers["lane-b"] = {"host":"local","path":"/w/lane-b","lane":"lane-b","state":"running","standing":true}' "$L" > "$ROOT/p.json" && mv "$ROOT/p.json" "$L"
+census "lane-a:cm:running
+cm:child kid-ep1
+cm:child kid-ep2 epic=ep-1
+cm:child kid-ep3" "lane-b:cm:running
+cm:child kid-ep1 epic=ep-9
+cm:child kid-ep2
+cm:child kid-ep3 epic=ep-8" "kid-ep1:cm:running" "kid-ep2:cm:running" "kid-ep3:cm:running" > "$ROOT/ad6.json"
+OUT="$("$FU" reconcile --discover "$ROOT/ad6.json" 2>&1)"
+check "one claim without epic, one with: the epic is kept"  '.workers["kid-ep1"].beadsEpic == "ep-9"'
+check "the epic survives whichever lead is read first"      '.workers["kid-ep2"].beadsEpic == "ep-1"'
+adoptseed
+jq '.workers["lane-b"] = {"host":"local","path":"/w/lane-b","lane":"lane-b","state":"running","standing":true}' "$L" > "$ROOT/p.json" && mv "$ROOT/p.json" "$L"
+census "lane-a:cm:running
+cm:child kid-ep3 epic=ep-1" "lane-b:cm:running
+cm:child kid-ep3 epic=ep-8" "kid-ep3:cm:running" > "$ROOT/ad7.json"
+OUT="$("$FU" reconcile --discover "$ROOT/ad7.json" 2>&1)"
+check "two different epics: not adopted"                    '.workers | has("kid-ep3") | not'
+if printf '%s' "$OUT" | grep -q 'followups: adopt-conflict kid-ep3'; then ok "reports the adopt-conflict"; else bad "no adopt-conflict line" "$OUT"; fi
+
+echo "-- two epic= tokens on one cm:child line are a conflict, not the first one"
+adoptseed
+census "lane-a:cm:running
+cm:child kid-twice epic=ep-closed epic=ep-open" "kid-twice:cm:running" > "$ROOT/ad12.json"
+OUT="$("$FU" reconcile --discover "$ROOT/ad12.json" 2>&1)"
+check "a child declaring two different epics is not adopted" '.workers | has("kid-twice") | not'
+if printf '%s' "$OUT" | grep -q 'followups: adopt-conflict kid-twice'; then ok "reports the adopt-conflict for two tokens"; else bad "no adopt-conflict for two tokens" "$OUT"; fi
+
+echo "-- a host-qualified cm:child (name@host) adopts the child on that host"
+adoptseed
+printf '%s' '{"worktrees":[
+ {"host":"local","path":"/w/lane-a","comment":"cm:running\ncm:child kid-far@host-b epic=ep-3\ncm:child kid-near"},
+ {"host":"host-b","path":"/w/kid-far","comment":"cm:running far"},
+ {"host":"local","path":"/w/kid-far","comment":"cm:running same name, other host"},
+ {"host":"local","path":"/w/kid-near","comment":"cm:running near"}]}' > "$ROOT/ad8.json"
+OUT="$("$FU" reconcile --discover "$ROOT/ad8.json" 2>&1)"
+check "name@host adopts the row on host-b"               '.workers["kid-far"] | .host == "host-b" and .path == "/w/kid-far" and .beadsEpic == "ep-3" and .parent == "lane-a"'
+check "the same name on the poster's host is not taken"   '.workers["kid-far"].host == "host-b"'
+check "an unqualified name still means the poster's host" '.workers["kid-near"] | .host == "local" and .standing == false'
 
 echo "passed=$PASS failed=$FAIL"
 [ "$FAIL" = 0 ]
