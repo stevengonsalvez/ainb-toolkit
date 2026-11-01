@@ -98,7 +98,9 @@ if ! cm_timeout "$HOST_TIMEOUT" "$ORCA" host list --json > "$TMP/hostlist.json" 
   # Query only the local host; every other host the ledger knows is listed
   # as unreachable so its workers are never assumed gone.
   printf '{"result":{"hosts":[{"kind":"local","name":"this machine","id":"local"}]}}\n' > "$TMP/hostlist.json"
-  if [ -r "$CM_HOME/ledger.json" ]; then
+  if [ -r "$CM_HOME/ledger.json" ] && ! cm_ledger_guard "$CM_HOME/ledger.json" 2>"$TMP/guard.err"; then
+    err "ledger" "refused, not this project's ledger (not read): $(head -c 300 "$TMP/guard.err")"
+  elif [ -r "$CM_HOME/ledger.json" ]; then
     jq -c '(.hosts // {}) | to_entries[] | select(.key != "local")
            | {name: .key, kind: (.value.kind // "environment"),
               selector: (.value.selector // ("--environment " + .key)), reachable: false,

@@ -32,6 +32,8 @@ case "${1:-}" in
 esac
 
 LEDGER="${CM_HOME:-$HOME/.concertmaster}/ledger.json"
+# A ledger of another project is never read (cm_ledger_guard, lib.sh): exit 3 with the reason.
+cm_ledger_guard "$LEDGER" || exit 3
 if [ -s "$LEDGER" ] && jq -e 'type == "object"' "$LEDGER" >/dev/null 2>&1; then
   LEDGER_ARGS=(--slurpfile ledger "$LEDGER")
 else

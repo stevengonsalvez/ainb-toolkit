@@ -115,6 +115,14 @@ run "listed child (cm:child line): plan ok"                  0 'listed in the co
 run "listed child: ledger line says not used"                0 'ledger .*not used' "$K1" --owner lane-a
 run "listed by absolute lead path"                           0 'listed in the comment' "$K2" --owner "$LA"
 if [ ! -e "$CM_HOME/ledger.json" ] && [ -z "$(ls -A "$CM_HOME")" ]; then ok "no ledger or other state was created in CM_HOME"; else bad "lead mode wrote into CM_HOME" "$(ls -A "$CM_HOME")"; fi
+# A foreign CM_HOME (another project's ledger leaked in) must not be read in lead mode (synthetic projects).
+lists $'cm:running 3 workers\ncm:child kid-1\ncm:child kid-2'
+printf '%s\n' '{"project":"project-b","workers":{"w-x":{"host":"local","path":"/nowhere","standing":false}}}' > "$CM_HOME/ledger.json"
+SUM_BEFORE="$(cksum < "$CM_HOME/ledger.json")"
+CM_PROJECT_ID=project-a run "foreign ledger in CM_HOME: lead mode still plans"   0 'listed in the comment of lane-a' "$K1" --owner lane-a
+CM_PROJECT_ID=project-a run "foreign ledger: lead mode never reads it (not used)" 0 'ledger .*not used' "$K1" --owner lane-a
+if [ "$(cksum < "$CM_HOME/ledger.json")" = "$SUM_BEFORE" ]; then ok "foreign ledger left untouched"; else bad "lead mode changed the foreign ledger"; fi
+rm -f "$CM_HOME/ledger.json"
 lists 'cm:running | WORKERS I OWN: kid-3 (fix a), kid-4 (fix b), kid-5'
 run "WORKERS I OWN list: first item"                          0 'listed in the comment' "$K3" --owner lane-a
 run "WORKERS I OWN list: middle item"                         0 'listed in the comment' "$K4" --owner lane-a

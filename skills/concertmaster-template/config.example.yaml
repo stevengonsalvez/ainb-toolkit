@@ -9,6 +9,9 @@ schema: concertmaster.config/v1
 
 project:
   name: Acme                       # [script] digest title, report headers
+  id: acme                         # [script] this project's id: stamped on the ledger as `project`; a ledger
+                                   # of another project (a CM_HOME leaked from a second project's session on
+                                   # a shared host) is refused, never read (scripts/ledger-guard.sh). Unset: no check
   owner:
     name: Alex                     # [script] the human the concertmaster reports to
     id: alex                       # [script] bead assignee / plan owner for "needs the owner"
