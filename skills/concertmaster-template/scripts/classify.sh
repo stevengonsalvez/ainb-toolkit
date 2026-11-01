@@ -3,6 +3,7 @@
 #
 #   scripts/discover.sh | scripts/classify.sh            # JSON
 #   scripts/discover.sh | scripts/classify.sh --table    # human table
+#   scripts/discover.sh | scripts/classify.sh --census   # the census line + each row over 0
 #
 # Env: CM_STUCK_MIN (default 45), CM_CONFIG (config file override). Rules live
 # in classify.jq. Reads the ledger ($CM_HOME/ledger.json): standing and beads
@@ -26,6 +27,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 MODE=json
 case "${1:-}" in
   --table) MODE=table ;;
+  --census) MODE=census ;;
   -h|--help) sed -n '2,/^set -euo/{/^#/p;}' "$0"; exit 0 ;;
   '') ;;
   *) printf 'classify.sh: unknown arg: %s\n' "$1" >&2; exit 2 ;;
@@ -71,10 +73,28 @@ else
   printf 'classify.sh: %s: ownership accounting skipped\n' "$OWN_ERR" >&2
 fi
 
-OUT="$(jq --argjson stuckMin "${CM_STUCK_MIN:-45}" --argjson forbidden "$FORBIDDEN" --argjson own "$OWN" --arg ownErr "$OWN_ERR" "${LEDGER_ARGS[@]}" -f "$HERE/classify.jq")"
+# Project scope for class other-project: the one Orca repo this project owns and the names of
+# other projects that share the hosts (worktrees.orca_repo, worktrees.never_touch). Unset: null.
+SCOPE="$(printf '%s' "$CM_CFG_JSON" | jq -c '{repo: .worktrees.orca_repo, neverTouch: ((.worktrees.never_touch // []) | map(select(type == "string" and length > 0)))}
+  | select(.repo | type == "string" and length > 0)' 2>/dev/null || true)"
+[ -n "$SCOPE" ] || SCOPE=null
+
+OUT="$(jq --argjson scope "$SCOPE" --argjson stuckMin "${CM_STUCK_MIN:-45}" --argjson forbidden "$FORBIDDEN" --argjson own "$OWN" --arg ownErr "$OWN_ERR" "${LEDGER_ARGS[@]}" -f "$HERE/classify.jq")"
 
 if [ "$MODE" = json ]; then
   printf '%s\n' "$OUT"
+  exit 0
+fi
+
+# census: the report line (SKILL.md § Reporting), data not prose. One line, then each row over 0
+# (worktree @ host: reason), then the apart count. Orphans print "?" when ownership is not configured.
+if [ "$MODE" = census ]; then
+  printf '%s\n' "$OUT" | jq -r '
+    .census as $c
+    | "census: orphans \($c.orphans // "?"), unknown-git \($c.unknownGit), dirty \($c.dirty) (target 0)",
+      ($c.rows[] | "  \(.kind): \(.worktree) @ \(.host): \(.reason)"),
+      (if $c.ownershipConfigured then empty else "  orphans: ? (ownership off: \(.ownership.error))" end),
+      "other-project: \($c.otherProject) (listed apart, not counted)"'
   exit 0
 fi
 
