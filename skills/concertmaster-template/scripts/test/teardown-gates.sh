@@ -74,6 +74,10 @@ mkwt() {
 wtcommit() {
   git -C "$1" add .beads/issues.jsonl && git -C "$1" commit -qm beads --no-gpg-sign && git -C "$1" push -q origin HEAD >/dev/null 2>&1
 }
+# tbead <wt>: commit and push a tracked change under .beads (a closed bead: no open work). A worktree
+# that never changed a tracked bead file is excused when bd cannot read its store (gap a); one that
+# did is not, so the older-schema refusal cases below need this.
+tbead() { printf '{"id":"t-tb-%s","status":"closed","updated_at":"2026-10-20T00:00:00Z"}\n' "${1##*/}" >> "$1/.beads/issues.jsonl"; wtcommit "$1"; }
 # chmod-based cases mean nothing as root (permissions are ignored): skip them.
 AS_ROOT=0; [ "$(id -u)" = 0 ] && AS_ROOT=1
 skip() { printf 'SKIP %s (running as root)\n' "$1"; }
@@ -141,6 +145,9 @@ rm -f "$CM_HOME/ledger.json"
 run "ledger missing"                                       3 'ledger missing or empty' "$W1"
 : > "$CM_HOME/ledger.json"
 run "ledger empty file"                                    3 'ledger missing or empty' "$W1"
+run "ledger missing: points a lead at lead mode"           3 'teardown.sh local .* --owner <your-worktree>' "$W1"
+run "ledger missing: cm:retire is only the fallback"       3 'cm:retire on the child' "$W1"
+run "ledger missing: says not to build a ledger here"      3 'do not copy or build one here' "$W1"
 ledger '{}'
 run "ledger {}"                                            3 'malformed' "$W1"
 ledger '{"workers":null}'
@@ -170,6 +177,11 @@ one "$W1" '"standing":"yes"'
 run "standing non-boolean refuses as unknown"              3 'standing state unknown' "$W1"
 one "$W4" '"standing":false'
 STUB_NAME=pr-sweeper run "sweeper name + standing:false: ledger wins" 0 'name looks like a lane, ledger wins' "$W4"
+# the folder is ops-b, so only the display name (STUB_NAME) carries the shape under test
+one "$W5" '"standing":false'
+STUB_NAME=release-sweeper-gcp2 run "release-sweeper-style name + standing:false: noted as lane-shaped" 0 'name looks like a lane, ledger wins' "$W5"
+STUB_NAME=research-notes run "research-<slug> + standing:false: a single-task worker, no lane note" 0 'ledger standing:false, single-task worker' "$W5"
+STUB_NAME=sweep-5585 run "sweep-<pr> + standing:false: a single-task worker, no lane note" 0 'ledger standing:false, single-task worker' "$W5"
 one "$W2" '"standing":true'
 STUB_NAME=feature-demo-sweeper run "incident shape: standing:true refuses" 3 'standing lane' "$W2"
 ledger "{\"lanes\":{\"dev-sweeper\":{\"lead\":\"w-a\"}},\"workers\":{\"w-a\":$(w "$W1" '"standing":false')}}"
@@ -214,6 +226,10 @@ ep "$W3" nope-zz; run "epic found nowhere"                       3 'not found in
 ep "$W3" 't-ep1; rm -rf /'; run "invalid epic id never executed" 3 'is not a bead id' "$W3"
 one "$W3" '"standing":false,"beadsEpic":42'
 run "non-string beadsEpic refuses"                         3 'beadsEpic on w-a is not a bead id' "$W3"
+one "$W3" '"standing":false,"epicConflict":["t-ep1","t-par"]'
+run "a recorded epic conflict refuses teardown"            3 'declare different epic= ids for w-a' "$W3"
+one "$W3" '"standing":false,"epicConflict":[]'
+run "an empty epicConflict does not block"                 0 'dry-run: nothing changed' "$W3"
 ledger "{\"workers\":{\"w-a\":$(w "$W3" '"standing":false,"beadsEpic":"t-ep1"'),\"w-b\":$(w "$W3" '"standing":false,"beadsEpic":"t-par"')}}"
 run "two workers: epics unioned"                           3 'under epic t-par:' "$W3"
 ledger "{\"asks\":[{\"id\":\"ask-1\",\"state\":\"answered\",\"kind\":\"remove-standing\",\"decision\":\"approved\",\"host\":\"local\",\"path\":\"$W3\"}],\"workers\":{\"w-a\":$(w "$W3" '"standing":true,"beadsEpic":"t-ep1"')}}"
@@ -383,10 +399,10 @@ rm -f "$W13/.beads/redirect"
 bdrt "$W14"
 one "$W14" '"standing":false'
 CM_BD_CMD=bd-stub STUB_BD_ERR='Error: search count issues: Error 1105: table "leases" does not have column "granted_node"' \
-  run "store with pending migrations: refuses, says why"   3 'bd said: Error: search count issues.*granted_node' "$W14" --salvage
+  run "store with pending migrations, no bead change: excused" 0 'excused, no tracked .beads change' "$W14" --salvage
 ep "$W14" t-ep1
 CM_BD_CMD=bd-stub STUB_BD_ERR='Error: search count issues: Error 1105: table "leases" does not have column "granted_node"' \
-  run "same with an epic: refuses"                         3 'a beads source failed' "$W14" --salvage
+  run "same with an epic that has open beads: refuses"     3 '2 open bead(s) under epic t-ep1' "$W14" --salvage
 
 echo "== bd runtime: always salvaged"
 bdrt "$W15"; one "$W15" '"standing":false'
@@ -479,6 +495,135 @@ else
   skip "partial bd runtime delete"
 fi
 
+echo "== beads store unreadable by bd (store schema older than the installed bd)"
+# Reproduction of the incident: bd 66 will not open a v53 store with --readonly and
+# says so in an Error line; the gate used to refuse with no way forward. The stub prints
+# that error; the store is never opened, migrated or written by the script.
+BDV='Error: pending schema migrations: store is at v53, bd expects v66 (run bd migrate)'
+W23="$(mkwt schema-a)"; W24="$(mkwt schema-b)"; W25="$(mkwt schema-c)"; W26="$(mkwt schema-d)"
+one "$W23" '"standing":false'
+tbead "$W23"; tbead "$W24"; tbead "$W25"; tbead "$W26"
+: > "$ROOT/bd-schema.log"
+export STUB_BD_LOG="$ROOT/bd-schema.log"   # every bd call in this section, --apply runs included
+CM_BD_CMD=bd-stub STUB_BD_ERR="$BDV" \
+  run "v53 store: refuses, names the bd error"             3 'bd said: Error: pending schema migrations' "$W23"
+CM_BD_CMD=bd-stub STUB_BD_ERR="$BDV" \
+  run "v53 store: refusal lists the state as UNKNOWN"      3 'beads store: its state is UNKNOWN' "$W23"
+CM_BD_CMD=bd-stub STUB_BD_ERR="$BDV" \
+  run "v53 store: refusal names the safe flag"             3 're-run with --salvage --beads-unreadable-ok' "$W23"
+CM_BD_CMD=bd-stub STUB_BD_ERR="$BDV" \
+  run "flag without --salvage: refuses"                    3 'needs --salvage' "$W23" --beads-unreadable-ok "v53 store bd v66"
+CM_BD_CMD=bd-stub STUB_BD_ERR="$BDV" \
+  run "flag with --salvage, tree clean and pushed: plan ok" 0 'accepted by --beads-unreadable-ok (v53 store bd v66)' "$W23" --salvage --beads-unreadable-ok "v53 store bd v66"
+CM_BD_CMD=bd-stub STUB_BD_ERR="$BDV" \
+  run "flag: plan copies the whole .beads dir out first"   0 'copy the WHOLE .beads dir to' "$W23" --salvage --beads-unreadable-ok "v53 store bd v66"
+run "flag without a reason: usage"                         2 'needs a reason' "$W23" --beads-unreadable-ok
+run "flag with an empty reason: usage"                     2 'needs a reason' "$W23" --beads-unreadable-ok ""
+run "flag whose reason is another flag: usage"             2 'needs a reason' "$W23" --beads-unreadable-ok --salvage
+run "flag with a punctuation-only reason: usage"           2 'letters or digits' "$W23" --beads-unreadable-ok "!!!"
+# Every other gate still refuses with the flag.
+: > "$W24/stray.txt"; one "$W24" '"standing":false'
+CM_BD_CMD=bd-stub STUB_BD_ERR="$BDV" \
+  run "flag, dirty tree: still refuses"                    3 'dirty tree' "$W24" --salvage --beads-unreadable-ok "v53 store bd v66"
+rm -f "$W24/stray.txt"
+printf '%s\n' 'x' > "$W24/more.txt"; git -C "$W24" add more.txt; git -C "$W24" commit -qm unpushed --no-gpg-sign
+CM_BD_CMD=bd-stub STUB_BD_ERR="$BDV" \
+  run "flag, unpushed commit: still refuses"              3 'unpushed commits' "$W24" --salvage --beads-unreadable-ok "v53 store bd v66"
+ep "$W25" t-ep1
+CM_BD_CMD=bd-stub STUB_BD_ERR="$BDV" \
+  run "flag does not excuse open beads in readable sources" 3 '2 open bead(s) under epic t-ep1' "$W25" --salvage --beads-unreadable-ok "v53 store bd v66"
+ep "$W25" nope-zz
+CM_BD_CMD=bd-stub STUB_BD_ERR="$BDV" \
+  run "flag does not excuse an epic found nowhere"         3 'not found in any beads source' "$W25" --salvage --beads-unreadable-ok "v53 store bd v66"
+one "$W23" '"standing":true'
+CM_BD_CMD=bd-stub STUB_BD_ERR="$BDV" \
+  run "flag does not excuse a standing lane"               3 'standing lane' "$W23" --salvage --beads-unreadable-ok "v53 store bd v66"
+one "$W23" '"standing":false'
+CM_BD_CMD=bd-stub STUB_BD_ERR="$BDV" \
+  run "--retire-check ignores the flag"                    3 'RETIRE REFUSED:.*beads read failed\|beads read failed' "$W23" --retire-check --beads-unreadable-ok "v53 store bd v66"
+# The flag excuses only "bd ran and printed an Error": not a bare bd failure, not bd
+# missing behind a redirect (the live store is elsewhere), not a timeout.
+CM_BD_CMD=bd-stub STUB_BD_FAIL=1 \
+  run "flag does not excuse a bd failure with no Error line" 3 'bd:failed' "$W23" --salvage --beads-unreadable-ok "v53 store bd v66"
+printf '%s\n' "$M/.beads" > "$W23/.beads/redirect"
+CM_BD_CMD=cm-no-such-bd \
+  run "flag does not excuse bd missing behind a redirect" 3 'bd:failed-missing-with-redirect' "$W23" --salvage --beads-unreadable-ok "v53 store bd v66"
+rm -f "$W23/.beads/redirect"
+# A hostile reason is reduced to a safe subset and never executed.
+# shellcheck disable=SC2016  # the single quotes keep the hostile reason literal on purpose
+CM_BD_CMD=bd-stub STUB_BD_ERR="$BDV" \
+  run "reason with shell metacharacters is sanitized"      0 'accepted by --beads-unreadable-ok (a(touch .*pwned)bid)' "$W23" --salvage --beads-unreadable-ok 'a$(touch '"$ROOT"'/pwned)b;`id`'
+exists "hostile reason was not executed" "$ROOT/pwned" no
+# bd healthy: the flag changes nothing and does not demand --salvage.
+CM_BD_CMD=bd-stub STUB_BD_JSON="$ROOT/bd-empty.json" \
+  run "bd reads fine: flag is a no-op, no --salvage needed" 0 'no unmerged open beads' "$W23" --beads-unreadable-ok "v53 store bd v66"
+# Safety: across every case above bd only ever ran read-only and sandboxed, never a write or a migrate.
+if [ -s "$ROOT/bd-schema.log" ] && ! grep -v -e '--readonly --sandbox' "$ROOT/bd-schema.log" | grep -q .; then
+  PASS=$((PASS + 1)); echo "PASS bd only ran with --readonly --sandbox (no migrate, no write)"
+else
+  FAIL=$((FAIL + 1)); echo "FAIL bd invocations not all read-only: $(cat "$ROOT/bd-schema.log")"
+fi
+if grep -qiE 'migrate|init|update|create|close|import|dolt' "$ROOT/bd-schema.log"; then
+  FAIL=$((FAIL + 1)); echo "FAIL a bd write-ish verb was run: $(cat "$ROOT/bd-schema.log")"
+else
+  PASS=$((PASS + 1)); echo "PASS no bd write-ish verb was run"
+fi
+# --apply: the whole .beads dir (store and all) is copied out and verified, the reason is
+# logged, then the worktree goes. The store files stay byte-identical in the copy.
+bdrt "$W26"; one "$W26" '"standing":false'
+printf 'v53-store-marker\n' > "$W26/.beads/embeddeddolt/beads/.dolt/noms-v53"
+rm -f "$CM_HOME/teardown-beads-unreadable.log"
+STUB_ORCA_NONE=1 CM_BD_CMD=bd-stub STUB_BD_ERR="$BDV" \
+  run "apply without --salvage: refuses, worktree kept"    3 'needs --salvage' "$W26" --apply --beads-unreadable-ok "v53 store bd v66"
+exists "refused apply: worktree kept" "$W26/.beads/embeddeddolt" yes
+STUB_ORCA_NONE=1 CM_BD_CMD=bd-stub STUB_BD_ERR="$BDV" \
+  run "apply with flag and --salvage: removes the worktree" 0 'done: .* torn down' "$W26" --apply --salvage --beads-unreadable-ok "v53 store bd v66"
+BW="$(find "$HOME/.concertmaster/salvage/local" -type d -name beads-whole -path '*b-schema-d-*' 2>/dev/null | head -n 1)"
+if [ -n "$BW" ] && [ -f "$BW/issues.jsonl" ] && [ "$(cat "$BW/embeddeddolt/beads/.dolt/noms-v53" 2>/dev/null)" = v53-store-marker ] && [ -f "$BW/backup/issues.jsonl" ]; then
+  PASS=$((PASS + 1)); echo "PASS whole .beads dir copied out (issues, store, backup)"
+else
+  FAIL=$((FAIL + 1)); echo "FAIL whole .beads copy missing or incomplete: ${BW:-none}"
+fi
+exists "worktree removed after the copy" "$W26" no
+if [ -f "$CM_HOME/teardown-beads-unreadable.log" ] \
+   && jq -e '.reason == "v53 store bd v66" and .host == "local" and (.path | endswith("schema-d")) and (.bdError | contains("pending schema migrations")) and (.salvage | endswith("/beads-whole"))' "$CM_HOME/teardown-beads-unreadable.log" >/dev/null 2>&1; then
+  PASS=$((PASS + 1)); echo "PASS reason, host, path, bd error and salvage dir logged"
+else
+  FAIL=$((FAIL + 1)); echo "FAIL log missing or wrong: $(cat "$CM_HOME/teardown-beads-unreadable.log" 2>&1)"
+fi
+
+unset STUB_BD_LOG
+echo "== origin org match is case-insensitive"
+# GitHub orgs and repos are case-insensitive. The config org here is AcmeOrg; an origin
+# written in lower case (or any mix) must be accepted, and exclude globs must match whatever
+# the case of the pattern or the repo name. Synthetic names only.
+# shellcheck disable=SC1091
+. "$HERE/../lib.sh"
+slug_case() { # slug_case <label> <url> <want-slug-or-empty> [exclude globs]
+  local got
+  got="$(CM_ORG=AcmeOrg CM_EXCLUDE_REPOS="${4-mirror-*}" cm_org_slug "$2" || true)"
+  if [ "$got" = "$3" ]; then PASS=$((PASS + 1)); printf 'PASS %s\n' "$1"
+  else FAIL=$((FAIL + 1)); printf 'FAIL %s: got [%s] want [%s]\n' "$1" "$got" "$3"; fi
+}
+slug_case "lower-case https URL, mixed-case config org"   https://github.com/acmeorg/acme-app          acmeorg/acme-app
+slug_case "upper-case URL"                                  https://github.com/ACMEORG/ACME-APP.git      acmeorg/acme-app
+slug_case "mixed-case ssh URL"                              git@github.com:AcMeOrG/Acme-App.git          acmeorg/acme-app
+slug_case "mixed-case host"                                 https://GitHub.com/acmeorg/acme-app          acmeorg/acme-app
+slug_case "other org still refused"                         https://github.com/other-org/acme-app        ""
+slug_case "org prefix is not the org"                       https://github.com/acmeorg-extra/acme-app    ""
+slug_case "exclude glob matches a different case (repo)"    https://github.com/acmeorg/MIRROR-acme       ""
+slug_case "exclude glob in upper case matches lower repo"   https://github.com/acmeorg/mirror-acme       "" "MIRROR-*"
+slug_case "non-excluded repo with an exclude glob set"      https://github.com/acmeorg/acme-mirror       acmeorg/acme-mirror
+# End to end: a worktree whose origin reads as a lower-case GitHub URL passes the repo gate.
+LC="$ROOT/github.com/acmeorg/acme-lc.git"
+git init -q --bare -b main "$LC"
+M2="$ROOT/main-lc"; git init -q -b main "$M2"; git -C "$M2" remote add origin "$LC"
+git -C "$M2" commit -q --allow-empty -m init --no-gpg-sign; git -C "$M2" push -q origin main
+git -C "$M2" worktree add -q -b b-lc "$ROOT/wt/lc" main >/dev/null 2>&1; git -C "$ROOT/wt/lc" push -q origin b-lc >/dev/null 2>&1
+WLC="$(cd "$ROOT/wt/lc" && pwd -P)"
+one "$WLC" '"standing":false'
+run "lower-case origin path: repo gate passes"             0 'repo .*acmeorg/acme-lc' "$WLC"
+
 echo "== follow-up gate"
 FUS="$HERE/../followups.sh"
 fu() { # fu <worker> <id> [state]: one followUps[] row as JSON
@@ -570,6 +715,38 @@ one "$W1" '"standing":false'
 run "retire-check refuses a subdirectory path"             3 'path unresolved' "$W1/.beads" --retire-check
 ledger '{"workers":{}}'
 run "retire-check refuses with no live ledger worker"      3 'RETIRE REFUSED' "$W1" --retire-check
+
+echo "== gap (a): an old-schema store no tracked bead change touched is not a refusal"
+BDV2='Error: pending schema migrations: store is at v18, bd expects v66'
+W27="$(mkwt schema-e)"; W28="$(mkwt schema-f)"; W29="$(mkwt schema-g)"
+: > "$ROOT/bd-gapa.log"
+export STUB_BD_LOG="$ROOT/bd-gapa.log"   # every bd call in this section
+one "$W27" '"standing":false'
+CM_BD_CMD=bd-stub STUB_BD_ERR="$BDV2" \
+  run "fresh worktree, v18 store: excused with no flag"    0 'excused, no tracked .beads change' "$W27"
+CM_BD_CMD=bd-stub STUB_BD_ERR="$BDV2" \
+  run "excused: no --salvage needed, plan ok"              0 'dry-run: nothing changed' "$W27"
+tbead "$W28"; one "$W28" '"standing":false'
+CM_BD_CMD=bd-stub STUB_BD_ERR="$BDV2" \
+  run "tracked .beads change: still refused"               3 'beads-unreadable-ok' "$W28"
+printf '{}\n' > "$W29/.beads/extra.jsonl"; one "$W29" '"standing":false'
+CM_BD_CMD=bd-stub STUB_BD_ERR="$BDV2" \
+  run "untracked bead file: still refused"                 3 'beads-unreadable-ok' "$W29"
+ep "$W27" t-ep1
+CM_BD_CMD=bd-stub STUB_BD_ERR="$BDV2" \
+  run "excused, but an epic with open beads still refuses" 3 '2 open bead(s) under epic t-ep1' "$W27"
+ep "$W27" t-par4
+CM_BD_CMD=bd-stub STUB_BD_ERR="$BDV2" \
+  run "excused, epic fully closed: plan ok"                0 'all 2 closed under t-par4' "$W27"
+CM_BD_CMD=bd-stub STUB_BD_ERR='Error: dial tcp 10.0.0.5:3306: connect: connection refused' \
+  run "a non-schema bd Error (connection refused) is not excused" 3 'beads-unreadable-ok' "$W27"
+CM_BD_CMD=bd-stub STUB_BD_ERR='Error: unsupported schema version v99: store is newer than this bd' \
+  run "a NEWER-schema Error is not excused"                3 'beads-unreadable-ok' "$W27"
+CM_BD_CMD=bd-stub STUB_BD_ERR='Error: cannot reach the schema registry: connection reset' \
+  run "an Error that only names a schema is not excused"   3 'beads-unreadable-ok' "$W27"
+CM_BD_CMD=bd-stub STUB_BD_FAIL=1 \
+  run "a bd failure with no Error line is not excused"     3 'bd:failed' "$W27"
+if ! grep -qE ' (migrate|init|create|update|close|sync|import|export)( |$)' "$STUB_BD_LOG"; then echo "PASS bd was never asked to migrate or write"; PASS=$((PASS + 1)); else FAIL=$((FAIL + 1)); echo "FAIL a bd write/migrate command ran"; fi
 
 echo "passed=$PASS failed=$FAIL"
 [ "$FAIL" = 0 ]

@@ -13,6 +13,38 @@
 #   add --accept-unmerged-beads <ask-id> ONLY when the owner approved leaving
 #     this worktree's unmerged open beads behind (kind "accept-unmerged-beads",
 #     same binding); it never overrides the epic gate
+#   add --beads-unreadable-ok <reason> ONLY when bd cannot read this worktree's
+#     beads store (for example a store on an older schema than the installed bd,
+#     which prints a pending-schema-migrations error) and a human agreed. The
+#     unreadable store is UNKNOWN, never clean; the refusal lists it as such and
+#     names this flag. The flag excuses ONLY the failed bd read: every other beads
+#     source (origin/<default>, the worktree and redirect files) is still read and
+#     still gates, and every other gate, a dirty or unpushed tree included, still
+#     refuses. It also needs --salvage: the WHOLE .beads dir is copied out to
+#     ~/.concertmaster/salvage/<host>/<branch>-<ts>/beads-whole/ first (verified),
+#     and the reason is logged to $CM_HOME/teardown-beads-unreadable.log. It never
+#     migrates the store and never runs a bd write command (bd runs --readonly
+#     --sandbox from /, as above). Ignored by --retire-check.
+#   add --owner <lead-worktree> [--owner-host <host>] for LEAD MODE: a lead on ANY host tears
+#     down its OWN child. <lead-worktree> is the lead's worktree name or absolute path, read with
+#     `orca worktree list` on --owner-host (default local, the host the lead runs on). The child
+#     must be listed in that lead's comment (a `cm:child <name>` line or its `WORKERS I OWN:`
+#     list); an unlisted child is refused, and when another worktree's comment lists it the
+#     refusal names that one. Every safety gate still runs (PR merged or closed, clean tree,
+#     nothing unpushed, no live agent, no open bead, no open follow-up in its comment, salvage);
+#     they go through the child's own git (ssh) and Orca with --environment <host>. A child that
+#     owns a beads epic is declared on its line as `cm:child <name> epic=<bead-id>` (or with
+#     --epic <bead-id>, repeatable): the epic gate then runs on those ids exactly as in
+#     concertmaster mode; with none declared only the unmerged-beads check runs. NO ledger
+#     is read or written (not even the host name check): the concertmaster tick reconciles the
+#     ledger from the comments afterwards. A standing lane (a configured lane name, an ownership
+#     lead, or a lane-shaped name: cm_lane_shaped in lib.sh) or the lead's own worktree is
+#     refused here: that needs concertmaster mode and the owner-approved path. Known limit:
+#     lead mode reads one host and no ledger, so a second lead on ANOTHER host listing the
+#     same child is not seen and nothing authenticates who runs --owner; the other gates still
+#     run and a cross-host double listing is the concertmaster's to resolve (follow-up
+#     lead-rival-scan). Not combined with --force-standing, --accept-unmerged-beads,
+#     --allow-no-pr or --retire-check.
 #   add --retire-check to run only the ledger, standing, beads and follow-up gates (the
 #     guard before retiring a worker's agent terminal); never acts, and
 #     refuses unless the path resolved and a live ledger worker matched
@@ -52,7 +84,7 @@
 #   - Orca shows a live agent (working/waiting/permission) or child worktrees
 #   - a terminal hosts an agent, or a non-shell process has its cwd in the
 #     worktree, unless every such terminal is named with --close-handle
-#   - LEDGER: $CM_HOME/ledger.json is missing, empty, not an object with a
+#   - (concertmaster mode only, never with --owner) LEDGER: $CM_HOME/ledger.json is missing, empty, not an object with a
 #     workers object, or its paths cannot be canonicalised on the host; or no
 #     live ledger worker (state not gone/repurposed) matches this host and path
 #     (canonical path or Orca worktreeId). No override: adopt it first.
@@ -80,6 +112,13 @@
 #     metadata.json names the default db and BEADS_DIR/BEADS_DB are unset;
 #     every other bd failure, and a timeout (CM_BD_SECS, default 90 per bd
 #     call, enforced on the host too), refuses).
+#     A store bd cannot read because its schema is OLDER than the installed bd (bd prints an
+#     Error line, opens nothing) is excused without any flag when BOTH hold: no tracked change
+#     under .beads versus the merge-base with origin/<default> (no untracked bead file either;
+#     bd runtime files do not count) AND the epic gate below (or, with no epic, the unmerged
+#     beads check) passes on the other sources. If either fails it refuses as before. The store
+#     is never migrated and never written. --beads-unreadable-ok <reason> stays for the
+#     remaining unreadable cases.
 #     An epic found nowhere, or an open epic with no children, refuses.
 #     With no epic: refuses when the worktree holds open beads newer than in
 #     every other source (unmerged bead work; --accept-unmerged-beads).
@@ -115,7 +154,12 @@ ALLOW_NO_PR=0
 SALVAGE=0
 FORCE_STANDING=""
 ACCEPT_BEADS=""
+BEADS_OK_RAW=""
 RETIRE_CHECK=0
+OWNER=""
+OWNER_HOST=local
+OWNER_MODE=0
+OWNER_EPICS=""
 CLOSE_HANDLES=" "
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -127,7 +171,24 @@ while [ $# -gt 0 ]; do
       case "$2" in ''|-*|*[!A-Za-z0-9._:-]*) cm_warn "$1 needs an ask id"; usage ;; esac
       if [ "$1" = --force-standing ]; then FORCE_STANDING="$2"; else ACCEPT_BEADS="$2"; fi
       shift ;;
+    --beads-unreadable-ok)
+      [ $# -ge 2 ] || { cm_warn "--beads-unreadable-ok needs a reason"; usage; }
+      case "$2" in ''|-*) cm_warn "--beads-unreadable-ok needs a reason"; usage ;; esac
+      BEADS_OK_RAW="$2"; shift ;;
     --retire-check) RETIRE_CHECK=1 ;;
+    --owner)
+      [ $# -ge 2 ] || { cm_warn "--owner needs the lead's worktree name or path"; usage; }
+      case "$2" in ''|-*) cm_warn "--owner needs the lead's worktree name or path"; usage ;; esac
+      OWNER="$2"; shift ;;
+    --epic)
+      [ $# -ge 2 ] || { cm_warn "--epic needs a bead id"; usage; }
+      case "$2" in ''|-*|*[!A-Za-z0-9._-]*|.*) cm_warn "--epic needs a bead id"; usage ;; esac
+      OWNER_EPICS="$OWNER_EPICS$2
+"; shift ;;
+    --owner-host)
+      [ $# -ge 2 ] || { cm_warn "--owner-host needs a host"; usage; }
+      case "$2" in ''|-*|*[[:space:]]*) cm_warn "--owner-host needs a host"; usage ;; esac
+      OWNER_HOST="$2"; shift ;;
     --close-handle) [ $# -ge 2 ] || usage; CLOSE_HANDLES="$CLOSE_HANDLES$2 "; shift ;;
     --dry-run) MODE=dry-run ;;
     -h|--help) usage ;;
@@ -136,6 +197,20 @@ while [ $# -gt 0 ]; do
   shift
 done
 IN="$WT"
+if [ -n "$OWNER_EPICS" ] && [ -z "$OWNER" ]; then cm_warn "--epic is only for --owner (lead mode)"; usage; fi
+if [ -n "$OWNER" ]; then
+  OWNER_MODE=1
+  if [ -n "$FORCE_STANDING" ] || [ -n "$ACCEPT_BEADS" ] || [ "$ALLOW_NO_PR" -eq 1 ] || [ "$RETIRE_CHECK" -eq 1 ]; then
+    cm_warn "--owner cannot be combined with --force-standing, --accept-unmerged-beads, --allow-no-pr or --retire-check"; usage
+  fi
+fi
+case "$OWNER_HOST" in "this machine") OWNER_HOST=local ;; esac
+# The reason is logged and printed: printable subset only, bounded.
+BEADS_OK_REASON="$(printf '%s' "$BEADS_OK_RAW" | tr -cd 'A-Za-z0-9 ._:,()/=#@-' | cut -c 1-200)"
+if [ -n "$BEADS_OK_RAW" ] && [ -z "$(printf '%s' "$BEADS_OK_REASON" | tr -d ' ')" ]; then
+  cm_warn "--beads-unreadable-ok needs a reason with letters or digits"; usage
+fi
+[ "$RETIRE_CHECK" -eq 0 ] || BEADS_OK_REASON=""
 case "$HOST" in "this machine") HOST=local ;; esac
 # Re-run after --apply closed the named terminals: they no longer exempt
 # anything, so an agent terminal or process that survived the close refuses.
@@ -232,8 +307,13 @@ printf 'checks:\n'
 # ---- remote identity ---------------------------------------------------------
 if [ "$HOST" != local ]; then
   EXPECT="${CM_SSH_EXPECT_HOSTNAME:-}"
-  if [ -z "$EXPECT" ] && [ -r "$CM_HOME/ledger.json" ]; then
+  if [ -z "$EXPECT" ] && [ "$OWNER_MODE" -eq 0 ] && [ -r "$CM_HOME/ledger.json" ]; then
     EXPECT="$(jq -r --arg h "$HOST" '.hosts[$h].hostname // empty' "$CM_HOME/ledger.json" 2>/dev/null)"
+  fi
+  # The configured hostname (hosts.per_host.<host>.hostname) is the next source; it is read in lead mode
+  # too, where the ledger stays untouched. A host with none is expected to answer as its own alias.
+  if [ -z "$EXPECT" ]; then
+    EXPECT="$(printf '%s' "$CM_CFG_JSON" | jq -r --arg h "$HOST" '.hosts.per_host[$h].hostname // empty' 2>/dev/null || true)"
   fi
   EXPECT="${EXPECT:-$HOST}"
   GOT="$(rrun 'hostname -s 2>/dev/null || hostname' 2>/dev/null | head -n 1 | cut -d. -f1)"
@@ -297,6 +377,11 @@ if [ "$GITOK" -eq 1 ]; then
     refuse "origin is not a $CM_ORG repo: never touched"
   else
     check repo "$SLUG"
+    # Lead mode proves ownership from a listing cut to ONE repo: the target must be a worktree of that repo too,
+    # not just any repo of the organization whose worktree happens to carry the listed name.
+    if [ "$OWNER_MODE" -eq 1 ] && [ -n "${CM_REPO:-}" ] && [ "$(cm_lower "${SLUG#*/}")" != "$(cm_lower "$CM_REPO")" ]; then
+      refuse "lead mode tears down only $CM_REPO worktrees: this origin is $SLUG (a listing in the lead's comment names a worktree, not a repository)"
+    fi
   fi
 
   # A failed check is UNKNOWN and refuses; it is never read as clean.
@@ -521,16 +606,129 @@ EOF_PROCS
   fi
 fi
 
+# ---- lead mode: ownership proof ----------------------------------------------
+# --owner: the lead's own comment is the proof, read now with `orca worktree list` on the
+# lead's host. No ledger. The child must be listed (cm:child <name> or WORKERS I OWN: ...).
+owner_orca() {
+  if [ "$OWNER_HOST" = local ]; then cm_timeout 30 "$ORCA" "$@"
+  else cm_timeout 30 "$ORCA" "$@" --environment "$OWNER_HOST"; fi
+}
+# A listing names the child as <name> (a child on the lead's own host) or <name>@<host> (any other host);
+# it only proves ownership of the child on THAT host, so two same-named worktrees on different hosts are
+# never confused. $th is the target child's host, $oh the lead's host (both "local" for this machine).
+# shellcheck disable=SC2016  # jq program
+OWNER_JQ='
+def segs: (. // "") | tostring | gsub("\\\\n"; "\n")
+  | [ split("\n")[] | split(" | ")[] | sub("^\\s+"; "") | sub("\\s+$"; "") | select(length > 0) ];
+def hn: if . == "this machine" then "local" else . end;
+def listed: [ segs[]
+  | ( (capture("^cm:child\\s+(?<n>[^\\s,@]+)(?:@(?<h>[^\\s,]+))?") | {n, h}),
+      (capture("^workers i own:\\s*(?<l>.*)$"; "i") | .l | split(",")[] | sub("^\\s+"; "")
+        | capture("^(?<n>[^\\s(,@]+)(?:@(?<h>[^\\s(,]+))?") | {n, h}) )
+  | .n + "@" + ((.h // $oh) | hn) ];
+.result.worktrees as $rows
+| [ $rows[] | select(.path == $owner or .displayName == $owner or ((.path // "") | split("/") | last) == $owner) ] as $o
+| if ($o | length) != 1 then "no-owner \($o | length)"
+  else $o[0] as $or
+  | ([ $rows[] | select(.path != $or.path) | . as $r
+        | select(any($names[]; . as $n | ($r.comment | listed) | index($n + "@" + $th))) | ($r.displayName // $r.path) ] | first) as $rival
+  | if ($th == $oh) and ($or.path == $wt or any($names[]; . == ($or.displayName // ""))) then "self"
+    elif any($names[]; . as $n | ($or.comment | listed) | index($n + "@" + $th)) then
+      # the same name on the lead host more than once is not a proof of which one the lead owns
+      if ($th == $oh) and ([ $rows[] | select(.path != $or.path) | . as $r
+            | select(any($names[]; . == ($r.displayName // "")) or any($names[]; . == (($r.path // "") | split("/") | last)))
+          ] | length) > 1 then "ambiguous"
+      # another lead lists the same child too: two owners, so no lead may remove it alone (their epic=
+      # restrictions differ, and with no ledger there is nowhere to merge them)
+      elif $rival != null then "contested \($rival)"
+      else "listed" end
+    elif $rival != null then "elsewhere \($rival)"
+    else "unlisted" end
+  end'
+# shellcheck disable=SC2016  # jq program
+OWNER_EPIC_JQ='
+def segs: (. // "") | tostring | gsub("\\\\n"; "\n")
+  | [ split("\n")[] | split(" | ")[] | sub("^\\s+"; "") | sub("\\s+$"; "") | select(length > 0) ];
+def hn: if . == "this machine" then "local" else . end;
+.result.worktrees as $rows
+| ([ $rows[] | select(.path == $owner or .displayName == $owner or ((.path // "") | split("/") | last) == $owner) ] | first) as $or
+| [ ($or.comment | segs)[] | capture("^cm:child\\s+(?<n>[^\\s,@]+)(?:@(?<h>[^\\s,]+))?(?<r>.*)$")
+    | select(.n as $x | $names | index($x))
+    | select(((.h // $oh) | hn) == $th)
+    | .r | scan("(?:^|\\s)epic=([A-Za-z0-9._-]+)") | .[0] ] | unique[]'
+if [ "$OWNER_MODE" -eq 1 ] && [ -n "$WT" ]; then
+  NAMES="$(jq -cn --arg a "${WT##*/}" --arg b "$([ -z "$ROW" ] || printf '%s' "$ROW" | jq -r '.displayName // ""')" \
+          '[$a, $b] | map(select(. != "")) | unique')"
+  # Only this project's worktrees can prove ownership: the lead list is cut to the configured Orca repo, so a
+  # lead of another project on the same host never authorizes a teardown here.
+  OREPO="${CM_ORCA_REPO:-$(cm_cfg .worktrees.orca_repo)}"
+  OLARGS=(worktree list --json --limit 500)
+  [ -z "$OREPO" ] || OLARGS+=(--repo "name:$OREPO")
+  if ! OL="$(owner_orca "${OLARGS[@]}" 2>/dev/null)" \
+     || ! printf '%s' "$OL" | jq -e '.result.worktrees | type == "array"' >/dev/null 2>&1; then
+    check owner "UNREACHABLE: cannot read the lead's comment on $OWNER_HOST"
+    refuse "owner host $OWNER_HOST unreachable or its worktree list unreadable: ownership unproven, nothing torn down"
+  elif printf '%s' "$OL" | jq -e '.result.truncated == true or ((.result.totalCount // 0) > (.result.worktrees | length))' >/dev/null 2>&1; then
+    check owner "INCOMPLETE: the worktree list on $OWNER_HOST was cut off"
+    refuse "the worktree list on $OWNER_HOST was truncated: the lead and the child's name cannot be proven unique, ownership unproven"
+  else
+    OV="$(printf '%s' "$OL" | jq -r --arg owner "$OWNER" --arg wt "$WT" --arg th "$HOST" --arg oh "$OWNER_HOST" --argjson names "$NAMES" "$OWNER_JQ" 2>/dev/null)" || OV="error"
+    case "$OV" in
+      listed) check owner "listed in the comment of $OWNER on $OWNER_HOST"
+            # The listing names a child, not a path: if two worktrees on the CHILD's host carry that name,
+            # the lead has not said which it owns, so nothing is torn down (the lead host was checked above).
+            if printf '%s' "${PS:-}" | jq -e '.result.truncated == true or ((.result.totalCount // 0) > (.result.worktrees | length))' >/dev/null 2>&1; then
+              check owner "INCOMPLETE: the worktree census on $HOST was cut off"
+              refuse "the worktree census on $HOST was truncated: the child's name cannot be proven unique there, ownership unproven"
+            fi
+            AMB="$(printf '%s' "${PS:-}" | jq -r --argjson names "$NAMES" '[.result.worktrees[]? | . as $r
+                  | select(any($names[]; . == ($r.displayName // "")) or any($names[]; . == (($r.path // "") | split("/") | last)))] | length' 2>/dev/null)" || AMB=0
+            case "${AMB:-0}" in ''|*[!0-9]*) AMB=0 ;; esac
+            # The census lists Orca-tracked worktrees only. A target with no row of its own (git-only) whose name a
+            # tracked worktree already carries is a different worktree: the lead's listing cannot be this one.
+            if [ -z "$ROW" ] && [ "$AMB" -ge 1 ]; then AMB=$((AMB + 1)); fi
+            if [ "$AMB" -gt 1 ]; then
+              check owner "AMBIGUOUS: $AMB worktrees on $HOST have this name"
+              refuse "more than one worktree on $HOST is named like '$WT' ($AMB): the lead's listing does not say which it owns (use a unique name)"
+            fi
+            # An epic the child owns is declared on its cm:child line as epic=<id> (or with --epic): lead
+            # mode has no ledger beadsEpic, so the epic gate below runs on exactly those ids.
+            OWNER_EPICS="$OWNER_EPICS$(printf '%s' "$OL" | jq -r --arg owner "$OWNER" --arg th "$HOST" --arg oh "$OWNER_HOST" --argjson names "$NAMES" "$OWNER_EPIC_JQ" 2>/dev/null)
+" ;;
+      contested*) check owner "CONTESTED: also listed by ${OV#contested }"
+            refuse "$HOST:$WT is listed by both '$OWNER' and '${OV#contested }': two owners, so no lead removes it alone (make one cm:child line, or let the concertmaster decide)" ;;
+      ambiguous) check owner "AMBIGUOUS: more than one worktree on $OWNER_HOST has this name"
+            refuse "more than one worktree on $OWNER_HOST is named like '$WT': the lead's listing does not say which it owns (use a unique name)" ;;
+      self) check owner "the child IS the lead's own worktree"
+            refuse "--owner $OWNER is this worktree: a lead is never torn down in lead mode" ;;
+      no-owner*) check owner "lead $OWNER not found (or ambiguous) on $OWNER_HOST"
+            refuse "lead worktree '$OWNER' not found, or not unique, on $OWNER_HOST: ownership unproven" ;;
+      elsewhere*) check owner "NOT listed by $OWNER; listed by ${OV#elsewhere }"
+            refuse "$HOST:$WT is not in the comment of '$OWNER' (cm:child / WORKERS I OWN); it is listed by '${OV#elsewhere }': that lead tears it down" ;;
+      unlisted) check owner "NOT listed in the comment of $OWNER"
+            refuse "$HOST:$WT is not listed in the comment of '$OWNER' (no cm:child line, not in WORKERS I OWN): refused" ;;
+      *) check owner "UNKNOWN (could not evaluate the lead's comment)"
+            refuse "could not evaluate the lead's comment on $OWNER_HOST: ownership unproven" ;;
+    esac
+  fi
+fi
+
+
 # ---- ledger -------------------------------------------------------------------
 # The ledger is the only source of standing and beadsEpic. Every way it can be
 # missing, malformed or silent about this worktree refuses (fail closed).
 LEDGER="$CM_HOME/ledger.json"
 LW=""          # merged view of the live ledger workers on this host + path
 LEDGER_OK=0
-if [ -n "$WT" ]; then
+if [ "$OWNER_MODE" -eq 1 ]; then
+  check ledger "not used (--owner: no ledger is read or written; the concertmaster reconciles it from comments)"
+elif [ -n "$WT" ]; then
   if [ ! -s "$LEDGER" ]; then
     check ledger "MISSING or empty ($LEDGER)"
-    gate "ledger missing or empty: standing and beads state unknown"
+    # The ledger lives only on the concertmaster host. A lead running this anywhere else lands here,
+    # so the refusal names the way through: ask the concertmaster, do not hunt for a ledger.
+    gate "ledger missing or empty: standing and beads state unknown. Backup ring: $(CM_LEDGER="$LEDGER" cm_ledger_bak_dir)/ (newest copy is the ledger before the last write). Restore: $(CM_LEDGER="$LEDGER" cm_ledger_restore_hint)"
+    gate "not the concertmaster host? The ledger exists only there; do not copy or build one here. A lead tears down its own child from ANY host with: teardown.sh $HOST $WT --owner <your-worktree> (add --owner-host <host> when you run on another host; plan first, then --apply). Only a lead that cannot reach the child's host posts cm:retire on the child's comment as a fallback request; the concertmaster then runs teardown.sh from its host."
   elif ! jq -se 'length == 1 and (.[0] | type == "object" and ((.workers // null) | type) == "object")' "$LEDGER" >/dev/null 2>&1; then
     check ledger "UNKNOWN ($LEDGER is not an object with a workers object)"
     gate "ledger unreadable or malformed: standing and beads state unknown"
@@ -574,6 +772,7 @@ EOF_K
                   standingTrue: [ $ws[] | select(.standing == true) | .id ],
                   standingUnknown: [ $ws[] | select((.standing | type) != "boolean") | .id ],
                   lead: [ $ws[].id as $k | $k | select($leads | index($k)) ],
+                  epicConflict: [ $ws[] | select(((.epicConflict // []) | length) > 0) | .id ],
                   badEpic: [ $ws[] | select(.beadsEpic != null and ((.beadsEpic | type) != "string" or .beadsEpic == "")) | .id ],
                   epics: ([ $ws[] | .beadsEpic | select(type == "string" and . != "") ] | unique),
                   lanes: [ $ws[] | (.lane // .id) ],
@@ -618,7 +817,28 @@ ask_ok() {
 # ---- standing lane ------------------------------------------------------------
 # Sweepers and lane leads are long-lived: more work will be assigned, so an
 # idle lead is idle, not done. Only single-task workers are torn down.
-if [ -n "$LW" ]; then
+if [ "$OWNER_MODE" -eq 1 ]; then
+  # No ledger, so standing comes from the config lane names and the lane-lead name shapes; a name
+  # that looks like a lane is refused (a refusal is the safe side: concertmaster mode decides it).
+  # A child a lead lists in cm:child / WORKERS I OWN is a single-task worker by contract.
+  if [ -n "$WT" ]; then
+    # configured lane names, configured ownership leads and lane-shaped names: cm_lane_shaped (lib.sh), the
+    # same predicate followups.sh adoption and concertmaster mode use
+    SDN=""
+    [ -z "$ROW" ] || SDN="$(printf '%s' "$ROW" | jq -r '.displayName // ""')"
+    SHIT=""
+    for _sn in "${WT##*/}" "$SDN"; do
+      [ -n "$_sn" ] || continue
+      if _why="$(cm_lane_reason "$_sn")"; then SHIT="${SHIT:-$_sn ($_why)}"; fi
+    done
+    if [ -n "$SHIT" ]; then
+      check standing "YES? ($SHIT)"
+      gate "standing lane ($SHIT): refused in lead mode; a standing lane is never torn down by a lead (concertmaster mode, owner-approved path only)"
+    else
+      check standing "no (listed as a child of $OWNER; not a configured or lane-shaped name)"
+    fi
+  fi
+elif [ -n "$LW" ]; then
   WHY=""
   ST_TRUE="$(lw '.standingTrue | join(",")')"
   ST_UNK="$(lw '.standingUnknown | join(",")')"
@@ -631,11 +851,11 @@ if [ -n "$LW" ]; then
   elif [ -z "$WHY" ]; then
     DNAME=""
     [ -z "$ROW" ] || DNAME="$(printf '%s' "$ROW" | jq -r '.displayName // ""')"
-    case "$(cm_lower "${WT##*/} $DNAME")" in
-      *sweep*|*-lead*|epic-*|*" epic-"*|research-*|*" research-"*)
-        check standing "no (ledger standing:false; note: name looks like a lane, ledger wins)" ;;
-      *) check standing "no (ledger standing:false, single-task worker)" ;;
-    esac
+    if cm_lane_shaped "${WT##*/}" || { [ -n "$DNAME" ] && cm_lane_shaped "$DNAME"; }; then
+      check standing "no (ledger standing:false; note: name looks like a lane, ledger wins)"
+    else
+      check standing "no (ledger standing:false, single-task worker)"
+    fi
   elif [ -n "$FORCE_STANDING" ] && ask_ok "$FORCE_STANDING" remove-standing; then
     check standing "YES ($WHY): --force-standing, $CM_OWNER_NAME approved in ask $FORCE_STANDING"
     plan "concertmaster: set asks[$FORCE_STANDING].usedAt (single use)"
@@ -697,6 +917,14 @@ BAD_EPIC=""
 if [ -n "$LW" ]; then
   EPICS="$(lw '.epics[]')"
   BAD_EPIC="$(lw '.badEpic | join(",")')"
+elif [ "$OWNER_MODE" -eq 1 ]; then
+  EPICS="$(printf '%s\n' "$OWNER_EPICS" | grep . | sort -u || true)"
+fi
+EPIC_CONFLICT=""
+[ -z "$LW" ] || EPIC_CONFLICT="$(lw '.epicConflict | join(",")')"
+if [ -n "$EPIC_CONFLICT" ]; then
+  check beads "UNKNOWN (cm:child lines declare different epic= ids for $EPIC_CONFLICT)"
+  gate "leads declare different epic= ids for $EPIC_CONFLICT: which epic gates this teardown is unknown, make the cm:child lines agree and reconcile"
 fi
 if [ -n "$BAD_EPIC" ]; then
   check beads "UNKNOWN (beadsEpic is not a string on $BAD_EPIC)"
@@ -852,8 +1080,57 @@ exit 4'
 fi
 BSRC="fetch:$BFETCH ${DEF}:$BMAIN_ST worktree:$BWT_ST redirect:$BRED_ST bd:$BBD_ST"
 [ -z "$BBD_ERR" ] || BSRC="$BSRC (bd said: $BBD_ERR)"
+# bd could not read the store (older schema than the installed bd, a timeout, a
+# failure): that source is UNKNOWN. The refusal says so and names the safe path;
+# with --beads-unreadable-ok <reason> it is excused, and ONLY it (the other beads
+# sources still gate). The store is never migrated and never written to.
+# Only the case the flag exists for: bd ran, opened nothing and printed an Error line
+# (a schema older than bd, say). A timeout, bd missing behind a redirect, and "no
+# database, but one may be configured elsewhere" mean the real store may live outside
+# this worktree's .beads, so the copy would not be the store: those stay hard refusals.
+BEADS_UNREAD=0
+if [ "$BBD_ST" = failed ] && [ -n "$BBD_ERR" ]; then
+  case "$BBD_ERR" in timeout*|*"no database, but"*|"exit "*) ;; *) BEADS_UNREAD=1 ;; esac
+fi
+# Gap (a): a store bd cannot read (older schema) on a worktree that never changed a tracked bead
+# file is not a refusal. Excused when NO tracked .beads path differs from the merge-base with the
+# default branch (and no untracked bead file exists; bd runtime paths are not bead files), with the
+# other sources readable. The epic / unmerged-beads checks below still run on those sources, so open
+# beads still refuse. Nothing is migrated or written.
+# Only an error that says the SCHEMA is older (migration pending, a column the new bd expects is
+# missing) is excused on its own, matched on those phrases and not on the bare word 'schema': any other
+# bd Error (a refused connection to a configured external database, a store schema NEWER than bd, an
+# error that merely names a schema) leaves the store state unknown and keeps the hard refusal and the flag.
+BEADS_SCHEMA_ERR=0
+case "$(cm_lower "$BBD_ERR")" in
+  *"pending schema migration"*|*"pending migration"*|*"migrate: pending"*|*"older schema"*|*"schema is older"*|*"schema older"*|*"does not have column"*|*"no such column"*|*"unknown column"*) BEADS_SCHEMA_ERR=1 ;;
+esac
+BEADS_AUTO=0
+if [ "$BEADS_UNREAD" = 1 ] && [ "$BEADS_SCHEMA_ERR" = 1 ] && [ -z "$BEADS_OK_REASON" ] && [ "$GITOK" -eq 1 ] && [ "$BFETCH" = ok ] \
+   && [ "$BWT_ST" != failed ] && [ "$BMAIN_ST" != failed ] && [ "$BRED_ST" != failed ] && [ "$BRED_ST" != failed-outside-main-checkout ]; then
+  if BMB="$(g merge-base HEAD "$DEF" 2>/dev/null)" && [ -n "$BMB" ] \
+     && BTCH="$(g diff --name-only "$BMB" -- .beads 2>/dev/null; echo "rc=$?")" && [ "$BTCH" = "rc=0" ] \
+     && BUNT="$(g ls-files --others --exclude-standard -- .beads 2>/dev/null; echo "rc=$?")" \
+     && [ -z "$(printf '%s\n' "$BUNT" | grep -v '^rc=' | grep -Ev "$BD_RUNTIME_PATH_RE" || true)" ] \
+     && [ "${BUNT##*rc=}" = 0 ]; then
+    BEADS_AUTO=1
+    check beads-unread "bd cannot read the store (UNKNOWN, likely an older schema): excused, no tracked .beads change vs $DEF; epic and open-bead checks still read the other sources"
+  fi
+fi
+BD_HINT=""
+if [ "$BEADS_UNREAD" = 1 ] && [ "$BEADS_AUTO" = 0 ] && [ -z "$BEADS_OK_REASON" ] \
+   && [ "$BFETCH" != failed ] && [ "$BWT_ST" != failed ] && [ "$BMAIN_ST" != failed ] && [ "$BRED_ST" != failed ] \
+   && [ "$BRED_ST" != failed-outside-main-checkout ]; then
+  BD_HINT=" | bd cannot read this beads store: its state is UNKNOWN (for example a store schema older than the installed bd). If the tree is otherwise clean and pushed and $CM_OWNER_NAME agrees, re-run with --salvage --beads-unreadable-ok '<reason>'; never migrate the store or run bd writes on this worktree"
+fi
+if [ "$BEADS_UNREAD" = 1 ] && [ -n "$BEADS_OK_REASON" ]; then
+  check beads-unread "bd cannot read the store: UNKNOWN, accepted by --beads-unreadable-ok ($BEADS_OK_REASON); the other beads sources are still checked"
+  [ "$SALVAGE" -eq 1 ] || refuse "--beads-unreadable-ok needs --salvage: the whole .beads dir is copied out before anything is removed"
+fi
 beads_failed() {
-  case "$BFETCH $BWT_ST $BMAIN_ST $BRED_ST $BBD_ST" in *failed*) return 0 ;; esac
+  local bd="$BBD_ST"
+  if [ "$BEADS_UNREAD" = 1 ] && { [ -n "$BEADS_OK_REASON" ] || [ "$BEADS_AUTO" = 1 ]; }; then bd=accepted-unknown; fi
+  case "$BFETCH $BWT_ST $BMAIN_ST $BRED_ST $bd" in *failed*) return 0 ;; esac
   return 1
 }
 # Tag each record with its source so one parse serves both modes. bd prints
@@ -875,7 +1152,7 @@ if [ -n "$EPICS" ]; then
     esac
     if beads_failed; then
       check beads "UNKNOWN ($BSRC)"
-      gate "beadsEpic $EPIC set but a beads source failed ($BSRC): not done"
+      gate "beadsEpic $EPIC set but a beads source failed ($BSRC): not done$BD_HINT"
       continue
     fi
     if ! BSTREAM="$(beads_stream)" \
@@ -905,14 +1182,14 @@ if [ -n "$EPICS" ]; then
   done <<EOF_EPICS
 $EPICS
 EOF_EPICS
-elif [ -n "$LW" ]; then
+elif [ -n "$LW" ] || [ "$OWNER_MODE" -eq 1 ]; then
   # No epic owned: open beads this worktree holds that no other source has at
   # least as new are unmerged bead work.
   if [ "$BWT_ST" = absent ]; then
     check beads "no epic in ledger; no beads in worktree"
   elif beads_failed; then
     check beads "UNKNOWN (no epic in ledger; $BSRC)"
-    gate "beads read failed ($BSRC): cannot prove the worktree holds no open bead work"
+    gate "beads read failed ($BSRC): cannot prove the worktree holds no open bead work$BD_HINT"
   elif ! BSTREAM="$(beads_stream)" \
        || ! BSUM="$(printf '%s\n' "$BSTREAM" | jq -rs --arg e "" --arg mode worktree "$BEADS_JQ" 2>/dev/null)" \
        || [ -z "$BSUM" ]; then
@@ -936,7 +1213,50 @@ fi
 # ---- follow-up gate -----------------------------------------------------------
 # An open followUps[] row (references/ledger.md) on this worker, or on any worker
 # whose parent chain leads to it, is work that must outlive the worker: not done.
-if [ -n "$LW" ]; then
+if [ "$OWNER_MODE" -eq 1 ]; then
+  # No ledger: the child's own comment is the whole record. Any cm:followup line still open in it
+  # (no cm:followup-done for the same id in the same comment) is work that outlives the worker.
+  if [ -n "$ROW" ]; then
+    if ! OW_RAW="$(printf '%s' "$ROW" | jq -r '.comment // ""' | "$HERE/followups.sh" comment-open 2>/dev/null)"; then
+      check followups "UNKNOWN (the child's comment could not be read)"
+      gate "child comment unreadable: open follow-up state unknown"
+    elif [ -n "$OW_RAW" ]; then
+      check followups "OPEN in the child's comment: $(printf '%s' "$OW_RAW" | tr '\n' ' ')"
+      gate "open follow-up(s) in the child's comment ($(printf '%s' "$OW_RAW" | tr '\n' ' ')): finish them, hand them to another owner, or post cm:followup-done <id> first"
+    else
+      check followups "none open in the child's comment"
+    fi
+    # A child that itself declares children (cm:child / WORKERS I OWN in its comment) owns work this run cannot
+    # see: spawn uses --no-parent, so Orca's own child check does not catch it, and the ledger's descendant
+    # follow-up walk is not available here. Refuse until those are torn down (their lines removed).
+    # shellcheck disable=SC2016  # jq program
+    if ! GK="$(printf '%s' "$ROW" | jq -r '
+        def segs: (.comment // "") | tostring | gsub("\\\\n"; "\n")
+          | [ split("\n")[] | split(" | ")[] | sub("^\\s+"; "") | sub("\\s+$"; "") | select(length > 0) ];
+        [ segs[]
+          | ( (capture("^cm:child\\s+(?<n>[^\\s,@]+)") | .n),
+              (capture("^workers i own:\\s*(?<l>.*)$"; "i") | .l | split(",")[] | sub("^\\s+"; "")
+                | capture("^(?<n>[^\\s(,@]+)") | .n) )
+          | select(. != "none" and . != "-") ] | unique | join(", ")' 2>/dev/null)"; then
+      check descendants "UNKNOWN (the child's comment could not be read for its own children)"
+      gate "child comment unreadable: its own children unknown"
+    elif [ -n "$GK" ]; then
+      check descendants "the child declares its own children: $GK"
+      gate "the child declares its own children ($GK): tear those down and remove their cm:child lines first, their follow-ups are not checked here"
+    else
+      check descendants "the child declares no children"
+    fi
+  elif [ -n "$WT" ]; then
+    # No row is "git-only, no comment" only when the census was complete; a census cut off at the limit
+    # proves nothing about this worktree, and its comment may hold an open follow-up.
+    if printf '%s' "${PS:-}" | jq -e '.result.truncated == true or ((.result.totalCount // 0) > (.result.worktrees | length))' >/dev/null 2>&1; then
+      check followups "UNKNOWN (the Orca census was cut off and has no row for this worktree: comment unread)"
+      gate "Orca census truncated and this worktree's row is missing: open follow-up state unknown"
+    else
+      check followups "no Orca row: no comment to read"
+    fi
+  fi
+elif [ -n "$LW" ]; then
   FU_OPEN="$(lw '.fuOpen | join(", ")')"
   if [ "$(lw '.fuBad')" = true ]; then
     check followups "UNKNOWN (ledger followUps is not an array of objects)"
@@ -1006,12 +1326,15 @@ if [ -n "$ROW" ] && [ -n "${HANDLES:-}" ]; then
   CLOSE_FIRST=1
 fi
 SALVAGE_DIR=""
-if [ -n "${PRECIOUS:-}" ] && [ "$SALVAGE" -eq 1 ]; then
+BEADS_WHOLE=0
+[ "$BEADS_UNREAD" = 1 ] && [ -n "$BEADS_OK_REASON" ] && BEADS_WHOLE=1
+if { [ -n "${PRECIOUS:-}" ] || [ "$BEADS_WHOLE" -eq 1 ]; } && [ "$SALVAGE" -eq 1 ]; then
   # Relative to ~/.concertmaster on the target host; every component sanitised.
   SALVAGE_REL="salvage/$(cm_safe_name "$HOST")/$(cm_safe_name "${BRANCH:-detached}")-$(date -u +%Y%m%dT%H%M%SZ)"
   # shellcheck disable=SC2088  # display only: the remote side expands $HOME
   SALVAGE_DIR="~/.concertmaster/$SALVAGE_REL"
-  plan "salvage $(printf '%s\n' "$PRECIOUS" | grep -c .) ignored path(s) to $SALVAGE_DIR (on $HOST)"
+  [ "$BEADS_WHOLE" -eq 0 ] || plan "copy the WHOLE .beads dir to $SALVAGE_DIR/beads-whole (on $HOST), verified, before anything is removed; log '$BEADS_OK_REASON' to $CM_HOME/teardown-beads-unreadable.log"
+  [ -z "${PRECIOUS:-}" ] || plan "salvage $(printf '%s\n' "$PRECIOUS" | grep -c .) ignored path(s) to $SALVAGE_DIR (on $HOST)"
 fi
 if [ -n "${BDRT:-}" ]; then
   BDRT_PLAN="remove untracked bd runtime files, then require git status clean: $(printf '%s\n' "$BDRT" | tr '\n' ' ')"
@@ -1061,7 +1384,36 @@ if [ -n "$CLOSE_FIRST" ]; then
   sleep 2
   CM_TD_TERMINALS_CLOSED=1 exec bash "$HERE/$(basename -- "$0")" "${ORIG_ARGS[@]}"
 fi
-if [ -n "$SALVAGE_DIR" ]; then
+if [ "$BEADS_WHOLE" -eq 1 ] && [ -n "$SALVAGE_DIR" ]; then
+  # The store bd could not read is copied out WHOLE (its Dolt dir, backups, config,
+  # issues.jsonl), then compared, so a later migration or an old bd can still read it.
+  # Plain cp and diff only: nothing here opens the store, nothing writes to it.
+  # shellcheck disable=SC2016
+  BW_OUT="$(RRUN_SECS=600 rrun 'rel=$1; wt=$2
+[ -L "$wt/.beads" ] && exit 3
+[ -d "$wt/.beads" ] || { echo none; exit 0; }
+dest="$HOME/.concertmaster/$rel/beads-whole"
+mkdir -p -- "$dest" && cp -Rp -- "$wt/.beads/." "$dest/" || exit 1
+sn=$(find "$wt/.beads" -type f 2>/dev/null | wc -l); dn=$(find "$dest" -type f 2>/dev/null | wc -l)
+[ "$sn" -eq "$dn" ] || { echo "count mismatch on .beads: $sn vs $dn" >&2; exit 2; }
+diff -rq -- "$wt/.beads" "$dest" >/dev/null || { echo "content mismatch on .beads" >&2; exit 2; }
+echo copied' "$SALVAGE_REL" "$WT")" \
+    || fail "whole .beads copy or verification (nothing removed)"
+  BW_DIR="$SALVAGE_DIR/beads-whole"
+  if [ "$BW_OUT" = copied ]; then
+    printf 'salvaged the whole .beads dir to %s on %s\n' "$BW_DIR" "$HOST"
+  else
+    BW_DIR=""
+    printf 'no .beads dir in the worktree: nothing to copy out\n'
+  fi
+  BLOG="$CM_HOME/teardown-beads-unreadable.log"
+  ( umask 077 && mkdir -p -- "$CM_HOME" && jq -cn --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg host "$HOST" --arg path "$WT" \
+      --arg branch "${BRANCH:-}" --arg reason "$BEADS_OK_REASON" --arg bd "$BBD_ERR" --arg salvage "$BW_DIR" \
+      '{at:$at, host:$host, path:$path, branch:$branch, reason:$reason, bdError:$bd, salvage:$salvage}' >> "$BLOG" ) \
+    || fail "log write to $BLOG (nothing removed; the .beads copy is kept at ${BW_DIR:-n/a} on $HOST)"
+  printf 'logged --beads-unreadable-ok reason to %s\n' "$BLOG"
+fi
+if [ -n "$SALVAGE_DIR" ] && [ -n "${PRECIOUS:-}" ]; then
   # Fixed script; salvage dir, worktree and every path arrive as arguments.
   set --
   while IFS= read -r p; do [ -n "$p" ] && set -- "$@" "$p"; done <<EOF_PRECIOUS
