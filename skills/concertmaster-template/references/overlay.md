@@ -43,6 +43,7 @@ were written there.
 | `boot` | `SKILL.md`, end of § Start | more boot steps, after step 5 and before step 6 arms the loop |
 | `tick-extra` | `SKILL.md`, § The tick, last item of step 4 (Act) | more act steps, every tick, before Report |
 | `merge-gate` | `SKILL.md`, end of § Merge gate | more merge requirements; the pr-sweeper brief carries them with the gate |
+| `evidence` | `SKILL.md`, § Merge gate item 2a (screenshots for a visible UI change) | the project's evidence rules: which changed paths count as visible UI, the themes and widths to capture, which non-production environment and test accounts to use, how files are named, and any extra place real-user screenshots must not go; the publish command itself is `cfg.evidence.publish_cmd`, not written here. Tightens only: it cannot waive the screenshot gate or the real-user rule |
 | `deploy` | `SKILL.md`, end of § Deploy windows | more rails or window steps; the deploy worker brief carries them |
 | `teardown` | `SKILL.md`, end of § Retire and teardown | more checks before a retire or teardown; they can refuse, never unlock |
 | `scripts` | `SKILL.md`, end of § Scripts | rows for the project's own scripts (kept outside the engine directories) |
@@ -61,6 +62,9 @@ Free text up to the first `## ` heading: notes, never applied.
 
 ## lane: lane-a
 - Run `local/acme-app-smoke.sh` before every cm:merge-ready.
+
+## evidence
+- Visible UI means files under `src/components/` and `src/pages/`; capture light and dark at 390px from the staging site with the `acme-test` accounts.
 
 ## pending-upstream
 - toolkit PR <link>: teardown refuses a worktree with a stale lock (local workaround: none)

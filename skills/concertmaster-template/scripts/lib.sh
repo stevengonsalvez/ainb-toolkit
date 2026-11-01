@@ -111,6 +111,40 @@ cm_timeout() {
 
 cm_lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
 
+# Standing-lane names. ONE definition, used by teardown.sh (lead and concertmaster mode) and followups.sh
+# (adoption), so a name one of them treats as a lane is never treated as a single-task child by another.
+# A name is a standing lane when it is a configured lane (lanes[].name), a configured ownership lead
+# (ownership.leads keys), or lane-shaped: it contains "-sweeper", ends in or continues after "-lead", or starts
+# with "epic-" or "epic:". Documented single-task names stay ordinary workers: sweep-<pr>, research-<slug>,
+# ops-<slug>. CM_LANE_SHAPE_RE is an ERE that jq (test) and grep -E both read.
+CM_LANE_SHAPE_RE='-sweeper|-lead($|-)|^epic[-:]'
+
+# cm_lane_names: configured lane names and ownership lead names, lowercased, one per line.
+cm_lane_names() {
+  { cm_cfg '.lanes[].name' 2>/dev/null; echo; printf '%s' "$CM_CFG_JSON" | jq -r '(.ownership.leads // {}) | keys[]' 2>/dev/null || true; } \
+    | tr '[:upper:]' '[:lower:]' | sed '/^$/d'
+}
+
+# cm_lane_reason <name>: prints why the name is a standing lane (configured lane, ownership lead, lane-shaped
+# name) and returns 0; returns 1 for any other name.
+cm_lane_reason() {
+  local l
+  l="$(cm_lower "$1")"
+  [ -n "$l" ] || return 1
+  if cm_cfg '.lanes[].name' 2>/dev/null | tr '[:upper:]' '[:lower:]' | tr ' ' '\n' | grep -Fxq -- "$l"; then
+    echo "configured lane"; return 0
+  fi
+  if printf '%s' "$CM_CFG_JSON" | jq -r '(.ownership.leads // {}) | keys[]' 2>/dev/null | tr '[:upper:]' '[:lower:]' | grep -Fxq -- "$l"; then
+    echo "ownership lead"; return 0
+  fi
+  if printf '%s\n' "$l" | grep -Eq -- "$CM_LANE_SHAPE_RE"; then echo "lane-shaped name"; return 0; fi
+  return 1
+}
+
+# cm_lane_shaped <name>: true when the name is a standing lane by any of those rules.
+cm_lane_shaped() { cm_lane_reason "$1" >/dev/null; }
+
+
 # cm_repo_excluded <name>: true when the repo name matches an exclude glob.
 cm_repo_excluded() {
   local name pat

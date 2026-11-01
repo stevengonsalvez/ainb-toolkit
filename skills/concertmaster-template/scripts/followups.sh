@@ -22,7 +22,16 @@
 # followUps[] keyed by lane + id, closes the ones with a cm:followup-done line, and mirrors
 # items owned by the project owner (owner=<project.owner.id>, compared lowercase) as an asks[] row (kind owner,
 # id fu-<lane>-<id>, found again by lane + followUp).
+# Child adoption (a lead-spawned child has no ledger row, so teardown would refuse "standing unknown"): a
+# cm:child <name> posted by a live ledger worker, naming a discovered worktree on the same host (Orca
+# displayName or path basename) that no live ledger worker covers, is added as workers.<name> with standing
+# false, adopted true, the poster lane, beadsEpic from an `epic=<bead-id>` token on the same line (else null), path/host/worktreeId from the census, and the state its OWN comment
+# reports on its first line (cm:running running, cm:blocked blocked-on-owner, cm:done done, cm:retire retired,
+# cm:failed stuck, ...; no cm: tag yet: spawning). An existing ledger worker is never overwritten (a taken key
+# is skipped and reported). Written through cm_ledger_write only (atomic, locked).
 # It prints one line per problem, for the tick report:
+#   followups: adopted <name> (child of <poster>, standing false, state <s>)   a child added to the ledger
+#   followups: adopt-skipped <name> (ledger id already taken ...)               a dead row holds the id: nothing written
 #   followups: malformed <worker> <line, first 80 chars>   a cm:child / cm:followup line that does not parse
 #   followups: unmatched <host>:<path> <ids>               tagged worktree with no live ledger worker
 #   followups: unmatched-child <poster> <name>             a cm:child naming no live ledger worker
@@ -65,7 +74,8 @@ def tags: tagsegs[] | select(test("^cm:(child|followup|followup-done)") or looks
   | (capture("^cm:followup-done\\s+(?<id>[a-z0-9][a-z0-9-]{0,39})(?:\\s.*)?$") | {t: "done", id})
     // (capture("^cm:followup\\s+(?<id>[a-z0-9][a-z0-9-]{0,39})\\s+owner=(?<owner>[A-Za-z0-9._:-]{1,40})(?:\\s+(?<text>.*))?$")
         | {t: "fu", id, owner: (.owner | ascii_downcase), text: ((.text // "") | clean | .[0:200])})
-    // (capture("^cm:child\\s+(?<n>\\S+)") | {t: "child", n})
+    // (capture("^cm:child\\s+(?<n>[^\\s@]+)(?:@(?<h>\\S+))?(?<r>.*)$")
+        | {t: "child", n, h: (.h // null), es: ([ .r | scan("(?:^|\\s)epic=([A-Za-z0-9._-]+)") | .[0] ] | unique)} | . + {e: (.es | first // null)})
     // {t: "bad", line: .};
 # every discovered row with its live ledger worker (null when none) and its parsed tags
 def rowposts($ws; $rows): [ $rows[] | . as $r
@@ -73,18 +83,81 @@ def rowposts($ws; $rows): [ $rows[] | . as $r
        | select(((.worktreeId // "") != "" and .worktreeId == $r.worktreeId)
                 or ((.path // "") != "" and (.path | npath) == ($r.path | npath))) ] | sort_by(.id) | first) as $w
   | {r: $r, w: $w, tags: [ ($r.comment // "") | tags ]} ];
-def childid($ws; $k): ([ $ws[] | select(live) | select(.host == null or .host == $k.host)
-  | select(.id == $k.name or (.path | base) == $k.name) ] | sort_by(.id) | first | .id?) // null;
+def sameRepo($posts; $k): . as $w | ([ $posts[] | select(.w != null and .w.id == $w.id) | (.r.repo // null) ] | first) as $wr
+  | ($wr == null or ($k.repo // null) == null or $wr == $k.repo);
+def childid($ws; $posts; $k): ([ $ws[] | select(live) | select(.host == null or .host == $k.host)
+  | select(.id == $k.name or (.path | base) == $k.name) | select(sameRepo($posts; $k)) ] | sort_by(.id) | first | .id?) // null;
+# The ledger worker a cm:child name means: by ledger id or folder name, else through the census row that carries the
+# name (a display name). One resolver for claims, unmatched children and declared epics, so an alias is never
+# understood by one check and dropped by another.
+def childref($ws; $posts; $k): (childid($ws; $posts; $k)
+  // ([ $posts[] | select(.w != null and .r.host == $k.host and ((.r.repo // null) == ($k.repo // null)) and ((.r.displayName // "") == $k.name or (.r.path | base) == $k.name)) ]
+      | if length == 1 then .[0].w.id else null end));
 # cm:child claims as {child, parent}; claims on one child by different parents are conflicts
-def claims($ws; $posts): [ $posts[] | .w as $w | .r.host as $h | .tags[] | select(.t == "child")
-  | {child: childid($ws; {host: $h, name: .n}), parent: $w.id, name: .n} | select(.child != null and .child != .parent) ];
-def nochild($ws; $posts): [ $posts[] | .w as $w | .r.host as $h | .tags[] | select(.t == "child")
-  | select(childid($ws; {host: $h, name: .n}) == null) | {poster: $w.id, name: .n} ];
+def chost($ph): (.h // $ph) | if . == "this machine" then "local" else . end;
+def claims($ws; $posts): [ $posts[] | .w as $w | .r.host as $h | (.r.repo // null) as $pr | .tags[] | select(.t == "child")
+  | {child: childref($ws; $posts; {host: chost($h), name: .n, repo: $pr}), parent: $w.id, name: .n} | select(.child != null and .child != .parent) ];
+def nochild($ws; $posts): [ $posts[] | .w as $w | .r.host as $h | (.r.repo // null) as $pr | .tags[] | select(.t == "child")
+  | select(childref($ws; $posts; {host: chost($h), name: .n, repo: $pr}) == null) | {poster: $w.id, name: .n} ];
 def setparent($c; $p): if $c == null or $c == $p then .
   elif (.workers[$c].parent // null) != null then .
   elif (ups(.workers; $p) | index($c)) != null then .
   else .workers[$c].parent = $p end;
+# the state a child comment reports on its first line (a segment, as everywhere); no cm: tag yet is spawning
+def tagstate: ((tagsegs | first) // "") as $l
+  | if ($l | startswith("cm:") | not) then "spawning"
+    else (([ $l | capture("^cm:(?<t>[a-z-]+)") | .t ] | first) // "") as $t
+      | ({"blocked": "blocked-on-owner", "waiting-owner": "blocked-on-owner", "done": "done", "retire": "retired",
+          "failed": "stuck", "keep": "parked", "running": "running", "idle": "idle", "spawning": "spawning",
+          "stuck": "stuck", "parked": "parked", "queued": "queued"}[$t] // "running") end;
+# Child adoption. A cm:child <name> posted by a live ledger worker, naming a discovered worktree on the same
+# host AND in the same repository as the poster (discover lists every repo of the org, so a stale line must not
+# claim a worktree of another project) that no live ledger worker covers, is adopted: standing false, state from the child own comment. Never
+# overwrites: a ledger key already taken (any state) is skipped and reported, never replaced.
+def laneish($n): ($n | ascii_downcase) as $l | (lanenames | index($l)) != null or ($l | test(laneshape));
+def adoptclaimsraw($rows): . as $L
+  | [ ($L.workers // {}) | to_entries[] | select(.value | type == "object") | .value + {id: .key} ] as $ws
+  | rowposts($ws; $rows) as $rp
+  | [ $rp[] | select(.w != null) | .w as $w | .r.host as $h | (.r.repo // null) as $pr | .tags[] | select(.t == "child")
+      | . as $c | select(($c.n | test("^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")) and $c.n != $w.id)
+      | ($c | chost($h)) as $th
+      | select(childid($ws; $rp; {host: $th, name: $c.n, repo: $pr}) == null)
+      | ([ $rp[] | select(.w == null and .r.host == $th and ((.r.repo // null) == $pr) and ((.r.displayName // "") == $c.n or (.r.path | base) == $c.n)) ]) as $m
+      | select(($m | length) >= 1)
+      | {name: $c.n, epic: $c.e, epics: $c.es, poster: $w.id, lane: ($w.lane // $w.id), n: ($m | length), row: $m[0].r,
+         laneish: ([ $c.n, ($m[0].r.displayName // ""), ($m[0].r.path | base) ] | map(select(. != "")) | any(laneish(.)))} ];
+# A standing lane is never adopted as a single-task child (it would be written standing:false): such a claim is
+# skipped and reported (adopt-skipped, lane-shaped). Two unledgered worktrees with one name are ambiguous: neither
+# is adopted and the name is reported (adopt-ambiguous).
+def adoptclaims($rows): adoptclaimsraw($rows) | map(select(.n == 1 and (.laneish | not)));
+def adoptlane($rows): adoptclaimsraw($rows) | map(select(.laneish) | .name) | unique;
+def adoptambig($rows): adoptclaimsraw($rows) | map(select(.n > 1 and (.laneish | not)) | .name) | unique;
+# One child claimed more than once keeps every epic= restriction: a single declared epic wins over claims
+# that name none (the strictest reading). Two different epic= ids are a conflict: no claim can be dropped
+# silently, so such a child is not adopted (reported as adopt-conflict). Poster conflicts stay parent-conflict.
+def epicsof: [ .[] | ((.epics // []) + [.epic | select(. != null)])[] ] | unique;
+# The claims are grouped by the worktree they resolve to (host + path), not by the name used: a worktree named by
+# both its display name and its folder is ONE child, keyed by its folder name when claimed, else the first name.
+def claimkey: .row.host + "\u0001" + .row.path;
+def adoptgroups($rows): adoptclaims($rows) | group_by(claimkey)
+  | map((map(.name) | unique) as $n | (.[0].row.path | base) as $b
+        | {name: (if ($n | index($b)) != null then $b else $n[0] end), epics: epicsof, g: .});
+def adoptconflict($rows): adoptgroups($rows) | map(select((.epics | length) > 1) | .name);
+# Every epic= declared on a cm:child line, per ledger child (host-resolved like claims): {id, epics}.
+def declaredepics($rows): . as $L
+  | [ ($L.workers // {}) | to_entries[] | select(.value | type == "object") | .value + {id: .key} ] as $ws
+  | rowposts($ws; $rows) as $rp
+  | [ $rp[] | select(.w != null) | .w.id as $p | .r.host as $h | (.r.repo // null) as $pr | .tags[] | select(.t == "child" and ((.es // []) | length) > 0)
+      | . as $c | (chost($h)) as $th
+      | childref($ws; $rp; {host: $th, name: $c.n, repo: $pr}) as $id
+      | $c.es[] as $ep | {id: $id, epic: $ep, by: $p} | select(.id != null) ]
+  | group_by(.id) | map({id: .[0].id, epics: (map(.epic) | unique), by: (map(.by) | unique)});
+# One name for two different worktrees is ambiguous: neither is adopted.
+def adoptable($rows): adoptgroups($rows) | map(select((.epics | length) <= 1))
+  | group_by(.name) | map(select(length == 1) | .[0] | . as $x | $x.g[0] + {name: $x.name, epic: ($x.epics | first)});
 '
+# the shared lane predicate (lib.sh) reaches jq as data, never as a second copy of the rule
+DEFS="def lanenames: $(cm_lane_names | jq -R . | jq -sc .); def laneshape: $(jq -n --arg r "$CM_LANE_SHAPE_RE" '$r'); $DEFS"
 
 # apply <filter> [jq args...]: write only when the filter changes the ledger; a jq error is an error.
 apply() {
@@ -118,10 +191,34 @@ case "$cmd" in
     # shellcheck disable=SC2016
     FILTER='
       if ((.followUps // []) | type) != "array" or any((.followUps // [])[]; type != "object") then error("ledger followUps is not an array of objects") else . end
+      | . as $L0
+      | reduce (adoptable($disc[0].worktrees // [])[] | select(($L0.workers // {})[.name] == null)) as $a (.;
+          .workers[$a.name] = {host: $a.row.host, path: $a.row.path, worktreeId: ($a.row.worktreeId // null),
+            state: ($a.row.comment | tagstate), standing: false, adopted: true, lane: $a.lane, parent: null,
+            beadsEpic: ($a.epic // null), lastComment: ((($a.row.comment | tagsegs | first) // "") | clean | .[0:200])})
       | . as $L
       | [ ($L.workers // {}) | to_entries[] | select(.value | type == "object") | .value + {id: .key} ] as $ws
       | rowposts($ws; $disc[0].worktrees // []) as $rp
       | ($rp | map(select(.w != null))) as $posts
+      # an adopted child whose lead adds epic=<id> to its cm:child line later still gets that restriction: filled
+      # in only while beadsEpic is empty, never replacing a set value. Different ids (declared ones and a set
+      # beadsEpic together) are a conflict: epicConflict records them all, whether or not beadsEpic is set, with
+      # the claimants (epicConflictBy), and teardown treats it as unknown beads state. A conflict is only ever
+      # resolved when EVERY recorded claimant is read again and the ids agree: an unreadable host, a cut-off
+      # census, or a claimant that dropped its epic= token leaves it standing.
+      | declaredepics($disc[0].worktrees // []) as $eg
+      | reduce $eg[] as $f (.;
+          if (.workers[$f.id].adopted == true) then
+            (($f.epics + [ .workers[$f.id].beadsEpic | select(type == "string" and . != "") ]) | unique) as $all
+            | (((.workers[$f.id].epicConflictBy // []) - $f.by) | length) as $missing
+            | (((.workers[$f.id].epicConflict // []) | length) > 0) as $had
+            | if ($all | length) > 1 then
+                (.workers[$f.id].epicConflict = (($all + (.workers[$f.id].epicConflict // [])) | unique)
+                 | .workers[$f.id].epicConflictBy = (((.workers[$f.id].epicConflictBy // []) + $f.by) | unique))
+              elif $had and $missing > 0 then .
+              elif ((.workers[$f.id].beadsEpic // null) == null) then .workers[$f.id].beadsEpic = $all[0] | del(.workers[$f.id].epicConflict, .workers[$f.id].epicConflictBy)
+              else del(.workers[$f.id].epicConflict, .workers[$f.id].epicConflictBy) end
+          else . end)
       # Orca is the authority on parentage; cm:child fills the rest (never a conflicting claim)
       | [ $posts[] | select((.r.parentWorktreeId // "") != "") | .w.id as $c | .r.parentWorktreeId as $pw
           | ([ $ws[] | select(live) | select((.worktreeId // "") != "" and .worktreeId == $pw) ] | sort_by(.id) | first | .id?) as $pid
@@ -165,7 +262,34 @@ case "$cmd" in
             elif $j != null and .asks[$j].state == "open" then .asks[$j] |= (. + {state: "answered", decision: (if $f.state == "done" then "followup-closed" else "owner-changed" end), answeredAt: $now})
             else . end)
     '
-    apply "($FILTER) as \$new | if \$new == . then . else \$new | .updatedAt = \$now end" --arg now "$NOW" --arg oid "$OWNER_ID" --slurpfile disc "$TMPD" || exit 1
+    # A child adopted in this pass can itself declare children (a grandchild with its own follow-ups), and those
+    # are only visible once the child is a ledger worker: repeat until a pass changes nothing (depth bounded).
+    PRINTED=""
+    for _pass in 1 2 3 4 5; do
+      _before="$(cksum < "$LEDGER" 2>/dev/null || true)"
+      # children to adopt, worked out on the ledger as it is now (after the write they are ordinary workers).
+      # These lines are report text only, computed outside the ledger lock: the write below re-runs the filter
+      # under the lock, so a stale line can mislead the report but never the ledger.
+      # shellcheck disable=SC2016
+      ADOPT="$(jq -r --slurpfile disc "$TMPD" "$DEFS"'
+        . as $L | (adoptable($disc[0].worktrees // [])[]
+        | if ($L.workers // {})[.name] == null
+          then "followups: adopted \(.name) (child of \(.poster), standing false, state \(.row.comment | tagstate))"
+          else "followups: adopt-skipped \(.name) (ledger id already taken: nothing overwritten)" end),
+        (adoptlane($disc[0].worktrees // [])[] | "followups: adopt-skipped \(.) (lane-shaped name: a standing lane is never adopted as a child)"),
+        (adoptambig($disc[0].worktrees // [])[] | "followups: adopt-ambiguous \(.) (more than one worktree carries this name: none adopted, make the cm:child line unambiguous)"),
+        (adoptconflict($disc[0].worktrees // [])[] | "followups: adopt-conflict \(.) (claims name different epic= ids: not adopted, resolve the cm:child lines)"),
+        (declaredepics($disc[0].worktrees // [])[] | select((.epics | length) > 1) | . as $e
+          | select($L.workers[$e.id].adopted == true)
+          | select((($e.epics + [ $L.workers[$e.id].beadsEpic | select(type == "string" and . != "") ]) | unique | length) > 1)
+          | "followups: epic-conflict \($e.id) (cm:child lines and the ledger name different epics, \($e.epics | join(", ")): teardown blocked until they agree)")' "$LEDGER")" || ADOPT=""
+      apply "($FILTER) as \$new | if \$new == . then . else \$new | .updatedAt = \$now end" --arg now "$NOW" --arg oid "$OWNER_ID" --slurpfile disc "$TMPD" || exit 1
+      while IFS= read -r _l; do
+        [ -n "$_l" ] || continue
+        case $'\n'"$PRINTED" in *$'\n'"$_l"$'\n'*) ;; *) printf '%s\n' "$_l"; PRINTED="$PRINTED$_l"$'\n' ;; esac
+      done <<< "$ADOPT"
+      [ "$(cksum < "$LEDGER" 2>/dev/null || true)" != "$_before" ] || break
+    done
     # problems for the tick report: malformed lines, tagged worktrees with no live worker, conflicting parents
     # shellcheck disable=SC2016
     jq -r --slurpfile disc "$TMPD" "$DEFS"'

@@ -113,6 +113,8 @@ queue:                             # scripts/queue.sh (references/queue.md)
   grant_hold_minutes: 30           # [script] a fresh grant counts as live on its host for this long
 
 merge:
+  # GitHub logins whose `in-session review:` comment satisfies the review gate (the fleet's own account).
+  in_session_review_authors: [acme-fleet-bot]
   # The pr-sweeper is the only merger. {pr} {org} {repo} are filled at run time.
   command: "gh pr merge {pr} -R {org}/{repo} --merge"
   env_prefix: ""                   # e.g. a hook bypass variable, if your merge hook needs one
@@ -126,22 +128,30 @@ merge:
   review_round_cap: 3
   approved_only_classes: [auth, payments]
 
+# Evidence for owner-facing proof (screenshots, recordings, logs). The engine never hosts files itself.
+evidence:
+  # Command that publishes one local file and prints a shareable URL. {file} is filled at run time.
+  # Empty = no publisher: a worker attaches the file to the PR through the GitHub UI or API and says so.
+  # Project rules (which states to capture, which accounts, which viewport) live in references/overlay.md.
+  publish_cmd: ""                  # e.g. "scripts/evidence/publish {file}"
+
 beads:
   ops_epic: acme-ops               # [script] intake parent for ops beads
   dev_epic: acme-dev               # [script] intake parent for feature and bug beads
 
 # Lanes. standing: true lanes are never torn down. agent: claude | codex | agy.
 lanes:
+  # model: every Claude lane and the workers it spawns run claude-sonnet-5-5 at effort high.
   # loop_minutes (optional, any lane): that lane's /loop interval when it differs from schedule.lane_loop_minutes
-  - { name: pr-sweeper,  standing: true,  spawn_at: 1, agent: claude, model: null, skills: [pr-sweep, ready-to-ship] }
-  - { name: dev-sweeper, standing: true,  spawn_at: 2, agent: claude, model: sonnet, skills: [dev-flow, ready-to-ship], max_parallel: 3 }
-  - { name: ops-sweeper, standing: true,  spawn_at: 2, agent: claude, model: sonnet, skills: [] }
-  - { name: research-sweeper, standing: true, spawn_at: 0, agent: claude, model: null, skills: [research], publish: null }
+  - { name: pr-sweeper,  standing: true,  spawn_at: 1, agent: claude, model: claude-sonnet-5-5, skills: [pr-sweep, ready-to-ship] }
+  - { name: dev-sweeper, standing: true,  spawn_at: 2, agent: claude, model: claude-sonnet-5-5, skills: [dev-flow, ready-to-ship], max_parallel: 3 }
+  - { name: ops-sweeper, standing: true,  spawn_at: 2, agent: claude, model: claude-sonnet-5-5, skills: [] }
+  - { name: research-sweeper, standing: true, spawn_at: 0, agent: claude, model: claude-sonnet-5-5, skills: [research], publish: null }
     # spawn_at 0 = spawned at first boot and takes every item. publish: skill or command that
     # publishes owner-facing pages; null = the inbox file only
-  # - { name: release-tester, standing: true, spawn_at: 0, agent: claude, model: sonnet, skills: [] }
+  # - { name: release-tester, standing: true, spawn_at: 0, agent: claude, model: claude-sonnet-5-5, skills: [] }
   #   uncomment to get a read-only production test after every release; fill release_tester below
-  - { name: "epic:<name>", standing: true, spawn_at: 1, agent: claude, model: null, max_parallel: 3 }
+  - { name: "epic:<name>", standing: true, spawn_at: 1, agent: claude, model: claude-sonnet-5-5, max_parallel: 3 }
 single_task_workers: [deploy, ops-fix, sweep, native-release, one-pr]
 
 # Per-lane journal ($CM_HOME/lanes/<lane>/journal.md, scripts/lane-journal.sh). Not under `lanes:`, which is the list above.

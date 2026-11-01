@@ -50,6 +50,8 @@ research ─▶ plan ─▶ implement ─▶ validate ─▶ ship
 | complex or unclear, a question | `/codex:rescue` | `/codex:rescue` |
 | needs human input | `/interview` | `/codex:rescue` or `/agy:rescue` |
 
+A second agent family advises and reviews. Before `cm:merge-ready` the in-session review applies (`/codex:review` where it works on the host, else `/review`, `references/lanes.md` § In-session review).
+
 `--autonomous`: nobody answers, so never open a question menu. Product, credential
 and spend decisions are for a human: set `cm:blocked <one question>` for those, and
 when no escalation gives an answer. The escalation commands come from host plugins
