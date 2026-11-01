@@ -105,11 +105,18 @@ The lane set above is the default; `cfg.lanes` is the list in use.
     a lane acts only on work its brief assigns. In this read, never touch the
     worktrees in `cfg.worktrees.never_touch`. (Lanes that read only their own
     host missed merge-ready markers on another host for hours.)
-14. **Lanes report through Orca comments only.** A lane reports to the
-    concertmaster only through Orca worktree comments (`cm:<state>`), never
-    `SendMessage` to "concertmaster": that name can resolve to another
-    project's concertmaster on another host. (A lead's message once reached
-    another project's concertmaster.)
+14. **Coordination goes through Orca and the ledger only, in both directions,
+    for any agent on any host.** A lane reports up only through its Orca worktree
+    comment (`cm:<state>`); the concertmaster instructs a lane only with
+    `orca terminal send` (and the ledger). Never `SendMessage` or any
+    agent-specific messaging, lead to concertmaster or concertmaster to lead. A
+    lane is identified by repo + worktree name + the host Orca reports, never by a
+    socket, PID, agent name or terminal handle; re-resolve the terminal handle from
+    `orca terminal list --json` by worktree path every time, never cache it. Why:
+    a "concertmaster" message name once resolved to another project's concertmaster
+    on another host, and handles go stale on every restart; Orca and the ledger are
+    the only transport that behaves the same for any agent on any host. Lead
+    charter: `references/lanes.md` § Lead charter.
 15. **Every piece of work has a GitHub issue.** Every PR body links it with
     `Closes #N` or `Part of #N`. Beads only break an issue down; a bead is
     never the only record of a piece of work.
@@ -141,6 +148,43 @@ The lane set above is the default; `cfg.lanes` is the list in use.
     make no PR calls under 500 until reset, never retry-loop a 403 or 429, and
     use one `gh pr list` rather than many `gh pr view`
     (`references/ci-capacity.md` section 2).
+20. **Leads relay review findings.** A lead checks every child PR each pass and relays a
+    CHANGES REQUESTED or BLOCK at the current head to the worker's terminal, once per comment
+    id, inside an untrusted-data fence (`references/lanes.md` § Relaying review verdicts).
+    Only a trusted author's comment is read, and an `in-session review: <tool> <verdict> at
+    <sha12>` comment counts like a marker review: the newest of either kind at the head wins.
+21. **Instruction ordering: newer wins, and every instruction has an id.** Every instruction
+    the concertmaster types into a lane terminal (`orca terminal send`) starts with a short
+    id, `[cm-i<n>] <text>`, with `n` rising per instruction (the lane journal line for the
+    send records it). A lead or worker acks each one it acts on with a line `cm:ack <id>` in
+    its worktree comment, after the first-line `cm:<state>`. A NEWER instruction wins over an
+    OLDER one still queued: a lane that finds two in conflict follows the newer, drops the
+    older and acks both ids. The concertmaster reads the `cm:ack` lines each tick: an id not
+    acked after two ticks is re-sent once, as a new instruction that says it replaces the old
+    id. (Without ids an older queued instruction could win over a newer one, and nobody could
+    tell which had been read.)
+22. **Evidence is published, never pasted into a third-party host.** Evidence an agent
+    produces (before/after screenshots on a PR, a deploy worker's staging checks, a
+    post-release walk) is published with `cfg.evidence.publish_cmd` when it is set (it prints
+    a shareable URL; empty means no publisher, so the worker attaches the file to the PR
+    through GitHub and says so) and linked in a PR comment or the worker's `cm:done` line.
+    Screenshots of REAL users (a chat message, a parent, any named person) stay local under
+    `$CM_HOME/inbox` and never enter the repo or any branch; one that shows a child's name,
+    face or score is checked by viewing it, then redacted or described in words only. Tests
+    and examples use test accounts only. Standard and file naming: `references/lanes.md`
+    § Evidence standard; the project's own paths, themes and accounts go in the `evidence`
+    hook of `references/project-local.md` (`references/overlay.md`).
+23. **Workers re-stamp ordered files right before every push.** When the project keeps
+    files whose name carries a unique, ordered stamp (database migrations are the usual
+    case), a worker re-stamps its new file above BOTH the default branch's highest stamp AND
+    every open PR's stamps (`gh pr list --state open --json number`, then `gh pr diff <n>
+    --name-only` filtered to that path), then reruns the project's duplicate-stamp check
+    (it must print nothing). The path, the check and any shape rule for the file (for
+    example a lock timeout and a rollback file) are the project's, named in the
+    `hard-rules` hook of `references/project-local.md`. The rule is in the worker brief
+    (`references/lanes.md`) and the Lead charter. There is no stamp helper script; the rule
+    is text. (Parallel PRs collide on stamps, the merge-time check catches it late, and the
+    worker is the one who can rename for free.)
 
 <!-- project-local: hard-rules -->
 
@@ -241,8 +285,16 @@ BEFORE asking.
    for a manual resume) and `beadsEpic` (the epic id, or null). Then fold the comment tags into
    the ledger: `scripts/followups.sh reconcile < $CM_HOME/last-discover.json` (Orca's
    `parentWorktreeId` and `cm:child` set `workers.<id>.parent`; `cm:followup` and `cm:followup-done`
-   update `followUps[]`; a failure is a warning). Each `followups: malformed`, `unmatched`,
-   `unmatched-child`, `parent-conflict` and `reused-id` line it prints becomes a report row.
+   update `followUps[]`; a failure is a warning). The same run ADOPTS every `cm:child <name>`
+   a live ledger worker posts whose worktree has no ledger row (a lead-spawned child, else
+   teardown refuses "standing unknown"): `standing: false`, `adopted: true`, the poster's lane,
+   `beadsEpic` from an `epic=<bead-id>` token on its `cm:child` line, and the state from the
+   child's own first comment line. An existing row is never overwritten (a child claimed with
+   two different `epic=` ids is reported as `adopt-conflict` and not adopted; a lane-shaped
+   name is never adopted as a child), and the write goes through `cm_ledger_write` only. Each
+   `followups: adopted` line it prints goes in the tick report; each `followups:
+   adopt-skipped`, `adopt-ambiguous`, `adopt-conflict`, `epic-conflict`, `malformed`,
+   `unmatched`, `unmatched-child`, `parent-conflict` and `reused-id` line becomes a report row.
    Update `hosts`, `lastOutputAt`, `lastComment` (from the worktree `comment`, `cm:<state>` per
    `references/lanes.md`), PR state. Last, rewrite the roster:
    `scripts/roster.sh` (active work only, atomic, mode 600; read by `resume`,
@@ -260,16 +312,30 @@ BEFORE asking.
    worker row or is listed `absent` with the tick that will spawn it. A lane
    lead flagged `LEAD-DEAD` is respawned in place (§ Ownership).
 4. **Act**, in this order, each bounded:
-   - `cm:blocked` comments and `awaiting-input` flags: answer what is factual
+   - **Asks and blockers.** Run `scripts/asks.sh` ONCE per tick first: it reads EVERY line of
+     EVERY lane's comment on EVERY host (each line also split on " | ") for `cm:ask`,
+     `cm:blocked` and `cm:waiting-owner`, lists unreachable hosts instead of treating them as
+     clean, and marks any item seen on two consecutive runs `older-than-1-tick`. Every row is
+     answered (factual or already decided) or escalated this tick, and the turn-end table
+     lists every blocker older than 1 tick with its age. (An older scan read only lines
+     starting `cm:ask`, so a `cm:blocked` on line 2 or after a " | " sat unseen for hours.)
+     Then `cm:blocked` comments and `awaiting-input` flags: answer what is factual
      or already decided; the rest becomes a `WAITING: <owner>, <question>, <age>`
-     row in the tick table (no AskUserQuestion in a tick turn).
+     row in the tick table (no AskUserQuestion in a tick turn). Read the `cm:ack <id>`
+     lines too (hard rule 21).
    - `abrupt.sh` rows: nudge or resume each (§ Resume), never while
      `resume.lock` exists. `waiting.sh` rows: list each with its wait time.
    - **stuck**: § Stuck rule.
    - **done-merged**: single-task workers only: teardown worktree (§ Retire
      and teardown), once first boot is complete and the beads gate passes.
      Standing lanes are never torn down. Items `declined` or `report-only` on
-     the kill list are never touched.
+     the kill list are never touched. A lead tears down its OWN children itself, from any
+     host, with `scripts/teardown.sh <host> <path> --owner <lead-worktree>` (lead mode, §
+     Retire and teardown, no ledger read or written); this tick only reconciles the ledger
+     from the comments afterwards (step 3 adoption; a gone child drops out). A `cm:retire
+     <reason>` posted on a child's comment is only the FALLBACK request from a lead that
+     cannot reach the child's host: run `teardown.sh` from here for it, once the ledger
+     records `standing: false`.
    - **done-selfreported** / `cm:done`: run the beads gate first. Open beads:
      not done; nudge the lane to continue them, surface the ones that need
      the owner. All closed: verify the deliverable, then retire a single-task
@@ -485,7 +551,13 @@ Lead rules:
   item; no placeholder reaches a worker.
 - Agent choice: `cfg.lanes[].agent` (default `claude`); `codex` for an
   independent second implementation or a fresh-perspective debug; `agy` for
-  research breadth or when the owner asks. Model: `cfg.lanes[].model` when set.
+  research breadth or when the owner asks; an agent in `cfg.agents.forbidden` is never
+  spawned. Model: every Claude session runs `claude-sonnet-5-5` at effort high
+  (`--model claude-sonnet-5-5 --effort high`), and that includes every lead and every worker
+  a lead spawns, unless the concertmaster says otherwise in writing. `cfg.lanes[].model`
+  sets a lane's model (the template default is `claude-sonnet-5-5`). Opus is for an
+  independent review pass (a subagent verdict) only. A lead's own spawns follow
+  `references/lanes.md` § Lead charter.
 - Caps: `hosts.<name>.maxWorkers` per host (seeded from `cfg.hosts.per_host`,
   else `cfg.hosts.defaults`), read every tick; spawn on the host with the most
   free slots among `general` hosts, `native` hosts only for native-build work
@@ -535,7 +607,8 @@ $ORCA worktree create $ENV --repo name:<cfg.worktrees.orca_repo> \
 - Name: `<lane>-<slug>` (`dev-101-calendar-export`, `ops-reset-account`,
   `research-cost-model`, `epic-billing-lead`). `--no-parent`, no `--base-branch`.
 - Record from the JSON: `worktree.id` (the full `<repoId>::<path>`) and the
-  ONE agent handle, `result.agentTerminalHandle` else
+  ONE agent handle (a hint only: re-resolve it from `orca terminal list --json` by worktree
+  path before every use, hard rule 14), `result.agentTerminalHandle` else
   `result.startupTerminal.handle`. Ledger entry: host, worktreeId, path,
   terminal, agent, model, lane, task, `state: spawning`, `nudges: 0`,
   briefFile, spawnedAt, `standing` (true for every sweeper and lead),
@@ -662,7 +735,7 @@ with the same safety checks and a per-transcript attempt cap. Nothing is sent wh
 | teardown or accept done with open beads | NEVER | nudge the lane to continue; surface beads that need the owner; never wipe or delete beads |
 | nudge / answer stuck agent | yes | answer is factual or already decided; else escalate |
 | respawn stuck worker | yes | after the nudge cap or the idle cap; with handover file |
-| merge PR (any author) | yes, via pr-sweeper | merge gate below passes |
+| merge PR (any author) | yes, via pr-sweeper | merge gate below passes, including the in-session review comment at the current head |
 | push to a collaborator's branch (`cfg.messaging.collaborators`) | yes | via pr-sweeper workers; merge main in, never force-push their commits |
 | prod deploy | yes | in a deploy window, all rails clear |
 | message humans | per `cfg.outward_messages` | owner digest and collaborator PR comments as configured; anything else is a draft first |
@@ -678,13 +751,39 @@ not depend on the answer carries on. In a tick turn the ASK is a
 
 ## Merge gate
 
-Enforced by the pr-sweeper lead (its brief carries it verbatim); concertmaster
+Enforced by the pr-sweeper lead (its brief carries it verbatim, including "do not merge
+without the in-session review comment at the current head"); concertmaster
 audits each `cm:merged` against GitHub. All required, at the current head sha:
 
 1. `cfg.merge.gates.evidence` reports `cfg.merge.gates.ready_value`.
-2. The latest automated review verdict is read for that head
-   (`cfg.merge.gates.review_verdict`), and its review comments are fixed and
-   verified, not just labelled.
+2. **In-session review at that head.** A comment whose whole body matches
+   `^in-session review: (/codex:review|/review) (APPROVED|CHANGES_REQUESTED) at [0-9a-f]{12}$`
+   (`/codex:review` run where Codex works on the host and is not in `cfg.agents.forbidden`,
+   else `/review`), authored by a login in `cfg.merge.in_session_review_authors` (the fleet's
+   own GitHub account; the comment must come from an account named there, and the fleet
+   account that authored the PR may post it: that is self-review by design, so a
+   collaborator or another bot account cannot approve by posting it), with sha12 equal to the
+   first 12 characters of the PR's CURRENT head, whose NEWEST such comment for that head says
+   `APPROVED`, plus `cm:merge-ready <pr> <sha>`. A PR whose current head has no such comment
+   (none, an older head's, a wrong author, `CHANGES_REQUESTED` newest) is REFUSED: do not
+   merge, send it back to its lead. For a collaborator's PR the pr-sweeper's worker runs the
+   review and posts it under the fleet account. Add `--match-head-commit <the full head sha
+   you verified>` to the merge command so a push between this check and the merge fails the
+   merge. Format and procedure: `references/lanes.md` § In-session review. Review findings
+   are fixed and verified, not just labelled. A project that also runs an automated review
+   bot adds its verdict (`cfg.merge.gates.review_verdict`) in the `merge-gate` hook.
+2a. **Screenshots for a visible UI change.** If the PR's changed files touch visible UI (the
+   project names the paths in the `evidence` hook of `references/project-local.md`; never
+   tests, docs or scripts), the PR body or a comment carries before/after screenshots at the
+   themes and widths that hook names, taken from a non-production environment with TEST
+   accounts only and no real user data, published with `cfg.evidence.publish_cmd` (empty:
+   attach through GitHub and say so). A PR with no visible UI change says "no visible UI
+   change" in its body. A visible UI change without them is REFUSED like a missing in-session
+   review. Rule and file naming: `references/lanes.md` § Screenshot gate: UI changes. All
+   agent-produced evidence (this, a deploy worker's staging checks, post-release walks)
+   follows the same standard, and screenshots of real users stay local: hard rule 22,
+   `references/lanes.md` § Evidence standard.
+   <!-- project-local: evidence -->
 3. Local CI gates run where Actions did not; `cfg.merge.gates.ci_gate` passes.
 4. Review loop: it ends only when a round reports **only Minor** findings.
    Any Critical or Major finding pertinent to the diff blocks the merge until
@@ -799,7 +898,50 @@ scripts/teardown.sh <host> <path> --close-handle <h> ...   # allow closing that 
 scripts/teardown.sh <host> <path> --retire-check           # gates only: run before every retire; refuses an unresolved path
 scripts/teardown.sh <host> <path> --force-standing <ask-id> # remove-standing ask the owner approved, single use
 scripts/teardown.sh <host> <path> --accept-unmerged-beads <ask-id> # accept-unmerged-beads ask the owner approved
+scripts/teardown.sh <host> <path> --salvage --beads-unreadable-ok "<reason>" # bd cannot read the beads store (older schema)
+scripts/teardown.sh <host> <path> --owner <lead-worktree> [--owner-host <host>] # LEAD MODE: a lead tears down its own child, no ledger
 ```
+
+Lead mode (`--owner`): a lead on ANY host tears down its own children itself. The child must be
+listed in the lead's `cm:child` or `WORKERS I OWN` lines (read with `orca worktree list` on
+`--owner-host`, default the host the lead runs on); an unlisted child is refused and, when another
+lead lists it, the refusal names that lead. A listing proves ownership of the child on one host: a
+bare `<name>` means the lead's own host, a child on another host is listed as `<name>@<host>`, and
+the same name on two hosts is never confused (two same-named worktrees on the lead's host refuse as
+ambiguous). Every safety gate still runs (PR merged or closed, clean tree, nothing unpushed, no live
+agent, no open bead, no open follow-up in the child's comment, salvage) through the child's own git
+and Orca `--environment <host>`. A child that owns a beads epic is declared on its line,
+`cm:child <name> epic=<bead-id>` (or `--epic <bead-id>`, repeatable); the epic gate then runs on
+those ids as in concertmaster mode, and with none declared only the unmerged-beads check runs. No
+ledger is read or written (not even the host name check): the tick reconciles the ledger from
+comments. A standing lane (a configured lane name, a configured ownership lead, or a lane-shaped
+name: one containing `-sweeper`, ending in or continuing after `-lead`, or starting with `epic-` or
+`epic:`; names like `sweep-<pr>` and `research-<slug>` stay ordinary; `cm_lane_shaped` in
+`scripts/lib.sh` is the one predicate lead mode, concertmaster mode and child adoption share) and
+the lead's own worktree are refused; those need concertmaster mode and the owner-approved path.
+Known limit, because lead mode reads one host and no ledger: a second lead on ANOTHER host that
+lists the same child is not seen, and nothing authenticates who runs `--owner`; every other gate
+still runs, and a cross-host double listing is the concertmaster's to resolve. It cannot be
+combined with `--force-standing`, `--accept-unmerged-beads`, `--allow-no-pr` or `--retire-check`.
+A lead that cannot reach the child's host posts `cm:retire <reason>` on the child's comment as the
+fallback request instead; the concertmaster then runs `teardown.sh` from its host.
+
+A store `bd` cannot read because its schema is older than the installed bd (bd's error names a
+schema, a migration or a missing column; any other bd error, such as a refused connection, is not
+excused) is excused WITHOUT the flag when no tracked `.beads` path differs from the merge-base with
+the default branch (and no untracked bead file exists) and the epic gate, or with no epic the
+unmerged-beads check, passes on the other sources; otherwise it refuses as below. The store is never
+migrated or written.
+
+`--beads-unreadable-ok <reason>` is the safe path when `bd` cannot read a worktree's beads store
+(for example a pending-schema-migrations error that `--readonly` will not apply). The unread store
+is UNKNOWN, never clean, and the refusal says so. The flag excuses only that failed bd read, and
+only when the tree is otherwise clean and pushed: every other gate, and every other beads source
+(origin/<default>, the worktree and redirect files), still applies, so open beads still refuse. It
+requires `--salvage`: the WHOLE `.beads` dir is copied out (verified) to
+`$CM_HOME/salvage/<host>/<branch>-<ts>/beads-whole/` before anything is removed, and the reason goes
+to `$CM_HOME/teardown-beads-unreadable.log`. Never migrate the store in place and never run a bd
+write command on the worktree. `--retire-check` ignores the flag.
 
 Overrides are bound to a structured ledger ask (`references/ledger.md`
 § asks): `kind` (`remove-standing` or `accept-unmerged-beads`), `host`, and
@@ -983,6 +1125,8 @@ next: trigger prod for the 16:00 window
   project owner is already a `WAITING: <owner>` row from `asks[]`, so it gets no `followup` row while its
   ask is open (its `orphaned` row still shows when its worker is dead).
 - Quiet tick (nothing changed): one row per lane plus `next:`.
+- Every `scripts/asks.sh` row older than 1 tick gets a row with its age (a blocker, ask or
+  `cm:waiting-owner` the owner has not answered).
 - Every session blocked on a menu (`waiting.sh`) gets a row with its wait time; its
   `BLOCKED PROMPT` rows (autocompact) are cleared, not reported as waiting on the owner.
 
@@ -998,14 +1142,18 @@ shellcheck clean.
 | `scripts/classify.sh [--table]` | one class per item (rules in `classify.jq`), ledger-aware: `standing-idle` for idle sweepers and leads, beads-gate suggest for epic owners; `CM_STUCK_MIN` default 45. Forbidden-agent check: `.violations` rows and `.violationCheck`, printed by `--table` as `violations: <n>` plus `VIOLATION` rows (§ The tick, step 2). Ownership (§ Ownership): `owner` and `ownerSource` per row, flags `ORPHAN` and `LEAD-DEAD`, `.ownership` summary; `cm:keep` and `cm:retire` comments (§ Session state machine) |
 | `scripts/abrupt.sh` | sessions cut off by a restart (background work killed, `/loop` resume pending, agent fell back to a shell) and duplicate live agents in one worktree; TSV |
 | `scripts/waiting.sh` | sessions showing a question menu or the autocompact prompt (`BLOCKED PROMPT` row, idle 2 minutes or more), with minutes waiting and the question; TSV |
+| `scripts/asks.sh [--json] [--peek]` | every `cm:ask`, `cm:blocked` and `cm:waiting-owner` on any line of any lane comment (also split on " \| ") on every host; unreachable hosts listed; `$CM_HOME/asks-seen.json` ages each item (`older-than-1-tick` on a second consecutive run); run once per tick (tick step 4) |
+| `scripts/test/asks.sh` | stub Orca, three hosts: blocker on line 2 and 3, after " \| ", literal `\n`, bare tag, no-tag and mid-sentence comments, malformed comments, never_touch, unreachable and garbage hosts, host list down, ageing, kept items of a down host, damaged seen file |
+| `scripts/test/teardown-owner.sh` | lead mode (`teardown.sh --owner`) on stub Orca and git: listed, unlisted, rival-listed, contested, ambiguous and cross-host children, standing and lane-shaped names, the lead's own worktree, epic declared on the `cm:child` line, every safety gate still refusing, no ledger read or written; the beads old-schema excuse and `--beads-unreadable-ok` |
+| `scripts/test/lanes-relay.sh` | the review-verdict query in `references/lanes.md` (cut out of the doc, run with jq and gojq when present) on fixture comments: trusted authors only, anchored marker and head, both comment kinds with the newest at the head winning, every accepted verdict form, a legend line, CRLF, null and non-string bodies, order by createdAt, superseded heads |
 | `scripts/jsanitize`, `scripts/jstrings` | Orca JSON helpers (python3): `jsanitize` re-emits JSON with lone UTF-16 surrogates replaced so `jq` can parse remote-host replies; `jstrings` prints every string of a reply (pane text), tolerating the same. `abrupt.sh`, `waiting.sh` and the census in `discover.sh` pipe Orca output through them |
 | `scripts/roster.sh [--stdout]` | rewrites `$CM_HOME/roster.yaml` from the ledger, active rows only; atomic, mode 600, exit 1 and roster untouched when the ledger is unreadable |
 | `scripts/programme-rollup.sh [--classify FILE\|-] [--discover FILE] [--json]` | tick step 3, report step 5: the programme table, one row per ledger lane (a `gone` lane is left out): `programme \| lead + host \| state \| open PRs \| waiting on`; state is the lead's comment first line (`no lead`, `unparsed: ...` or `ledger:<state>` when there is none); open PRs are the PRs (not MERGED or CLOSED, judged per repo) driven by a worker of the programme, with the classify JSON state of each worktree winning over the ledger; waiting on is the first `cm:blocked`, `cm:followup owner=<x>` or `cm:waiting-owner` line; read-only; on an unreadable ledger it prints the header and one `unknown (rollup failed)` row and exits 1 |
 | `scripts/test/programme-rollup.sh` | temp `CM_HOME` and synthetic lanes (lane-a, host-a): two programmes with a blocked worker and an idle lead, a lane with no lead and one whose lead is gone, classify PRs merged in, followup order and done ids, malformed and non-string comments, secret scrubbing, empty ledger, hostile ledgers, the failure row, `--json`, bad input; ledger never written |
 | `scripts/resume.sh [--dry-run] [--host <h>] [--worktree-id <id>] [--path <wt>] [--lane <label>]` | `/concertmaster resume`: rewrites the roster, then per row: live, dead (`claude --continue` plus one nudge), offline, duplicate, missing, manual, unknown, held; one run at a time (lock); exit 3 when a row needs attention |
 | `scripts/lane-journal.sh append <lane> <text> / tail <lane> [n] / rotate [--lane <l>] / name <label>` | the per-lane journal `$CM_HOME/lanes/<lane>/journal.md`: append-only, one stamped line per entry, secret-shaped text refused (exit 3), lane name `[a-z0-9._-]`; `tail` is what a lane reads at boot, and the respawn nudge carries it for a standing lane on this host; never sent to a group; `references/ledger.md` § Lane journal |
-| `scripts/teardown.sh <host> <path> [--apply] [--allow-no-pr] [--salvage] [--close-handle <h>] [--force-standing <ask-id>] [--accept-unmerged-beads <ask-id>] [--retire-check]` | safe teardown, dry run by default; refuses standing lanes, unknown standing, open beads and open follow-ups (ledger and live comment; `--apply` archives the comment first), fails closed |
-| `scripts/followups.sh reconcile\|close\|open\|report\|comment-open` | the follow-up ledger (rule 12a): `reconcile` reads discover JSON and folds Orca's `parentWorktreeId`, `cm:child`, `cm:followup <id> owner=<o> <text>` and `cm:followup-done <id>` comment lines into `workers.<id>.parent` and `followUps[]` (an item owned by `project.owner.id` also gets an `asks[]` row; idempotent, writes nothing when nothing changed, through `cm_ledger_write`) and prints `followups: malformed`, `unmatched`, `unmatched-child`, `parent-conflict` and `reused-id` lines; `close` closes an item from outside a comment; `open [--lane]` lists open items as TSV; `report` prints the turn-end rows (`orphaned`, `followup`); `comment-open [--texts]` reads one comment on stdin and prints its open ids, with their text under `--texts` (teardown uses it on the live comment) |
+| `scripts/teardown.sh <host> <path> [--apply] [--allow-no-pr] [--salvage] [--close-handle <h>] [--force-standing <ask-id>] [--accept-unmerged-beads <ask-id>] [--beads-unreadable-ok <reason>] [--owner <lead-worktree> [--owner-host <host>]] [--retire-check]` | safe teardown, dry run by default; refuses standing lanes, unknown standing, open beads and open follow-ups (ledger and live comment; `--apply` archives the comment first), fails closed |
+| `scripts/followups.sh reconcile\|close\|open\|report\|comment-open` | the follow-up ledger (rule 12a): `reconcile` reads discover JSON and adopts every lead-spawned `cm:child <name>` with no ledger row (`standing: false`, state from the child's own comment), and folds Orca's `parentWorktreeId`, `cm:child`, `cm:followup <id> owner=<o> <text>` and `cm:followup-done <id>` comment lines into `workers.<id>.parent` and `followUps[]` (an item owned by `project.owner.id` also gets an `asks[]` row; idempotent, writes nothing when nothing changed, through `cm_ledger_write`) and prints `followups: malformed`, `unmatched`, `unmatched-child`, `parent-conflict` and `reused-id` lines; `close` closes an item from outside a comment; `open [--lane]` lists open items as TSV; `report` prints the turn-end rows (`orphaned`, `followup`); `comment-open [--texts]` reads one comment on stdin and prints its open ids, with their text under `--texts` (teardown uses it on the live comment) |
 | `scripts/mc-emit.sh <type> <msg> [meta]` / `--fleet-upsert ...` / `--tick <json>` / `--issue-state <issue> <state> [pr]` / `--flush` / `--requeue-dead` | outbox + telemetry POST, always exit 0; base URL or tenant not configured: sends nothing, lines stay queued (capped); `--requeue-dead [--any-tenant]` puts dead 400 lines with tenantId null (or any tenant; with a project id, also any without a projectId) back in front of the outbox, newest fleet upsert per agent only (backup kept, refused past the cap), events stamped with the project id and a deterministic eventId so a replay dedupes; with a project id every event carries projectId and fleet upserts are skipped; a 403 on an upsert, or on an event naming another project, dead-letters it; never sends an upsert older than one accepted (`fleet.sent.json`); unsent lines go back in front; write lock on every append and rewrite; `MC_NO_FLUSH=1` queues only; warns when the installed copy is older |
 | `scripts/boot-sweep.sh [--dry-run] [--no-wait] [--since <epoch> [--lanes <paths>]]` | after a host restart, nudges standing lanes that ran no turn since boot to re-arm their `/loop` (`references/boot-sweep.md`) |
 | `scripts/runtime-check.sh [--dry-run]` | tick step after an Orca runtime restart: refreshes standing lanes' ledger handles by worktree path and nudges lanes whose `/loop` wake died, via `boot-sweep.sh --since --lanes` (`references/runtime-check.md`) |
@@ -1027,7 +1175,7 @@ shellcheck clean.
 | `scripts/hooks/mc-worker-hook.sh` | Claude Code hook for workers, in-scope repos only (optional) |
 | `scripts/digest.sh [--full] [--since-hours n]` | digest text, stdout only, `- ` bullets, no Needs, Open follow-ups, Stuck or Fleet section (`--full` adds them for the terminal report): Merged (merged since `digests.lastSentAt`, else 12h) from `gh pr list`, and in `--full` the open PR count (a failed gh prints "unknown (gh failed)", never 0), every other section from the ledger; read-only; `--full` also lists `ledger.violations` and an incomplete `ledger.violationCheck` |
 | `scripts/intake.sh <cmd>` | the deterministic half of `intake` (rules in `scripts/intake.jq`) |
-| `scripts/test/*.sh` | `classify-standing`, `classify-violations`, `teardown-gates`, `resume-flow`, `intake`, `mc-emit`, `boot-sweep`, `runtime-check`, `ci-queue-alert`, `cred-check`, `scan-secrets`, `rm-guard-hook`, `digest-gh`, `orca-json-helpers`, `waiting-autocompact`, `spawn-verify`, `classify-ownership`, `ask-timeout`, `queue`, `queue-audit`, `salv3`, `markers`, `unlinked-prs`, `tick-emit`, `config-check`, `automations-audit`, `followups`, `lane-journal`: hermetic tests against `scripts/test/fixtures/config.test.yaml`; run the matching one after any script change |
+| `scripts/test/*.sh` | `classify-standing`, `classify-violations`, `teardown-gates`, `resume-flow`, `intake`, `mc-emit`, `boot-sweep`, `runtime-check`, `ci-queue-alert`, `cred-check`, `scan-secrets`, `rm-guard-hook`, `digest-gh`, `orca-json-helpers`, `waiting-autocompact`, `spawn-verify`, `classify-ownership`, `ask-timeout`, `queue`, `queue-audit`, `salv3`, `markers`, `unlinked-prs`, `tick-emit`, `config-check`, `automations-audit`, `followups`, `lane-journal`, `asks`, `teardown-owner`, `lanes-relay`: hermetic tests against `scripts/test/fixtures/config.test.yaml`; run the matching one after any script change |
 
 <!-- project-local: scripts -->
 
