@@ -152,7 +152,7 @@ The lane set above is the default; `cfg.lanes` is the list in use.
     CHANGES REQUESTED or BLOCK at the current head to the worker's terminal, once per comment
     id, inside an untrusted-data fence (`references/lanes.md` § Relaying review verdicts).
     Only a trusted author's comment is read, and an `in-session review: <tool> <verdict> at
-    <sha12>` comment counts like a marker review: the newest of either kind at the head wins.
+    <sha>` comment (the FULL 40-character head for a pass) counts like a marker review: the newest of either kind at the head wins.
 21. **Instruction ordering: newer wins, and every instruction has an id.** Every instruction
     the concertmaster types into a lane terminal (`orca terminal send`) starts with a short
     id, `[cm-i<n>] <text>`, with `n` rising per instruction (the lane journal line for the
@@ -783,13 +783,13 @@ audits each `cm:merged` against GitHub. All required, at the current head sha:
 
 1. `cfg.merge.gates.evidence` reports `cfg.merge.gates.ready_value`.
 2. **In-session review at that head.** A comment whose whole body matches
-   `^in-session review: (/codex:review|/review) (APPROVED|CHANGES_REQUESTED) at [0-9a-f]{12}$`
+   `^in-session review: (/codex:review|/review) (APPROVED at [0-9a-f]{40}|CHANGES_REQUESTED at [0-9a-f]{7,40})$`
    (`/codex:review` run where Codex works on the host and is not in `cfg.agents.forbidden`,
    else `/review`), authored by a login in `cfg.merge.in_session_review_authors` (the fleet's
    own GitHub account; the comment must come from an account named there, and the fleet
    account that authored the PR may post it: that is self-review by design, so a
-   collaborator or another bot account cannot approve by posting it), with sha12 equal to the
-   first 12 characters of the PR's CURRENT head, whose NEWEST such comment for that head says
+   collaborator or another bot account cannot approve by posting it), whose sha equals the PR's
+   CURRENT head in full (an `APPROVED` carries all 40 characters; 12 is not enough), whose NEWEST such comment for that head says
    `APPROVED`, plus `cm:merge-ready <pr> <sha>`. A PR whose current head has no such comment
    (none, an older head's, a wrong author, `CHANGES_REQUESTED` newest) is REFUSED: do not
    merge, send it back to its lead. For a collaborator's PR the pr-sweeper's worker runs the

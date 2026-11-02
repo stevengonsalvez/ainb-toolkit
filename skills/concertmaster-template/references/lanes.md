@@ -148,10 +148,10 @@ recommended option, and ends its turn. The answer arrives as a typed message.
 - In-session review before every `cm:merge-ready` (owner rule; no automated review pipeline is
   assumed): run `/codex:review` where Codex works on this host, else `/review`, on the PR diff
   at the final head. Fix or answer every finding. Post the PR comment exactly
-  `in-session review: <tool> <verdict> at <sha12>` (`<tool>` is `/codex:review` or `/review`,
-  `<verdict>` is `APPROVED` or `CHANGES_REQUESTED`, `<sha12>` is the first 12 characters of the
-  PR head) and re-run and re-post it on EVERY new head. pr-sweeper refuses a head with no such
-  comment (§ In-session review).
+  `in-session review: <tool> <verdict> at <sha>` (`<tool>` is `/codex:review` or `/review`,
+  `<verdict>` is `APPROVED` or `CHANGES_REQUESTED`, `<sha>` is the FULL 40-character PR head;
+  a `CHANGES_REQUESTED` may use 7 to 40 characters) and re-run and re-post it on EVERY new head.
+  pr-sweeper refuses a head with no such comment (§ In-session review).
 - Screenshot gate before every `cm:merge-ready`: if the diff touches visible UI, the PR carries
   before/after screenshots (§ Screenshot gate: UI changes). A diff with no visible UI change says
   "no visible UI change" in the PR body.
@@ -273,7 +273,7 @@ its ticker does each tick).
 - Model: you run `claude-sonnet-5-5` at effort high, and so does every worker you spawn
   (SKILL.md § Spawn recipe). A stronger model only for an independent review pass.
 - In-session review: before any `cm:merge-ready` (yours or a worker's), the PR head carries the
-  comment `in-session review: <tool> <verdict> at <sha12>` from `/codex:review` (where Codex
+  comment `in-session review: <tool> <verdict> at <sha>` (full 40-character head) from `/codex:review` (where Codex
   works on that host) or `/review` (§ In-session review). Re-run and re-post on every new head;
   fix or answer every finding; make sure every worker you spawn does the same.
 - Screenshot gate: a PR whose diff touches visible UI carries before/after screenshots
@@ -369,11 +369,11 @@ Group workers drive each PR with .agents/skills/ready-to-ship/SKILL.md until
 Merge gate, ALL at the current head sha:
 - {{evidence_cmd}} reports {{ready_value}} for that head.
 - The in-session review at that head: a PR comment whose whole body matches
-  `^in-session review: (/codex:review|/review) (APPROVED|CHANGES_REQUESTED) at [0-9a-f]{12}$`,
+  `^in-session review: (/codex:review|/review) (APPROVED at [0-9a-f]{40}|CHANGES_REQUESTED at [0-9a-f]{7,40})$`,
   authored by a login in `merge.in_session_review_authors` (config; the review must come from an account
   named there. The fleet account that authored the PR may post it: self-review by design. A
-  collaborator or another bot account cannot approve by posting it), whose sha12 equals the first 12
-  characters of the PR's CURRENT head (read both: `gh pr view <n> --json
+  collaborator or another bot account cannot approve by posting it), whose sha equals the PR's
+  CURRENT head in full (all 40 characters for `APPROVED`; read both: `gh pr view <n> --json
   headRefOid,comments`), and whose NEWEST such comment for that head is `APPROVED`, plus
   `cm:merge-ready <pr> <sha>`. A head with no such comment, an older head's comment, a wrong
   author, or `CHANGES_REQUESTED` newest is NOT mergeable: do not merge, send the worker back to
@@ -545,18 +545,20 @@ docs-only included). pr-sweeper merges nothing whose current head has no such co
    <file in your own scratchpad>`:
 
 ```text
-in-session review: <tool> <verdict> at <sha12>
+in-session review: <tool> <verdict> at <sha>
 ```
 
    `<tool>` is `/codex:review` or `/review`. `<verdict>` is `APPROVED` (no finding left open)
-   or `CHANGES_REQUESTED`. `<sha12>` is the first 12 characters of the PR head at the time of
-   the review (`gh pr view <N> --json headRefOid --jq .headRefOid | cut -c1-12`). Put the
+   or `CHANGES_REQUESTED`. `<sha>` is the FULL 40-character PR head at the time of the review
+   (`gh pr view <N> --json headRefOid --jq .headRefOid`). A pass with a shorter sha is read as
+   malformed, not as a pass, because 12 characters (48 bits) can be matched by a second commit
+   built to share them; a `CHANGES_REQUESTED` may use 7 to 40 characters. Put the
    findings and how each Medium-or-worse was fixed in the PR body or in a separate earlier
    comment, never in this line.
 4. Re-run and re-post on EVERY new head, including a merge of main into the branch. Only
    `APPROVED` at the current head counts for the gate. The comment must come from a login in
    `merge.in_session_review_authors`.
-5. Set `cm:merge-ready #<PR> <sha12>` with the sha equal to the comment's sha12, and keep it at
+5. Set `cm:merge-ready #<PR> <sha12>` with the sha12 equal to the first 12 characters of the comment's sha, and keep it at
    the start of every later comment until the PR is merged. Several PRs: one comment,
    `cm:merge-ready #12 ea0f8b55a992 #13 2ae2328fad26`.
 6. PR body links its issue (`Closes #N` or `Part of #N`) and carries the E2E screenshots and
@@ -621,10 +623,10 @@ are read, and the NEWEST of either kind at the PR head wins:
   the one INSIDE the marker. A comment that only mentions the marker (a fix summary, a merge
   note) has no marker line and is ignored.
 - an in-session review comment, a line of its own,
-  `in-session review: <tool> <APPROVED|CHANGES REQUESTED|BLOCK> at <sha12>` (no marker; `<tool>`
+  `in-session review: <tool> <APPROVED|CHANGES REQUESTED|BLOCK> at <sha>` (no marker; `<tool>`
   is `/codex:review`, `/review`, `codex`, `claude` or `review`; the underscore form
   `CHANGES_REQUESTED` of § In-session review is read as CHANGES REQUESTED). Its head is the
-  sha12. So an older APPROVED marker review does not hide a newer in-session CHANGES REQUESTED,
+  sha (40 characters for APPROVED; a shorter APPROVED is ignored). So an older APPROVED marker review does not hide a newer in-session CHANGES REQUESTED,
   and the reverse.
 
 The verdict is the first line that carries exactly one verdict token (a legend line that lists
@@ -666,7 +668,8 @@ parser; that direction is harmless.
 gh pr view "$PR" --json number,headRefOid,comments --jq '
   def tokn: "\\*\\*(Verdict:\\s*)?(?<v>BLOCK|CHANGES REQUESTED|APPROVED)\\*\\*";
   def mk: "^<!--\\s*claude-review-run:(\\d+|local-\\d{8}T\\d{4}Z)\\s+head:(?<h>[0-9a-f]{40})\\s*-->\\s*$";
-  def ins: "^in-session review: (/codex:review|/review|codex|claude|review) (?<v>BLOCK|CHANGES[ _]REQUESTED|APPROVED) at (?<s>[0-9a-f]{12})\\s*$";
+  def ins: "^in-session review: (/codex:review|/review|codex|claude|review) (?<v>BLOCK|CHANGES[ _]REQUESTED|APPROVED) at (?<s>[0-9a-f]{7,40})\\s*$";
+  def insok: test(ins) and (capture(ins) | .v != "APPROVED" or (.s | length) == 40);
   def ok: ((.author.login // "") == "github-actions")
           or ((.authorAssociation // "") | test("^(OWNER|MEMBER|COLLABORATOR)$"));
   def lv: if test("^(\\S{1,4}\\s)?" + tokn) and ([match(tokn; "g")] | length) == 1 then capture(tokn).v
@@ -677,13 +680,13 @@ gh pr view "$PR" --json number,headRefOid,comments --jq '
   | [ .comments[] | select(ok) | . as $c
       | ((($c.body // "") | tostring | split("\n") | map(sub("\\r$"; ""))) as $L
          | ([$L[] | select(test(mk))][0] // null) as $m
-         | ([$L[] | select(test(ins))][0] // null) as $i
+         | ([$L[] | select(insok)][0] // null) as $i
          | if $m != null then {kind: "marker", head: ($m | capture(mk).h), verdict: ([$L[] | lv | select(. != null)][0] // "UNKNOWN")}
            elif $i != null then {kind: "in-session", head: ($i | capture(ins).s), verdict: ($i | capture(ins).v | sub("_"; " "))}
            else empty end)
         + {at: ($c.createdAt // ""), url: ($c.url // "")} ]
   | sort_by(.at) as $all
-  | ([$all[] | select(.head[0:12] == $h[0:12])] | last // ($all | last)) as $c
+  | ([$all[] | select(. as $e | $h | startswith($e.head))] | last // ($all | last)) as $c
   | [$n, $h[0:12], ($c.head[0:12] // "none"), ($c.verdict // "none"), ($c.kind // "none"),
      (($c.url // "") | sub(".*issuecomment-"; "") | if . == "" then "-" else . end)] | @tsv'
 ```
@@ -777,9 +780,9 @@ Model: `claude-sonnet-5-5`, effort high. Work in this worktree only. For anythin
 until {{evidence_cmd}} says {{ready_value}}. Before cm:merge-ready run the in-session
 review on the PR diff: /codex:review where Codex works on this host, else /review. Fix or
 answer every finding, then post the PR comment exactly
-"in-session review: <tool> <verdict> at <sha12>" (<tool> is /codex:review or /review,
-<verdict> is APPROVED or CHANGES_REQUESTED, <sha12> is the first 12 characters of the PR
-head), and re-run and re-post it on EVERY new head. Before cm:merge-ready, if the diff touches
+"in-session review: <tool> <verdict> at <sha>" (<tool> is /codex:review or /review,
+<verdict> is APPROVED or CHANGES_REQUESTED, <sha> is the FULL 40-character PR head; a
+CHANGES_REQUESTED may use 7 to 40), and re-run and re-post it on EVERY new head. Before cm:merge-ready, if the diff touches
 visible UI (references/lanes.md § Screenshot gate: UI changes), attach before/after screenshots
 published per § Evidence standard and link them in the PR; a PR with no visible UI change says
 "no visible UI change" in its body. Set "cm:running <step>" at each checkpoint and

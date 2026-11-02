@@ -79,7 +79,7 @@ cases() { local e="$1"
     "$(c alice COLLABORATOR $T2 "in-session review: codex CHANGES REQUESTED at $H12" 2)"
   check "$e" "newer in-session APPROVED beats an older CR marker review" "${H12}${tab}APPROVED${tab}in-session${tab}2" \
     "$(c $GH NONE $T1 "$(printf '**CHANGES REQUESTED**\n%s' "$(marker 123 $H)")" 1)" \
-    "$(c alice MEMBER $T2 "in-session review: review APPROVED at $H12" 2)"
+    "$(c alice MEMBER $T2 "in-session review: review APPROVED at $H" 2)"
   # 11 the newest is chosen by createdAt, not array order
   check "$e" "sorted by createdAt, not by array order" "${H12}${tab}APPROVED${tab}marker${tab}2" \
     "$(c $GH NONE $T2 "$(printf '**APPROVED**\n%s' "$(marker 124 $H)")" 2)" \
@@ -108,7 +108,16 @@ cases() { local e="$1"
   check "$e" "review of a superseded head shows that head" "${O12}${tab}CHANGES REQUESTED${tab}marker${tab}1" \
     "$(c $GH NONE $T1 "$(printf '**CHANGES REQUESTED**\n%s' "$(marker 123 $O)")" 1)"
   check "$e" "in-session review of another head" "${O12}${tab}APPROVED${tab}in-session${tab}1" \
-    "$(c alice OWNER $T1 "in-session review: codex APPROVED at $O12" 1)"
+    "$(c alice OWNER $T1 "in-session review: codex APPROVED at $O" 1)"
+  # an APPROVED must carry the whole head: 12 characters is not a verdict, and a second head
+  # that shares its first 12 characters is a different head
+  check "$e" "in-session APPROVED with a 12-char sha is ignored" "none${tab}none${tab}none${tab}-" \
+    "$(c alice OWNER $T1 "in-session review: codex APPROVED at $H12" 1)"
+  check "$e" "a newer 9-char CHANGES REQUESTED at the head beats an older full-sha APPROVED" "${H:0:9}${tab}CHANGES REQUESTED${tab}in-session${tab}2" \
+    "$(c alice OWNER $T1 "in-session review: codex APPROVED at $H" 1)" \
+    "$(c alice OWNER $T2 "in-session review: codex CHANGES REQUESTED at ${H:0:9}" 2)"
+  check "$e" "in-session CHANGES REQUESTED may use a 9-char sha" "${H:0:9}${tab}CHANGES REQUESTED${tab}in-session${tab}1" \
+    "$(c alice OWNER $T1 "in-session review: codex CHANGES REQUESTED at ${H:0:9}" 1)"
   # a marker without any verdict is UNKNOWN, never approval
   check "$e" "marker with no verdict is UNKNOWN" "${H12}${tab}UNKNOWN${tab}marker${tab}1" \
     "$(c $GH NONE $T1 "$(printf 'I will wait for the review agents\n%s' "$(marker 123 $H)")" 1)"
