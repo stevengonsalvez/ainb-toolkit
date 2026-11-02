@@ -621,10 +621,10 @@ are read, and the NEWEST of either kind at the PR head wins:
   the one INSIDE the marker. A comment that only mentions the marker (a fix summary, a merge
   note) has no marker line and is ignored.
 - an in-session review comment, a line of its own,
-  `in-session review: <tool> <APPROVED|CHANGES REQUESTED|BLOCK> at <sha12>` (no marker; `<tool>`
+  `in-session review: <tool> <APPROVED|CHANGES REQUESTED|BLOCK> at <sha>` (no marker; `<tool>`
   is `/codex:review`, `/review`, `codex`, `claude` or `review`; the underscore form
   `CHANGES_REQUESTED` of § In-session review is read as CHANGES REQUESTED). Its head is the
-  sha12. So an older APPROVED marker review does not hide a newer in-session CHANGES REQUESTED,
+  sha (40 characters for APPROVED; a shorter APPROVED is ignored). So an older APPROVED marker review does not hide a newer in-session CHANGES REQUESTED,
   and the reverse.
 
 The verdict is the first line that carries exactly one verdict token (a legend line that lists
@@ -666,7 +666,8 @@ parser; that direction is harmless.
 gh pr view "$PR" --json number,headRefOid,comments --jq '
   def tokn: "\\*\\*(Verdict:\\s*)?(?<v>BLOCK|CHANGES REQUESTED|APPROVED)\\*\\*";
   def mk: "^<!--\\s*claude-review-run:(\\d+|local-\\d{8}T\\d{4}Z)\\s+head:(?<h>[0-9a-f]{40})\\s*-->\\s*$";
-  def ins: "^in-session review: (/codex:review|/review|codex|claude|review) (?<v>BLOCK|CHANGES[ _]REQUESTED|APPROVED) at (?<s>[0-9a-f]{12})\\s*$";
+  def ins: "^in-session review: (/codex:review|/review|codex|claude|review) (?<v>BLOCK|CHANGES[ _]REQUESTED|APPROVED) at (?<s>[0-9a-f]{7,40})\\s*$";
+  def insok: test(ins) and (capture(ins) | .v != "APPROVED" or (.s | length) == 40);
   def ok: ((.author.login // "") == "github-actions")
           or ((.authorAssociation // "") | test("^(OWNER|MEMBER|COLLABORATOR)$"));
   def lv: if test("^(\\S{1,4}\\s)?" + tokn) and ([match(tokn; "g")] | length) == 1 then capture(tokn).v
@@ -677,13 +678,13 @@ gh pr view "$PR" --json number,headRefOid,comments --jq '
   | [ .comments[] | select(ok) | . as $c
       | ((($c.body // "") | tostring | split("\n") | map(sub("\\r$"; ""))) as $L
          | ([$L[] | select(test(mk))][0] // null) as $m
-         | ([$L[] | select(test(ins))][0] // null) as $i
+         | ([$L[] | select(insok)][0] // null) as $i
          | if $m != null then {kind: "marker", head: ($m | capture(mk).h), verdict: ([$L[] | lv | select(. != null)][0] // "UNKNOWN")}
            elif $i != null then {kind: "in-session", head: ($i | capture(ins).s), verdict: ($i | capture(ins).v | sub("_"; " "))}
            else empty end)
         + {at: ($c.createdAt // ""), url: ($c.url // "")} ]
   | sort_by(.at) as $all
-  | ([$all[] | select(.head[0:12] == $h[0:12])] | last // ($all | last)) as $c
+  | ([$all[] | select(. as $e | $h | startswith($e.head))] | last // ($all | last)) as $c
   | [$n, $h[0:12], ($c.head[0:12] // "none"), ($c.verdict // "none"), ($c.kind // "none"),
      (($c.url // "") | sub(".*issuecomment-"; "") | if . == "" then "-" else . end)] | @tsv'
 ```
