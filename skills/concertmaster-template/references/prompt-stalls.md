@@ -3,20 +3,23 @@
 Subagents can sit for hours on "Dangerous rm operation on possibly-empty variable path". Nobody
 answers a prompt overnight, so one prompt stops a lane.
 
+Detection (every tick): `scripts/pane-stalls.sh` reads every in-scope agent pane for `Do you want to proceed`,
+because a subagent's prompt shows in no worktree comment. See `SKILL.md` § The tick, step 4 (Act), pane-stall scan.
+
 Three layers, cheapest first:
 
 | Layer | What | Where |
 |---|---|---|
-| 1 Brief rule | Every brief tells the agent to write `rm -rf "${S:?}"/x` or a literal path | `references/lanes.md` common footer, `SKILL.md` hard rule 7 |
+| 1 Brief rule | Every brief tells the agent: never run `rm`; `mktemp -d` under the scratchpad and leave it (even a guarded `rm` in a test harness raised the prompt) | `references/lanes.md` Lead charter 8, worker and review-subagent briefs, common footer; `SKILL.md` hard rule 18 |
 | 2 Deny hook | A PreToolUse hook denies an unguarded `rm` instantly with the fix, so the agent corrects itself in one turn instead of waiting | `scripts/hooks/rm-guard-hook.sh` |
 | 3 Allowlist | A few read-only commands never ask | snippet below, optional |
 
-## Premise, still to be verified on a live host
-The hook and the brief rule assume Claude Code's built-in check accepts `rm -rf "${S:?}"/x`
-without a prompt. That is not yet verified. Before relying on it, run one unattended session
-that executes `rm -rf "${S:?}"/x` against a scratch path and confirm no prompt appears, then
-record the Claude Code version here: `verified on: ______`. If it does prompt, the only fix is
-to avoid `rm` of variable paths (use `find "${S:?}/x" -delete` or a literal path).
+## Premise, now refuted
+The hook assumed Claude Code's built-in check accepts `rm -rf "${S:?}"/x` without a prompt. It does
+not hold for an `rm` inside `bash -c` or a heredoc in a test harness: two review subagents stalled on
+the "Dangerous rm operation" prompt. So the brief rule is now "never run rm; mktemp -d under the
+scratchpad and leave it". The hook below stays as a cheap second layer for a guarded form that still
+slips through; the pane scan (`scripts/pane-stalls.sh`) is the net.
 
 ## The hook
 Denies a Bash command only when an `rm` has a recursive flag (`-r`, `-R`, `--recursive`) or a glob
