@@ -35,8 +35,52 @@ worktrees:
   orca_repo: acme-app              # `orca worktree create --repo name:<this>`
   path_match: "/acme-app/"         # [script] ERE on worktree paths (abrupt.sh, waiting.sh)
   self_name: concertmaster         # [script] the concertmaster's own worktree, never torn down
+  # Optional pin for the fleet state line (scripts/fleet-state.sh): the Orca host name (`local` or the environment
+  # name) and the exact path of the concertmaster worktree. Set both once it runs somewhere fixed: a same-named copy
+  # elsewhere is then not heard, and the gate blocks while that host cannot be read. Unset = any host answers
+  # (ambiguity still blocks). self_path needs self_host. Env CM_SELF_HOST / CM_SELF_PATH win.
+  # self_host: local
+  # self_path: /srv/work/acme-app/concertmaster
   regenerable_ignored: []          # [script] ignored files teardown may drop (e.g. deno.lock)
   never_touch: []                  # worktrees or sessions of other projects on shared hosts: lanes never read or act on them
+
+# The shared fleet state line `cm:state freeze=<on|off> window=<UTC> prod=<ver> at=<UTC>` in the concertmaster's own
+# worktree comment (scripts/fleet-state.sh, SKILL.md § The tick step 4). [script]
+fleet_state:
+  # A line older than this is stale: leads act as freeze=on. Default: 2 ticks of the slowest schedule.tick_delays_s
+  # value, never under 30 minutes (60 with the quiet delay of 1800 s). Env CM_STATE_STALE_MIN wins.
+  stale_minutes: null
+  # `fleet-state.sh write --freeze on --push` sends one terminal message to every lane whose worktree name matches this
+  # regex (and has a Claude terminal). Freeze-off needs no push, leads read the line. Env CM_FREEZE_PUSH_MATCH wins.
+  push_match: "-sweeper"
+
+# scripts/pane-stalls.sh: panes that sit on a permission prompt (a subagent prompt shows in no worktree comment). [script]
+stalls:
+  regex: "Do you want to proceed"  # extended regex judged on each pane's last 25 non-empty lines; env CM_STALL_REGEX wins
+
+# scripts/skill-sync.sh (SKILL.md § The tick step 1): how a merged change to the skill reaches the LIVE concertmaster
+# checkout. It fast-forwards that worktree when the remote branch moved the skill directory, and never forces. [script]
+# Each key is optional; a flag or the env var (CM_SKILL_SYNC_REPO, _PATH, _REMOTE, _BRANCH) wins over this block.
+skill_sync:
+  repo: null                       # the git worktree to keep current; default: the worktree holding the scripts
+  path: null                       # the skill directory inside that repo, relative (e.g. ".agents/skills/concertmaster"); default: where the scripts sit
+  remote: origin
+  branch: main
+
+# The daily lessons loop (scripts/lessons-recon.sh, SKILL.md § The tick step 4, references/lanes.md Lead charter 5b). [script]
+lessons:
+  per_lane_per_day: 3              # lessons counted per lane per UTC day; the rest are reported as capped
+  min_lessons: 2                   # a gap qualifies with this many lessons, or with ONE that names a root cause and carries [failure]
+  max_changes: 5                   # PR size cap: qualifying gaps beyond it wait for the next run
+  carry_days: 7                    # a single lesson waits this long for its second before it ages out of the window
+  blocker_min_runs: 8              # a cm:blocked item seen on this many asks.sh runs counts as a signal
+  # Gaps that touch these force an owner ping. `file` or `file#section words`, relative to the skill directory.
+  risk_paths: ["SKILL.md#hard rules", "SKILL.md#merge gate", "scripts/teardown.sh"]
+  # Project-owned files (a toolkit sync overwrites references/, so the real log and blocklist live outside it).
+  # Relative to the skill directory unless absolute. Start from references/lessons-log.md and
+  # references/lessons-rejected.md; a missing file is an empty list.
+  log_file: local/lessons-log.md
+  rejected_file: local/lessons-rejected.md
 
 # Ownership accounting [script]: scripts/classify.sh gives every in-scope worktree one owner lane
 # and flags ORPHAN (nobody owns it) and LEAD-DEAD (a lane lead's session is gone while it still
