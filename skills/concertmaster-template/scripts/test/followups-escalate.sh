@@ -233,8 +233,8 @@ has "odd rows: a null worker still gets its issue" "$out" "created: [lane-a/nowo
 
 # the guard: more key shapes, private paths; ordinary text passes
 for t in 'key sk''-ant-api03-abcdefghijklmnop' 'key sk''-proj-abcdefghijklmnopqrst' 'sk_li''ve_abcdefgh12345' 'whs''ec_abcdefgh12345' 'sb_sec''ret_abcdefgh1234' \
-         'sb''p_abcdefghijkl1234' 'jwt ey''JhbGciOiJIUzI1.ey''JzdWIiOiIxMjM0.abc' 'xo''xb-12345678-abcdefgh' 'AI''zaSyA-abcdefghijklmnopqrstu' 'token: abcdef123456' \
-         'password = hunter22xy' 'look in /ro''ot/.ssh/x' 'edit the .env file' 'gh''p_ABCDEFGHIJKLMNOPQRSTUV1234'; do
+         'sb''p_abcdefghijkl1234' 'jwt ey''JhbGciOiJIUzI1.ey''JzdWIiOiIxMjM0.abc' 'xo''xb-12345678-abcdefgh' 'AI''zaSyA-abcdefghijklmnopqrstu' 'tok''en: abcdef123456' \
+         'pass''word = hunter22xy' 'look in /ro''ot/.ssh/x' 'edit the .env file' 'gh''p_ABCDEFGHIJKLMNOPQRSTUV1234'; do
   seed; jq --arg t "$t" '.followUps += [{id: "g1", worker: "w-a", lane: "lane-a", owner: "w-a", text: $t, state: "open", openedAt: (now - 90000 | todate)}]' "$L" > "$ROOT/l.json" && mv "$ROOT/l.json" "$L"
   out="$("$FU" escalate 2>&1)"
   has "guard refuses: $t" "$out" "refused lane-a/g1"
