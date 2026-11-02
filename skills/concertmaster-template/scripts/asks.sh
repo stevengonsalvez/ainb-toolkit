@@ -29,6 +29,8 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=SCRIPTDIR/lib.sh
 . "$HERE/lib.sh"
+# shellcheck source=SCRIPTDIR/fleet-read.sh
+. "$HERE/fleet-read.sh"
 
 JSON=0; PEEK=0
 while [ $# -gt 0 ]; do
@@ -41,11 +43,7 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-ORCA="$(cm_orca)"
-SAN="$HERE/jsanitize"
-REPO="${CM_ORCA_REPO:-$(cm_cfg .worktrees.orca_repo)}"
 NEVER="${CM_NEVER_TOUCH:-$(cm_cfg .worktrees.never_touch)}"
-HOST_TIMEOUT="${CM_HOST_TIMEOUT:-30}"
 SEEN="${CM_ASKS_SEEN:-$CM_HOME/asks-seen.json}"
 NOW="$(date -u +%FT%TZ)"
 NOWS="$(date -u +%s)"
@@ -55,64 +53,40 @@ trap 'rm -rf -- "${TMP:?}"' EXIT
 : > "$TMP/unreach.ndjson"
 : > "$TMP/hosts.ndjson"
 
-# Hosts. A failed host list still reads the local host, and says so.
-HL="$TMP/hostlist.json"
+# Hosts: the shared reader (scripts/fleet-read.sh) writes hosts.ndjson, unreach.ndjson and one worktree list per host
+# into $TMP/fleet. A failed host list still reads the local host, and says so (HLFAIL).
+mkdir -p "$TMP/fleet"
+cm_fleet_worktrees "$TMP/fleet"
+cp -- "$TMP/fleet/hosts.ndjson" "$TMP/hosts.ndjson"; cp -- "$TMP/fleet/unreach.ndjson" "$TMP/unreach.ndjson"
 HLFAIL=0
-if cm_timeout "$HOST_TIMEOUT" "$ORCA" host list --json </dev/null 2>"$TMP/hl.err" | "$SAN" > "$HL" \
-   && jq -e '.result.hosts | type == "array"' "$HL" >/dev/null 2>&1; then
-  :
-else
-  HLFAIL=1
-  jq -cn --arg e "$(head -c 200 "$TMP/hl.err" 2>/dev/null)" '{where:"host list", error:("orca host list failed: " + $e + "; only the local host was read")}' >> "$TMP/unreach.ndjson"
-  printf '{"result":{"hosts":[{"kind":"local","name":"this machine"}]}}\n' > "$HL"
-fi
+if jq -e 'select(.host == "host list")' "$TMP/unreach.ndjson" >/dev/null 2>&1; then HLFAIL=1; fi
 
 # never_touch names, one per line, lowercase.
 # shellcheck disable=SC2086  # NEVER is a space-joined list on purpose
 printf '%s\n' $NEVER | tr '[:upper:]' '[:lower:]' | grep . | jq -R . | jq -sc . > "$TMP/never.json" 2>/dev/null || printf '[]\n' > "$TMP/never.json"
 
 i=0
-while IFS="$(printf '\t')" read -r kind name; do
+while IFS="$(printf '\t')" read -r hname wl; do
   i=$((i + 1))
-  [ -n "$name" ] || continue
-  if [ "$kind" = local ]; then hname=local; sel=(); else hname="$name"; sel=(--environment "$name"); fi
-  args=(worktree list --json --limit 500)
-  [ -z "$REPO" ] || args+=(--repo "name:$REPO")
-  wl="$TMP/wl-$i.json"; rc=0
-  cm_timeout "$HOST_TIMEOUT" "$ORCA" "${args[@]}" ${sel[@]+"${sel[@]}"} </dev/null 2>"$TMP/wl-$i.err" | "$SAN" > "$wl" || rc=$?
-  # rc is the pipeline status (pipefail): an orca that printed a list and then failed or timed out is not a read
-  if [ "$rc" -ne 0 ] || ! jq -e '.ok == true and (.result.worktrees | type == "array")' "$wl" >/dev/null 2>&1; then
-    why="not a worktree list"
-    [ "$rc" -eq 0 ] || why="orca worktree list failed (exit $rc)"
-    [ -s "$TMP/wl-$i.err" ] && why="$(head -c 160 "$TMP/wl-$i.err" | tr '\n' ' ')"
-    jq -cn --arg h "$hname" --arg e "$why" '{where:$h, host:$h, error:$e}' >> "$TMP/unreach.ndjson"
-    continue
-  fi
-  jq -cn --arg h "$hname" '{host:$h}' >> "$TMP/hosts.ndjson"
-  # A list cut off at the limit is a partial read: its rows are used, but the host is also reported and the
-  # blockers it did not return keep their saved age (absence from a partial list proves nothing).
-  if jq -e '.result.truncated == true or ((.result.totalCount // 0) > (.result.worktrees | length))' "$wl" >/dev/null 2>&1; then
-    jq -cn --arg h "$hname" '{where:$h, host:$h, error:"worktree list truncated at the limit: some blockers may not be listed"}' >> "$TMP/unreach.ndjson"
-  fi
+  [ -n "$wl" ] || continue
   # Every comment line, split on " | ", a tag must start its segment. A comment that is not a string
   # (null, number, object, array) is read as empty, never as a crash.
   # shellcheck disable=SC2016  # jq program
-  jq -c --arg host "$hname" --slurpfile never "$TMP/never.json" '
+  jq -c -L "$HERE" --arg host "$hname" --slurpfile never "$TMP/never.json" '
+    include "comment-segs";
     def clean: tostring | gsub("[[:cntrl:]]+"; " ");
-    def segs: (if type == "string" then . else "" end) | gsub("\\\\n"; "\n")
-      | [ split("\n")[] | split(" | ")[] | sub("^\\s+"; "") | sub("\\s+$"; "") | select(length > 0) ];
     .result.worktrees[]
     | . as $w
     | ($w.displayName // (($w.path // "") | split("/") | last) // "") as $n
     | select((($n | tostring | ascii_downcase) as $l | any($never[0][]; . == $l)) | not)
-    | ($w.comment | segs[])
+    | ($w.comment | comment_segs[])
     | capture("^cm:(?<tag>ask|blocked|waiting-owner)(?::|\\s+|$)\\s*(?<text>.*)$")
     | {host: $host, worktree: ($n | clean), path: ($w.path // null), tag: ("cm:" + .tag),
        text: ((.text | clean | sub("^\\s+"; "") | sub("\\s+$"; "")) | if . == "" then "(no text)" else .[0:300] end)}
   ' "$wl" >> "$TMP/items.ndjson" 2>"$TMP/jq-$i.err" || {
     jq -cn --arg h "$hname" --arg e "comments unreadable: $(head -c 120 "$TMP/jq-$i.err")" '{where:$h, host:$h, error:$e}' >> "$TMP/unreach.ndjson"
   }
-done < <(jq -r '.result.hosts[] | [(.kind // ""), (.name // "")] | @tsv' "$HL")
+done < <(jq -r '[.host, .file] | @tsv' "$TMP/hosts.ndjson")
 
 # Age. The key is host, worktree, worktree path, tag and text (two worktrees that share a name stay two blockers); the previous file may be missing or damaged.
 PREV="$TMP/prev.json"
