@@ -9,7 +9,8 @@
 # directory or journal is refused; 30 concurrent appends give 30 whole lines; rotate drops entries older
 # than journal.keep_days and keeps the last journal.keep_lines, keeps an unstamped line, leaves an empty
 # journal and not a missing one, and takes one lane with --lane;
-# `name` maps a lane label; no script but lane-journal.sh and resume.sh reads a journal (nothing is sent
+# `name` maps a lane label; no script but lane-journal.sh, resume.sh, lessons-recon.sh, fleet-state.sh and
+# skill-sync.sh (the recon only reads; the override and the sync each write one audit line) reads a journal (nothing is sent
 # to a group). Touches nothing outside a mktemp dir.
 #
 #   scripts/test/lane-journal.sh       # exit 0 when every case passes
@@ -73,7 +74,8 @@ ALPHA="abcdefghijklmnopqrstuvwxyz"; DIGS="0123456789"
 HEX="0123456789abcdef"; H64="$(printf '%s' "$HEX$HEX$HEX$HEX")"; H40A="${H64:0:40}"; H40B="$(printf "%s" "$H64" | rev | cut -c1-40)"; LONG="${ALPHA}$(printf '%s' "$ALPHA" | tr a-z A-Z)${DIGS:0:4}"
 for s in "token ${GH}${ALPHA}${DIGS}" "key ${SBS}abcdefgh12345678" "${SBP}0123456789abcdef" "jwt ${JWT}hbGciOiJIUzI1NiJ9.payload.sig" \
          "digest $H64" "run $LONG" \
-         "$PEM" "aws AK""IAABCDEFGHIJKLMNOP" "stripe ${SKL}abc123"; do
+         "$PEM" "aws AK""IAABCDEFGHIJKLMNOP" "stripe ${SKL}abc123" \
+         "sts AS""IAABCDEFGHIJKLMNOP" "gl gl""pat-abcdef12345" "ant sk-""ant-api03-${ALPHA:0:10}" 'url https://deploy:hun''ter2@git.example.invalid/x.git'; do
   "$J" append secrets "$s" >/dev/null 2>&1; RC=$?
   check "secret refused (exit 3): ${s%% *} ..." '[ "$RC" = 3 ] && [ ! -e "$LANES/secrets" ]'
 done
@@ -173,8 +175,8 @@ check "name maps epic:Widget-Two to epic-widget-two" '[ "$("$J" name "epic:Widge
 check "name refuses a label that does not fit" '[ "$RC" = 2 ] && [ "$RC2" = 2 ]'
 
 echo "--- nothing is sent to a group"
-others="$(cd "$SCRIPTS" && grep -lE 'journal\.md|lane-journal' ./*.sh ./*.py ./hooks/* 2>/dev/null | grep -vE '^\./(lane-journal|resume)\.sh$' || true)"
-check "no script but lane-journal.sh and resume.sh reads a journal (digest, mc-emit, intake, tick-emit and the rest do not)" '[ -z "$others" ]'
+others="$(cd "$SCRIPTS" && grep -lE 'journal\.md|lane-journal' ./*.sh ./*.py ./hooks/* 2>/dev/null | grep -vE '^\./(lane-journal|resume|lessons-recon|fleet-state|skill-sync)\.sh$' || true)"
+check "no script but lane-journal.sh, resume.sh, lessons-recon.sh, fleet-state.sh and skill-sync.sh reads a journal (digest, mc-emit, intake, tick-emit and the rest do not)" '[ -z "$others" ]'
 check "the digest and message senders never name the lanes directory" '! grep -nE "lanes/" "$SCRIPTS/digest.sh" "$SCRIPTS/mc-emit.sh" "$SCRIPTS/tick-emit.sh" "$SCRIPTS/intake.sh"'
 
 echo
