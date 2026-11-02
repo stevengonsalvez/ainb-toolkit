@@ -57,20 +57,9 @@ lane_ok() {
   [ "${#1}" -le 64 ]
 }
 
-# secret_shaped <text>: 0 when it looks like a credential. A 40-hex commit id is removed first.
-secret_shaped() {
-  local t prev
-  t="$1"
-  # each 40-hex commit id is blanked; repeat, because two ids one space apart share the boundary character
-  while :; do
-    prev="$t"
-    t="$(printf '%s' "$t" | sed -E 's/(^|[^A-Za-z0-9_-])[0-9a-f]{40}([^A-Za-z0-9_-]|$)/\1 \2/g')"
-    [ "$t" != "$prev" ] || break
-  done
-  # The prefixes are written split ('sb''p_') so this file holds no literal token-shaped string
-  # for a secret scanner to trip on; the shell joins them before grep sees the pattern.
-  printf '%s' "$t" | grep -Eq '(sb''p_|sb_sec''ret_|sk_li''ve_|sk_te''st_|rk_li''ve_|rk_te''st_|whs''ec_|gh''p_|gh''o_|gh''s_|gh''u_|gh''r_|github_''pat_|sntr''ys_|sntr''yu_|cf''ut_|cf''at_|AK''IA[0-9A-Z]{12}|ey''J[A-Za-z0-9_-]{10,}|[A-Fa-f0-9]{64}|[A-Za-z0-9_-]{40,}|-----BEGIN [A-Z ]*PRI''VATE KEY-----)'
-}
+# secret_shaped <text>: 0 when it looks like a credential (scripts/secret-shape.sh, shared with lessons-recon.sh).
+# shellcheck source=SCRIPTDIR/secret-shape.sh
+. "$HERE/secret-shape.sh"
 
 # ---- the lane lock: a mkdir lock in the lane directory --------------------------------------
 HELD=""

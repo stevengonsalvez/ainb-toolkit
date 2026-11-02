@@ -235,21 +235,49 @@ host. A lead may run on any agent and may move hosts; the protocol must not chan
    `scripts/asks.sh` reads every tick on every host.
 5b. Lessons: when something went wrong and you fixed the cause, post one line in your comment
    `cm:lesson <lane> | <what happened and fix> | root cause: <gap>` and append the same text to
-   the lane journal (`scripts/lane-journal.sh append <lane> "<line>"`). The line format is the
-   whole contract; no script reads it yet.
+   the lane journal (`scripts/lane-journal.sh append <lane> "<line>"`), `cm:lesson` prefix included.
+   `<gap>` is the instruction it failed to give: the file and section (`references/lanes.md Lead
+   charter`), named the same way every time so two lessons about one gap cluster. Add `[project-only]`
+   after the gap when the fix is specific to this project (default: generic, a candidate for the
+   toolkit). Add `[failure]` after the gap when the miss was a real failure with a root cause, not a
+   one-off: one such lesson is enough for a skill change, otherwise a gap waits for a second lesson.
+   Never put a secret, a token or project data in a lesson. `scripts/lessons-recon.sh` reads these
+   lines daily (SKILL.md § The tick, lessons loop); up to `lessons.per_lane_per_day` lessons per lane
+   per day count, a gap needs `lessons.min_lessons` lessons or one marked `[failure]`, and an id listed
+   in the project's lessons blocklist (`lessons.rejected_file`) is dropped. The concertmaster turns the
+   clusters into one skill PR and nudges you once ("re-read <section>"): re-read that section then.
 5c. Review relay: check every child PR each pass and relay a CHANGES REQUESTED or BLOCK to the
    worker (§ Relaying review verdicts).
 6. Never writes prod data, never merges, never deploys, never flips a flag on prod.
 7. Decisions: the owner first if present in the session; otherwise `cm:blocked <question>` with
    options and a recommendation, and keep working on anything else.
+8. Every subagent brief you write (worker, reviewer, verdict subagent) says: "never run rm; mktemp -d
+   under the scratchpad and leave it". Why: a harness `rm` inside `bash -c` or a heredoc raises Claude
+   Code's "Dangerous rm operation" approval prompt, which a subagent cannot answer, and the lane stalls
+   for hours (`references/prompt-stalls.md`).
 
 ### What the lead's ticker does (each self-paced tick)
 1. Re-read its issue, plan and lane journal (`scripts/lane-journal.sh tail <lane>`).
+1a. Read the fleet state: `scripts/fleet-state.sh check --worktree <your worktree> --apply` (exit 0 = may
+   go on, exit 1 = must not). The state is ONE `cm:state freeze=<on|off> window=<UTC time>
+   prod=<version> at=<UTC ts>` line in the concertmaster's own worktree comment, found on any host
+   (`worktrees.self_name`). No merge ask and no deploy while `freeze=on`. A missing, malformed, stale
+   (`at` older than 2 ticks of the slowest tick delay: 60 minutes while the quiet delay is 1800 s, never
+   under 30) or ambiguous line (more than one worktree answers to the concertmaster name, or more than
+   one `cm:state` line is present, valid or damaged: the newest is never trusted over the others) means
+   act as `freeze=on`: `--apply` posts `cm:blocked cm:state stale` in your comment and removes it on the
+   next fresh line. Manual toggle: when the concertmaster types `cm:override continue <reason>` into
+   your terminal, run `scripts/fleet-state.sh override <reason>`: it records `cm:override continue
+   until=<UTC ts>` in your comment (2 hours, or the first fresh `cm:state`) and an audit line in your
+   lane journal. The override lifts a STALE line only; it never lifts a fresh `freeze=on`, a stale
+   `freeze=on` stays on, and a missing, malformed or future-dated line still blocks. When the
+   concertmaster pushes `[cm-freeze-...]` into your terminal, it is the same state, only sooner.
 2. `orca host list --json`, then per host `orca worktree list --json` (timeout 30s; an
    unreachable host is skipped, never treated as gone). Find every worktree it owns.
 3. Per owned worker: no output 45 min, so read the pane and nudge with a concrete step; 2 nudges
-   or 2 h idle, so respawn in place (same model and effort) with a handover. PR merged, so tear
-   down. No agent but an open PR, so resume or hand to pr-sweeper.
+   or 2 h idle, so respawn in place (same model and effort) with a handover. Journal every respawn as
+   `respawn cause: <short cause>` (the lessons recon counts the same cause twice as a signal). PR
+   merged, so tear down. No agent but an open PR, so resume or hand to pr-sweeper.
 4. Advance the plan: spawn the next worker when its dependency merged, within the host cap.
 5. Check every open PR it owns: CI, review verdicts (relay them, § Relaying review verdicts),
    migration stamps still above main and other open PRs.
@@ -339,8 +367,9 @@ its ticker does each tick).
   At each checkpoint append what you did this pass, what you decided and why, the PRs you relayed, and what your next
   session needs: `scripts/lane-journal.sh append {{lane_journal_name}} "<one line>"`. No secrets (a
   secret-shaped line is refused), and nothing in it is ever sent to a group.
-- Guard every `rm` on a variable: `rm -rf -- "${VAR:?}/path"`, so an empty
-  variable aborts instead of deleting the wrong tree.
+- Never run `rm`: a harness `rm` inside `bash -c` or a heredoc raises a "Dangerous rm operation"
+  approval prompt that nobody answers, and the lane stalls for hours. `mktemp -d` under your
+  scratchpad and leave it there.
 ```
 
 ## pr-sweeper (lead, persistent)
@@ -365,6 +394,13 @@ Load .agents/skills/pr-sweep/SKILL.md and run it with these interview answers
   6 cadence: 15-minute ticks, no stop condition (persistent lane).
 Group workers drive each PR with .agents/skills/ready-to-ship/SKILL.md until
 `{{evidence_cmd}}` says {{ready_value}}.
+
+Fleet state (every tick, before any merge): `scripts/fleet-state.sh check --worktree <your worktree> --apply`.
+Exit 1 means no merge: `freeze=on` in a fresh `cm:state` line, or a missing, malformed, ambiguous or stale line
+(act as freeze=on and let `--apply` post `cm:blocked cm:state stale`). The concertmaster also sends you one terminal
+message when a freeze starts; the line in its worktree comment is the source of truth, so a lifted freeze needs no
+message. `cm:override continue <reason>` typed into your terminal: `scripts/fleet-state.sh override <reason>`; it
+lifts the stale rule only and never a fresh `freeze=on` (Lead charter 1a).
 
 Merge gate, ALL at the current head sha:
 - {{evidence_cmd}} reports {{ready_value}} for that head.
@@ -394,6 +430,10 @@ Merge gate, ALL at the current head sha:
   scope (pre-existing on main or outside the PR's goal), recorded on the PR and
   filed as an issue. It never waives a pertinent Critical or Major: still
   blocked, set cm:blocked.
+- Every review subagent brief you write (the Opus adversarial review, a verdict subagent) says:
+  "never run rm; mktemp -d under the scratchpad and leave it". Why: a test harness `rm` raised a
+  "Dangerous rm operation" approval prompt that stalled review subagents, and a subagent prompt
+  shows in no worktree comment.
 - {{approved_only_classes}} class: APPROVED only. Any of {{rails_list}}: set
   cm:blocked, do not merge.
 Merge one at a time, one unchained command:
@@ -798,6 +838,9 @@ nothing else changed) to a stamp above the highest of them, then rerun the dupli
 `ls <migrations-dir> | cut -d_ -f1 | sort | uniq -d` (it must print nothing). Main and other
 PRs move while you work: do this on every push, not once. `<migrations-dir>` and the shape of a
 migration file come from the project overlay (`references/project-local.md`).
+Never run rm; mktemp -d under the scratchpad and leave it (a harness rm raises a "Dangerous rm
+operation" approval prompt that nobody answers, and you stall for hours). Say the same in every
+subagent brief you write.
 Instructions: the {{spawner}} may type instructions into your terminal, each with a short id
 (`[cm-i7] <text>`). A newer instruction wins over an older queued one: if they conflict,
 follow the newer, drop the older. Ack each one you act on by id with a line `cm:ack <id>` in
