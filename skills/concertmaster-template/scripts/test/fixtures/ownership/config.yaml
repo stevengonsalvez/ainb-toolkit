@@ -11,7 +11,11 @@ ownership:
     lead-g: lane-g
     lead-aaa: lane-zzz
     lead-b2: lane-b
-  comment_markers: ["workers i own", "owned", "orchestrated"]
+    child-lead: child-lane
+    mixed-lead: mixed-lane
+    esc-lead: esc-lane
+    neg-child-lead: neg-lane
+  comment_markers: ["workers i own", "owned", "orchestrated", "cm:child"]
   comment_stop_words: ["sweep done", "merged today", "held", "cm", "next"]
   scratch_path_regex: "-workspaces-acme-app-(?<worker>[^/]+)/"
   prefixes:

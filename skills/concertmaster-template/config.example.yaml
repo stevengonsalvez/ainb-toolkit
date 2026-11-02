@@ -86,7 +86,12 @@ hosts:
   defaults: { role: general, maxWorkers: 4 }
   per_host:
     local: { role: general, maxWorkers: 6 }
-    # build-mac: { role: native, maxWorkers: 2, hostname: build-mac }   # hostname = `hostname -s` over ssh
+    # build-mac: { role: native, maxWorkers: 2, hostname: build-mac }
+    # hostname = what `hostname -s` prints on that host (case is ignored, a FQDN is cut to its short name).
+    # Set it for every remote host: teardown.sh runs `hostname -s` over ssh and refuses ("ssh target is not
+    # host <h>") when the answer differs from this key; with no key the host's own name (the Orca
+    # environment name) is expected, which a host whose real name differs never matches. An ssh alias that
+    # differs from the host name is given per run in CM_SSH_TARGET.
 
 # Agent types the project does not allow. Each census (discover.sh, classify.sh) lists every
 # terminal under worktrees.path_match whose Orca agentIdentity is one of these as a

@@ -510,7 +510,11 @@ owned by x` is prose, not a list) and is written as a header, followed by `(`,
 ends at ` | `, at a `<stop word>:` (`ownership.comment_stop_words`), at the next
 ALL-CAPS header, at the end of the sentence, or at the end. Parenthesised text is
 ignored (`(cm: nudged)` never cuts a list, `(replaced old-x)` never claims
-`old-x`). `NOT OWNED:` and `not-owned:` are negations, not markers. Only names
+`old-x`). `NOT OWNED:` and `not-owned:` are negations, not markers.
+A `cm:child <name> ...` line (the form the lane charter tells leads to post) also lists a worker, when `cm:child`
+is in `ownership.comment_markers`: one name per line, the first token after the tag; the rest of the line is a
+description and never names another worker (`cm:child x-fix (PR 12 merged)` claims `x-fix` only). It may sit
+beside a `WORKERS I OWN:` list; the lead owns the union. Only names
 that are real worktrees count, so prose and host names never become owners. Two
 leads listing the same worktree flag `owner-contested:<a>,<b>` (the
 alphabetically first lane takes it until one lead drops it). Names are the
