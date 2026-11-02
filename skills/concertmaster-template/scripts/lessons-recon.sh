@@ -29,7 +29,7 @@
 #                         AND carries `[failure]` (the "root-cause failure": the lead says the miss was a failure, not
 #                         a one-off). An unmarked single lesson waits for a second.
 #   max_changes [5]       the PR size cap; qualifying gaps beyond it are deferred to the next run
-#   risk_paths            gaps that touch these force an owner ping: standing-rules.md, SKILL.md "merge gate",
+#   risk_paths            gaps that touch these force an owner ping: SKILL.md "hard rules", SKILL.md "merge gate",
 #                         scripts/teardown.sh (`file` or `file#section words`)
 # Tag: `[project-only]` or `[generic]` on the line wins; otherwise a gap in references/project-local.md or config.yaml,
 # or text naming a PR or issue (#123) or the project path (worktrees.path_match), is project-only; everything else is
@@ -82,7 +82,7 @@ P_MIN="$(num "$(cm_cfg .lessons.min_lessons 2)" 2)"
 P_MAX="$(num "$(cm_cfg .lessons.max_changes 5)" 5)"
 P_CARRY="$(num "$(cm_cfg .lessons.carry_days 7)" 7)"
 P_BLOCKER_RUNS="$(num "$(cm_cfg .lessons.blocker_min_runs 8)" 8)"
-RISK_JSON="$(cm_cfg_json .lessons.risk_paths '["references/standing-rules.md","SKILL.md#merge gate","scripts/teardown.sh"]')"
+RISK_JSON="$(cm_cfg_json .lessons.risk_paths '["SKILL.md#hard rules","SKILL.md#merge gate","scripts/teardown.sh"]')"
 
 # --due: the tick gate.
 stamp_ts=""

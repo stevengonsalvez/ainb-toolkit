@@ -256,15 +256,15 @@ tg() { jq -r --arg g "$1" '.clusters[] | select(.gap == $g) | .tag' <<<"$J"; }
 
 # ---- risk list and owner ping ----
 wl local '[
- {"path":"/w/acme/k1","displayName":"k1","comment":"cm:lesson k1 | a | root cause: references/standing-rules.md section 3 [failure]"},
+ {"path":"/w/acme/k1","displayName":"k1","comment":"cm:lesson k1 | a | root cause: SKILL.md Hard rules item 3 [failure]"},
  {"path":"/w/acme/k2","displayName":"k2","comment":"cm:lesson k2 | b | root cause: SKILL.md Merge gate item 2 [failure]"},
  {"path":"/w/acme/k3","displayName":"k3","comment":"cm:lesson k3 | c | root cause: scripts/teardown.sh gate order [failure]"},
  {"path":"/w/acme/k4","displayName":"k4","comment":"cm:lesson k4 | d | root cause: SKILL.md The tick step 3 [failure]"}
 ]'
 J="$(jrun --dry-run)"
 rk() { jq -r --arg g "$1" '.clusters[] | select(.gap == $g) | .risk' <<<"$J"; }
-[ "$(rk "references/standing-rules.md section 3")" = true ] && [ "$(rk "SKILL.md Merge gate item 2")" = true ] && [ "$(rk "scripts/teardown.sh gate order")" = true ] && [ "$(rk "SKILL.md The tick step 3")" = false ] \
-  && pass "risk list: standing-rules.md, the SKILL.md Merge gate and teardown.sh are risky; the tick section is not" || fail "risk" "$(jq -c '[.clusters[] | {gap,risk}]' <<<"$J")"
+[ "$(rk "SKILL.md Hard rules item 3")" = true ] && [ "$(rk "SKILL.md Merge gate item 2")" = true ] && [ "$(rk "scripts/teardown.sh gate order")" = true ] && [ "$(rk "SKILL.md The tick step 3")" = false ] \
+  && pass "risk list: the SKILL.md Hard rules, the SKILL.md Merge gate and teardown.sh are risky; the tick section is not" || fail "risk" "$(jq -c '[.clusters[] | {gap,risk}]' <<<"$J")"
 has '.proposal.ownerPing == true and (.proposal.ownerPingWhy | length) == 3' && pass "owner ping is set and names the three risky gaps" || fail "ping" "$(jq -c .proposal <<<"$J")"
 wl local '[{"path":"/w/acme/k4","displayName":"k4","comment":"cm:lesson k4 | d | root cause: SKILL.md The tick step 3 [failure]"}]'
 J="$(jrun --dry-run)"
