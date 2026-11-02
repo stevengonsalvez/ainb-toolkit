@@ -119,13 +119,34 @@ def tokens: [ match("[A-Za-z0-9][A-Za-z0-9._-]*"; "g").string | sub("[._-]+$"; "
 def mask: gsub("(?<p>\\([^()]*\\))"; (.p | length) as $n | " " * $n);
 def claims($text; $mk; $stop; $names):
   ($text | mask | mask) as $m
+  # "cm:child <name> (...)": one worker per line, the name is the first token after the tag and the rest
+  # of the line is a description (a PR number or "merged" there never names a worker). Same token shape
+  # as teardown.sh and followups.sh (up to a space, comma or "@host"; a literal "\n" is a newline), but
+  # census-tolerant where they are strict: case is ignored, a leading bracket, quote or backtick and anything from
+  # a parenthesis on are dropped (so "cm:child x-fix(PR 1)" claims x-fix), trailing punctuation is dropped, and a name
+  # is matched without its host, like every other marker list. It starts the comment, a line or a " | "
+  # section, after an optional "cm:<state> ", so "no longer cm:child x" and "(cm:child x)" claim nothing.
+  # Read only when "cm:child" is a configured marker. Other markers go through the header-list parser
+  # below, so "cm:child" is taken out of that regex.
+  | (if ($mk | map(ascii_downcase) | index("cm:child")) != null then
+       ($text | gsub("\\\\n"; "\n")) as $tn
+       | ($tn | mask | mask) as $mn
+       # a match whose text is blanked in the masked copy sits inside a parenthesis: ignored
+       | [ $tn
+         | match("(?:\\A|\\| |\\n)[ \\t]*(?:cm:[A-Za-z-]+[ \\t]+)?cm:child[ \\t]+[\\[`'\"]?([^\\s,@()\\[\\]/`'\"]+)"; "gi")
+         | select($mn[.offset:(.offset + .length)] == .string)
+         | .captures[0].string
+         | sub("[.:;_-]+$"; "") | ascii_downcase | select(. as $t | $names | index($t)) ]
+     else [] end) as $kids
+  | ($mk | map(select(ascii_downcase != "cm:child"))) as $mk
   | ($mk | map(rxesc) | join("|")) as $mre
   | (if ($stop | length) > 0 then "\\b(" + ($stop | map(rxesc) | join("|")) + ")\\s*:" else null end) as $sre
   # strong boundaries (comment start, pipe section, sentence, line, a "cm:<state> " prefix) allow the
   # "few words and a colon" header; weak ones (", " ": " " - ") need the marker right before ( [ or :
   | ("(?:\\A|\\| |[.;] |\\n|cm:[A-Za-z-]+\\s+)\\s*\\b(" + $mre + ")") as $strong
   | ("(?:, |: | - )\\b(" + $mre + ")(?=\\s*[(\\[:])") as $weak
-  | [ ($strong, $weak) as $rx | $m | match($rx; "gi") | .captures[0] as $mk0
+  | (if ($mk | length) == 0 then [] else
+     [ ($strong, $weak) as $rx | $m | match($rx; "gi") | .captures[0] as $mk0
       | select(($text[($mk0.offset + $mk0.length):]) | test("^(\\s*[(\\[:]|(?![^:|()\\n]{0,40}\\bby\\b)[^:|()\\n]{0,40}:)"))
       | select(($text[($mk0.offset + $mk0.length):]) | test("^\\s*\\([^)]*\\b(not|never|no longer)\\b") | not)
       | {offset: $mk0.offset, length: $mk0.length}
@@ -135,7 +156,7 @@ def claims($text; $mk; $stop; $names):
            ([$mrest | match("\\b[A-Z]{2,}[A-Z0-9 ]*:")] | first | .offset?),
            ([$mrest | match("\\.\\s")] | first | .offset?) ]
          | map(select(. != null)) | if length == 0 then ($mrest | length) else min end) as $e
-      | $mrest[:$e] | tokens[] | select(. as $t | $names | index($t)) ] | unique;
+      | $mrest[:$e] | tokens[] | select(. as $t | $names | index($t)) ] end) + $kids | unique;
 def nrm: ascii_downcase | gsub("[^a-z0-9]"; "-");
 
 ($stuckMin // 45) as $stuck

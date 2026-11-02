@@ -332,7 +332,7 @@ echo "== bd runtime files"
 # Dolt store, its backups and gate locks), as on branches older than the
 # .gitignore entries for them.
 bdrt() {
-  : > "$1/.beads.gate.lock"; : > "$1/.beads/embeddeddolt.gate.lock"; : > "$1/.beads/backup.lock"
+  : > "$1/.beads.gate.lock"; : > "$1/.beads/embeddeddolt.gate.lock"; : > "$1/.beads/backup.lock"; : > "$1/.beads/dolt.gate.lock"
   mkdir -p "$1/.beads/embeddeddolt/beads/.dolt" "$1/.beads/backup"
   printf '{}' > "$1/.beads/embeddeddolt/beads/.dolt/config.json"
   printf '{}\n' > "$1/.beads/backup/issues.jsonl"

@@ -93,7 +93,14 @@ CM_SELF_WORKTREE="${CM_SELF_WORKTREE:-$(cm_cfg .worktrees.self_name concertmaste
 # is a directory prefix anywhere, one holding "/" matches the whole path (or its tail), and any
 # other matches the file name. Env wins over config; an explicit empty list ignores nothing; an
 # absent key takes the default.
-CM_IGNORE_UNTRACKED_DEFAULT='/.beads/*.jsonl /.agents/scratch/ /.orca/ /.wrangler/ *.log'
+# Default: tool scratch (.beads/*.jsonl, which also covers .auto-import-issues.jsonl; .agents/scratch/,
+# .orca/, .wrangler/, *.log) and the bd runtime files a running bd writes: .beads/dolt.gate.lock,
+# .beads/embeddeddolt.gate.lock, the .beads/embeddeddolt/ store, .beads/backup.lock, .beads/backup/ and
+# the root-level .beads.gate.lock. All are root-anchored: a src/.beads/... lookalike stays real dirt.
+# The runtime set matches teardown.sh BD_RUNTIME_PATH_RE and its remote allow-list (keep them in step).
+# The *.jsonl entry is census-only: teardown.sh still treats an untracked bd export as precious and
+# refuses without --salvage.
+CM_IGNORE_UNTRACKED_DEFAULT='/.beads/*.jsonl /.beads/dolt.gate.lock /.beads/embeddeddolt/ /.beads/embeddeddolt.gate.lock /.beads/backup.lock /.beads/backup/ /.beads.gate.lock /.agents/scratch/ /.orca/ /.wrangler/ *.log'
 if [ -z "${CM_IGNORE_UNTRACKED+x}" ]; then
   _cm_ign="$(cm_cfg_json .census.ignore_untracked)"
   if [ -z "$_cm_ign" ] || [ "$_cm_ign" = null ]; then
@@ -215,13 +222,14 @@ cm_now_ms() { printf '%s000\n' "$(date +%s)"; }
 # "dir/" is a directory prefix anywhere; another pattern with "/" matches the path or its tail;
 # a bare pattern matches the file name.
 cm_status_dirt() {
-  local line path pat rel hit real=0 ign=0
+  local line path pat rel hit pslash real=0 ign=0
   while IFS= read -r line; do
     [ -n "$line" ] || continue
     hit=0
     case "$line" in
       '?? '*)
         path="${line#\?\? }"; path="${path#\"}"; path="${path%\"}"
+        pslash="${path//[!\/]/}"   # the path's slashes only; the anchored one-level form compares counts
         set -f
         for pat in $CM_IGNORE_UNTRACKED; do
           # the unquoted $pat below is a glob on purpose
@@ -229,9 +237,7 @@ cm_status_dirt() {
           case "$pat" in
             /*/) case "$path" in "${pat#/}"*) hit=1 ;; esac ;;
             /*) rel="${pat#/}"   # anchored at the repo root; a "*" never crosses a "/"
-                if [ "$(printf '%s' "$rel" | tr -cd / | wc -c)" = "$(printf '%s' "$path" | tr -cd / | wc -c)" ]; then
-                  case "$path" in $rel) hit=1 ;; esac
-                fi ;;
+                case "${rel//[!\/]/}" in "$pslash") case "$path" in $rel) hit=1 ;; esac ;; esac ;;
             */) case "$path" in "$pat"*|*/"$pat"*) hit=1 ;; esac ;;
             */*) case "$path" in $pat|*/$pat) hit=1 ;; esac ;;
             *) case "${path##*/}" in $pat) hit=1 ;; esac ;;

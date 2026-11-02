@@ -54,7 +54,10 @@ ownership:
   # A list runs to the next " | ", the next stop word followed by a colon, the next ALL-CAPS
   # header, the end of the sentence, or the end. Parenthesised text is ignored. Write lists
   # with commas, never pipes. A marker after not, never, no longer or dis is a negation.
-  comment_markers: ["workers i own", "workers owned", "my workers", "workers", "owned", "orchestrated"]
+  # "cm:child" is a different shape: each "cm:child <name> (description)" line (the form the lane
+  # charter tells leads to post) claims one worker, the first token after the tag; the rest of the
+  # line never names another worker. Drop it from this list to stop reading those lines as claims.
+  comment_markers: ["workers i own", "workers owned", "my workers", "workers", "owned", "orchestrated", "cm:child"]
   comment_stop_words: ["sweep done", "merged today", "open ready", "held", "needs cm", "stuck check", "hosts read", "next check", "next tick", "next", "note", "cm"]
   # Optional. Session scratch dirs embed the worker's worktree name; a git-only worktree made
   # there inherits that worker's owner. The regex needs a named group "worker".
@@ -73,9 +76,10 @@ census:
   # change or an untracked source file is still dirt. A pattern starting with "/" is anchored at
   # the repo root (a "*" never crosses a "/"), so "/.orca/" does not hide src/.orca/x.ts; one
   # ending in "/" is a directory prefix anywhere; one holding "/" matches the whole path (or its
-  # tail); any other matches the file name. Absent: these five. [] ignores nothing. Env
-  # CM_IGNORE_UNTRACKED (space separated) wins.
-  ignore_untracked: ["/.beads/*.jsonl", "/.agents/scratch/", "/.orca/", "/.wrangler/", "*.log"]
+  # tail); any other matches the file name. Absent: this default list (tool scratch plus the bd
+  # runtime files a running bd writes; "/.beads/*.jsonl" also covers .auto-import-issues.jsonl).
+  # [] ignores nothing. Env CM_IGNORE_UNTRACKED (space separated) wins.
+  ignore_untracked: ["/.beads/*.jsonl", "/.beads/dolt.gate.lock", "/.beads/embeddeddolt/", "/.beads/embeddeddolt.gate.lock", "/.beads/backup.lock", "/.beads/backup/", "/.beads.gate.lock", "/.agents/scratch/", "/.orca/", "/.wrangler/", "*.log"]
 
 hosts:
   home: local                      # host the concertmaster runs on
@@ -85,7 +89,12 @@ hosts:
   defaults: { role: general, maxWorkers: 4 }
   per_host:
     local: { role: general, maxWorkers: 6 }
-    # build-mac: { role: native, maxWorkers: 2, hostname: build-mac }   # hostname = `hostname -s` over ssh
+    # build-mac: { role: native, maxWorkers: 2, hostname: build-mac }
+    # hostname = what `hostname -s` prints on that host (case is ignored, a FQDN is cut to its short name).
+    # Set it for every remote host: teardown.sh runs `hostname -s` over ssh and refuses ("ssh target is not
+    # host <h>") when the answer differs from this key; with no key the host's own name (the Orca
+    # environment name) is expected, which a host whose real name differs never matches. An ssh alias that
+    # differs from the host name is given per run in CM_SSH_TARGET.
 
 # Agent types the project does not allow. Each census (discover.sh, classify.sh) lists every
 # terminal under worktrees.path_match whose Orca agentIdentity is one of these as a

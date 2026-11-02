@@ -100,6 +100,34 @@ S=acme-app
   row scratch-wt $S "" none '{"path": "/tmp/agent-1000/-home-user-workspaces-acme-app-wa-alpha/abc/scratchpad/scratch-wt", "source": "git", "inOrca": false}'
   # a git-only worktree whose scratch parent is gone, no ledger worker, no PR: an untracked-lane, still counted as an orphan
   row lost-wt $S "" none '{"path": "/tmp/agent-1000/-home-user-workspaces-acme-app-vanished-worker/abc/scratchpad/lost-wt", "source": "git", "inOrca": false}'
+  # cm:child lines (lane charter form): one name per line, the rest of the line is a description
+  row child-lead $S $'cm:working\ncm:child ch-one (PR 12 merged, tests green)\ncm:child CH-Two. merged #7 ch-nope\n(cm:child ch-paren)\ncm:child ch-three\ncm:child cm_under (x)\ncm:child cm-host@host-b (on another host)\ncm:child cm-nosp(PR 12 merged)\ncm:child `cm-tick` ok\ncm:child [cm-brk]\ncm:child cm-slash/ here\nnote (retired | cm:child cm-inparen)\ncm:working cm:child cm-pref\ncm:child (renamed) cm-fall' live
+  row cm-nosp $S "" live
+  row cm-tick $S "" live
+  row cm-brk $S "" live
+  row cm-slash $S "" live
+  row cm-inparen $S "" live
+  row cm-pref $S "" live
+  row cm-fall $S "" live
+  row cm_under $S "" live
+  row cm-host $S "" live
+  row cm-esc $S "" live
+  row cm-esc2 $S "" live
+  row cm-neg $S "" live
+  row cm-neg2 $S "" live
+  row ch-one $S "" live
+  row ch-two $S "" live
+  row ch-three $S "" live
+  row ch-nope $S "" live
+  row ch-paren $S "" live
+  row merged $S "" live
+  row esc-lead $S 'cm:working\ncm:child cm-esc (PR 1)\ncm:child cm-esc2' live
+  row neg-child-lead $S $'no longer cm:child cm-neg | NOT OWNED: cm-neg2' live
+  row mixed-lead $S $'WORKERS I OWN: mx-one (PR 9), mx-two\ncm:child mx-three: merged\ncm:child mx-four' live
+  row mx-one $S "" live
+  row mx-two $S "" live
+  row mx-three $S "" live
+  row mx-four $S "" live
   # never-touch: by repo and by worktree name, never owner, never flagged
   row other-x other-repo "" live
   row nx $S "" live
@@ -134,6 +162,27 @@ expect_flag() { # expect_flag <label> <name> <flag> <yes|no>
   if { [ "$4" = yes ] && [ "$has" = true ]; } || { [ "$4" = no ] && [ "$has" = false ]; }; then pass "$1"; else fail "$1" "flag $3 present=$has"; fi
 }
 
+expect_owner "cm:child line (description in parentheses) is owned"     ch-one child-lane '^comment:child-lead$'
+expect_owner "cm:child name is case-insensitive and drops a trailing dot" ch-two child-lane '^comment:child-lead$'
+expect_owner "cm:child on the last line is owned"                     ch-three child-lane '^comment:child-lead$'
+expect_flag  "only the first token of a cm:child line is a name: orphan" ch-nope ORPHAN yes
+expect_flag  "a cm:child inside a parenthesis claims nothing: orphan"  ch-paren ORPHAN yes
+expect_flag  "'merged' / a PR number in a description is not a name: orphan" merged ORPHAN yes
+expect_owner "cm:child name with an underscore is whole (teardown/followups shape)" cm_under child-lane '^comment:child-lead$'
+expect_owner "cm:child after a cm:<state> prefix on the same line is read" cm-pref child-lane '^comment:child-lead$'
+expect_flag  "cm:child with a parenthesised first token does not fall through to the next word: orphan" cm-fall ORPHAN yes
+expect_owner "cm:child name directly followed by a parenthesis is whole"  cm-nosp child-lane '^comment:child-lead$'
+expect_owner "cm:child name in brackets is whole"                    cm-brk child-lane '^comment:child-lead$'
+expect_owner "cm:child name before a slash is whole"                  cm-slash child-lane '^comment:child-lead$'
+expect_flag  "cm:child after a pipe inside a parenthesis claims nothing: orphan" cm-inparen ORPHAN yes
+expect_owner "cm:child name in backticks is whole"                    cm-tick child-lane '^comment:child-lead$'
+expect_owner "cm:child <name>@<host> claims the name"                  cm-host child-lane '^comment:child-lead$'
+expect_flag  "'no longer cm:child x' is not a claim: orphan"          cm-neg ORPHAN yes
+expect_flag  "a name after 'NOT OWNED:' beside a cm:child lead is not claimed: orphan" cm-neg2 ORPHAN yes
+expect_owner "mixed comment: WORKERS I OWN list and cm:child lines both count" mx-one mixed-lane '^comment:mixed-lead$'
+expect_owner "mixed comment: second name of the list"                 mx-two mixed-lane '^comment:mixed-lead$'
+expect_owner "mixed comment: cm:child with a colon after the name"    mx-three mixed-lane '^comment:mixed-lead$'
+expect_owner "mixed comment: cm:child after the list"                 mx-four mixed-lane '^comment:mixed-lead$'
 expect_owner "owned by prefix (wa-)"                              wa-alpha lane-a '^prefix$'
 expect_owner "owned by a lead's comment list (WORKERS I OWN)"        odd-beta lane-a '^comment:lead-a$'
 expect_owner "owned via the ORCHESTRATED marker after a pipe"        odd-eta lane-a '^comment:lead-a$'
@@ -199,7 +248,7 @@ got="$(printf '%s' "$OUT" | jq -r '[.ownership.leadDead[] | select(.lead == "lea
 eq "ghost lead with nothing owned is not LEAD-DEAD" "$got" 0
 # the summary
 got="$(printf '%s' "$OUT" | jq -r '"\(.ownership.configured) orphans=\(.ownership.orphans)"')"
-eq "summary counts the 16 orphans" "$got" "true orphans=16"
+eq "summary counts the 23 orphans" "$got" "true orphans=23"
 
 # --- lead with no worktree: only a ledger-recorded lead on a host that answered in full ---
 jq -c 'select(.displayName != "lead-b")' "$ROOT/rows2.ndjson" \
@@ -290,7 +339,7 @@ eq "no config: ownership skipped, no ORPHAN guessed" "$got" "false 0"
 
 # --- table output carries the owner column and the flags ---
 TABLE="$("$HERE/../classify.sh" --table < "$ROOT/discover.json" 2>/dev/null)"
-if printf '%s' "$TABLE" | grep -q '^ownership: orphans=16 lead-dead=1'; then pass "--table prints the ownership line"; else fail "--table prints the ownership line" ""; fi
+if printf '%s' "$TABLE" | grep -q '^ownership: orphans=23 lead-dead=1'; then pass "--table prints the ownership line"; else fail "--table prints the ownership line" ""; fi
 if printf '%s' "$TABLE" | grep -E 'zzz-gamma' | grep -q 'ORPHAN'; then pass "--table shows the ORPHAN flag on the row"; else fail "--table shows the ORPHAN flag on the row" ""; fi
 
 if [ -n "${OWNERSHIP_SAMPLE:-}" ]; then printf '%s\n' "$TABLE" > "$OWNERSHIP_SAMPLE"; fi

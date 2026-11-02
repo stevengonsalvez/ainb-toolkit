@@ -66,7 +66,7 @@
 #     github.exclude_repo_patterns)
 #   - tree is dirty, or HEAD has commits on no remote (unpushed), or any git
 #     check itself failed (a failed check is never read as clean). Untracked
-#     bd runtime state (.beads.gate.lock, .beads/embeddeddolt[.gate.lock],
+#     bd runtime state (.beads.gate.lock, .beads/dolt.gate.lock, .beads/embeddeddolt[.gate.lock],
 #     .beads/backup[.lock]) is not dirt. Untracked or ignored, it is always
 #     precious: it refuses without --salvage and is copied out with it. On
 #     --apply the untracked paths are deleted after the salvage and git status
@@ -315,8 +315,9 @@ for _rn in $(cm_cfg .worktrees.regenerable_ignored); do
   REGEN_RE="$REGEN_RE|(^|/)$(printf '%s' "$_rn" | sed 's/[].[\*^$()+?{|]/\\&/g')\$"
 done
 # bd runtime paths (relative to the worktree root): the embedded Dolt store,
-# its backups and the gate locks bd 1.3 takes around them.
-BD_RUNTIME_PATH_RE='^(\.beads\.gate\.lock|\.beads/embeddeddolt\.gate\.lock|\.beads/backup\.lock|\.beads/(embeddeddolt|backup)(/.*)?)$'
+# its backups and the gate locks bd 1.3 takes around them. Keep in step with
+# CM_IGNORE_UNTRACKED_DEFAULT in lib.sh (the census ignore list) and the allow-list in RM_BDRT_SCRIPT.
+BD_RUNTIME_PATH_RE='^(\.beads\.gate\.lock|\.beads/dolt\.gate\.lock|\.beads/embeddeddolt\.gate\.lock|\.beads/backup\.lock|\.beads/(embeddeddolt|backup)(/.*)?)$'
 BDRT=""
 
 printf 'teardown %s on %s (%s)\n' "$IN" "$HOST" "$MODE"
@@ -1474,7 +1475,7 @@ cd -- "$wt" || exit 1
 for p in "$@"; do
   case "$p" in *..*) exit 2 ;; esac
   case "$p" in
-    .beads.gate.lock|.beads/embeddeddolt.gate.lock|.beads/backup.lock) ;;
+    .beads.gate.lock|.beads/dolt.gate.lock|.beads/embeddeddolt.gate.lock|.beads/backup.lock) ;;
     .beads/embeddeddolt|.beads/backup|.beads/embeddeddolt/*|.beads/backup/*) ;;
     *) exit 2 ;;
   esac
