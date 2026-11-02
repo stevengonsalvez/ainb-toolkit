@@ -73,9 +73,10 @@ census:
   # change or an untracked source file is still dirt. A pattern starting with "/" is anchored at
   # the repo root (a "*" never crosses a "/"), so "/.orca/" does not hide src/.orca/x.ts; one
   # ending in "/" is a directory prefix anywhere; one holding "/" matches the whole path (or its
-  # tail); any other matches the file name. Absent: these five. [] ignores nothing. Env
-  # CM_IGNORE_UNTRACKED (space separated) wins.
-  ignore_untracked: ["/.beads/*.jsonl", "/.agents/scratch/", "/.orca/", "/.wrangler/", "*.log"]
+  # tail); any other matches the file name. Absent: this default list (tool scratch plus the bd
+  # runtime files a running bd writes; "/.beads/*.jsonl" also covers .auto-import-issues.jsonl).
+  # [] ignores nothing. Env CM_IGNORE_UNTRACKED (space separated) wins.
+  ignore_untracked: ["/.beads/*.jsonl", "/.beads/dolt.gate.lock", "/.beads/embeddeddolt/", "/.beads/embeddeddolt.gate.lock", "/.beads/backup.lock", "/.beads/backup/", "/.beads.gate.lock", "/.agents/scratch/", "/.orca/", "/.wrangler/", "*.log"]
 
 hosts:
   home: local                      # host the concertmaster runs on
