@@ -254,11 +254,23 @@ BEFORE asking.
                                                └───────────┘
 ```
 
-1. **Wake.** Read the ledger. Check `gh api rate_limit` (hard rule 19). `df -h /` locally: under
+1. **Wake.** Run `scripts/ledger-guard.sh` first: exit 3 means the ledger in `$CM_HOME` belongs
+   to another project (a leaked `CM_HOME` or `CM_LEDGER`); stop the tick, read nothing from it,
+   report the refusal (it names both projects), and fix the environment (`references/ledger.md`
+   § Project guard). Then read the ledger. Check `gh api rate_limit` (hard rule 19). `df -h /` locally: under
    `cfg.hosts.min_free_disk_gb` free, spawn nothing.
 2. **Discover.** `scripts/discover.sh > $CM_HOME/last-discover.json`
    then `scripts/classify.sh --table < $CM_HOME/last-discover.json`.
-   Read the table, not the JSON. Also run `scripts/abrupt.sh` (sessions cut off
+   Read the table, not the JSON. **Census line, every tick:**
+   `scripts/classify.sh --census < $CM_HOME/last-discover.json` prints `census: orphans N,
+   unknown-git N, dirty N (target 0)`, one `  <kind>: <worktree> @ <host>: <reason>` row for
+   everything over 0, and `other-project: N (listed apart, not counted)`. Paste it as printed
+   into the report (§ Reporting); never hand-write or trim it. `unknown-git` here means Orca
+   AND ssh both failed on that host (the reason says which); a row the census names gets its own
+   item row. `other-project` rows (another repo, or a `never_touch` name by exact match; a row of
+   THIS repo only while its git is known and clean) are never touched and never orphans. A clean
+   git worktree of this repo with no Orca row, ledger worker or PR is an `untracked-lane`:
+   counted as an orphan, resolved by adopting it or tearing it down per the gates, never hidden. Also run `scripts/abrupt.sh` (sessions cut off
    by a restart) and `scripts/waiting.sh` (sessions blocked on a question menu or the
    autocompact prompt).
    Then `scripts/runtime-check.sh` (an Orca runtime restart that left a lane
@@ -437,10 +449,12 @@ Classes from `scripts/classify.sh` map onto it:
 | `standing-dead` | running (dead) | standing lane with no agent at all (no agent pane, no live terminal, or git-only): respawn in place with `claude --continue` in its worktree, only by running `scripts/resume.sh --host <host> --worktree-id <id> --path <worktree>` for that one row (never a hand-typed `terminal create`; give the call a 600000 ms Bash timeout, or run it in the background). Exit 4: a resume run is in progress, do nothing for that lane this tick. Exit 5: no roster row matches, respawn that lane by hand. A git-only lane Orca does not list is `missing` there: respawn it by hand. Hand any open PR to pr-sweeper; never retire or teardown |
 | `done-merged` | done | single-task worker with every epic bead closed: teardown worktree (after first boot; honour kill-list decisions). Standing lane: idle, never teardown |
 | `done-selfreported` | done only if every epic bead is closed | open beads: back to running, nudge to continue them. Else: single-task worker retired, open PR to pr-sweeper, teardown only when the PR merges/closes (no PR: after the owner approves); standing lane goes idle. A `cm:retire` comment (whole token) lands here too, as if every agent had reported done |
-| `unknown-git` | unchanged | investigate (remote git state not collected, a git check failed, or path gone); never teardown |
+| `unknown-git` | unchanged | investigate (a remote host where BOTH Orca and ssh failed to give git state, a git check failed, or path gone; the reason names which and why); never teardown |
 | `dirty-or-unpushed` | blocked-on-owner | escalate with a diff summary; never delete |
 | `orphan-git-only` | (adopted) | open PR to pr-sweeper; else ask |
 | `idle` | (adopted) | standing lane: leave idle or hand work. Otherwise adopt into a lane or ask |
+| `other-project` | n/a | not this project: a repo other than `worktrees.orca_repo`, or a `worktrees.never_touch` name (exact match, never a prefix). A row of this repo on that list is `other-project` only while its git is known and clean; dirty, unpushed or unknown git keeps its own class so work never hides. Never touched, never an orphan, never counted in the census (listed apart) |
+| `untracked-lane` | counted as an orphan | a clean git worktree of this repo with no Orca row, no ledger worker and no PR at all. Ask the likely lane lead, adopt it into Orca, or tear it down per the teardown gates. A merged or closed PR keeps `done-merged`; an open one goes to pr-sweeper |
 | `main-checkout` | n/a | never touch |
 | `host-offline` | unchanged | retry next tick |
 
@@ -496,7 +510,7 @@ worktree path's last segment, which equals the Orca display name.
 
 | flag | meaning | action |
 |---|---|---|
-| `ORPHAN` | in scope, no owner by any rule | ask the likely lane lead, record `orphanAskedAt` on the worker's ledger row, tear down only after 2 ticks plus the lead's loop interval, and only for the classes the row's suggest names (idle, orphan-git-only, done-merged, done-selfreported, never standing, never `has-child-agent`); every other class is asked about, never torn down on this flag. A family that keeps appearing gets a prefix |
+| `ORPHAN` | in scope, no owner by any rule | ask the likely lane lead, record `orphanAskedAt` on the worker's ledger row, tear down only after 2 ticks plus the lead's loop interval, and only for the classes the row's suggest names (idle, orphan-git-only, untracked-lane, done-merged, done-selfreported, never standing, never `has-child-agent`); every other class is asked about, never torn down on this flag. A family that keeps appearing gets a prefix |
 | `LEAD-DEAD` | a lane lead has no live session while it owns open work (open = class not done-merged and PR not merged or closed); or the ledger records the lead as spawned and its host answered in full yet it has no worktree | respawn in place (only through `scripts/resume.sh`), else hand its items to another lead and report it |
 
 Open work is counted per lead: a lead's own comment claims are its work, and
@@ -1024,7 +1038,7 @@ When there is no ledger:
 |---|---|
 | Host unreachable (laptop asleep, VPN down) | mark offline (`offlineSince`), keep its workers' state, no teardown, retry next tick |
 | Orca says "working" but no output for hours | stuck; read pane; nudge or escalate |
-| Worktree in git but not Orca | classify by branch PR state; teardown if merged/closed and clean (remote hosts: unknown-git, see Open config) |
+| Worktree in git but not Orca | classify by branch PR state; teardown if merged/closed and clean (remote hosts: not discovered, see Open config) |
 | Dirty tree or unpushed commits on a merged branch | never delete; escalate with a diff summary (subagent writes it) |
 | Two agents in one worktree | flag; never send to either until the owner picks one |
 | Agent showing an AskUserQuestion menu | never type into it; menu keys for a decided answer, else escalate |
@@ -1108,6 +1122,20 @@ next: trigger prod for the 16:00 window
   | dev-sweeper     | none                   | no lead              | 0            | none       |
   ```
 
+- **Census line, required in EVERY tick report, right after the programme table:**
+  `census: orphans N, unknown-git N, dirty N (target 0)`, then one row per item over 0 naming
+  worktree, host and reason, then `other-project: N (listed apart, not counted)`. It is data, not
+  prose: paste the output of `scripts/classify.sh --census` (tick step 2) and never hand-write or
+  trim it. Each row it names also gets its own row with its next action. `orphans ?` means
+  ownership is not configured, never zero. A report without this line is incomplete.
+
+  ```text
+  census: orphans 0, unknown-git 1, dirty 1 (target 0)
+    unknown-git: lane-a @ host-b: git state not collected: orca terminal: timed out after 30s waiting for git output; ssh: exit 255 (host host-b)
+    dirty: lane-b @ host-a: dirty:2, unpushed:1 (class dirty-or-unpushed)
+  other-project: 6 (listed apart, not counted)
+  ```
+
 - Three columns, `thread | state | next`, one row per live thread. `state` under
   12 words, present tense; `next` 5 words max or `blocked: <what>`.
 - One `next:` line: the single recommended action.
@@ -1138,8 +1166,9 @@ shellcheck clean.
 | script | does |
 |---|---|
 | `scripts/lib.sh` | shared helpers: config loader (`cm_cfg`), ORCA resolution, portable timeout, org filter |
-| `scripts/discover.sh` | every host's Orca worktrees, local git-only worktrees, PR state, to one JSON doc; unreachable host = `reachable:false`. With `agents.forbidden` set it also lists the terminals under `path_match` with their `agentIdentity`; a failed or cut-off terminal list = `terminalScope.hosts[].ok:false` |
-| `scripts/classify.sh [--table]` | one class per item (rules in `classify.jq`), ledger-aware: `standing-idle` for idle sweepers and leads, beads-gate suggest for epic owners; `CM_STUCK_MIN` default 45. Forbidden-agent check: `.violations` rows and `.violationCheck`, printed by `--table` as `violations: <n>` plus `VIOLATION` rows (§ The tick, step 2). Ownership (§ Ownership): `owner` and `ownerSource` per row, flags `ORPHAN` and `LEAD-DEAD`, `.ownership` summary; `cm:keep` and `cm:retire` comments (§ Session state machine) |
+| `scripts/discover.sh` | every host's Orca worktrees, local git-only worktrees, PR state, to one JSON doc; unreachable host = `reachable:false`. With `agents.forbidden` set it also lists the terminals under `path_match` with their `agentIdentity`; a failed or cut-off terminal list = `terminalScope.hosts[].ok:false`. Git state of a remote host's rows: one short-lived `orca terminal create --environment <host>` per host (hosts in parallel) runs a one-line `sh` script (`git status --porcelain`, `rev-list`, `branch --show-current` per worktree of the repo), is read to an end marker (`CM_GIT_TIMEOUT`, 30s) and closed by its exact handle; ssh is the fallback. `gitScope.hosts[]` records `via` (`orca`, `ssh`, `local`) or the error of both, so `unknown-git` means Orca and ssh both failed or timed out, never clean, never gone. Untracked tool scratch (`census.ignore_untracked`) is `git.ignoredUntracked`, not dirty |
+| `scripts/classify.sh [--table\|--census]` | one class per item (rules in `classify.jq`), ledger-aware: `standing-idle` for idle sweepers and leads, beads-gate suggest for epic owners; `CM_STUCK_MIN` default 45. Forbidden-agent check: `.violations` rows and `.violationCheck`, printed by `--table` as `violations: <n>` plus `VIOLATION` rows (§ The tick, step 2). Ownership (§ Ownership): `owner` and `ownerSource` per row, flags `ORPHAN` and `LEAD-DEAD`, `.ownership` summary; `cm:keep` and `cm:retire` comments (§ Session state machine). `--census` prints the tick's census line (`census: orphans N, unknown-git N, dirty N (target 0)`), each row over 0 as `<kind>: <worktree> @ <host>: <reason>`, and the `other-project` count (JSON: `.census`); orphans is `?` without an ownership config |
+| `scripts/ledger-guard.sh [ledger]` | tick step 1: exit 0 when the ledger is this project's (or the project id is unset, or no ledger yet), 3 when it belongs to another project or sits unstamped outside this project's state dir; reason on stderr; `lib.sh` `cm_ledger_guard` is the rule, also applied by `cm_ledger_write`, `teardown.sh`, `classify.sh` and `discover.sh` (`references/ledger.md` § Project guard) |
 | `scripts/abrupt.sh` | sessions cut off by a restart (background work killed, `/loop` resume pending, agent fell back to a shell) and duplicate live agents in one worktree; TSV |
 | `scripts/waiting.sh` | sessions showing a question menu or the autocompact prompt (`BLOCKED PROMPT` row, idle 2 minutes or more), with minutes waiting and the question; TSV |
 | `scripts/asks.sh [--json] [--peek]` | every `cm:ask`, `cm:blocked` and `cm:waiting-owner` on any line of any lane comment (also split on " \| ") on every host; unreachable hosts listed; `$CM_HOME/asks-seen.json` ages each item (`older-than-1-tick` on a second consecutive run); run once per tick (tick step 4) |
@@ -1184,8 +1213,8 @@ shellcheck clean.
 Every unresolved project item lives in `cfg.open_questions` and is mirrored
 here by the project when it copies this template. Defaults in use until the
 owner decides. Known gap in the template itself: remote git-only worktrees are
-not discovered (`discover.sh` runs `git worktree list` on the local host only;
-remote rows carry `git: null`, class `unknown-git`).
+not discovered (`discover.sh` runs `git worktree list` for git-only rows on the local host only;
+a remote host's Orca rows get their git state through Orca or ssh, see `scripts/discover.sh`).
 
 Telemetry needs two required values before anything is sent: `cfg.telemetry.base_url`
 and `cfg.telemetry.tenant_id` (or `MC_BASE_URL` and `MC_TENANT_ID`, or the same

@@ -70,6 +70,9 @@ fi
 CM_ORG="${CM_ORG:-$(cm_cfg .github.org)}"
 CM_REPO="${CM_REPO:-$(cm_cfg .github.main_repo)}"
 CM_PROJECT="${CM_PROJECT:-$(cm_cfg .project.name project)}"
+# This project's id (config project.id), stamped on the ledger as `project` and checked by
+# cm_ledger_guard. Unset: no ledger is judged foreign (legacy configs keep working).
+CM_PROJECT_ID="${CM_PROJECT_ID:-$(cm_cfg .project.id)}"
 CM_OWNER_NAME="${CM_OWNER_NAME:-$(cm_cfg .project.owner.name owner)}"
 CM_OWNER_ID="${CM_OWNER_ID:-$(cm_cfg .project.owner.id owner)}"
 CM_TZ="${CM_TZ:-$(cm_cfg .schedule.timezone UTC)}"
@@ -83,6 +86,22 @@ CM_PATH_MATCH="${CM_PATH_MATCH:-$(cm_cfg .worktrees.path_match)}"
 CM_FORBIDDEN_AGENTS="${CM_FORBIDDEN_AGENTS-$(cm_cfg .agents.forbidden | tr '[:upper:]' '[:lower:]')}"
 # The concertmaster's own worktree name: never torn down.
 CM_SELF_WORKTREE="${CM_SELF_WORKTREE:-$(cm_cfg .worktrees.self_name concertmaster)}"
+
+# Untracked paths that never make a worktree dirty (census.ignore_untracked): tool scratch that
+# every lane writes. Space-separated globs. A leading "/" anchors at the repo root ("/dir/" is a
+# prefix, "/a/*.x" matches one level, a "*" never crosses a "/"); otherwise a pattern ending in "/"
+# is a directory prefix anywhere, one holding "/" matches the whole path (or its tail), and any
+# other matches the file name. Env wins over config; an explicit empty list ignores nothing; an
+# absent key takes the default.
+CM_IGNORE_UNTRACKED_DEFAULT='/.beads/*.jsonl /.agents/scratch/ /.orca/ /.wrangler/ *.log'
+if [ -z "${CM_IGNORE_UNTRACKED+x}" ]; then
+  _cm_ign="$(cm_cfg_json .census.ignore_untracked)"
+  if [ -z "$_cm_ign" ] || [ "$_cm_ign" = null ]; then
+    CM_IGNORE_UNTRACKED="$CM_IGNORE_UNTRACKED_DEFAULT"
+  else
+    CM_IGNORE_UNTRACKED="$(printf '%s' "$_cm_ign" | jq -r 'if type == "array" then map(select((type == "string") and (length > 0) and (test("[[:space:]]") | not))) | join(" ") else "" end' 2>/dev/null || true)"
+  fi
+fi
 
 # Resolve the Orca CLI per the orca-cli skill: $ORCA_CLI_COMMAND, else
 # orca-ide on Linux outside an Orca terminal (bare `orca` there is the GNOME
@@ -189,6 +208,43 @@ cm_file_fresh() {
 
 cm_now_ms() { printf '%s000\n' "$(date +%s)"; }
 
+# cm_status_dirt: stdin is `git status --porcelain --untracked-files=all`; prints "<real> <ignored>".
+# A tracked change or an untracked source file is real dirt. An untracked path matching
+# CM_IGNORE_UNTRACKED is ignored (counted, never dirty). Tracked changes are never ignored.
+# Pattern forms: "/dir/" and "/a/*.x" are anchored at the repo root (a "*" never crosses a "/");
+# "dir/" is a directory prefix anywhere; another pattern with "/" matches the path or its tail;
+# a bare pattern matches the file name.
+cm_status_dirt() {
+  local line path pat rel hit real=0 ign=0
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    hit=0
+    case "$line" in
+      '?? '*)
+        path="${line#\?\? }"; path="${path#\"}"; path="${path%\"}"
+        set -f
+        for pat in $CM_IGNORE_UNTRACKED; do
+          # the unquoted $pat below is a glob on purpose
+          # shellcheck disable=SC2254
+          case "$pat" in
+            /*/) case "$path" in "${pat#/}"*) hit=1 ;; esac ;;
+            /*) rel="${pat#/}"   # anchored at the repo root; a "*" never crosses a "/"
+                if [ "$(printf '%s' "$rel" | tr -cd / | wc -c)" = "$(printf '%s' "$path" | tr -cd / | wc -c)" ]; then
+                  case "$path" in $rel) hit=1 ;; esac
+                fi ;;
+            */) case "$path" in "$pat"*|*/"$pat"*) hit=1 ;; esac ;;
+            */*) case "$path" in $pat|*/$pat) hit=1 ;; esac ;;
+            *) case "${path##*/}" in $pat) hit=1 ;; esac ;;
+          esac
+          [ "$hit" = 1 ] && break
+        done
+        set +f ;;
+    esac
+    if [ "$hit" = 1 ]; then ign=$((ign + 1)); else real=$((real + 1)); fi
+  done
+  printf '%s %s\n' "$real" "$ign"
+}
+
 # cm_transcript_mtime <worktree path>: newest Claude transcript mtime (epoch seconds) for the
 # worktree, or "unknown" when the project dir or any transcript is missing (a lane we cannot see
 # is never treated as idle). Claude keys the dir by the path with every non-alphanumeric as "-".
@@ -212,6 +268,62 @@ cm_transcript_mtime() {
 CM_MENU_RE='enter to select|enter to confirm|esc to cancel|arrow keys|tab/arrow'
 # shellcheck disable=SC2034  # read by boot-sweep.sh
 CM_CLAUDE_RE='claude code|\? for shortcuts|esc to interrupt|shift\+tab|bypass permissions|accept edits|auto-accept'
+
+# ---- ledger project guard ---------------------------------------------------------------------
+# Two projects can share a host, each with its own state dir (~/.concertmaster, ~/.concertmaster-<other>).
+# A CM_HOME or CM_LEDGER leaked from the other project's session made a lead here read the other
+# project's ledger. cm_ledger_guard refuses a ledger that is not this project's.
+#
+# cm_project_state_dir: this project's default state dir (config state_dir, else ~/.concertmaster).
+cm_project_state_dir() {
+  local d
+  d="$(cm_cfg .state_dir)"
+  # shellcheck disable=SC2088
+  case "$d" in "~/"*) d="$HOME/${d#\~/}" ;; esac
+  printf '%s\n' "${d:-$HOME/.concertmaster}"
+}
+
+# _cm_realdir <dir>: the physical path of an existing directory, else the argument as given.
+_cm_realdir() { (cd "$1" 2>/dev/null && pwd -P) || printf '%s\n' "$1"; }
+
+# cm_ledger_guard [--create] [ledger path]: 0 when the ledger may be read or written by this project,
+# 3 (with the reason on stderr) when it belongs to another project. Does nothing and returns 0 when
+# the project id is unset (project.id / CM_PROJECT_ID) or the ledger does not exist yet (--create:
+# the file is about to be made, so only its location is judged). Rules, first hit wins:
+#   - the ledger has a `project` field: it must equal this project's id (case-insensitive);
+#   - no field (a legacy ledger): the file must sit under this project's state dir
+#     (cm_project_state_dir); then it is read with a warning and stamped by the next
+#     cm_ledger_write. Outside that dir it is refused with how to proceed. A legacy ledger is
+#     never rewritten by hand.
+cm_ledger_guard() {
+  local create=0 L have id def real dir
+  if [ "${1:-}" = "--create" ]; then create=1; shift; fi
+  L="${1:-$(cm_ledger_path)}"
+  id="${CM_PROJECT_ID:-}"
+  [ -n "$id" ] || return 0
+  if [ ! -s "$L" ] && [ "$create" = 0 ]; then return 0; fi
+  def="$(cm_project_state_dir)"
+  if [ -s "$L" ]; then
+    have="$(jq -r 'if type == "object" then (.project // "" | tostring) else "" end' "$L" 2>/dev/null || true)"
+    if [ -n "$have" ]; then
+      if [ "$(cm_lower "$have")" = "$(cm_lower "$id")" ]; then return 0; fi
+      cm_warn "REFUSED: ledger $L belongs to project '$have'; this session runs project '$id'. Nothing was read or written. CM_HOME=${CM_HOME:-unset} CM_LEDGER=${CM_LEDGER:-unset} probably leaked in from the other project: unset them (this project's state dir is $def)."
+      return 3
+    fi
+  fi
+  dir="$(_cm_realdir "$(dirname "$L")")"; real="$(_cm_realdir "$def")"
+  case "$dir/" in
+    "$real/"*)
+      if [ -s "$L" ]; then cm_warn "ledger $L has no project field (legacy file): read as project '$id' because it sits in this project's state dir; the next cm_ledger_write stamps it. Not rewritten by hand."; fi
+      return 0 ;;
+  esac
+  if [ -s "$L" ]; then
+    cm_warn "REFUSED: ledger $L has no project field and sits outside this project's state dir $def (project '$id'), so it may belong to another project. Nothing was read or written. If it is this project's, copy it to $def/ledger.json (it is stamped on its next write); otherwise unset CM_HOME and CM_LEDGER."
+  else
+    cm_warn "REFUSED: a new ledger would be created at $L, outside this project's state dir $def (project '$id'). Nothing was written. Unset CM_HOME and CM_LEDGER, or use $def."
+  fi
+  return 3
+}
 
 # ---- ledger writes ----------------------------------------------------------------------------
 # EVERY write to the ledger goes through cm_ledger_write (references/ledger.md). 25 Oct 2026, 22:33Z:
@@ -314,7 +426,10 @@ cm_ledger_write() {
   command -v jq >/dev/null 2>&1 || { cm_warn "ledger write refused: jq missing"; return 1; }
   L="$(cm_ledger_path)"
   if [ "$init" = 1 ]; then
+    cm_ledger_guard --create "$L" || return 3
     mkdir -p -- "$(dirname "$L")" 2>/dev/null || { cm_warn "ledger write refused: cannot create $(dirname "$L")"; return 1; }
+  else
+    cm_ledger_guard "$L" || return 3
   fi
   if _cm_ledger_lock_held; then held=1; fi
   cm_ledger_lock || return 1
@@ -360,6 +475,12 @@ _cm_ledger_write_locked() {
     if ! err="$(jq ${@+"$@"} "$filter" "$L" 2>&1 >"$tmp")"; then
       rm -f -- "$tmp"; cm_warn "ledger write refused: jq failed (${err%%$'\n'*}): ledger untouched"; return 1
     fi
+  fi
+
+  # Stamp the ledger with this project's id when it has none (first boot, or a legacy file under this
+  # project's state dir). A project field the filter set itself is left alone.
+  if [ -n "${CM_PROJECT_ID:-}" ] && jq -e -s 'length == 1 and (.[0] | type == "object")' "$tmp" >/dev/null 2>&1; then
+    if jq --arg p "$CM_PROJECT_ID" '.project //= $p' "$tmp" > "$tmp.stamp" 2>/dev/null; then mv -f -- "$tmp.stamp" "$tmp"; else rm -f -- "$tmp.stamp"; fi
   fi
 
   # (a) one object with a workers object (consumers read .workers as an object). jq -e exits non-zero on false; the exit code is tested here.

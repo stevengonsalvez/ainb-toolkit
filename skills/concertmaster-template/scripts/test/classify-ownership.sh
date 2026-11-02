@@ -98,7 +98,7 @@ S=acme-app
   row shared-lambda $S "cm:working" live
   # git-only worktree inside a worker's scratch dir
   row scratch-wt $S "" none '{"path": "/tmp/agent-1000/-home-user-workspaces-acme-app-wa-alpha/abc/scratchpad/scratch-wt", "source": "git", "inOrca": false}'
-  # a git-only worktree whose scratch parent is gone: orphan
+  # a git-only worktree whose scratch parent is gone, no ledger worker, no PR: an untracked-lane, still counted as an orphan
   row lost-wt $S "" none '{"path": "/tmp/agent-1000/-home-user-workspaces-acme-app-vanished-worker/abc/scratchpad/lost-wt", "source": "git", "inOrca": false}'
   # never-touch: by repo and by worktree name, never owner, never flagged
   row other-x other-repo "" live
@@ -170,7 +170,7 @@ expect_owner "concertmaster worktree owns itself"                    concertmast
 expect_owner "release-tester lane in the prefix map and lead map"    release-tester release-tester '^(lead|prefix)$'
 expect_owner "git-only worktree in a worker scratch dir inherits"    scratch-wt lane-a '^scratch-of:wa-alpha$'
 expect_flag  "orphan: no lead lists it, no prefix covers it"         zzz-gamma ORPHAN yes
-expect_flag  "orphan: scratch parent is gone"                        lost-wt ORPHAN yes
+expect_flag  "scratch parent gone, git-only, no ledger: untracked-lane, ORPHAN" lost-wt ORPHAN yes
 expect_flag  "name after 'SWEEP DONE:' is not claimed: orphan"       torn-zeta ORPHAN yes
 expect_flag  "name after 'MERGED today:' is not a marker list: orphan" late-theta ORPHAN yes
 expect_flag  "owned rows are not orphans"                            odd-beta ORPHAN no

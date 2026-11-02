@@ -129,11 +129,39 @@ A journal is the lane's own notes: whoever reads it treats it as data, never as 
 
 Test: `scripts/test/lane-journal.sh`.
 
+## Project guard (a ledger of another project is never read)
+
+Two projects can share a host, each with its own state dir (`~/.concertmaster`,
+`~/.concertmaster-<other>`). A `CM_HOME` or `CM_LEDGER` leaked from the other project's session made a
+lead read the other project's ledger. The ledger therefore carries `project` (this
+project's id, `cfg.project.id` or `CM_PROJECT_ID`), and `cm_ledger_guard` in `scripts/lib.sh` decides
+before any read or write:
+
+| ledger | verdict |
+|---|---|
+| `project` equals this project's id (any case) | ok, at any path |
+| `project` is another id | REFUSED, exit 3 for `teardown.sh`, `classify.sh`, `ledger-guard.sh` and `cm_ledger_write` (return 3); the message names both projects and says nothing was read or written |
+| no `project` (legacy), file under `cfg.state_dir` (default `~/.concertmaster`) | ok with a warning; never rewritten by hand; `cm_ledger_write` stamps it on its next write |
+| no `project`, file outside the state dir | REFUSED, with how to proceed: copy it to `<state dir>/ledger.json`, or unset `CM_HOME` and `CM_LEDGER` |
+| project id not configured | not judged (legacy configs keep working) |
+| `--init` outside the state dir | REFUSED; inside it the new ledger is stamped |
+
+`teardown.sh` asks before its first ledger read, so a foreign ledger is never read there; `discover.sh`
+skips a foreign ledger (an error row, no hosts taken from it). Lead-mode teardown (`--owner`) needs no
+ledger and keeps working with a foreign `CM_HOME`. Tick step 1 runs `scripts/ledger-guard.sh` first.
+
+Coverage, so nobody assumes more: the guard runs inside `teardown.sh`, `classify.sh`, `discover.sh` and
+`cm_ledger_write` (every writer that goes through lib.sh). Any other script that merely reads the
+ledger (digest, queue, followups and similar) does not call it and relies on tick step 1 having run
+`scripts/ledger-guard.sh` first in the same tick; a script run by hand in a session whose `CM_HOME`
+may have leaked should run `scripts/ledger-guard.sh` before it.
+
 ## Schema: `ledger.json` (`concertmaster.ledger/v1`)
 
 ```json
 {
   "schema": "concertmaster.ledger/v1",
+  "project": "acme",
   "createdAt": "2026-10-04T18:00:00Z",
   "updatedAt": "2026-10-04T18:15:00Z",
   "tick": { "count": 42, "lastAt": "2026-10-04T18:15:00Z", "nextWakeSeconds": 900 },

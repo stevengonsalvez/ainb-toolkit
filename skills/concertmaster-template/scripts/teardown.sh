@@ -84,6 +84,10 @@
 #   - Orca shows a live agent (working/waiting/permission) or child worktrees
 #   - a terminal hosts an agent, or a non-shell process has its cwd in the
 #     worktree, unless every such terminal is named with --close-handle
+#   - PROJECT: $CM_HOME/ledger.json belongs to another project (its `project` field is not this
+#     project's id, or it has none and sits outside this project's state dir; cm_ledger_guard in
+#     lib.sh). It is refused BEFORE any read of it, naming both projects. Never reached with --owner,
+#     which reads no ledger.
 #   - (concertmaster mode only, never with --owner) LEDGER: $CM_HOME/ledger.json is missing, empty, not an object with a
 #     workers object, or its paths cannot be canonicalised on the host; or no
 #     live ledger worker (state not gone/repurposed) matches this host and path
@@ -144,6 +148,20 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=SCRIPTDIR/lib.sh
 . "$HERE/lib.sh"
+
+# ledger_guard: the ledger at $CM_HOME/ledger.json must be this project's (cm_ledger_guard, lib.sh).
+# Asked before EVERY ledger read below, once (memoised); a foreign ledger is never read: the
+# hostname lookup is skipped and the ledger gate refuses (exit 3) with the reason, which names the
+# project the ledger belongs to and the one running.
+LEDGER_GUARD_RC=""; LEDGER_GUARD_MSG=""
+ledger_guard() {
+  if [ -z "$LEDGER_GUARD_RC" ]; then
+    LEDGER_GUARD_MSG="$(cm_ledger_guard "$CM_HOME/ledger.json" 2>&1)"; LEDGER_GUARD_RC=$?
+    # An accepted legacy ledger warns (once); a refusal is printed by the ledger gate.
+    if [ "$LEDGER_GUARD_RC" = 0 ] && [ -n "$LEDGER_GUARD_MSG" ]; then printf '%s\n' "$LEDGER_GUARD_MSG" >&2; fi
+  fi
+  return "$LEDGER_GUARD_RC"
+}
 
 usage() { sed -n '2,/^set -uo pipefail/p' "$0" | sed '$d'; exit 2; }
 [ $# -ge 2 ] || usage
@@ -307,7 +325,7 @@ printf 'checks:\n'
 # ---- remote identity ---------------------------------------------------------
 if [ "$HOST" != local ]; then
   EXPECT="${CM_SSH_EXPECT_HOSTNAME:-}"
-  if [ -z "$EXPECT" ] && [ "$OWNER_MODE" -eq 0 ] && [ -r "$CM_HOME/ledger.json" ]; then
+  if [ -z "$EXPECT" ] && [ "$OWNER_MODE" -eq 0 ] && ledger_guard && [ -r "$CM_HOME/ledger.json" ]; then
     EXPECT="$(jq -r --arg h "$HOST" '.hosts[$h].hostname // empty' "$CM_HOME/ledger.json" 2>/dev/null)"
   fi
   # The configured hostname (hosts.per_host.<host>.hostname) is the next source; it is read in lead mode
@@ -723,7 +741,10 @@ LEDGER_OK=0
 if [ "$OWNER_MODE" -eq 1 ]; then
   check ledger "not used (--owner: no ledger is read or written; the concertmaster reconciles it from comments)"
 elif [ -n "$WT" ]; then
-  if [ ! -s "$LEDGER" ]; then
+  if ! ledger_guard; then
+    check ledger "REFUSED (not this project's ledger, not read)"
+    gate "${LEDGER_GUARD_MSG#concertmaster: }"
+  elif [ ! -s "$LEDGER" ]; then
     check ledger "MISSING or empty ($LEDGER)"
     # The ledger lives only on the concertmaster host. A lead running this anywhere else lands here,
     # so the refusal names the way through: ask the concertmaster, do not hunt for a ledger.

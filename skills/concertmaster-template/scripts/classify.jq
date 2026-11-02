@@ -8,7 +8,8 @@
 #   stuck              live agent (or status working/permission/waiting) with
 #                      no output for stuckMin+ minutes
 #   running            live agent with recent output
-#   unknown-git        git state not collected (remote host) or a git check
+#   unknown-git        git state not collected (a remote host where Orca and ssh
+#                      both failed; the reason names which and why) or a git check
 #                      failed or the path is gone: investigate, never teardown
 #   dirty-or-unpushed  dirty tree or unpushed commits, whatever the PR state.
 #                      Never delete.
@@ -16,6 +17,18 @@
 #   done-selfreported  every agent reports done, PR not merged
 #   orphan-git-only    git worktree Orca does not track, PR not merged
 #   idle               Orca worktree, no live agent, nothing merged: adopt or ask
+#   other-project      not this project: a repo other than worktrees.orca_repo, or a name
+#                      (exact, never a prefix) or repo in worktrees.never_touch. A row of
+#                      THIS repo in never_touch counts as other-project only while its git is
+#                      known and clean; dirty, unpushed or unproven git keeps its own class so
+#                      real work is never hidden. Overrides every class except host-offline
+#                      and main-checkout. Never an orphan, never counted in the census (listed
+#                      apart), never touched. Needs --argjson scope (orca_repo, never_touch).
+#   untracked-lane     a clean git worktree of this repo with no Orca row, no ledger worker
+#                      and no PR at all (needs ownership configured). Counted as an orphan in
+#                      the census: it is resolved (adopt, or tear down per the gates), never
+#                      hidden. A merged or closed PR keeps done-merged, an open one is handed
+#                      to pr-sweeper, dirty or unproven git keeps its own class.
 #
 # Standing lanes (sweepers and leads) then override, from the LEDGER only
 # (the owner's rule; names never decide). Ledger workers match by Orca
@@ -76,6 +89,10 @@
 # reachable census) while it owns open work: flag LEAD-DEAD on the lead row and
 # list it under .ownership.leadDead. Class never changes for ownership.
 #
+# Census: `.census` = {orphans, unknownGit, dirty, otherProject, rows[]}; the first three are the
+# counts that must reach 0 and rows[] names each (kind, worktree, host, reason). other-project,
+# main-checkout and host-offline rows never count. orphans is null when ownership is not configured.
+#
 # Timestamps are epoch ms; any of them may be null on remote rows.
 
 def live_states: ["working", "waiting", "permission", "blocked", "running"];
@@ -132,7 +149,9 @@ def nrm: ascii_downcase | gsub("[^a-z0-9]"; "-");
     | select(((.state // "") | IN("gone", "repurposed")) | not)
     | {name: (.path | normpath | split("/") | last // ""), label: $e.key, host: (.host // null)} ] as $ledgerLeads
 | .generatedAtMs as $now
+| ($scope // null) as $scope
 | (.hosts // []) as $hosts
+| ((.gitScope.hosts // []) | map({key: .host, value: .}) | from_entries) as $gitHost
 | [
     ( $hosts[] | select(.reachable | not)
       | {host: .name, class: "host-offline", path: null, repo: null, branch: null,
@@ -205,7 +224,10 @@ def nrm: ascii_downcase | gsub("[^a-z0-9]"; "-");
             suggest: (if ($flags | index("awaiting-input")) then "read pane; answer via menu keys or escalate" else "none" end)}
          elif ($gitKnown | not) then
            {class: "unknown-git",
-            reason: (if $g == null then "git state not collected on \($w.host)"
+            reason: (if $g == null then
+                       (($gitHost[$w.host] // null) as $gh
+                        | if $gh != null and $gh.ok == false then ($gh.error // "git state not collected") + " (host \($w.host))"
+                          else "git state not collected on \($w.host)" end)
                      elif $g.exists == false then "path gone"
                      else "a git check failed" end),
             suggest: (if $g != null and $g.exists == false then "investigate: path gone (git worktree prune candidate)"
@@ -229,6 +251,14 @@ def nrm: ascii_downcase | gsub("[^a-z0-9]"; "-");
             suggest: (if $prState == "OPEN" then "hand PR #\($w.pr.number) to pr-sweeper" else "adopt or ask" end)}
          end) as $c0
       | ((($w.agents // []) | length) == 0 or $w.source == "git" or $w.liveTerminalCount == 0) as $noAgent
+      | (if $scope == null or $w.isMainWorktree then null
+         else (($w.repo // "") | lc) as $rp
+              | (($w.path | normpath | split("/") | last // "") | lc) as $nm
+              | if $rp != (($scope.repo // "") | lc) then "repo \($w.repo // "?") is not \($scope.repo)"
+                elif any(($scope.neverTouch // [])[]?; lc as $nt | $nm == $nt or $rp == $nt) then "name or repo is in worktrees.never_touch"
+                else null end end) as $oopWhy
+      | (if $scope == null or $w.isMainWorktree then false
+         else (($w.repo // "") | lc) == (($scope.repo // "") | lc) end) as $oopSameRepo
       | (if $standing and $noAgent
             and (["idle", "done-merged", "done-selfreported", "orphan-git-only", "dirty-or-unpushed"] | index($c0.class)) then
            {class: "standing-dead", reason: ("standing lane, no live agent; " + $c0.reason),
@@ -255,13 +285,17 @@ def nrm: ascii_downcase | gsub("[^a-z0-9]"; "-");
          else $c0 end) as $c1
       | (if $childAgent and (["done-merged", "done-selfreported", "orphan-git-only", "idle", "standing-idle", "standing-dead"] | index($c1.class))
          then $c1 + {suggest: "investigate: child agent present; never teardown"}
-         else $c1 end) as $c
+         else $c1 end) as $cPre
+      | ($gitKnown and ($dirty | not) and ($unpushed | not)) as $gitClean   # proven clean, whatever class a live agent gave the row
+      | (if $oopWhy != null and $cPre.class != "main-checkout" and (($oopSameRepo | not) or $gitClean)
+         then {class: "other-project", reason: ("not this project: " + $oopWhy), suggest: "none; listed apart, not counted, never touched"}
+         else $cPre end) as $c
       | {host: $w.host, class: $c.class, path: $w.path, repo: $w.repo, branch: $w.branch,
          worktreeId: $w.worktreeId, inOrca: $w.inOrca, idleMinutes: $idle,
          pr: (if $w.pr == null then null else {number: $w.pr.number, state: $w.pr.state, author: $w.pr.author} end),
          flags: $flags, reason: $c.reason, suggest: $c.suggest,
          name: ($w.path | normpath | split("/") | last // ""), isMain: ($w.isMainWorktree // false),
-         comment: ($w.comment // ""), noAgent: $noAgent,
+         comment: ($w.comment // ""), noAgent: $noAgent, hasLedger: (($lw | length) > 0),
          ledgerLane: ([$lw[] | .value.lane? | select(type == "string" and length > 0)] | first // null)} )
   ] as $items0
 | (if $own == null then null else
@@ -271,7 +305,7 @@ def nrm: ascii_downcase | gsub("[^a-z0-9]"; "-");
     | ($own.markers // []) as $mk
     | ($own.stopWords // []) as $stop
     | def inscope: (.name // "" | lc) as $n | (.repo // "" | lc) as $r
-                    | $n != "" and .repo != null and $r == $repo and (.isMain | not)
+                    | $n != "" and .repo != null and $r == $repo and (.isMain | not) and (.class != "other-project")
                       and (($nt | index($n)) == null) and (($nt | index($r)) == null);
       ([ $items0[] | select(inscope) | .name | lc ] | unique) as $names
     | (( $own.leads // {} | to_entries | map({name: (.key | lc), label: .value}))
@@ -317,6 +351,10 @@ def nrm: ascii_downcase | gsub("[^a-z0-9]"; "-");
                else ($w | nrm) as $wn
                     | ($ownedNorm | map(select(. as $r | $r.n == $wn or ($wn | startswith($r.n + "-")))) | sort_by(.n | length) | last) end) as $par
             | if $par != null then $i + {owner: $par.owner, ownerSource: ("scratch-of:" + $par.name)}
+              elif (($i.flags | index("git-only")) != null) and ($i.hasLedger | not) and ($i.class == "orphan-git-only") and ($i.pr == null)
+              then $i + {class: "untracked-lane", flags: ($i.flags + ["ORPHAN"]),
+                         reason: "clean git worktree of this repo: no Orca row, no ledger worker, no PR",
+                         suggest: "untracked lane, counted as an orphan: ask the likely lane lead (SKILL.md § Ownership); with no claim after 2 ticks and the lead's loop interval, adopt it into Orca or tear it down per the teardown gates; never hide it"}
               else $i + {flags: ($i.flags + ["ORPHAN"]),
                          suggest: ($i.suggest + "; ORPHAN: no owner (no lead lists it, no prefix covers it). Ask the likely lane lead"
                            + (if (($i.class | IN("idle", "orphan-git-only", "done-merged", "done-selfreported"))
@@ -356,7 +394,7 @@ def nrm: ascii_downcase | gsub("[^a-z0-9]"; "-");
                 else .suggest += "; LEAD-DEAD: lane \(.owner) lead session is gone while it owns \([$dead[] | select(.lead == ($i.name | lc)) | .open | length] | first) open item(s): respawn in place (claude --continue in its worktree) else hand the items to another lead; never leave them unwatched" end
             else . end ]),
        dead: $dead} end) as $O2
-| (if $O2 == null then $items0 else $O2.owned end | map(del(.isMain, .comment, .noAgent, .ledgerLane))) as $items
+| (if $O2 == null then $items0 else $O2.owned end | map(del(.isMain, .comment, .noAgent, .ledgerLane, .hasLedger))) as $items
 | ([ (.terminals // [])[]
      | (if (.agentIdentity | type) == "string" then (.agentIdentity | ascii_downcase) else "" end) as $id
      | (if (.title | type) == "string" then (.title | ascii_downcase) else "" end) as $ti
@@ -365,6 +403,15 @@ def nrm: ascii_downcase | gsub("[^a-z0-9]"; "-");
      | {host, worktree: ((.worktreePath | normpath | split("/") | last) // ""), path: .worktreePath,
         handle: (.handle // null), title: (.title // null), agent: $hit, rule: "forbidden-agent"} ]
    | sort_by(.host, .worktree, .handle)) as $violations
+# Census (SKILL.md § Reporting): the three counts that must reach zero, each row named. Rows of
+# class other-project, main-checkout and host-offline never count. dirty also covers a standing
+# lane or other class carrying dirty:/unpushed: flags; a live agent (running) mid-work does not.
+| ([ $items[] | select((.class | IN("other-project", "main-checkout", "host-offline")) | not) ]) as $cn
+| ([ $cn[] | select(.flags | index("ORPHAN")) | {kind: "orphans", worktree: .name, host, reason: "no owner: no lead lists it, no prefix covers it (class \(.class))"} ]) as $cOrph
+| ([ $cn[] | select(.class == "unknown-git") | {kind: "unknown-git", worktree: .name, host, reason} ]) as $cUnk
+| ([ $cn[] | select(.class != "running")
+      | ([.flags[] | select(startswith("dirty:") or startswith("unpushed:"))]) as $df | select(($df | length) > 0)
+      | {kind: "dirty", worktree: .name, host, reason: (($df | join(", ")) + " (class \(.class))")} ]) as $cDirty
 | (.terminalScope // null) as $ts
 | (if ($forbid | length) == 0 then []
    elif $ts == null or ($ts.enabled | not) then ["discover document has no terminal data (older discover.sh, or agents.forbidden unset when it ran): forbidden-agent check not run"]
@@ -387,5 +434,13 @@ def nrm: ascii_downcase | gsub("[^a-z0-9]"; "-");
                       orphans: ($items | map(select(.flags | index("ORPHAN"))) | length),
                       leadDead: $O2.dead,
                       byOwner: ($items | map(select(.owner != null)) | group_by(.owner) | map({key: .[0].owner, value: length}) | from_entries)} end),
+    census: {
+      ownershipConfigured: ($O2 != null),
+      orphans: (if $O2 == null then null else ($cOrph | length) end),
+      unknownGit: ($cUnk | length),
+      dirty: ($cDirty | length),
+      otherProject: ($items | map(select(.class == "other-project")) | length),
+      rows: ($cOrph + $cUnk + $cDirty | sort_by(.kind, .host, .worktree))
+    },
     items: $items
   }

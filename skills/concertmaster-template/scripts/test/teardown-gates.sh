@@ -748,5 +748,28 @@ CM_BD_CMD=bd-stub STUB_BD_FAIL=1 \
   run "a bd failure with no Error line is not excused"     3 'bd:failed' "$W27"
 if ! grep -qE ' (migrate|init|create|update|close|sync|import|export)( |$)' "$STUB_BD_LOG"; then echo "PASS bd was never asked to migrate or write"; PASS=$((PASS + 1)); else FAIL=$((FAIL + 1)); echo "FAIL a bd write/migrate command ran"; fi
 
+echo "== project guard: a ledger of another project is never read (synthetic projects project-a, project-b)"
+SAVED_HOME="$CM_HOME"; SAVED_HOME_ENV="$HOME"
+export CM_PROJECT_ID=project-a HOME="$ROOT/home-a"
+mkdir -p "$HOME/.concertmaster"
+one "$W1" '"standing":false'
+printf '%s' "$(jq -c '. + {project: "project-b"}' "$CM_HOME/ledger.json")" > "$CM_HOME/ledger.json"
+run "foreign ledger (project field project-b): refused"   3 "belongs to project 'project-b'; this session runs project 'project-a'" "$W1"
+run "foreign ledger: nothing else is judged from it"      3 'ledger  *REFUSED (not this project' "$W1"
+one "$W1" '"standing":false'
+run "unstamped ledger outside the project state dir: refused" 3 'no project field and sits outside this project' "$W1"
+printf '%s' "$(jq -c '. + {project: "project-a"}' "$CM_HOME/ledger.json")" > "$CM_HOME/ledger.json"
+run "matching project field: ok, whatever the path"       0 'single-task worker' "$W1"
+export CM_HOME="$HOME/.concertmaster"
+one "$W1" '"standing":false'
+run "legacy unstamped ledger in the state dir: ok, warns" 0 'has no project field' "$W1"
+run "legacy unstamped ledger: the worker is still judged" 0 'single-task worker' "$W1"
+printf '%s' "$(jq -c '. + {project: "project-b"}' "$CM_HOME/ledger.json")" > "$CM_HOME/ledger.json"
+run "foreign field refused even inside the state dir"     3 "belongs to project 'project-b'" "$W1"
+run "retire-check refuses a foreign ledger too"           3 'RETIRE REFUSED' "$W1" --retire-check
+export CM_HOME="$ROOT/cmhome"
+# lead mode (--owner) with a foreign CM_HOME: see teardown-owner.sh, which has the lead-mode harness
+export CM_HOME="$SAVED_HOME" HOME="$SAVED_HOME_ENV"; unset CM_PROJECT_ID
+
 echo "passed=$PASS failed=$FAIL"
 [ "$FAIL" = 0 ]
