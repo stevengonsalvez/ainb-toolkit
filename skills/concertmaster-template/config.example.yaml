@@ -54,7 +54,10 @@ ownership:
   # A list runs to the next " | ", the next stop word followed by a colon, the next ALL-CAPS
   # header, the end of the sentence, or the end. Parenthesised text is ignored. Write lists
   # with commas, never pipes. A marker after not, never, no longer or dis is a negation.
-  comment_markers: ["workers i own", "workers owned", "my workers", "workers", "owned", "orchestrated"]
+  # "cm:child" is a different shape: each "cm:child <name> (description)" line (the form the lane
+  # charter tells leads to post) claims one worker, the first token after the tag; the rest of the
+  # line never names another worker. Drop it from this list to stop reading those lines as claims.
+  comment_markers: ["workers i own", "workers owned", "my workers", "workers", "owned", "orchestrated", "cm:child"]
   comment_stop_words: ["sweep done", "merged today", "open ready", "held", "needs cm", "stuck check", "hosts read", "next check", "next tick", "next", "note", "cm"]
   # Optional. Session scratch dirs embed the worker's worktree name; a git-only worktree made
   # there inherits that worker's owner. The regex needs a named group "worker".
