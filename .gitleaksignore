@@ -1,6 +1,7 @@
 # Historical gitleaks hits present when this gate was added (2026-10-12).
 # Reviewed as test fixtures and placeholders. A new leak is not in this list and fails CI.
 # Remove a line once its value is rotated or the file is gone. Do not add a line to hide a new leak.
+20089103c855f81aa0cf2b036e6b4303ad396bb8:skills/concertmaster-template/scripts/test/followups-escalate.sh:generic-api-key:236
 1b6f3b1d310e41a805f030a1f96f7b69b0f00162:general-rules/postman-security-rule.md:generic-api-key:76
 1b6f3b1d310e41a805f030a1f96f7b69b0f00162:general-rules/postman-security-rule.md:generic-api-key:79
 1b6f3b1d310e41a805f030a1f96f7b69b0f00162:general-rules/postman-security-rule.md:generic-api-key:82

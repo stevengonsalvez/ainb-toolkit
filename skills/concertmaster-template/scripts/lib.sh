@@ -546,3 +546,47 @@ CM_FOOTER_RE='⏵⏵|⏸|plan mode on|bypass permissions|accept edits on|auto-ac
 # ("<model>-<ver> · eff <effort>"). spawn-verify.sh judges the bottom-most such line against the expected model.
 # shellcheck disable=SC2034  # read by spawn-verify.sh
 CM_ANY_MODEL_RE='[[:alpha:]]+[ -]?[0-9]+(\.[0-9]+)?[^[:alnum:]]{1,6}(with )?[a-z]*[ ]?(effort|eff )'
+
+# cm_text_looks_secret: reads text on stdin, exit 0 when it looks like a credential, a brief or a private path.
+# The ONE place a script that publishes free text (followups.sh escalate) asks "may this leave the host?". It is
+# the union of (1) the shape list of scan-secrets.sh (RES there: RE_PK, RE_TP, RE_TPB with its BND left boundary,
+# RE_SK, RE_JWT, RE_AWS, RE_URL, RE_PW, RE_BEARER), copied below with the length minimums lowered where a gate that
+# refuses may be stricter than a counter, (2) the vendor prefixes programme-rollup.sh scrubs (glpat-, ghr_, xapp-,
+# xoxa/xoxe), npm tokens and a plain "the password is ..." sentence, and (3) brief and private-path shapes. The text
+# is checked as read AND with every non-ASCII byte removed, so a soft hyphen, a variation selector or a combining
+# mark inside a key cannot split it. A heuristic, not a scanner: it refuses, it does not grade. Keep the shapes in
+# step with scan-secrets.sh (test/followups-escalate.sh section 9 feeds one sample per shape).
+_cm_ci() { printf '%s' "$1" | awk '{ o = ""; for (i = 1; i <= length($0); i++) { c = substr($0, i, 1); if (c ~ /[A-Za-z]/) o = o "[" tolower(c) toupper(c) "]"; else o = o c } print o }'; }
+_cm_secret_init() {   # lazy: building the case-insensitive names costs forks, and every script sources this file
+  [ -z "${CM_RE_SECRET_READY:-}" ] || return 0
+  CM_RE_SECRET_BND='(^|\\[ntr]|%[0-9A-Fa-f]{2}|[^A-Za-z0-9_-])'
+  CM_RE_SECRET_PWNAME="($(_cm_ci PASSWORD)|$(_cm_ci PASSWD)|$(_cm_ci PWD)|$(_cm_ci SECRET)|$(_cm_ci API)_?$(_cm_ci KEY)|$(_cm_ci ACCESS)_?$(_cm_ci TOKEN)|$(_cm_ci AUTH)_?$(_cm_ci TOKEN))"
+  # the scan-secrets.sh shapes (case-sensitive; the *_ci ones spell their letters out)
+  CM_RE_SECRET_SCAN=(
+    '-----BEGIN [A-Z ]*PRIVATE KEY-----'
+    '(sk-ant-|sk-proj-|sk_live_|sk_test_|rk_live_|rk_test_|whsec_|ghp_|gho_|ghs_|ghu_|ghr_|github_pat_|xox[abeprs]-|sbp_|sb_secret_)[A-Za-z0-9_-]{16,}'
+    "${CM_RE_SECRET_BND}(sk-svcacct-|sk-admin-|sk-or-|sk-None-|AIza)[A-Za-z0-9_-]{16,}"
+    "${CM_RE_SECRET_BND}sk-[A-Za-z0-9]{48}"
+    'eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}'
+    '(AKIA|ASIA)[A-Z0-9]{16}'
+    "[A-Za-z][A-Za-z0-9+.-]*://[^/[:space:]:@\"']{0,64}:[^/[:space:]@\"']{1,}@"
+    "${CM_RE_SECRET_PWNAME}[A-Za-z_]{0,12}[\\\\\"']{0,6}[[:space:]]*[:=][[:space:]]*[\\\\\"']{0,6}[^[:space:]\"',;)}\\\\]{10,}"
+    "$(_cm_ci BEARER)[[:space:]]+[A-Za-z0-9._~+/=-]{24,}"
+  )
+  CM_RE_SECRET_READY=1
+}
+CM_RE_SECRET_CS='(AKIA|ASIA)[A-Z0-9]{12,}|npm_[A-Za-z0-9]{20,}'
+CM_RE_SECRET_CI='(ghp|gho|ghs|ghu|ghr|github_pat)_[A-Za-z0-9_]{10,}|glpat-[A-Za-z0-9_-]{10,}|xapp-[A-Za-z0-9-]{8,}|xox[abeprs]-[A-Za-z0-9-]{8,}|(^|[^A-Za-z0-9-])sk-[A-Za-z0-9_-]{16,}|[sr]k_(live|test)_[A-Za-z0-9]{8,}|whsec_[A-Za-z0-9]{8,}|sb_(secret|publishable)_[A-Za-z0-9_-]{8,}|sbp_[A-Za-z0-9]{12,}|eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.|AIza[0-9A-Za-z_-]{20,}|-----BEGIN|_authToken[[:space:]]*=[[:space:]]*[^[:space:]]{6,}|(password|passwd|passphrase|secret|token|api[_-]?key)[[:space:]]*[=:][[:space:]]*([A-Za-z0-9+/_.-]{3,}[0-9]|[A-Za-z0-9+/_.-]*[0-9][A-Za-z0-9+/_.-]{3,})|(password|passwd|passphrase|secret|api[_-]?key)[[:space:]]+(is|was|are|=)[[:space:]]+[^[:space:]]*[0-9][^[:space:]]*|(password|passwd|passphrase)[[:space:]]+(is|was)[[:space:]]+[^[:space:]]{8,}|\.secrets|(^|[^[:alnum:]_.])\.env([^[:alnum:]_]|$)|briefs?/|/home/[A-Za-z0-9._-]+/|/Users/[A-Za-z0-9._-]+/|/root/|~/|bearer [A-Za-z0-9._-]{12,}'
+_cm_secret_hit() { # $1 = text; 0 when any shape matches (a newline is a line break for grep, so a key after one still counts)
+  local re; _cm_secret_init
+  for re in "${CM_RE_SECRET_SCAN[@]}"; do grep -Eq -e "$re" <<<"$1" && return 0; done
+  grep -Eq -e "$CM_RE_SECRET_CS" <<<"$1" && return 0
+  grep -Eqi -e "$CM_RE_SECRET_CI" <<<"$1"
+}
+cm_text_looks_secret() {
+  local t a; t="$(cat)"
+  _cm_secret_hit "$t" && return 0
+  a="$(printf '%s' "$t" | LC_ALL=C tr -d '\200-\377')"
+  [ "$a" = "$t" ] && return 1
+  _cm_secret_hit "$a"
+}
