@@ -105,7 +105,7 @@ PREFIX_RE="sb_""secret_|s""bp_[A-Za-z0-9]|sb_""publishable_|ey""J[A-Za-z0-9_-]{8
 KV_RE="(password|passwd|pass|api[_-]?key|secret|token|auth[_-]?token)[[:space:]]*[:=][[:space:]]*[\"']?[^\"'[:space:]#]{8,}"
 LEAK=""
 if LC_ALL=C grep -Eiq -- "$PREFIX_RE" "$CFG"; then LEAK=prefix; fi
-# A reference is an env var name WITH an underscore (API_KEY_NAME: a base32 seed has none) or an
+# A reference is an env var name WITH an underscore (TELEMETRY_API_KEY: a base32 seed has none) or an
 # absolute path under a well-known root (a base64 token that starts with / does not).
 ENVNAME_RE='^[A-Z][A-Z0-9]*(_[A-Z0-9]+)+$'
 PATH_RE='^(~/|\$[A-Z_]+/|/(home|etc|usr|var|opt|tmp|Users)/)[A-Za-z0-9._/-]*$'
