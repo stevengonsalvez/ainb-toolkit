@@ -6,7 +6,7 @@
 #   scripts/discover.sh | scripts/classify.sh --census   # the census line + each row over 0
 #
 # Env: CM_STUCK_MIN (default 45), CM_CONFIG (config file override). Rules live
-# in classify.jq. Reads the ledger ($CM_HOME/ledger.json): standing and beads
+# in classify.jq (the comment-claim reader is claims.jq, shared with teardown.sh). Reads the ledger ($CM_HOME/ledger.json): standing and beads
 # epics come from it alone. Without a readable ledger every item is flagged
 # standing-unknown (no retire or teardown suggested); names never decide.
 # Reads the active config through lib.sh (CM_CONFIG, else config.yaml next to
@@ -79,7 +79,7 @@ SCOPE="$(printf '%s' "$CM_CFG_JSON" | jq -c '{repo: .worktrees.orca_repo, neverT
   | select(.repo | type == "string" and length > 0)' 2>/dev/null || true)"
 [ -n "$SCOPE" ] || SCOPE=null
 
-OUT="$(jq --argjson scope "$SCOPE" --argjson stuckMin "${CM_STUCK_MIN:-45}" --argjson forbidden "$FORBIDDEN" --argjson own "$OWN" --arg ownErr "$OWN_ERR" "${LEDGER_ARGS[@]}" -f "$HERE/classify.jq")"
+OUT="$(jq -L "$HERE" --argjson scope "$SCOPE" --argjson stuckMin "${CM_STUCK_MIN:-45}" --argjson forbidden "$FORBIDDEN" --argjson own "$OWN" --arg ownErr "$OWN_ERR" "${LEDGER_ARGS[@]}" -f "$HERE/classify.jq")"
 
 if [ "$MODE" = json ]; then
   printf '%s\n' "$OUT"
