@@ -142,6 +142,12 @@ OUT="$("$F" write --freeze on --push 2>&1)"
 grep -q 'push: dev-sweeper@local no Claude terminal, skipped' <<<"$OUT" && ! grep -q 'lane-a\|epic-x' <<<"$OUT" \
   && pass "a sweeper without a Claude terminal is skipped and reported; a non-sweeper lane is not messaged" || fail "push skip" "$OUT"
 : > "$FX/sent.log"
+echo '{"ok":true,"result":{"terminals":[{"handle":"term_d1","agentIdentity":"claude"},{"handle":"term_d2","agentIdentity":"claude"}]}}' > "$FX/term/dev-sweeper.json"
+: > "$FX/sent.log"
+OUT="$("$F" write --freeze on --push 2>&1)"
+grep -q 'push: dev-sweeper@local more than one Claude terminal, skipped' <<<"$OUT" && ! grep -q 'term_d' "$FX/sent.log" && grep -q '^term_pr	' "$FX/sent.log" \
+  && pass "a sweeper with two Claude terminals is skipped and reported (the reader refuses two agents); the other sweeper still gets its message" || fail "push two claude" "$(cat "$FX/sent.log") / $OUT"
+rm -f "$FX/term/dev-sweeper.json"
 "$F" write --freeze off --push >/dev/null 2>&1
 [ ! -s "$FX/sent.log" ] && pass "freeze off pushes nothing (leads read the line)" || fail "push off" "$(cat "$FX/sent.log")"
 rm -f "$FX/own/pr-sweeper.comment" "$FX/own/dev-sweeper.comment" "$FX/own/epic-x.comment"
