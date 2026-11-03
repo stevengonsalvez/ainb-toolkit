@@ -39,12 +39,22 @@
 #     is read or written (not even the host name check): the concertmaster tick reconciles the
 #     ledger from the comments afterwards. A standing lane (a configured lane name, an ownership
 #     lead, or a lane-shaped name: cm_lane_shaped in lib.sh) or the lead's own worktree is
-#     refused here: that needs concertmaster mode and the owner-approved path. Known limit:
-#     lead mode reads one host and no ledger, so a second lead on ANOTHER host listing the
-#     same child is not seen and nothing authenticates who runs --owner; the other gates still
-#     run and a cross-host double listing is the concertmaster's to resolve (follow-up
-#     lead-rival-scan). Not combined with --force-standing, --accept-unmerged-beads,
-#     --allow-no-pr or --retire-check.
+#     refused here: that needs concertmaster mode and the owner-approved path. RIVAL SCAN: before
+#     any teardown action the comment of every OTHER worktree on EVERY host is read with the same
+#     claim reader as classify.jq (claims.jq: markers, negation and comment boundaries, whole names
+#     only, never substrings); one that claims the child's name refuses, and so does an incomplete
+#     census (a host failed, answered garbage, was offline or was cut off at the limit, or the
+#     lead's row is not in it). The scan runs again on the re-run after the terminals are closed.
+#     Nothing authenticates who runs --owner; the other gates still run. Not combined with
+#     --force-standing, --accept-unmerged-beads or --retire-check.
+#     --allow-no-pr with --owner is the NO-PR RETIREMENT of a child that never had a PR, and only
+#     when ALL hold (any one missing refuses): the child is proven owned and not standing (above);
+#     the first line of ITS OWN comment is an anchored `cm:retire <reason>` with a reason that has a
+#     letter or digit; the branch has no PR of any state; its terminals are already
+#     closed (none listed, none named with --close-handle); the tree is clean and nothing is
+#     unpushed; it is zero commits ahead of origin/<default> fetched now (a failed fetch or an
+#     unreadable count is UNKNOWN and refuses). Every beads, process, follow-up and salvage gate
+#     still runs. With a merged or closed PR the flag changes nothing.
 #   add --retire-check to run only the ledger, standing, beads and follow-up gates (the
 #     guard before retiring a worker's agent terminal); never acts, and
 #     refuses unless the path resolved and a live ledger worker matched
@@ -148,6 +158,8 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=SCRIPTDIR/lib.sh
 . "$HERE/lib.sh"
+# shellcheck source=SCRIPTDIR/fleet-read.sh
+. "$HERE/fleet-read.sh"
 
 # ledger_guard: the ledger at $CM_HOME/ledger.json must be this project's (cm_ledger_guard, lib.sh).
 # Asked before EVERY ledger read below, once (memoised); a foreign ledger is never read: the
@@ -218,8 +230,8 @@ IN="$WT"
 if [ -n "$OWNER_EPICS" ] && [ -z "$OWNER" ]; then cm_warn "--epic is only for --owner (lead mode)"; usage; fi
 if [ -n "$OWNER" ]; then
   OWNER_MODE=1
-  if [ -n "$FORCE_STANDING" ] || [ -n "$ACCEPT_BEADS" ] || [ "$ALLOW_NO_PR" -eq 1 ] || [ "$RETIRE_CHECK" -eq 1 ]; then
-    cm_warn "--owner cannot be combined with --force-standing, --accept-unmerged-beads, --allow-no-pr or --retire-check"; usage
+  if [ -n "$FORCE_STANDING" ] || [ -n "$ACCEPT_BEADS" ] || [ "$RETIRE_CHECK" -eq 1 ]; then
+    cm_warn "--owner cannot be combined with --force-standing, --accept-unmerged-beads or --retire-check"; usage
   fi
 fi
 case "$OWNER_HOST" in "this machine") OWNER_HOST=local ;; esac
@@ -488,6 +500,7 @@ fi
 MERGED_PR=""
 MERGED_HEAD=""
 CLOSED_PR=""
+NOPR_LEAD=0   # 1 when lead mode uses --allow-no-pr because the branch really has no PR
 if [ "$GITOK" -eq 1 ] && [ -n "${SLUG:-}" ] && [ -n "${BRANCH:-}" ]; then
   if PRS="$(cm_timeout 30 gh pr list -R "$SLUG" --head "$BRANCH" --state all --limit 10 \
             --json number,state,headRefOid 2>/dev/null)"; then
@@ -502,6 +515,9 @@ if [ "$GITOK" -eq 1 ] && [ -n "${SLUG:-}" ] && [ -n "${BRANCH:-}" ]; then
       check pr "#$MERGED_PR MERGED (head ${MERGED_HEAD:0:12})"
     elif [ -n "$CLOSED_PR" ]; then
       check pr "#$CLOSED_PR CLOSED (unmerged: branch kept)"
+    elif [ "$ALLOW_NO_PR" -eq 1 ] && [ "$OWNER_MODE" -eq 1 ]; then
+      check pr "none (--allow-no-pr, lead mode: needs the child's cm:retire request, see nopr below)"
+      NOPR_LEAD=1
     elif [ "$ALLOW_NO_PR" -eq 1 ]; then
       check pr "none (--allow-no-pr: approved kill-list item)"
     else
@@ -516,6 +532,7 @@ fi
 
 # ---- Orca state ------------------------------------------------------------
 ROW=""
+TERMS_READ=0   # 1 only when the terminal list was read and parsed
 if [ -z "$WT" ]; then
   check orca "skipped (no canonical path)"
 elif PS="$(orca_cmd worktree ps --limit 500 --json 2>/dev/null)"; then
@@ -554,6 +571,7 @@ elif PS="$(orca_cmd worktree ps --limit 500 --json 2>/dev/null)"; then
       HANDLES=""
     else
       HANDLES="$(printf '%s' "$TLIST" | jq -r '.result.terminals[].handle')"
+      TERMS_READ=1
       if [ "$TERMS_CLOSED" = 1 ] && [ -n "$HANDLES" ]; then
         refuse "terminal(s) still open after closing: $(printf '%s\n' "$HANDLES" | tr '\n' ' ')"
       fi
@@ -675,9 +693,70 @@ def hn: if . == "this machine" then "local" else . end;
     | select(.n as $x | $names | index($x))
     | select(((.h // $oh) | hn) == $th)
     | .r | scan("(?:^|\\s)epic=([A-Za-z0-9._-]+)") | .[0] ] | unique[]'
+# ---- lead mode: cross-host rival-claim scan -----------------------------------
+# One lead's listing proves ownership only if no OTHER worktree, on ANY host, claims the same child name. The
+# claim reader is claims.jq, the one classify.jq uses (markers from config ownership.comment_markers plus the two
+# that lead mode itself reads, cm:child and "workers i own"; negation, comment boundaries, whole names only, never
+# substrings). Every worktree comment of the project on every host is read through cm_fleet_worktrees
+# (fleet-read.sh); the lead's own row and the child's row are skipped. The census must be COMPLETE: the host
+# list, every host's worktree list and the lead's row must all have been read, none cut off at the limit.
+# rival_scan sets RIVAL_MSG and returns 0 (no rival, census complete), 1 (a rival claims the name) or 2 (the
+# census is incomplete or unreadable, so absence of a rival proves nothing).
+RIVAL_MSG=""
+# shellcheck disable=SC2016  # jq program
+RIVAL_JQ='include "claims";
+def isowner: $h == $oh and (.path == $owner or .displayName == $owner or ((.path // "") | split("/") | last) == $owner);
+def ischild: $h == $th and (.path == $wt or ($wid != "" and .worktreeId == $wid));
+.result.worktrees[]
+| if isowner then "owner"
+  elif ischild then empty
+  else . as $r
+    | claims(($r.comment | if type == "string" then . else "" end); $mk; $stop; $names) as $c
+    | select(($c | length) > 0)
+    | "rival:\($r.displayName // $r.path // "?" | tostring | gsub("[\\n\\t]"; " "))"
+  end'
+rival_scan() {
+  local d rc
+  RIVAL_MSG=""
+  d="$(mktemp -d "${TMPDIR:-/tmp}/cm-rival.XXXXXX" 2>/dev/null)" || d=""
+  if [ -z "$d" ] || [ ! -d "$d" ]; then RIVAL_MSG="cannot create a temp dir for the census"; return 2; fi
+  rival_read "$d"; rc=$?
+  rm -rf -- "${d:?}"
+  return "$rc"
+}
+rival_read() {
+  local d="$1" f h out rc gaps hosts nowner=0 rivals=""
+  cm_fleet_worktrees "$d"
+  if [ -s "$d/unreach.ndjson" ]; then
+    gaps="$(jq -r '"\(.host // "?"): \(.error // "?")"' "$d/unreach.ndjson" 2>/dev/null | head -n 3 | tr '\n' ';')"
+    RIVAL_MSG="the census of all hosts is incomplete (${gaps:-unreadable})"; return 2
+  fi
+  hosts="$(jq -r '.host' "$d/hosts.ndjson" 2>/dev/null | tr '\n' ' ')"
+  case " $hosts " in *" $HOST "*) ;; *) RIVAL_MSG="host $HOST is not in the census (read: ${hosts:-none})"; return 2 ;; esac
+  case " $hosts " in *" $OWNER_HOST "*) ;; *) RIVAL_MSG="the lead's host $OWNER_HOST is not in the census (read: ${hosts:-none})"; return 2 ;; esac
+  while IFS="$(printf '\t')" read -r h f; do
+    [ -n "$f" ] || continue
+    out="$(jq -r -L "$HERE" --arg h "$h" --arg oh "$OWNER_HOST" --arg th "$HOST" --arg wt "$WT" --arg wid "${WID:-}" --arg owner "$OWNER" \
+          --argjson names "$NAMES_LC" --argjson mk "$RIVAL_MK" --argjson stop "$RIVAL_STOP" "$RIVAL_JQ" "$f" 2>/dev/null)"; rc=$?
+    if [ "$rc" -ne 0 ]; then RIVAL_MSG="the comments on $h could not be read"; return 2; fi
+    nowner=$((nowner + $(printf '%s\n' "$out" | grep -c '^owner$' || true)))
+    rivals="$rivals$(printf '%s\n' "$out" | grep '^rival:' | cut -c 7- | while IFS= read -r r; do printf ' %s@%s' "$r" "$h"; done)"
+  done < <(jq -r '[.host, .file] | @tsv' "$d/hosts.ndjson")
+  if [ "$nowner" -lt 1 ]; then RIVAL_MSG="the lead '$OWNER' has no row in the census of $OWNER_HOST"; return 2; fi
+  if [ -n "$rivals" ]; then RIVAL_MSG="claimed by${rivals}"; return 1; fi
+  return 0
+}
+
 if [ "$OWNER_MODE" -eq 1 ] && [ -n "$WT" ]; then
   NAMES="$(jq -cn --arg a "${WT##*/}" --arg b "$([ -z "$ROW" ] || printf '%s' "$ROW" | jq -r '.displayName // ""')" \
           '[$a, $b] | map(select(. != "")) | unique')"
+  NAMES_LC="$(printf '%s' "$NAMES" | jq -c 'map(ascii_downcase) | unique')"
+  # markers and stop words for the rival scan: the configured ones, then the two lead mode reads itself.
+  RIVAL_MK="$(printf '%s' "${CM_CFG_JSON:-}" | jq -c '((.ownership.comment_markers // []) | map(select(type == "string" and length > 0))) as $m
+        | $m + (["cm:child", "workers i own"] | map(select(. as $x | ($m | map(ascii_downcase) | index($x)) == null)))' 2>/dev/null)" || RIVAL_MK=""
+  [ -n "$RIVAL_MK" ] || RIVAL_MK='["cm:child","workers i own"]'
+  RIVAL_STOP="$(printf '%s' "${CM_CFG_JSON:-}" | jq -c '(.ownership.comment_stop_words // []) | map(select(type == "string" and length > 0))' 2>/dev/null)" || RIVAL_STOP=""
+  [ -n "$RIVAL_STOP" ] || RIVAL_STOP='[]'
   # Only this project's worktrees can prove ownership: the lead list is cut to the configured Orca repo, so a
   # lead of another project on the same host never authorizes a teardown here.
   OREPO="${CM_ORCA_REPO:-$(cm_cfg .worktrees.orca_repo)}"
@@ -710,6 +789,16 @@ if [ "$OWNER_MODE" -eq 1 ] && [ -n "$WT" ]; then
               check owner "AMBIGUOUS: $AMB worktrees on $HOST have this name"
               refuse "more than one worktree on $HOST is named like '$WT' ($AMB): the lead's listing does not say which it owns (use a unique name)"
             fi
+            # Rival scan across ALL hosts (see rival_scan above): a claim by another lead, or an incomplete
+            # census, refuses before any terminal is closed or anything is removed.
+            rival_scan; RV=$?
+            case "$RV" in
+              0) check rival "no other worktree on any host claims this name (census complete)" ;;
+              1) check rival "RIVAL: $RIVAL_MSG"
+                 refuse "$HOST:$WT is also claimed by another lead on ${RIVAL_MSG#claimed by }: two owners, so no lead removes it alone (make one cm:child line, or let the concertmaster decide)" ;;
+              *) check rival "UNKNOWN: $RIVAL_MSG"
+                 refuse "cannot rule out a rival claim on '${WT##*/}' on another host: $RIVAL_MSG (nothing torn down)" ;;
+            esac
             # An epic the child owns is declared on its cm:child line as epic=<id> (or with --epic): lead
             # mode has no ledger beadsEpic, so the epic gate below runs on exactly those ids.
             OWNER_EPICS="$OWNER_EPICS$(printf '%s' "$OL" | jq -r --arg owner "$OWNER" --arg th "$HOST" --arg oh "$OWNER_HOST" --argjson names "$NAMES" "$OWNER_EPIC_JQ" 2>/dev/null)
@@ -1232,6 +1321,55 @@ elif [ -n "$LW" ] || [ "$OWNER_MODE" -eq 1 ]; then
   fi
 fi
 
+# ---- no-PR retirement (lead mode, --allow-no-pr) -------------------------------
+# A lead's own child that never had a PR may be retired only on an explicit request in the child's OWN comment,
+# with nothing left to lose. Only reached when the branch has no PR of any state (an open PR already refused; a
+# merged or closed PR proves itself and the flag changes nothing). The ownership proof, the not-standing check,
+# the clean/unpushed checks and every beads, process, follow-up and salvage gate are the ones above and below.
+# What this adds: (1) the request, (2) terminals already closed, (3) zero commits ahead of origin/<default> as
+# fetched by the beads gate just now. Anything unknown refuses.
+if [ "$NOPR_LEAD" -eq 1 ]; then
+  if [ -z "$ROW" ]; then
+    check nopr "no Orca row: no cm:retire request to read"
+    refuse "no-PR retirement needs the child's cm:retire request in its Orca comment, and this worktree has no Orca row"
+  else
+    # shellcheck disable=SC2016  # jq program
+    if ! RETIRE_WHY="$(printf '%s' "$ROW" | jq -r -L "$HERE" 'include "comment-segs";
+          (.comment | comment_segs | first // "") | capture("^cm:retire\\s+(?<r>.*)$") | .r | select(test("[A-Za-z0-9]"))' 2>/dev/null)"; then
+      check nopr "UNKNOWN (the child's comment could not be read)"
+      refuse "child comment unreadable: the cm:retire request cannot be proven"
+    elif [ -z "$RETIRE_WHY" ]; then
+      check nopr "NO cm:retire request: the first line of the child's comment is not 'cm:retire <reason>'"
+      refuse "no-PR retirement needs the child's comment to start with 'cm:retire <reason>' (a reason with a letter or digit); a cm:retire later in the comment, or with a blank reason, does not count"
+    else
+      check nopr "cm:retire request: $(printf '%s' "$RETIRE_WHY" | tr -cd 'A-Za-z0-9 ._:,()/=#@-' | cut -c 1-120)"
+    fi
+  fi
+  if [ "$TERMS_READ" -ne 1 ]; then
+    check nopr-terms "UNKNOWN (terminals not read)"
+    refuse "no-PR retirement needs the terminals proven closed, and the terminal list was not read"
+  elif [ -n "${HANDLES:-}" ]; then
+    check nopr-terms "OPEN: $(printf '%s\n' "$HANDLES" | tr '\n' ' ')"
+    refuse "no-PR retirement needs the terminals already closed (open: $(printf '%s\n' "$HANDLES" | tr '\n' ' ')): close them first, --close-handle does not apply here"
+  else
+    check nopr-terms "none open"
+  fi
+  if [ "$GITOK" -ne 1 ] || [ "$BFETCH" != ok ]; then
+    check nopr-ahead "UNKNOWN (fetch of origin/${DEFB:-?} $BFETCH)"
+    refuse "no-PR retirement needs a fresh fetch of origin/${DEFB:-main}: commits ahead of it are unknown"
+  elif AHEAD="$(g rev-list --count HEAD --not "$DEF" 2>/dev/null)" && [ -n "$AHEAD" ] && [ -z "${AHEAD//[0-9]/}" ]; then
+    if [ "$AHEAD" = 0 ]; then
+      check nopr-ahead "0 commits ahead of $DEF"
+    else
+      check nopr-ahead "$AHEAD commit(s) ahead of $DEF"
+      refuse "no-PR retirement: $AHEAD commit(s) ahead of origin/$DEFB with no PR would be lost: open a PR or merge them first"
+    fi
+  else
+    check nopr-ahead "UNKNOWN (git rev-list against $DEF failed)"
+    refuse "no-PR retirement needs the commits ahead of origin/$DEFB counted, and the count failed"
+  fi
+fi
+
 # ---- follow-up gate -----------------------------------------------------------
 # An open followUps[] row (references/ledger.md) on this worker, or on any worker
 # whose parent chain leads to it, is work that must outlive the worker: not done.
@@ -1379,6 +1517,8 @@ elif [ "$GITOK" -eq 1 ]; then
   fi
 fi
 [ "$HOST" = local ] || [ -n "$ROW" ] || plan "(git steps run over: ssh $SSH_TARGET)"
+[ "$NOPR_LEAD" -ne 1 ] || plan "(no PR: retired on the child's own cm:retire request, 0 commits ahead of origin/${DEFB:-main})"
+[ "$OWNER_MODE" -ne 1 ] || [ -z "$CLOSE_FIRST" ] || plan "(the rival scan repeats on the re-run after the terminals close; a claim then stops it before anything is removed)"
 plan "mc-emit.sh worktree.teardown \"$HOST:$WT\""
 
 if [ -n "$REFUSALS" ]; then
