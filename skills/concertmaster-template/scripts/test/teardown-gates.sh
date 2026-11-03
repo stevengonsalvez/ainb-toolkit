@@ -639,6 +639,8 @@ ledger "{\"followUps\":[$(fu w-other other-item)],\"workers\":{\"w-a\":$(w "$W1"
 run "open follow-up on an unrelated worker is ignored"     0 'none open' "$W1"
 ledger "{\"followUps\":[$(fu w-a item-ids "done")],\"workers\":{\"w-a\":$(w "$W1" '"standing":false')}}"
 run "done follow-up allows"                                0 'none open' "$W1"
+ledger "{\"followUps\":[$(fu w-a fa-codes | sed 's/"closedAt":null/"closedAt":null,"issue":42,"issueUrl":"https:\/\/github.com\/AcmeOrg\/acme-app\/issues\/42"/')],\"workers\":{\"w-a\":$(w "$W1" '"standing":false')}}"
+run "follow-up already escalated to a GitHub issue allows"  0 'none open' "$W1"
 ledger "{\"followUps\":{\"id\":\"x\"},\"workers\":{\"w-a\":$(w "$W1" '"standing":false')}}"
 run "followUps not an array refuses"                       3 'followUps is not an array' "$W1"
 ledger "{\"followUps\":[$(fu w-a item-ids)],\"workers\":{\"w-a\":$(w "$W1" '"standing":false')}}"
@@ -669,6 +671,11 @@ STUB_COMMENT=$'cm:running\ncm:followup fresh-one owner=owner a NEW item still to
 ledger "{\"followUps\":[$(fu w-a fresh-one "done" | sed 's/"lane":"lane-a"/"lane":"lane-b"/')],\"workers\":{\"w-a\":$(w "$W1" '"standing":false,"lane":"lane-a"')}}"
 STUB_COMMENT=$'cm:running\ncm:followup fresh-one owner=owner choose a or b' \
   run "a done row in another lane still refuses"           3 'in live comment (fresh-one)' "$W1"
+ledger "{\"followUps\":[$(fu w-a fresh-one | sed 's/"closedAt":null/"closedAt":null,"issue":42,"issueUrl":"https:\/\/github.com\/AcmeOrg\/acme-app\/issues\/42"/')],\"workers\":{\"w-a\":$(w "$W1" '"standing":false,"lane":"lane-a"')}}"
+STUB_COMMENT=$'cm:running\ncm:followup fresh-one owner=owner choose a or b' \
+  run "an escalated row, same text, in the live comment allows" 0 'none open' "$W1"
+STUB_COMMENT=$'cm:running\ncm:followup fresh-one owner=owner a NEW validation step still to do' \
+  run "an escalated id reused with new text refuses"       3 'in live comment (fresh-one)' "$W1"
 one "$W1" '"standing":false,"lane":"lane-a"'
 STUB_COMMENT=$'cm:running\ncm:followup Bad-Id owner=owner t' \
   run "a malformed cm:followup line refuses"               3 'malformed follow-up line in live comment' "$W1"

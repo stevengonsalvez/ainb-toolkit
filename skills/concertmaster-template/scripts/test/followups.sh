@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2015  # "A && ok || bad": ok never fails
 # followups.sh: behaviour tests for scripts/followups.sh (reconcile, close, open, report, comment-open) on a
 # temp CM_HOME. Never touches the live ledger. The teardown refusals are in teardown-gates.sh.
 #
@@ -325,6 +326,64 @@ if [ "$rc" != 0 ]; then ok "a bad discover document fails"; else bad "bad discov
 jq '.followUps = {"x":1}' "$L" > "$ROOT/p.json" && mv "$ROOT/p.json" "$L"
 census "lead-a:cm:followup z owner=x t" | "$FU" reconcile >/dev/null 2>&1; rc=$?
 if [ "$rc" != 0 ] && jq -e '.followUps | type == "object"' "$L" >/dev/null; then ok "followUps that is not an array: refused, ledger untouched"; else bad "non-array followUps was rewritten"; fi
+
+echo "== reconcile: new text on an escalated item is a new task"
+seed
+rec "lead-a:cm:running
+cm:followup validate-codes owner=lane-a Codex validation after the load"
+jq '(.followUps[] | select(.id == "validate-codes")) += {issue: 9, issueUrl: "https://github.com/AcmeOrg/acme-app/issues/9", escalatedAt: "2026-10-30T00:00:00Z"}' "$L" > "$ROOT/p.json" && mv "$ROOT/p.json" "$L"
+rec "lead-a:cm:running
+cm:followup validate-codes owner=lane-a Codex validation after the load"
+check "same text: the issue stays"                      '.followUps[] | select(.id == "validate-codes") | .issue == 9'
+rec "lead-a:cm:running
+cm:followup validate-codes owner=lane-a A different job now"
+check "new text: the issue fields are cleared"          '.followUps[] | select(.id == "validate-codes") | (.issue // .issueUrl // .escalatedAt) == null and .text == "A different job now"'
+# an escalate run holds a claim while gh runs; a text change in that window must leave the claim for the run to record against
+rec "lead-a:cm:running
+cm:followup validate-codes owner=lane-a A different job now"
+jq '(.followUps[] | select(.id == "validate-codes")) += {escalatingAt: "tok-123"}' "$L" > "$ROOT/p.json" && mv "$ROOT/p.json" "$L"
+rec "lead-a:cm:running
+cm:followup validate-codes owner=lane-a A third wording"
+check "new text while a claim is held: the claim stays"  '.followUps[] | select(.id == "validate-codes") | .escalatingAt == "tok-123" and .text == "A third wording" and (.issue // .issueUrl // .escalatedAt) == null'
+
+echo "== for-worktree: the open items of a worktree's worker and its children"
+jq -n '{workers: {
+  "w-p": {host: "local", path: "/w/ops-p", lane: "lane-a", state: "running"},
+  "w-c": {host: "local", path: "/w/ops-c", lane: "lane-a", state: "running", parent: "w-p"},
+  "w-x": {host: "local", path: "/w/ops-x", lane: "lane-a", state: "running", parent: "w-y"},
+  "w-y": {host: "local", path: "/w/ops-y", lane: "lane-a", state: "running", parent: "w-x"},
+  "w-z": {host: "local", path: "/w/other-z", lane: "lane-b", state: "running"}},
+  followUps: [
+    {id: "p-item", worker: "w-p", lane: "lane-a", owner: "w-p", text: "parent item", state: "open", openedAt: "2026-10-27T10:00:00Z"},
+    {id: "c-item", worker: "w-c", lane: "lane-a", owner: "owner", text: "child\u001b[31m item\twith a tab", state: "open", openedAt: "2026-10-27T11:00:00Z"},
+    {id: "p-done", worker: "w-p", lane: "lane-a", owner: "w-p", text: "closed", state: "done", openedAt: "2026-10-26T10:00:00Z"},
+    {id: "x-item", worker: "w-x", lane: "lane-a", owner: "w-x", text: "in a parent cycle", state: "open", openedAt: "2026-10-27T12:00:00Z"},
+    {id: "z-item", worker: "w-z", lane: "lane-b", owner: "w-z", text: "someone else", state: "open", openedAt: "2026-10-27T13:00:00Z"}]}' > "$L"
+out="$("$FU" for-worktree /w/ops-p 2>&1)"; rc=$?
+if [ "$rc" = 0 ] && [ "$(printf '%s\n' "$out" | cut -f1 | sort | tr '\n' ' ')" = "c-item p-item " ]; then ok "for-worktree: the worker's and its child's open items, by path"; else bad "for-worktree by path" "rc=$rc $out"; fi
+case "$out" in *p-done*|*z-item*|*x-item*) bad "for-worktree: closed or foreign item listed" "$out" ;; *) ok "for-worktree: closed and foreign items not listed" ;; esac
+case "$out" in *$'\033'*) bad "for-worktree: control characters kept" "$out" ;; *) ok "for-worktree: control characters cleaned" ;; esac
+[ "$("$FU" for-worktree ops-p | cut -f1 | sort | tr '\n' ' ')" = "c-item p-item " ] && ok "for-worktree: by directory name" || bad "for-worktree by name"
+[ "$("$FU" for-worktree w-p | cut -f1 | sort | tr '\n' ' ')" = "c-item p-item " ] && ok "for-worktree: by worker id" || bad "for-worktree by id"
+out="$("$FU" for-worktree ops-x 2>&1)"; rc=$?
+if [ "$rc" = 0 ] && [ "$(printf '%s\n' "$out" | cut -f1 | sort | tr '\n' ' ')" = "x-item " ]; then ok "for-worktree: a parent cycle ends"; else bad "for-worktree cycle" "rc=$rc $out"; fi
+"$FU" for-worktree /w/nowhere >/dev/null 2>&1; rc=$?
+[ "$rc" = 3 ] && ok "for-worktree: no ledger worker owns it, exit 3" || bad "for-worktree untracked" "rc=$rc"
+"$FU" for-worktree op >/dev/null 2>&1; rc=$?
+[ "$rc" = 3 ] && ok "for-worktree: a name prefix matches nothing" || bad "for-worktree prefix" "rc=$rc"
+"$FU" for-worktree >/dev/null 2>&1; rc=$?
+[ "$rc" = 2 ] && ok "for-worktree: no argument, exit 2" || bad "for-worktree usage" "rc=$rc"
+for led in '{"followUps":[]}' '{"workers":[],"followUps":[]}' '{"workers":"x"}'; do
+  printf '%s' "$led" > "$ROOT/p.json"; cp "$L" "$ROOT/keep.json"; cp "$ROOT/p.json" "$L"
+  "$FU" for-worktree /w/ops-p >/dev/null 2>&1; rc=$?
+  [ "$rc" = 1 ] && ok "for-worktree: a ledger without a workers object is unusable (exit 1), not untracked: $led" || bad "for-worktree malformed $led" "rc=$rc"
+  cp "$ROOT/keep.json" "$L"
+done
+# an item with a GitHub issue lives on there: not listed; a missing field prints empty, not "null"
+jq '(.followUps[] | select(.id == "p-item")) += {issue: 7, issueUrl: "https://github.com/AcmeOrg/acme-app/issues/7"} | (.followUps[] | select(.id == "c-item")) |= del(.openedAt)' "$L" > "$ROOT/p.json" && mv "$ROOT/p.json" "$L"
+out="$("$FU" for-worktree /w/ops-p 2>&1)"
+[ "$(printf '%s\n' "$out" | cut -f1 | tr '\n' ' ')" = "c-item " ] && ok "for-worktree: an escalated item is not listed" || bad "for-worktree escalated" "$out"
+case "$out" in *null*) bad "for-worktree: a missing field printed as null" "$out" ;; *) ok "for-worktree: a missing field prints empty" ;; esac
 
 echo "== child adoption (cm:child names a worktree with no ledger row)"
 # lane-a posts its children; child rows carry their own comment, host-a style synthetic names

@@ -36,11 +36,11 @@ printf 'k\n' > "$D/.keys/ed25519"; printf 'p\n' > "$D/private/note"
 
 OUT="$(CM_WORKTREE_BASE="$ROOT/wts" "$SCRIPT" clean)"; RC=$?
 check "clean worktree: exit 0" "$RC" "0"
-check "clean worktree: RESULT line" "$(printf '%s\n' "$OUT" | sed 's/ salvage=.*//')" "RESULT clean branch=main dirty=0 ahead_main=0 unpushed_vs_remote=0"
+check "clean worktree: RESULT line" "$(printf '%s\n' "$OUT" | sed 's/ followups=.*//')" "RESULT clean branch=main dirty=0 ahead_main=0 unpushed_vs_remote=0"
 
 OUT="$(CM_WORKTREE_BASE="$ROOT/wts" CM_SALVAGE_EXCLUDE="private" "$SCRIPT" dirty)"; RC=$?
 check "dirty worktree: exit 0" "$RC" "0"
-check "dirty worktree: RESULT counts" "$(printf '%s\n' "$OUT" | sed 's/ salvage=.*//')" \
+check "dirty worktree: RESULT counts" "$(printf '%s\n' "$OUT" | sed 's/ followups=.*//')" \
   "RESULT dirty branch=main dirty=2 ahead_main=1 unpushed_vs_remote=1"
 S="${OUT##*salvage=}"
 check "salvage under CM_HOME/salvage" "$(case "$S" in "$CM_HOME"/salvage/*) echo yes ;; *) echo no ;; esac)" "yes"
