@@ -42,6 +42,7 @@ PWV="Zx9$(rep w 12)Kq"
 PWS="Ab1!$(rep m 6)#Cd2"
 URLPW="Tr0ub$(rep d 6)Xy9"
 PWKEY="pass""word"
+SECKEY="sec""ret"; TOKKEY="to""ken"
 SVC="sk-""svcacct-$(rep V 46)"
 ADM="sk-""admin-$(rep M 46)"
 ORK="sk-""or-v1-$(rep O 46)"
@@ -71,7 +72,7 @@ ENVREF="\$DB_PW"
   printf '{"t":"ey""J is how a jwt starts; AK""IA keys are 20 chars"}\n'
   printf '{"tokenizer":"cl100k_base","secretName":"STRIPE_SECRET_KEY_LIVE","tokens:":123456789}\n'
   printf '{"t":"api_key=/opt/app/conf/some/path/file","secret: somelongplainword","token_type":"bearer"}\n'
-  printf '{"t":"%s=changemechangeme and %s: lowercaseonlywords"}\n' "$PWKEY" "$PWKEY"
+  printf '{"t":"%s=changemechangeme and %s: lowercaseonlywords"}\n' "$SECKEY" "$TOKKEY"   # plain letters under names that are not password names
   printf '{"u":"postgresql://app:password@localhost:5432/x","h":"https://example.com:8443/some/very/long/path/here"}\n'
 } > "$D/b/clean.jsonl"
 # a non-jsonl file in a dir is ignored by the dir walk
@@ -125,6 +126,44 @@ check "--strict makes advisory exit 1" "$(run --strict "$ROOT/adv")" "1"
 mkdir -p "$ROOT/clean"; cp "$D/b/clean.jsonl" "$ROOT/clean/"
 check "noise-only exits 0 with --strict" "$(run --strict "$ROOT/clean")" "0"
 check "noise-only summary" "$(grep '^SUMMARY' "$OUT")" "SUMMARY files=1 hits=0 advisory=0 errors=0"
+# pure-letter passwords: only the password / passwd / pwd / passphrase names, 8+ letters, no prose word
+PLA="Sun""shine"; PLB="correct""horsebattery"; PLC="hunter""hunter"
+mkdir -p "$ROOT/pl" "$ROOT/plneg"
+{
+  printf 'ssh %s: %s.\n' "$PWKEY" "$PLA"
+  printf '{"%s":"%s"}\n' "$PWKEY" "$PLB"
+  printf 'the %s is '"'"'%s'"'"' ok\n' "$PWKEY" "$PLA"
+  printf 'p""wd=%s\n' "$PLC" | tr -d '"'
+  printf '%s = %s\n' "pass""phrase" "$PLB"
+  printf '%s is '"'"'%s'"'"' too\n' "p""wd" "$PLA"
+  printf '{"c":"the %s is \\"%s\\" ok"}\n' "$PWKEY" "$PLA"   # as JSONL carries it: the quotes are escaped
+  printf '%s: %s\r\n' "$PWKEY" "$PLA"   # a CRLF line end after the value
+  printf '%s is '"'"'%s.'"'"' ok\n' "$PWKEY" "Sun""shinex"   # punctuation inside the quotes
+  printf '%s: %s.\n' "$PWKEY" "Sun""shines"   # nine letters and a full stop: one password, matched by two patterns before the tagged stage
+  printf '%s: %s then more text\n' "$PWKEY" "$PLA"
+  printf '%s:\t%s\tmore\n' "$PWKEY" "$PLA"
+} > "$ROOT/pl/h.log"
+{
+  printf '%s: required\n' "$PWKEY"
+  printf '%s: <redacted>\n' "$PWKEY"
+  printf '%s_hash: abcdef""ghij\n' "$PWKEY" | tr -d '"'
+  printf '%s: abcdefgh_x\n' "$PWKEY"
+  printf '%s: ABCDEFGHIJ\n' "$PWKEY"
+  printf '%s: short\n' "$PWKEY"
+  printf '%s is '"'"'required'"'"'\n' "$PWKEY"
+  printf '%s policy: strictstrict\n' "$PWKEY"
+  printf 'secret=%s\n' "$PLB"
+  printf '%s: Abcdefgh1\n' "$PWKEY"
+} > "$ROOT/plneg/n.log"
+check "pure-letter passwords: advisory only, exit 0" "$(run "$ROOT/pl")" "0"
+check "twelve pure-letter passwords counted once each in their own class (pwd is, a space or a tab, a CRLF end, punctuation inside quotes, a nine-letter value and a full stop, escaped quotes in JSONL)" "$(row password_word)" "12/1/advisory"
+check "and they are not password_assign" "$(row password_assign)" "0/0/advisory"
+check "--strict makes the pure-letter class exit 1" "$(run --strict "$ROOT/pl")" "1"
+frag=0; for v in "$PLA" "$PLB" "$PLC"; do grep -qF -- "${v:0:8}" "$OUT" "$ERR" && frag=$((frag + 1)); done
+check "the output holds no part of a pure-letter password" "$frag" "0"
+check "prose words, placeholders, identifiers and other names are not counted" "$(run --strict "$ROOT/plneg")" "0"
+check "the negative file has no hits at all" "$(grep '^SUMMARY' "$OUT")" "SUMMARY files=1 hits=0 advisory=0 errors=0"
+
 # a single file argument is scanned even if not .jsonl
 check "file arg scanned as is" "$(run "$D/a/notes.txt")" "1"
 check "file arg counts" "$(row token_prefix)" "1/1/strict"

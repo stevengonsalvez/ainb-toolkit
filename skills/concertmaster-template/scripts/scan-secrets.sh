@@ -20,7 +20,12 @@
 #                             value of 10+ chars that mixes at least 3 of lower/upper/digit/symbol,
 #                             or is a 32+ char token with letters and digits. Identifiers, paths,
 #                             env names (STRIPE_SECRET_KEY) and plain words do not count. A heuristic:
-#                             a hit is a lead to check, not proof. Pure-letter passwords are missed.
+#                             a hit is a lead to check, not proof. Pure-letter values are not counted here (see the next class).
+#   password_word   advisory  password/passwd/pwd/passphrase NAME ONLY (not secret or api key), then : or =, or the
+#                             words "is" / "was" and a quoted value, then a value of 8+ LETTERS only (a trailing . , ; ! ?
+#                             quote or bracket is allowed; a digit, _ - / or ( after it is not). All-capital words and a
+#                             short list of prose words that follow "password:" (required, redacted, expired, ...) do not
+#                             count. Catches a pure-letter password pasted into a handover; a hit is a lead, not proof.
 # Counts are occurrences: a repeated secret counts each time. Each class counts its own matches, so a
 # URL or an assignment that carries a vendor token counts in url_credential or password_assign AND in
 # token_prefix (never skipped: a strict class must match for a value to count as covered). The jwt class cannot tell a
@@ -105,10 +110,21 @@ RE_SK="${BND}sk-[A-Za-z0-9]{48}"
 RE_JWT='eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}'
 RE_AWS='(AKIA|ASIA)[A-Z0-9]{16}'
 RE_URL="[A-Za-z][A-Za-z0-9+.-]*://[^/[:space:]:@\"']{1,64}:[^/[:space:]@\"']{6,}@"
-PWNAME="($(ci PASSWORD)|$(ci PASSWD)|$(ci PWD)|$(ci SECRET)|$(ci API)_?$(ci KEY)|$(ci ACCESS)_?$(ci TOKEN)|$(ci AUTH)_?$(ci TOKEN))"
+PWNAME="($(ci PASSWORD)|$(ci PASSWD)|$(ci PWD)|$(ci PASSPHRASE)|$(ci SECRET)|$(ci API)_?$(ci KEY)|$(ci ACCESS)_?$(ci TOKEN)|$(ci AUTH)_?$(ci TOKEN))"
 RE_PW="${PWNAME}[A-Za-z_]{0,12}[\\\\\"']{0,6}[[:space:]]*[:=][[:space:]]*[\\\\\"']{0,6}[^[:space:]\"',;)}\\\\]{10,}"
 RE_BEARER="$(ci BEARER)[[:space:]]+[A-Za-z0-9._~+/=-]{24,}"
+# Pure-letter passwords have their own two patterns and their own grep stage (RES_PWL): the output is tagged, so
+# the awk below counts a match there as password_word only, so one letters-only password is never counted twice
+# (RE_PW above also matches a long letters-only value, but its classifier needs three character classes). A value
+# that has three classes and ends in punctuation (SunshineRiver!) is counted by BOTH stages: once as password_assign
+# and once as password_word. They are separate classes with separate counts; the strict decision is the same either way.
+# RE_PWL ends in one boundary character, so the value cannot be the start of a longer word or of a mixed value;
+# RE_PWI is the quoted "is" / "was" form, with punctuation allowed before the closing quote.
+PWFAM="($(ci PASSWORD)|$(ci PASSWD)|$(ci PWD)|$(ci PASSPHRASE))"
+RE_PWL="${PWFAM}[\\\\\"']{0,6}[[:space:]]*[:=][[:space:]]*[\\\\\"']{0,6}[A-Za-z]{8,}([^A-Za-z0-9]|\$)"
+RE_PWI="${PWFAM}[[:space:]]+($(ci IS)|$(ci WAS))[[:space:]]+[\\\\]{0,3}[\"'][A-Za-z]{8,}[]\\\\.,;:!?)}]{0,3}[\\\\]{0,3}[\"']"   # in JSONL the quotes arrive as \"
 RES=("$RE_PK" "$RE_TP" "$RE_TPB" "$RE_SK" "$RE_JWT" "$RE_AWS" "$RE_URL" "$RE_PW" "$RE_BEARER")
+RES_PWL=("$RE_PWL" "$RE_PWI")
 
 # shellcheck disable=SC2016  # awk program, no shell expansion wanted
 AWK_CLASSIFY='
@@ -121,9 +137,25 @@ function shape(v, min,    lo, up, di, ot, cls) {
   if (length(v) >= 32 && v ~ /^[A-Za-z0-9+=_-]+$/ && di && (lo || up)) return 1
   return 0
 }
+# a pure-letter password: 8+ letters, then at most closing punctuation; not all capitals, not a prose word
+function pwword(v,   l, r) {
+  if (!match(v, /^[A-Za-z]+/) || RLENGTH < 8) return 0
+  l = substr(v, 1, RLENGTH); r = substr(v, RLENGTH + 1)
+  if (r !~ /^[]\\.,;:!?)}"\047 \t\r]*$/) return 0   # the one character the 8-9 letter pattern consumed may be a space, a tab or the CR of a CRLF line end
+  if (l ~ /^[A-Z]+$/) return 0
+  if (index(" required optional redacted unchanged unknown provided supplied generated prompted incorrect expired invalid missing example placeholder passwords passphrase confidential protected encrypted ", " " tolower(l) " ")) return 0
+  return 1
+}
 {
   m = $0
   if (m == "@@GREPFAIL") { c["@@fail"]++; next }
+  if (m ~ /^@@PWL /) {   # a pure-letter password pattern: counted here and nowhere else
+    sub(/^@@PWL /, "", m)
+    if (tolower(m) ~ /^(password|passwd|pwd|passphrase)[ \t]+(is|was)[ \t]+[\\]*["\047]/) { v = m; sub(/^[^ \t]+[ \t]+[^ \t]+[ \t]+[\\]*["\047]/, "", v); sub(/[\\]*["\047].*$/, "", v) }
+    else { i = match(m, /[:=]/); v = substr(m, i + 1); sub(/^[ \t\\"\047]*/, "", v); sub(/[ \t\r]+$/, "", v) }   # the pattern consumes one boundary character, which may be white space
+    if (pwword(v)) c["password_word"]++
+    next
+  }
   # the boundary of a bounded-prefix match: an escape, then any run of non-key bytes (multibyte safe)
   if (m ~ /^(\\[ntr]|%[0-9A-Fa-f][0-9A-Fa-f])/) sub(/^(\\[ntr]|%[0-9A-Fa-f][0-9A-Fa-f])/, "", m)
   if (m ~ /^[^A-Za-z0-9_-]/) sub(/^[^A-Za-z0-9_-]+/, "", m)
@@ -145,7 +177,7 @@ function shape(v, min,    lo, up, di, ot, cls) {
 END { for (k in c) print k "\t" c[k] }'
 
 STRICT_CLASSES="private_key token_prefix jwt aws_key url_credential bearer_token"
-ALL_CLASSES="$STRICT_CLASSES password_assign"
+ALL_CLASSES="$STRICT_CLASSES password_assign password_word"
 
 LIST="$(mktemp "${TMPDIR:-/tmp}/cm-scan-list.XXXXXX")" || { cm_warn "scan-secrets.sh: cannot create a temp file"; exit 2; }
 trap 'rm -f -- "${LIST:?}" "${TMP:-}"' EXIT
@@ -183,7 +215,8 @@ for f in ${FILES[@]+"${FILES[@]}"}; do
   # Only regular files (a symlink to one is fine). A FIFO, a socket or a broken link is an error: never opened.
   if [ ! -f "$f" ]; then cm_warn "scan-secrets.sh: not a regular file: $f"; errors=$((errors + 1)); continue; fi
   if [ ! -r "$f" ]; then cm_warn "scan-secrets.sh: cannot read file: $f"; errors=$((errors + 1)); continue; fi
-  res="$({ for re in "${RES[@]}"; do grep -aoE -e "$re" -- "$f" 2>/dev/null; [ $? -le 1 ] || echo '@@GREPFAIL'; done; } | awk "$AWK_CLASSIFY"; printf 'rc=%s\n' "${PIPESTATUS[1]}")"
+  res="$({ for re in "${RES[@]}"; do grep -aoE -e "$re" -- "$f" 2>/dev/null; [ $? -le 1 ] || echo '@@GREPFAIL'; done
+         for re in "${RES_PWL[@]}"; do grep -aoE -e "$re" -- "$f" 2>/dev/null | sed 's/^/@@PWL /'; [ "${PIPESTATUS[0]}" -le 1 ] || echo '@@GREPFAIL'; done; } | awk "$AWK_CLASSIFY"; printf 'rc=%s\n' "${PIPESTATUS[1]}")"
   rc="$(printf '%s\n' "$res" | tail -n 1)"
   if [ "$rc" != "rc=0" ] || printf '%s\n' "$res" | grep -q '^@@fail'; then
     cm_warn "scan-secrets.sh: scan failed for: $f"; errors=$((errors + 1)); continue
