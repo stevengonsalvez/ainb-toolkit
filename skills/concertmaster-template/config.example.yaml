@@ -270,9 +270,9 @@ intake:
   issue_repo: null                 # [script] default github.org/github.main_repo
   chats: {}                        # [script] alias: { jid: "<id>@g.us", title: "<group title>" }
   media:
-    host: imgbb
-    key_env_file: null             # [script] NON-production env file holding IMGBB_API_KEY
-    privacy_note: "the chat may carry personal data"   # [script] shown before an upload
+    # Reporter media stays local: it is never uploaded to any host. A bead carries a local
+    # path or a description in words.
+    privacy_note: "the chat may carry personal data"   # [script] what the chat may carry; read before looking at media
 
 telemetry:                         # optional mission-control style sink
   # base_url and tenant_id are REQUIRED for anything to be sent; there is no built-in default

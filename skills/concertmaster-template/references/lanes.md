@@ -554,9 +554,9 @@ Per issue:
      constraints (minors' data, app store rules, licences), all with source
      URLs.
 3. Write into the issue body, or as one structured comment if the body is the
-   author's: Problem; What the reference does (screenshots only via
-   scripts/intake.sh upload <img> --reviewed (intake.md rule 8), only when
-   no personal data shows); What exists today; Proposed shape (screens and
+   author's: Problem; What the reference does (describe screenshots in words;
+   a screenshot of a real user stays local, intake.md rule 8, and is never
+   uploaded); What exists today; Proposed shape (screens and
    flows, data, permissions); Acceptance criteria as a checklist; Open
    questions for {{owner}}; Sources.
 4. Label the issue 'researched' (create the label if missing) and set cm:idle

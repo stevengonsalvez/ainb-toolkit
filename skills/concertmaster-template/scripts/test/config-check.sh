@@ -86,7 +86,7 @@ variant chat-no-jid 's/^  chats: {}.*/  chats: { team-chat: { title: "Team Chat"
 doctor "an intake chat without a jid fails"                     "$ROOT/chat-no-jid.yaml" 1 'FAIL intake.chats'
 
 # an env-var-name reference and a path are not secrets
-awk '{ print } /^  base_url:/ { print "  api_key: IMGBB_API_KEY"; print "  secret_file: /home/x/.secrets/y" }' "$EXAMPLE" > "$ROOT/refs.yaml"
+awk '{ print } /^  base_url:/ { print "  api_key: TELEMETRY_API_KEY"; print "  secret_file: /home/x/.secrets/y" }' "$EXAMPLE" > "$ROOT/refs.yaml"
 doctor "env-var-name and path references are not secrets"       "$ROOT/refs.yaml" 0 'config-check: 0 failed'
 
 # a base32 seed (all caps and digits, no underscore) and a base64 token starting with / are NOT references

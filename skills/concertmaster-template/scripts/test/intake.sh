@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # cm-test: rm-cleanup (its EXIT trap rm -rf-s its own mktemp dir; CM_TEST_KEEP_TMP=1 keeps it)
 # intake.sh tests: dry-run the intake script against a fixture chat export, a
-# fake ledger and fake issue and bead lists, with stubs for wacli, bd, curl and
-# gh. Proves: since parsing, chat aliases, the wacli allow-list, dedupe
+# fake ledger and fake issue and bead lists, with stubs for wacli, bd and
+# gh (and a curl that refuses every call, because intake never uploads). Proves: since parsing, chat aliases, the wacli allow-list, dedupe
 # (filed, duplicate, related), classification, routing against live and
 # degraded ledgers, bead creation, the tracker format (golden file), the single
-# AskUserQuestion payload, the imgbb key never reaching argv, and that the
+# AskUserQuestion payload, that reporter media stays local (no upload command, no
+# curl call, the bead carries a local path or a description), and that the
 # script cannot send, file or follow. Nothing outside a mktemp dir is touched.
 #
 #   scripts/test/intake.sh            # exit 0 when every case passes
@@ -72,9 +73,8 @@ exit 0
 EOF
 cat > "$ROOT/bin/curl" <<EOF
 #!/usr/bin/env bash
-printf '%s\n' "\$*" > "$ROOT/curl.argv"
-cat > "$ROOT/curl.stdin"
-printf '{"success":true,"status":200,"data":{"url":"https://i.ibb.co/stub/snap.png","delete_url":"https://ibb.co/stub/delete-token"}}'
+printf '%s\n' "\$*" >> "$ROOT/curl.log"
+echo "curl stub: intake must not make network calls" >&2; exit 9
 EOF
 cat > "$ROOT/bin/gh" <<EOF
 #!/usr/bin/env bash
@@ -216,7 +216,8 @@ check "route a question to Owner" "$(by x '.items[] | select(.type == "question"
 check "route a feature that names a live epic to the epic lead" "$(by x '.items[] | select(.type == "feature") | .owner')" "epic:infra-credits"
 check "a lane with no lead is never chosen (alpha-sweeper sorts first and accepts bugs)" "$(by x '.items[] | select(.type == "bug") | .owner')" "dev-sweeper"
 check "a lead the ledger marks torn-down or does not know is not live" "$(jq '[.items[].owner] | map(select(. == "beta-sweeper" or . == "gamma-sweeper")) | length' "$PLAN")" "0"
-check "the plan carries the media url from the map" "$(jq -r '.items[] | select(.msgIds | index("3EB0AA0A")) | .media[0].url' "$PLAN")" "https://i.ibb.co/fake01/blank-screen.png"
+# shellcheck disable=SC2088 # the tilde is literal text in the expected value
+check "the plan carries the local media path from the map" "$(jq -r '.items[] | select(.msgIds | index("3EB0AA0A")) | .media[0].ref' "$PLAN")" "~/.concertmaster/inbox/team-chat-media/blank-screen.png"
 
 # the concertmaster corrects a proposal by first message id
 printf '{"3EB0AA08":{"type":"bug"},"3EB0AA0A":{"owner":"owner"}}' > "$ROOT/over.json"
@@ -365,7 +366,7 @@ check_has "description is passed on stdin, not argv" "$(cat "$ROOT/bd.log")" "--
 OPSBODY="$(grep -l 'Password reset' "$ROOT"/bd-body-*.txt | head -n 1)"
 check_has "bead carries the whatsapp id" "$(cat "$OPSBODY")" "WhatsApp msg ids: 3EB0AA0A"
 check_has "bead carries a UTC timestamp" "$(cat "$OPSBODY")" "at 2026-10-12T12:00:00Z UTC"
-check_has "bead carries the imgbb url with time and id" "$(cat "$OPSBODY")" "Screenshot (Sam, 12:04 UTC, msg 3EB0AA05): https://i.ibb.co/fake01/blank-screen.png"
+check_has "bead carries the local path with time and id" "$(cat "$OPSBODY")" "Screenshot (Sam, 12:04 UTC, msg 3EB0AA05): ~/.concertmaster/inbox/team-chat-media/blank-screen.png"
 check "bead id map is keyed by the first FULL message id" "$(jq -r '.["3EB0AA0AFFFF000A"]' "$ROOT/beadmap.json")" "acme-test.2"
 check_has "bead carries the full message id" "$(cat "$OPSBODY")" "Full ids: 3EB0AA0AFFFF000A"
 CM_HOME="$ROOT/home-epics" "$IN" beads --apply --ops-epic custom-ops --dev-epic custom-dev < "$PLAN" >/dev/null 2>&1
@@ -468,42 +469,59 @@ check "every alternative states a concrete downside" \
   "$(jq '[.questions[0].options[1:][] | select(.description | test("idle|slips|round trip"))] | length' "$ASK")" "2"
 check_has "the hold option counts the idle items" "$(jq -r '.questions[0].options[1].description' "$ASK")" "4 items sit idle, the oldest already 5h old"
 
-# ------------------------------------------------------------------ media + upload
+# ------------------------------------------------------------------ media stays local
 
 MEDIA_OUT="$("$IN" media team-chat 3EB0AA05FFFF0005 --out "$ROOT/media" 2>/dev/null)"
 check "media downloads one named message" "$(tail -n 1 "$ROOT/wacli.log" | cut -c1-14)" "media download"
 check "media returns the directory" "$MEDIA_OUT" "$ROOT/media"
 check_lacks "media never uses --download-media" "$(cat "$ROOT/wacli.log")" "--download-media"
 
-KEY="k3y-SECRET-0123456789abcdef"  # gitleaks:allow (fake test key)
-printf 'x' > "$ROOT/snap.png"; printf 'x' > "$ROOT/clip.mp4"
-IMGBB_API_KEY="$KEY" "$IN" upload "$ROOT/snap.png" >/dev/null 2>"$ROOT/unrev.err"; check "upload refuses without --reviewed" "$?" "2"
-check_has "the refusal says why" "$(cat "$ROOT/unrev.err")" "imgbb URLs are public"
-URL="$(IMGBB_API_KEY="$KEY" "$IN" upload "$ROOT/snap.png" --reviewed --id 3EB0AA05FFFF0005 --map "$ROOT/mm.json")"
-check "upload returns the url" "$URL" "https://i.ibb.co/stub/snap.png"
-check_lacks "the imgbb key is never on argv" "$(cat "$ROOT/curl.argv")" "$KEY"
-check_has "curl reads its config from stdin" "$(cat "$ROOT/curl.argv")" "-K -"
-check_has "the key reaches curl on stdin" "$(cat "$ROOT/curl.stdin")" "$KEY"
-check "upload records the full message id against the url" "$(jq -r '.["3EB0AA05FFFF0005"]' "$ROOT/mm.json")" "https://i.ibb.co/stub/snap.png"
-check_has "the upload asks imgbb to expire it" "$(cat "$ROOT/curl.stdin")" 'expiration=2592000'
-check_lacks "the chat-supplied file name never reaches the curl config" "$(cat "$ROOT/curl.stdin")" "snap.png"
-IMGBB_API_KEY="$KEY" bash -x "$IN" upload "$ROOT/snap.png" --reviewed >/dev/null 2>"$ROOT/xtrace.err"
-check_lacks "bash -x does not trace the key" "$(cat "$ROOT/xtrace.err")" "$KEY"
-NLFILE="$ROOT/evil
-url = z"; printf x > "$NLFILE.png"
-IMGBB_API_KEY="$KEY" "$IN" upload "$NLFILE.png" --reviewed >/dev/null 2>&1; check "upload refuses a path with a newline (curl config injection)" "$?" "1"
-IMGBB_API_KEY="$KEY" "$IN" upload "$ROOT/clip.mp4" --reviewed >/dev/null 2>"$ROOT/vid.err"; check "upload refuses video" "$?" "1"
-check_has "video refusal says to extract frames" "$(cat "$ROOT/vid.err")" "extract frames"
-printf 'IMGBB_API_KEY=prod-credential-0000\n' > "$ROOT/.env.production"
-check "upload recorded the takedown link owner-only, outside any bead" "$(jq -r '.["https://i.ibb.co/stub/snap.png"]' "$CM_HOME/imgbb-deletes.json")" "https://ibb.co/stub/delete-token"
-(cd "$ROOT" && env -u IMGBB_API_KEY HOME="$ROOT" "$IN" upload "$ROOT/snap.png" --reviewed >/dev/null 2>"$ROOT/nokey.err"); check "upload without a key fails" "$?" "1"
-check_lacks "the missing-key error never prints a key" "$(cat "$ROOT/nokey.err")" "$KEY"
-check "the production credential is never used for chat media" "$(grep -c 'prod-credential' "$ROOT/curl.stdin")" "0"
+# Owner decision: reporter media is never uploaded. There is no upload command.
+printf 'x' > "$ROOT/snap.png"
+"$IN" upload "$ROOT/snap.png" --reviewed >/dev/null 2>"$ROOT/upl.err"; check "upload is not a command" "$?" "2"
+check_has "the refusal names the unknown command" "$(cat "$ROOT/upl.err")" "unknown command 'upload'"
+printf '{"3EB0AA05FFFF0005": "Blank screen\\n```\\nmail kid.member@example.com or +44 7700 900123 %s"}' "$(printf 'x%.0s' $(seq 1 400))" > "$ROOT/mm-dirty.json"
+DIRTY="$("$IN" plan --issues "$FX/issues.json" --beads "$FX/beads.jsonl" --ledger "$FX/ledger-live.json" --media-map "$ROOT/mm-dirty.json" < "$ENV" | jq -r '.items[] | select(.msgIds | index("3EB0AA0A")) | .media[0].ref')"
+check "a media-map value is one line" "$(printf '%s' "$DIRTY" | grep -c '')" "1"
+check "a media-map value loses email and phone" "$(printf '%s' "$DIRTY" | grep -c -E 'example.com|7700')" "0"
+check "a media-map value is capped at 300 characters" "$([ "${#DIRTY}" -le 300 ] && echo ok)" "ok"
+printf '{"3EB0AA05FFFF0005": "/h/c-media/3EB0AA05FFFF0005/1730640000123.jpg x@foo.mov 447700900123"}' > "$ROOT/mm-num.json"
+check "a bare 10+ digit number and a .mov address are redacted, an alnum id survives" \
+  "$("$IN" plan --issues "$FX/issues.json" --beads "$FX/beads.jsonl" --ledger "$FX/ledger-live.json" --media-map "$ROOT/mm-num.json" < "$ENV" | jq -r '.items[] | select(.msgIds | index("3EB0AA0A")) | .media[0].ref')" \
+  "/h/c-media/3EB0AA05FFFF0005/[phone removed].jpg [email removed] [phone removed]"
+printf '{"3EB0AA05FFFF0005": "   "}' > "$ROOT/mm-blank.json"
+check "a blank media-map value counts as no reference" \
+  "$("$IN" plan --issues "$FX/issues.json" --beads "$FX/beads.jsonl" --ledger "$FX/ledger-live.json" --media-map "$ROOT/mm-blank.json" < "$ENV" | jq -r '.items[] | select(.msgIds | index("3EB0AA0A")) | .media[0].ref')" "null"
+"$IN" media team-chat '@@@' >/dev/null 2>&1; check "media refuses an id with no usable characters" "$?" "1"
+printf '{"3EB0AA05FFFF0005": "/h/inbox/x/login@2x.png mail a@b.com or 07700 900123"}' > "$ROOT/mm-2x.json"
+check "login@2x.png survives, a real email and a 0-number do not" \
+  "$("$IN" plan --issues "$FX/issues.json" --beads "$FX/beads.jsonl" --ledger "$FX/ledger-live.json" --media-map "$ROOT/mm-2x.json" < "$ENV" | jq -r '.items[] | select(.msgIds | index("3EB0AA0A")) | .media[0].ref')" \
+  "/h/inbox/x/login@2x.png mail [email removed] or [phone removed]"
+for u in 'see https://i.ibb.co/a/b.png now' 'www.imgbb.com/x' 'data:image/png;base64,AAAA' 'DATA:image/png;base64,AA' 'i.ibb.co/abc/x.png' 'imgur.com/a/xyz' '//cdn.example.com/a.png' 'cdn.foo.xyz/a.png' 'see imgbb.com' 'foo.ru/x'; do
+  printf '{"3EB0AA05FFFF0005": "%s"}' "$u" > "$ROOT/mm-u.json"
+  check "a media-map value with a remote link is dropped: $u" \
+    "$("$IN" plan --issues "$FX/issues.json" --beads "$FX/beads.jsonl" --ledger "$FX/ledger-live.json" --media-map "$ROOT/mm-u.json" < "$ENV" | jq -r '.items[] | select(.msgIds | index("3EB0AA0A")) | .media[0].ref')" "null"
+done
+printf '{"3EB0AA05FFFF0005": "https://i.ibb.co/x/y.png"}' > "$ROOT/mm-url.json"
+check "a media-map URL is dropped, never carried into a bead" \
+  "$("$IN" plan --issues "$FX/issues.json" --beads "$FX/beads.jsonl" --ledger "$FX/ledger-live.json" --media-map "$ROOT/mm-url.json" < "$ENV" | jq -r '.items[] | select(.msgIds | index("3EB0AA0A")) | .media[0].ref')" "null"
+check "a media-map value has no code fence" "$(printf '%s' "$DIRTY" | grep -c '```')" "0"
+printf '{"3EB0AA05FFFF0005": "./m/Screenshot 2026-11-03 at 12.30.05.png +44 7700 900123"}' > "$ROOT/mm-rel.json"
+check "a relative path keeps its date and loses a phone number" \
+  "$("$IN" plan --issues "$FX/issues.json" --beads "$FX/beads.jsonl" --ledger "$FX/ledger-live.json" --media-map "$ROOT/mm-rel.json" < "$ENV" | jq -r '.items[] | select(.msgIds | index("3EB0AA0A")) | .media[0].ref')" \
+  "./m/Screenshot 2026-11-03 at 12.30.05.png [phone removed]"
+printf '{"3EB0AA05FFFF0005": "~/.concertmaster/inbox/team-chat-media/Screenshot 2026-11-03 at 12.30.05.png"}' > "$ROOT/mm-path.json"
+# shellcheck disable=SC2088 # the tilde is literal text in the expected value
+check "a media path keeps its date-stamped file name" \
+  "$("$IN" plan --issues "$FX/issues.json" --beads "$FX/beads.jsonl" --ledger "$FX/ledger-live.json" --media-map "$ROOT/mm-path.json" < "$ENV" | jq -r '.items[] | select(.msgIds | index("3EB0AA0A")) | .media[0].ref')" \
+  "~/.concertmaster/inbox/team-chat-media/Screenshot 2026-11-03 at 12.30.05.png"
+check "no curl call was made by any intake command" "$([ -e "$ROOT/curl.log" ] && echo called || echo none)" "none"
+check "media lands in its own directory under the inbox by default" "$(CM_HOME="$ROOT/home2" "$IN" media team-chat 3EB0AA05FFFF0005 2>/dev/null)" "$ROOT/home2/inbox/team-chat-media/3EB0AA05FFFF0005"
 
 # ------------------------------------------------------------------ hard rules, checked on the code itself
 
 CODE="$(cat "$IN" "$SCRIPTS/intake.jq")"
-for pat in 'wacli send' 'send text' 'gh issue create' 'gh issue comment' 'gh issue edit' 'gh pr ' 'gh api' 'git commit' 'git push' 'supabase' 'psql'; do
+for pat in api.imgbb.com IMGBB_API_KEY curl 'wacli send' 'send text' 'gh issue create' 'gh issue comment' 'gh issue edit' 'gh pr ' 'gh api' 'git commit' 'git push' 'supabase' 'psql'; do
   check_lacks "script never contains: $pat" "$CODE" "$pat"
 done
 for flag in --download-media --follow --webhook; do
