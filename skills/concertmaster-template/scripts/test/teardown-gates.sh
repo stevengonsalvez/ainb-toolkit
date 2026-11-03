@@ -84,7 +84,8 @@ AS_ROOT=0; [ "$(id -u)" = 0 ] && AS_ROOT=1
 skip() { printf 'SKIP %s (running as root)\n' "$1"; }
 cat > "$ROOT/bin/gh" <<G
 #!/usr/bin/env bash
-echo '[{"number":1,"state":"MERGED","headRefOid":"$SHA"}]'
+# STUB_GH=none: the branch has no PR at all; default MERGED
+if [ "\${STUB_GH:-}" = none ]; then echo '[]'; else echo '[{"number":1,"state":"MERGED","headRefOid":"$SHA"}]'; fi
 G
 cat > "$ROOT/bin/orca-stub" <<'O'
 #!/usr/bin/env bash
@@ -127,7 +128,7 @@ run() { # run <label> <expect-exit> <grep-pattern> <path> [args...]
   local label="$1" want="$2" pat="$3" p="$4" out rc
   shift 4
   out="$(STUB_PATH="$p" "$TD" local "$p" "$@" 2>&1)"; rc=$?
-  if [ "$rc" = "$want" ] && printf '%s' "$out" | grep -q -- "$pat"; then
+  if [ "$rc" = "$want" ] && grep -q -- "$pat" <<<"$out"; then
     PASS=$((PASS + 1)); printf 'PASS %-58s rc=%s\n' "$label" "$rc"
   else
     FAIL=$((FAIL + 1)); printf 'FAIL %-58s rc=%s want=%s\n%s\n' "$label" "$rc" "$want" "$out"
@@ -777,7 +778,22 @@ run "foreign field refused even inside the state dir"     3 "belongs to project 
 run "retire-check refuses a foreign ledger too"           3 'RETIRE REFUSED' "$W1" --retire-check
 export CM_HOME="$ROOT/cmhome"
 # lead mode (--owner) with a foreign CM_HOME: see teardown-owner.sh, which has the lead-mode harness
+
 export CM_HOME="$SAVED_HOME" HOME="$SAVED_HOME_ENV"; unset CM_PROJECT_ID
+
+echo "== --allow-no-pr: concertmaster mode unchanged, lead mode now accepts it"
+export CM_HOME="$ROOT/cmhome"
+NP1="$(mkwt nopr-a)"
+one "$NP1" '"standing":false'
+STUB_GH=none run "concertmaster mode, no PR, no flag: refused"             3 'no merged/closed PR' "$NP1"
+STUB_GH=none run "concertmaster mode, no PR, --allow-no-pr: plan ok (unchanged)" 0 'approved kill-list item' "$NP1" --allow-no-pr
+# --owner no longer rejects --allow-no-pr as a usage error (exit 2): the lead-mode gates judge it (here the
+# lead cannot be found, a refusal, exit 3); the other combinations stay usage errors.
+STUB_GH=none run "--owner with --allow-no-pr is not a usage error"         3 'REFUSED' "$NP1" --owner no-such-lead --allow-no-pr
+STUB_GH=none run "--owner with --allow-no-pr: the refusal is not 'cannot be combined'" 3 'ownership unproven' "$NP1" --owner no-such-lead --allow-no-pr
+run "--owner with --retire-check is still a usage error"                   2 'cannot be combined' "$NP1" --owner no-such-lead --retire-check
+run "--owner with --force-standing is still a usage error"                 2 'cannot be combined' "$NP1" --owner no-such-lead --force-standing x
+run "--owner with --accept-unmerged-beads is still a usage error"          2 'cannot be combined' "$NP1" --owner no-such-lead --accept-unmerged-beads x
 
 echo "passed=$PASS failed=$FAIL"
 [ "$FAIL" = 0 ]
