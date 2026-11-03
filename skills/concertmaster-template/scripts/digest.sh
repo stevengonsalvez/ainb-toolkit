@@ -120,7 +120,7 @@ TZ="$CM_TZ" jq -r --argjson sinceH "$SINCE_H" --argjson since "$SINCE_EPOCH" --a
       (.violationCheck // {}) as $vc
       | if $vc.enabled == false then empty else
         ([ (.violations // [])[] | "\(.agent // "?" | clean) \(.host // "?" | clean) \(.worktree // "?" | clean) \(.handle // "-" | clean) \(.title // "-" | clean | .[0:40])" ]
-         + (if $vc.complete == false then ["CHECK INCOMPLETE, not proof of none: \(($vc.gaps // []) | join("; ") | clean | .[0:160])"] else [] end)
+         + (if $vc.complete == false then ["CHECK INCOMPLETE, not proof of none: \(($vc.gaps // []) | join("; ") | clean | .[0:600])"] else [] end)
          + (if ($vc.checkedAt | ts) != null then ["census \($vc.checkedAt | ago) old"] else [] end)) as $lines
         | if ($lines | map(select(startswith("census ") | not)) | length) == 0 then empty
           else section("Forbidden agents on \($project) work"; $lines) end end end ),
