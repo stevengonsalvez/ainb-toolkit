@@ -141,8 +141,11 @@ The lane set above is the default; `cfg.lanes` is the list in use.
     Code's "Dangerous rm operation" approval prompt, which nobody answers, and the lane
     stalls for hours. Briefs say: never run `rm`; `mktemp -d` under the scratchpad and leave
     it there. Scripts in this skill that clean their own temp dir keep `rm -rf -- "${VAR:?}"`
-    (an empty variable aborts instead of deleting from `/`); the rm-guard hook
-    (`scripts/hooks/rm-guard-hook.sh`) denies the unguarded form on sight.
+    (an empty variable aborts instead of deleting from `/`);
+    each test script that does so in an EXIT trap carries the line `# cm-test: rm-cleanup` and skips
+    that `rm -rf` under `CM_TEST_KEEP_TMP=1`, so a reviewer greps a script for `\brm\b` and runs it
+    only with that switch (`references/prompt-stalls.md`, sixth wave);
+    the rm-guard hook (`scripts/hooks/rm-guard-hook.sh`) denies the unguarded form on sight.
     The same hook denies a raw `orca worktree rm` or `orca worktree remove` (also as `orca-ide`,
     `orca-dev` or `$ORCA_CLI_COMMAND`; any flags, any place in a chain, also inside `ssh '...'`)
     in a session under `worktrees.path_match`: remove a worktree only through
@@ -1255,7 +1258,7 @@ shellcheck clean.
 | `scripts/hooks/mc-worker-hook.sh` | Claude Code hook for workers, in-scope repos only (optional) |
 | `scripts/digest.sh [--full] [--since-hours n]` | digest text, stdout only, `- ` bullets, no Needs, Open follow-ups, Stuck or Fleet section (`--full` adds them for the terminal report): Merged (merged since `digests.lastSentAt`, else 12h) from `gh pr list`, and in `--full` the open PR count (a failed gh prints "unknown (gh failed)", never 0), every other section from the ledger; read-only; `--full` also lists `ledger.violations` and an incomplete `ledger.violationCheck` |
 | `scripts/intake.sh <cmd>` | the deterministic half of `intake` (rules in `scripts/intake.jq`) |
-| `scripts/test/*.sh` | `classify-standing`, `classify-violations`, `teardown-gates`, `resume-flow`, `intake`, `mc-emit`, `boot-sweep`, `runtime-check`, `ci-queue-alert`, `cred-check`, `backup-offhost`, `backup-stale`, `scan-secrets`, `rm-guard-hook`, `digest-gh`, `orca-json-helpers`, `waiting-autocompact`, `spawn-verify`, `classify-ownership`, `ask-timeout`, `queue`, `queue-audit`, `salv3`, `salv3-followups`, `markers`, `unlinked-prs`, `tick-emit`, `config-check`, `automations-audit`, `followups`, `followups-escalate`, `lane-journal`, `asks`, `teardown-owner`, `lanes-relay`, `fleet-state`, `lessons-recon`, `pane-stalls`, `skill-sync`, `tick-contract`: hermetic tests against `scripts/test/fixtures/config.test.yaml`; run the matching one after any script change |
+| `scripts/test/*.sh` | `classify-standing`, `classify-violations`, `teardown-gates`, `resume-flow`, `intake`, `mc-emit`, `boot-sweep`, `runtime-check`, `ci-queue-alert`, `cred-check`, `backup-offhost`, `backup-stale`, `scan-secrets`, `rm-guard-hook`, `digest-gh`, `orca-json-helpers`, `waiting-autocompact`, `spawn-verify`, `classify-ownership`, `ask-timeout`, `queue`, `queue-audit`, `salv3`, `salv3-followups`, `markers`, `unlinked-prs`, `tick-emit`, `config-check`, `automations-audit`, `followups`, `followups-escalate`, `lane-journal`, `asks`, `teardown-owner`, `lanes-relay`, `fleet-state`, `lessons-recon`, `pane-stalls`, `skill-sync`, `tick-contract`, `keep-tmp`: hermetic tests against `scripts/test/fixtures/config.test.yaml`; run the matching one after any script change |
 
 <!-- project-local: scripts -->
 

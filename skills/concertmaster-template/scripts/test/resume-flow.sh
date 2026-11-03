@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# cm-test: rm-cleanup (its EXIT trap rm -rf-s its own mktemp dir; CM_TEST_KEEP_TMP=1 keeps it)
 # resume-flow.sh: integration test for roster.sh and resume.sh with a STUBBED
 # orca. A synthetic roster holds live, dead, offline, duplicate, missing and
 # failed rows; the stub records every orca call and the test asserts which
@@ -16,7 +17,7 @@ SCRIPTS="$(cd "$HERE/.." && pwd)"
 ROOT="$(mktemp -d "${TMPDIR:-/tmp}/cm-resume-test.XXXXXX")" || { echo "cannot create a temp dir" >&2; exit 1; }
 [ -n "$ROOT" ] && [ -d "$ROOT" ] || { echo "temp dir missing" >&2; exit 1; }
 PROC_PID=""
-trap '[ -z "$PROC_PID" ] || kill "$PROC_PID" 2>/dev/null; rm -rf -- "${ROOT:?}"' EXIT
+trap '[ -z "$PROC_PID" ] || kill "$PROC_PID" 2>/dev/null; [ "${CM_TEST_KEEP_TMP:-}" = 1 ] && echo "cm-test: CM_TEST_KEEP_TMP set, kept $ROOT" >&2 || rm -rf -- "${ROOT:?}"' EXIT
 export CM_HOME="$ROOT/home"
 STUB="$ROOT/stub"
 mkdir -p "$CM_HOME" "$STUB" "$ROOT/bin" "$ROOT/wtproc"

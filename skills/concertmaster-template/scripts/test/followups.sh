@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# cm-test: rm-cleanup (its EXIT trap rm -rf-s its own mktemp dir; CM_TEST_KEEP_TMP=1 keeps it)
 # shellcheck disable=SC2015  # "A && ok || bad": ok never fails
 # followups.sh: behaviour tests for scripts/followups.sh (reconcile, close, open, report, comment-open) on a
 # temp CM_HOME. Never touches the live ledger. The teardown refusals are in teardown-gates.sh.
@@ -11,7 +12,7 @@ unset CM_ORG CM_REPO CM_PROJECT CM_OWNER_NAME CM_OWNER_ID CM_TZ CM_TZ_LABEL CM_E
 FU="$HERE/../followups.sh"
 ROOT="$(mktemp -d "${TMPDIR:-/tmp}/cm-followups.XXXXXX")" || { echo "cannot create a temp dir" >&2; exit 1; }
 [ -n "$ROOT" ] && [ -d "$ROOT" ] || { echo "temp dir missing" >&2; exit 1; }
-trap 'rm -rf -- "${ROOT:?}"' EXIT
+trap '[ "${CM_TEST_KEEP_TMP:-}" = 1 ] && echo "cm-test: CM_TEST_KEEP_TMP set, kept $ROOT" >&2 || rm -rf -- "${ROOT:?}"' EXIT
 export CM_HOME="$ROOT/cmhome"
 mkdir -p "$CM_HOME"
 L="$CM_HOME/ledger.json"

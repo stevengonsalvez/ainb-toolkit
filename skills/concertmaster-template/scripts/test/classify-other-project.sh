@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# cm-test: rm-cleanup (its EXIT trap rm -rf-s its own mktemp dir; CM_TEST_KEEP_TMP=1 keeps it)
 # classify-other-project.sh (test): rule 3 of the census-to-zero work. Rows that are not this project
 # get class other-project: another repo, or a never_touch name (exact, never a prefix). A row of THIS
 # repo on that list is other-project only while its git is known and clean (dirty, unpushed or unknown
@@ -10,7 +11,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(mktemp -d "${TMPDIR:-/tmp}/cm-otherproj.XXXXXX")" || { echo "cannot create a temp dir" >&2; exit 1; }
 [ -n "$ROOT" ] && [ -d "$ROOT" ] || { echo "temp dir missing" >&2; exit 1; }
-trap 'rm -rf -- "${ROOT:?}"' EXIT
+trap '[ "${CM_TEST_KEEP_TMP:-}" = 1 ] && echo "cm-test: CM_TEST_KEEP_TMP set, kept $ROOT" >&2 || rm -rf -- "${ROOT:?}"' EXIT
 command -v jq >/dev/null 2>&1 || { echo "missing dependency: jq" >&2; exit 1; }
 command -v yq >/dev/null 2>&1 || { echo "missing dependency: yq" >&2; exit 1; }
 export CM_HOME="$ROOT"

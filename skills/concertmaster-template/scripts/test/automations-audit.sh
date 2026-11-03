@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# cm-test: rm-cleanup (its EXIT trap rm -rf-s its own mktemp dir; CM_TEST_KEEP_TMP=1 keeps it)
 # automations-audit.sh (test): behaviour tests for the Orca automations audit. The
 # orca CLI is a stub that answers `host list` and `automations list` from files in a
 # mktemp dir; the config is written there too. No Orca, no network.
@@ -9,7 +10,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 SCRIPT="$HERE/../automations-audit.sh"
 ROOT="$(mktemp -d "${TMPDIR:-/tmp}/cm-autoaudit.XXXXXX")" || { echo "cannot create a temp dir" >&2; exit 1; }
 if [ -z "$ROOT" ] || [ ! -d "$ROOT" ]; then echo "temp dir missing" >&2; exit 1; fi
-trap 'rm -rf -- "${ROOT:?}"' EXIT
+trap '[ "${CM_TEST_KEEP_TMP:-}" = 1 ] && echo "cm-test: CM_TEST_KEEP_TMP set, kept $ROOT" >&2 || rm -rf -- "${ROOT:?}"' EXIT
 mkdir -p "$ROOT/bin" "$ROOT/home"
 export HOME="$ROOT/home" CM_HOME="$ROOT/cm" STUB_DIR="$ROOT" ORCA_CLI_COMMAND="$ROOT/bin/orca-stub"
 unset CM_CONFIG CM_PROJECT

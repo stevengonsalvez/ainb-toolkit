@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# cm-test: rm-cleanup (its EXIT trap rm -rf-s its own mktemp dir; CM_TEST_KEEP_TMP=1 keeps it)
 # queue-audit.sh test: stubbed gh and Orca CLI, a fixture ledger. Asserts: a PR or a worktree comment
 # naming the issue makes an item OK, neither after the stall window is STALLED, a young item is OK, no
 # issue is NO-ISSUE, no timestamp is UNKNOWN-AGE, an unreadable host turns STALLED into UNVERIFIED, and a
@@ -9,7 +10,7 @@ set -uo pipefail
 SCRIPT="$(cd "$(dirname "$0")/.." && pwd)/queue-audit.sh"
 ROOT="$(mktemp -d "${TMPDIR:-/tmp}/cm-queue-audit.XXXXXX")" || { echo "cannot create a temp dir" >&2; exit 1; }
 [ -n "$ROOT" ] && [ -d "$ROOT" ] || { echo "temp dir missing" >&2; exit 1; }
-trap 'rm -rf -- "${ROOT:?}"' EXIT
+trap '[ "${CM_TEST_KEEP_TMP:-}" = 1 ] && echo "cm-test: CM_TEST_KEEP_TMP set, kept $ROOT" >&2 || rm -rf -- "${ROOT:?}"' EXIT
 mkdir -p "$ROOT/bin" "$ROOT/home"
 cat > "$ROOT/bin/gh" <<'S'
 #!/usr/bin/env bash

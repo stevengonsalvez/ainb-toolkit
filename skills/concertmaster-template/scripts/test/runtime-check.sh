@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# cm-test: rm-cleanup (its EXIT trap rm -rf-s its own mktemp dir; CM_TEST_KEEP_TMP=1 keeps it)
 # runtime-check.sh test: STUBBED orca (the live terminal-read shape), fake Claude transcripts with set
 # ages, a fixture ledger. Asserts the runtime-restart check: renamed terminal handles are detected and
 # refreshed in the ledger BY PATH; a stale lane (transcript older than 2 x its loop interval, 1 x when its
@@ -14,7 +15,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 SCRIPT="$HERE/../runtime-check.sh"
 ROOT="$(mktemp -d "${TMPDIR:-/tmp}/cm-runtime-test.XXXXXX")" || { echo "cannot create a temp dir" >&2; exit 1; }
 [ -n "$ROOT" ] && [ -d "$ROOT" ] || { echo "temp dir missing" >&2; exit 1; }
-trap 'rm -rf -- "${ROOT:?}"' EXIT
+trap '[ "${CM_TEST_KEEP_TMP:-}" = 1 ] && echo "cm-test: CM_TEST_KEEP_TMP set, kept $ROOT" >&2 || rm -rf -- "${ROOT:?}"' EXIT
 export CM_HOME="$ROOT/home" STUB_DIR="$ROOT/stub" CM_CLAUDE_PROJECTS="$ROOT/projects"
 mkdir -p "$CM_HOME/cache" "$STUB_DIR" "$CM_CLAUDE_PROJECTS"
 cat > "$ROOT/cfg.yaml" <<'Y'

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# cm-test: rm-cleanup (its EXIT trap rm -rf-s its own mktemp dir; CM_TEST_KEEP_TMP=1 keeps it)
 # teardown-owner.sh: behaviour tests for teardown.sh lead mode (--owner) and for the beads
 # old-schema excuse. Hermetic: a throwaway repo whose origin is a local bare repo, linked
 # worktrees as children, a stubbed orca (worktree ps / worktree list / terminal), gh and bd.
@@ -13,7 +14,7 @@ unset CM_ORG CM_REPO CM_PROJECT CM_OWNER_NAME CM_OWNER_ID CM_TZ CM_TZ_LABEL CM_E
 TD="$HERE/../teardown.sh"
 ROOT="$(mktemp -d "${TMPDIR:-/tmp}/cm-owner.XXXXXX")" || { echo "cannot create a temp dir" >&2; exit 1; }
 [ -n "$ROOT" ] && [ -d "$ROOT" ] || { echo "temp dir missing" >&2; exit 1; }
-trap 'chmod -R u+rwx "$ROOT" 2>/dev/null; rm -rf -- "${ROOT:?}"' EXIT
+trap 'chmod -R u+rwx "$ROOT" 2>/dev/null; [ "${CM_TEST_KEEP_TMP:-}" = 1 ] && echo "cm-test: CM_TEST_KEEP_TMP set, kept $ROOT" >&2 || rm -rf -- "${ROOT:?}"' EXIT
 export CM_HOME="$ROOT/cmhome"
 mkdir -p "$CM_HOME" "$ROOT/bin"
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# cm-test: rm-cleanup (its EXIT trap rm -rf-s its own mktemp dir; CM_TEST_KEEP_TMP=1 keeps it)
 # shellcheck disable=SC2015  # pass() always succeeds, so A && pass || fail is if-then-else here
 # waiting-autocompact.sh (test): waiting.sh must report the Claude Code autocompact dialog ("We
 # recommend compacting earlier", "Autocompact at <N> tokens", footer ending "esc not now") as a
@@ -12,7 +13,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 S="$HERE/.."
 ROOT="$(mktemp -d "${TMPDIR:-/tmp}/cm-waitac.XXXXXX")" || { echo "cannot create a temp dir" >&2; exit 1; }
 if [ -z "$ROOT" ] || [ ! -d "$ROOT" ]; then echo "temp dir missing" >&2; exit 1; fi
-trap 'rm -rf -- "${ROOT:?}"' EXIT
+trap '[ "${CM_TEST_KEEP_TMP:-}" = 1 ] && echo "cm-test: CM_TEST_KEEP_TMP set, kept $ROOT" >&2 || rm -rf -- "${ROOT:?}"' EXIT
 command -v yq >/dev/null 2>&1 || { echo "missing dependency: yq" >&2; exit 1; }
 PASS=0; FAIL=0
 pass() { PASS=$((PASS + 1)); printf 'PASS %s\n' "$1"; }

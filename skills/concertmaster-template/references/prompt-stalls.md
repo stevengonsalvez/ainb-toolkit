@@ -10,7 +10,7 @@ Three layers, cheapest first:
 
 | Layer | What | Where |
 |---|---|---|
-| 1 Brief rule | Every brief tells the agent: never run `rm`; `mktemp -d` under the scratchpad and leave it (even a guarded `rm` in a test harness raised the prompt) | `references/lanes.md` Lead charter 8, worker and review-subagent briefs, common footer; `SKILL.md` hard rule 18 |
+| 1 Brief rule | Every brief tells the agent: never run `rm`; `mktemp -d` under the scratchpad and leave it (even a guarded `rm` in a test harness raised the prompt) | `references/lanes.md` Lead charter 8, worker and review-subagent briefs, common footer; `SKILL.md` hard rule 18; the test scripts honour `CM_TEST_KEEP_TMP=1` (sixth wave below) |
 | 2 Deny hook | A PreToolUse hook denies an unguarded `rm` instantly with the fix, so the agent corrects itself in one turn instead of waiting | `scripts/hooks/rm-guard-hook.sh` |
 | 3 Allowlist | A few read-only commands never ask | snippet below, optional |
 
@@ -20,6 +20,27 @@ not hold for an `rm` inside `bash -c` or a heredoc in a test harness: two review
 the "Dangerous rm operation" prompt. So the brief rule is now "never run rm; mktemp -d under the
 scratchpad and leave it". The hook below stays as a cheap second layer for a guarded form that still
 slips through; the pane scan (`scripts/pane-stalls.sh`) is the net.
+
+## Sixth wave: the rule did not reach every brief, and our tests run rm traps
+A review subagent stalled on "This shell -c script runs rm and could not be checked". Two causes:
+
+1. The no-rm rule lived only in this skill (`lanes.md` Lead charter 8, the briefs, this file). A brief built by a
+   different review or sweep tool that has its own prompts never carried it. Fix: put the rule in ONE shared
+   shell-safety block that tool owns, and have each of its verbs and adapters point at it. Check with
+   `git grep -n -iE "never run rm|mktemp -d under"` over that tool's directory.
+2. A reviewer who runs one of our test scripts also runs its `EXIT` trap, and a trap or a `bash -c` string with an
+   `rm` in it cannot be checked, so it prompts. The deny hook cannot help: it never sees inside `bash -c`.
+   Fix: every test script that has `trap '... rm -rf ...' EXIT` carries the header line `# cm-test: rm-cleanup`
+   and skips that `rm -rf` when `CM_TEST_KEEP_TMP=1` (it prints the directory it left). `test/keep-tmp.sh` checks
+   every such script and runs one both ways. A reviewer greps a script for `\brm\b` first and runs it by its path
+   only with the marker and `CM_TEST_KEEP_TMP=1`; a script with an `rm` and no marker is read, not run. The switch
+   covers the exit trap. An `rm` a test runs mid-script on its own temp dir stays: the script runs it, not a command
+   the reviewer submitted. That the permission layer reads only the submitted command line (so a script run by path
+   is not parsed for `rm`) is inferred from observed stalls, each of which came from `rm` text inside a
+   `bash -c` or heredoc command; it is not from Claude Code documentation. If a prompt shows for a script run by
+   path, the inference is wrong: the agent reports it and stops.
+
+If a prompt shows anyway, the agent reports the text and stops; `pane-stalls.sh` still catches it.
 
 ## The hook
 Denies a Bash command only when an `rm` has a recursive flag (`-r`, `-R`, `--recursive`) or a glob

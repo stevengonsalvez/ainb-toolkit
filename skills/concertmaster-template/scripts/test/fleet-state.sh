@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# cm-test: rm-cleanup (its EXIT trap rm -rf-s its own mktemp dir; CM_TEST_KEEP_TMP=1 keeps it)
 # shellcheck disable=SC2015  # pass() always succeeds, so A && pass || fail is if-then-else here
 # fleet-state.sh (test): the shared `cm:state` line, hermetic. Stub orca (synthetic concertmaster, lane-a, host-a,
 # an unreachable host-b), a temp CM_HOME, a fixed clock (CM_NOW). The stub keeps one comment file per worktree;
@@ -18,7 +19,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 S="$HERE/.."
 ROOT="$(mktemp -d "${TMPDIR:-/tmp}/cm-fstate.XXXXXX")" || { echo "cannot create a temp dir" >&2; exit 1; }
 if [ -z "$ROOT" ] || [ ! -d "$ROOT" ]; then echo "temp dir missing" >&2; exit 1; fi
-trap 'rm -rf -- "${ROOT:?}"' EXIT
+trap '[ "${CM_TEST_KEEP_TMP:-}" = 1 ] && echo "cm-test: CM_TEST_KEEP_TMP set, kept $ROOT" >&2 || rm -rf -- "${ROOT:?}"' EXIT
 PASS=0; FAIL=0
 pass() { PASS=$((PASS + 1)); printf 'PASS %s\n' "$1"; }
 fail() { FAIL=$((FAIL + 1)); printf 'FAIL %s: %s\n' "$1" "$2"; }
@@ -141,13 +142,13 @@ OUT="$("$F" write --freeze on --push 2>&1)"
   && pass "--push with freeze on: ONE terminal send, to the Claude terminal of pr-sweeper" || fail "push" "$(cat "$FX/sent.log") / $OUT"
 grep -q 'push: dev-sweeper@local no Claude terminal, skipped' <<<"$OUT" && ! grep -q 'lane-a\|epic-x' <<<"$OUT" \
   && pass "a sweeper without a Claude terminal is skipped and reported; a non-sweeper lane is not messaged" || fail "push skip" "$OUT"
-: > "$FX/sent.log"
 echo '{"ok":true,"result":{"terminals":[{"handle":"term_d1","agentIdentity":"claude"},{"handle":"term_d2","agentIdentity":"claude"}]}}' > "$FX/term/dev-sweeper.json"
 : > "$FX/sent.log"
 OUT="$("$F" write --freeze on --push 2>&1)"
 grep -q 'push: dev-sweeper@local more than one Claude terminal, skipped' <<<"$OUT" && ! grep -q 'term_d' "$FX/sent.log" && grep -q '^term_pr	' "$FX/sent.log" \
   && pass "a sweeper with two Claude terminals is skipped and reported (the reader refuses two agents); the other sweeper still gets its message" || fail "push two claude" "$(cat "$FX/sent.log") / $OUT"
 rm -f "$FX/term/dev-sweeper.json"
+: > "$FX/sent.log"
 "$F" write --freeze off --push >/dev/null 2>&1
 [ ! -s "$FX/sent.log" ] && pass "freeze off pushes nothing (leads read the line)" || fail "push off" "$(cat "$FX/sent.log")"
 rm -f "$FX/own/pr-sweeper.comment" "$FX/own/dev-sweeper.comment" "$FX/own/epic-x.comment"

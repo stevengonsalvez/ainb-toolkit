@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# cm-test: rm-cleanup (its EXIT trap rm -rf-s its own mktemp dir; CM_TEST_KEEP_TMP=1 keeps it)
 # scan-secrets.sh test: synthetic secrets are BUILT AT RUN TIME from split strings, so this file
 # holds no secret-shaped literal. Asserts the per-class and per-file counts, the strict / advisory
 # split and exit codes (0 clean, 1 strict hit, 2 could not read or nothing to scan), single and
@@ -13,7 +14,7 @@ set -uo pipefail
 SCRIPT="$(cd "$(dirname "$0")/.." && pwd)/scan-secrets.sh"
 ROOT="$(mktemp -d "${TMPDIR:-/tmp}/cm-scan-test.XXXXXX")" || { echo "cannot create a temp dir" >&2; exit 1; }
 [ -n "$ROOT" ] && [ -d "$ROOT" ] || { echo "temp dir missing" >&2; exit 1; }
-trap 'chmod -R u+rwx "$ROOT" 2>/dev/null; rm -rf -- "${ROOT:?}"' EXIT
+trap 'chmod -R u+rwx "$ROOT" 2>/dev/null; [ "${CM_TEST_KEEP_TMP:-}" = 1 ] && echo "cm-test: CM_TEST_KEEP_TMP set, kept $ROOT" >&2 || rm -rf -- "${ROOT:?}"' EXIT
 export HOME="$ROOT/home" CM_HOME="$ROOT/cmhome"
 unset CM_CLAUDE_PROJECTS
 mkdir -p "$HOME" "$CM_HOME"
@@ -374,10 +375,10 @@ done
 printf '{"h":"BEARER %s"}\n' "$BMIX" > "$ROOT/glue/g$((n + 1)).jsonl"; n=$((n + 1))
 check "every glued key shape is a strict hit" "$(run "$ROOT/glue")" "1"
 check "one hit per glued file, none missed" "$(grep '^SUMMARY' "$OUT" | sed -E 's/ advisory=[0-9]+//')" "SUMMARY files=$n hits=$n errors=0"
-mkdir -p "$ROOT/glue1"; printf '{"o":"x\\n%s"}\n' "$NONE" > "$ROOT/glue1/g.jsonl"
 # snake_case text that ends in the Stripe prefix letters (task_test_data) is the tail of a longer word, not a key
 mkdir -p "$ROOT/word"; printf '{"o":"the ta%s"}\n' "sk_""test_$(rep T 30)" > "$ROOT/word/w1.jsonl"
 check "a letter before sk_test_ is a longer word, not a key" "$(run "$ROOT/word")" "0"
+mkdir -p "$ROOT/glue1"; printf '{"o":"x\\n%s"}\n' "$NONE" > "$ROOT/glue1/g.jsonl"
 check "sk-None- after a JSON newline counts as token_prefix" "$(run "$ROOT/glue1" >/dev/null; row token_prefix)" "1/1/strict"
 check "no secret fragment after the glue runs" "$(leaks "$OUT" "$ERR")" "0"
 

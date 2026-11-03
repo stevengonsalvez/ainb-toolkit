@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# cm-test: rm-cleanup (its EXIT trap rm -rf-s its own mktemp dir; CM_TEST_KEEP_TMP=1 keeps it)
 # shellcheck disable=SC2015  # pass() always succeeds, so A && pass || fail is if-then-else here
 # lessons-recon.sh (test): the daily recon of the self-improvement loop, hermetic. Stub orca (synthetic lane-a,
 # host-a), a temp CM_HOME, fixture journals, ledger and asks-seen, temp lessons-log and lessons-rejected files,
@@ -16,7 +17,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 S="$HERE/.."
 ROOT="$(mktemp -d "${TMPDIR:-/tmp}/cm-lessons.XXXXXX")" || { echo "cannot create a temp dir" >&2; exit 1; }
 if [ -z "$ROOT" ] || [ ! -d "$ROOT" ]; then echo "temp dir missing" >&2; exit 1; fi
-trap 'rm -rf -- "${ROOT:?}"' EXIT
+trap '[ "${CM_TEST_KEEP_TMP:-}" = 1 ] && echo "cm-test: CM_TEST_KEEP_TMP set, kept $ROOT" >&2 || rm -rf -- "${ROOT:?}"' EXIT
 PASS=0; FAIL=0
 pass() { PASS=$((PASS + 1)); printf 'PASS %s\n' "$1"; }
 fail() { FAIL=$((FAIL + 1)); printf 'FAIL %s: %s\n' "$1" "$2"; }

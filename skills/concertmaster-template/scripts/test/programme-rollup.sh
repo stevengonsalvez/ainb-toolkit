@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# cm-test: rm-cleanup (its EXIT trap rm -rf-s its own mktemp dir; CM_TEST_KEEP_TMP=1 keeps it)
 # programme-rollup.sh: behaviour tests for scripts/programme-rollup.sh on a temp CM_HOME with
 # synthetic lanes and hosts. Never touches the live ledger.
 #
@@ -10,7 +11,7 @@ unset CM_ORG CM_REPO CM_PROJECT CM_OWNER_NAME CM_OWNER_ID CM_TZ CM_TZ_LABEL CM_E
 PR="$HERE/../programme-rollup.sh"
 ROOT="$(mktemp -d "${TMPDIR:-/tmp}/cm-rollup.XXXXXX")" || { echo "cannot create a temp dir" >&2; exit 1; }
 [ -n "$ROOT" ] && [ -d "$ROOT" ] || { echo "temp dir missing" >&2; exit 1; }
-trap 'rm -rf -- "${ROOT:?}"' EXIT
+trap '[ "${CM_TEST_KEEP_TMP:-}" = 1 ] && echo "cm-test: CM_TEST_KEEP_TMP set, kept $ROOT" >&2 || rm -rf -- "${ROOT:?}"' EXIT
 export CM_HOME="$ROOT/cmhome"
 mkdir -p "$CM_HOME"
 L="$CM_HOME/ledger.json"

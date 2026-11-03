@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# cm-test: rm-cleanup (its EXIT trap rm -rf-s its own mktemp dir; CM_TEST_KEEP_TMP=1 keeps it)
 # shellcheck disable=SC2015  # pass() always succeeds, so A && pass || fail is if-then-else here
 # backup-offhost.sh (test): behaviour tests for scripts/backup-offhost.sh, the nightly off-host
 # backup. Runs against temp dirs only (--dest local-path mode, and a fake ssh for the host path);
@@ -20,7 +21,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(mktemp -d "${TMPDIR:-/tmp}/cm-backup-offhost.XXXXXX")" || { echo "cannot create a temp dir" >&2; exit 1; }
 if [ -z "$ROOT" ] || [ ! -d "$ROOT" ]; then echo "temp dir missing" >&2; exit 1; fi
-trap '[ -n "${CM_TEST_KEEP_TMP:-}" ] && echo "cm-test: CM_TEST_KEEP_TMP set, kept $ROOT" >&2 || rm -rf -- "${ROOT:?}"' EXIT
+trap '[ "${CM_TEST_KEEP_TMP:-}" = 1 ] && echo "cm-test: CM_TEST_KEEP_TMP set, kept $ROOT" >&2 || rm -rf -- "${ROOT:?}"' EXIT
 for c in rsync jq yq; do command -v "$c" >/dev/null 2>&1 || { echo "missing dependency: $c" >&2; exit 1; }; done
 unset CM_BACKUP_HOST CM_BACKUP_REMOTE_DIR CM_BACKUP_KEEP CM_BACKUP_SSH CM_BACKUP_NOW
 export HOME="$ROOT/home" CM_HOME="$ROOT/cm" CM_CONFIG="$HERE/fixtures/config.test.yaml"

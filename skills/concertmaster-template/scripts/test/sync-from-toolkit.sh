@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# cm-test: rm-cleanup (its EXIT trap rm -rf-s its own mktemp dir; CM_TEST_KEEP_TMP=1 keeps it)
 # sync-from-toolkit.sh test: scratch project directories only. Asserts the engine is copied or
 # refreshed, the project's config.yaml and other config.*.yaml are byte-identical afterwards, the
 # SKILL.md frontmatter of the project survives, a dry run changes nothing, project-only files are
@@ -13,7 +14,7 @@ SRC="$(cd "$(dirname "$0")/../.." && pwd)"
 SYNC="$SRC/scripts/sync-from-toolkit.sh"
 ROOT="$(mktemp -d "${TMPDIR:-/tmp}/cm-sync-test.XXXXXX")" || { echo "cannot create a temp dir" >&2; exit 1; }
 [ -n "$ROOT" ] && [ -d "$ROOT" ] || { echo "temp dir missing" >&2; exit 1; }
-trap 'rm -rf -- "${ROOT:?}"' EXIT
+trap '[ "${CM_TEST_KEEP_TMP:-}" = 1 ] && echo "cm-test: CM_TEST_KEEP_TMP set, kept $ROOT" >&2 || rm -rf -- "${ROOT:?}"' EXIT
 fail=0
 check() { if [ "$2" = "$3" ]; then echo "ok   $1"; else echo "FAIL $1: want '$3' got '$2'"; fail=1; fi; }
 tree_hash() { (cd "$1" && find . -type f | LC_ALL=C sort | xargs cksum | cksum); }

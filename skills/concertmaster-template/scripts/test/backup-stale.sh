@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# cm-test: rm-cleanup (its EXIT trap rm -rf-s its own mktemp dir; CM_TEST_KEEP_TMP=1 keeps it)
 # shellcheck disable=SC2015  # "A && ok || bad": ok never fails
 # backup-stale.sh test: a fake clock (CM_NOW), a stamp file written by hand, a dead telemetry URL.
 # Asserts: no host configured stays quiet; a fresh stamp is fine; a stamp over the limit alerts ONCE
@@ -12,7 +13,7 @@ set -uo pipefail
 SCRIPT="$(cd "$(dirname "$0")/.." && pwd)/backup-stale.sh"
 ROOT="$(mktemp -d "${TMPDIR:-/tmp}/cm-backup-stale-test.XXXXXX")" || { echo "cannot create a temp dir" >&2; exit 1; }
 [ -n "$ROOT" ] && [ -d "$ROOT" ] || { echo "temp dir missing" >&2; exit 1; }
-trap '[ -n "${CM_TEST_KEEP_TMP:-}" ] && echo "cm-test: CM_TEST_KEEP_TMP set, kept $ROOT" >&2 || rm -rf -- "${ROOT:?}"' EXIT
+trap '[ "${CM_TEST_KEEP_TMP:-}" = 1 ] && echo "cm-test: CM_TEST_KEEP_TMP set, kept $ROOT" >&2 || rm -rf -- "${ROOT:?}"' EXIT
 export CM_HOME="$ROOT/home" HOME="$ROOT/home" MC_BASE_URL="http://127.0.0.1:9" MC_QUIET=1
 export CM_CONFIG=/nonexistent
 unset CM_BACKUP_HOST CM_BACKUP_MAX_AGE_HOURS CM_NOW

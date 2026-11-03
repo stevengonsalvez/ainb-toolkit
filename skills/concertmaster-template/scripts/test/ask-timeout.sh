@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# cm-test: rm-cleanup (its EXIT trap rm -rf-s its own mktemp dir; CM_TEST_KEEP_TMP=1 keeps it)
 # ask-timeout.sh: behaviour tests for the away timeout (rule 16). A fixture
 # ledger in a mktemp dir, the clock injected with CM_NOW. No LLM, no network,
 # touches nothing outside the temp dir.
@@ -9,7 +10,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 SCRIPT="$HERE/../ask-timeout.sh"
 ROOT="$(mktemp -d "${TMPDIR:-/tmp}/cm-ask-timeout.XXXXXX")" || { echo "cannot create a temp dir" >&2; exit 1; }
 if [ -z "$ROOT" ] || [ ! -d "$ROOT" ]; then echo "temp dir missing" >&2; exit 1; fi
-trap 'rm -rf -- "${ROOT:?}"' EXIT
+trap '[ "${CM_TEST_KEEP_TMP:-}" = 1 ] && echo "cm-test: CM_TEST_KEEP_TMP set, kept $ROOT" >&2 || rm -rf -- "${ROOT:?}"' EXIT
 unset CM_AWAY_TIMEOUT_MIN CM_OWN_SCOPE_KINDS CM_ASK_REPO CM_VERDICT_BY CM_ORG CM_REPO CM_OWNER_NAME
 command -v yq >/dev/null 2>&1 || { echo "missing dependency: yq" >&2; exit 1; }
 export HOME="$ROOT/home" CM_HOME="$ROOT/cm" CM_NOW="2026-10-17T19:00:00Z" CM_CONFIG="$ROOT/config.yaml"

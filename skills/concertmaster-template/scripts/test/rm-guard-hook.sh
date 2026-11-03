@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# cm-test: rm-cleanup (its EXIT trap rm -rf-s its own mktemp dir; CM_TEST_KEEP_TMP=1 keeps it)
 # shellcheck disable=SC2016,SC2015  # test commands are single-quoted on purpose (unexpanded variables); "A && ok || bad": ok never fails
 # rm-guard-hook.sh test: feeds Bash commands to the hook as Claude Code does and
 # asserts deny (unguarded variable under a recursive/force/glob rm) or allow.
@@ -402,7 +403,7 @@ out="$(run 'orca worktree rm --worktree id:abc')"
 case "$out" in *teardown.sh*) echo "ok   raw worktree rm reason names teardown.sh" ;; *) echo "FAIL reason"; fail=1 ;; esac
 # a checkout whose git origin is a repo of the configured org is in scope without a path match
 GT="$(mktemp -d "${TMPDIR:-/tmp}/cm-rmguard.XXXXXX")" || exit 1
-trap 'rm -rf -- "${GT:?}"' EXIT
+trap '[ "${CM_TEST_KEEP_TMP:-}" = 1 ] && echo "cm-test: CM_TEST_KEEP_TMP set, kept $GT" >&2 || rm -rf -- "${GT:?}"' EXIT
 git -C "$GT" init -q && git -C "$GT" remote add origin https://github.com/acme/other-name.git
 [ -n "$(CWD="$GT" run 'rm -rf $S/x')" ] && echo "ok   org origin is in scope" || { echo "FAIL org origin"; fail=1; }
 git -C "$GT" remote set-url origin https://github.com/someone-else/x.git
@@ -412,7 +413,7 @@ git -C "$GT" remote set-url origin https://github.com/someone-else/x.git
 # other projects)
 NG="$(mktemp -d "${TMPDIR:-/tmp}/cm-rmguard-nogit.XXXXXX")" || exit 1
 NO="$(mktemp -d "${TMPDIR:-/tmp}/cm-rmguard-noorigin.XXXXXX")" || exit 1
-trap 'rm -rf -- "${GT:?}" "${NG:?}" "${NO:?}"' EXIT
+trap '[ "${CM_TEST_KEEP_TMP:-}" = 1 ] && echo "cm-test: CM_TEST_KEEP_TMP set, kept $GT $NG $NO" >&2 || rm -rf -- "${GT:?}" "${NG:?}" "${NO:?}"' EXIT
 git -C "$NO" init -q
 if [ -z "$(CWD="$NG" run 'rm -rf $S/x')" ]; then echo "ok   non-git dir outside the path match untouched"; else echo "FAIL non-git dir"; fail=1; fi
 if [ -z "$(CWD="$NO" run 'rm -rf $S/x')" ]; then echo "ok   git dir with no origin untouched"; else echo "FAIL no-origin dir"; fail=1; fi

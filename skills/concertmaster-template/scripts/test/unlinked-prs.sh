@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# cm-test: rm-cleanup (its EXIT trap rm -rf-s its own mktemp dir; CM_TEST_KEEP_TMP=1 keeps it)
 # unlinked-prs.sh: behaviour tests for the unlinked-PR check. gh
 # is a PATH shim that records its argv and answers with $STUB/answer.json (or
 # fails with $STUB/fail); CM_HOME and HOME live in a mktemp dir. No network.
@@ -9,7 +10,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 SCRIPT="$HERE/../unlinked-prs.sh"
 ROOT="$(mktemp -d "${TMPDIR:-/tmp}/cm-unlinked.XXXXXX")" || { echo "cannot create a temp dir" >&2; exit 1; }
 if [ -z "$ROOT" ] || [ ! -d "$ROOT" ]; then echo "temp dir missing" >&2; exit 1; fi
-trap 'rm -rf -- "${ROOT:?}"' EXIT
+trap '[ "${CM_TEST_KEEP_TMP:-}" = 1 ] && echo "cm-test: CM_TEST_KEEP_TMP set, kept $ROOT" >&2 || rm -rf -- "${ROOT:?}"' EXIT
 STUB="$ROOT/stub"
 mkdir -p "$ROOT/bin" "$ROOT/home" "$STUB"
 unset CM_UNLINKED_SINCE CM_UNLINKED_SKIP_AUTHORS CM_UNLINKED_INCLUDE_DRAFTS CM_UNLINKED_REPO CM_UNLINKED_TIMEOUT

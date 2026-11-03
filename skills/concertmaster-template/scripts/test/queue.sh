@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# cm-test: rm-cleanup (its EXIT trap rm -rf-s its own mktemp dir; CM_TEST_KEEP_TMP=1 keeps it)
 # shellcheck disable=SC2015  # pass() always succeeds, so A && pass || fail is if-then-else here
 # queue.sh (test): behaviour tests for the work queue. add then list keeps the
 # order (P0, urgent, oldest addedAt); a grant with the total at the cap grants
@@ -13,7 +14,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 Q="$HERE/../queue.sh"
 ROOT="$(mktemp -d "${TMPDIR:-/tmp}/cm-queue.XXXXXX")" || { echo "cannot create a temp dir" >&2; exit 1; }
 if [ -z "$ROOT" ] || [ ! -d "$ROOT" ]; then echo "temp dir missing" >&2; exit 1; fi
-trap 'rm -rf -- "${ROOT:?}"' EXIT
+trap '[ "${CM_TEST_KEEP_TMP:-}" = 1 ] && echo "cm-test: CM_TEST_KEEP_TMP set, kept $ROOT" >&2 || rm -rf -- "${ROOT:?}"' EXIT
 command -v yq >/dev/null 2>&1 || { echo "missing dependency: yq" >&2; exit 1; }
 # The guarded ledger writer lives in lib.sh (references/ledger.md). Without it the write paths cannot be tested.
 if ! bash -c '. "$1"; declare -F cm_ledger_write' _ "$HERE/../lib.sh" >/dev/null 2>&1; then

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# cm-test: rm-cleanup (its EXIT trap rm -rf-s its own mktemp dir; CM_TEST_KEEP_TMP=1 keeps it)
 # classify-ownership.sh: behaviour tests for classify's ownership accounting.
 # Feeds a synthetic discover document, a ledger and a fixture config to
 # classify.sh and checks each row's owner, ownerSource and ORPHAN / LEAD-DEAD
@@ -10,7 +11,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(mktemp -d "${TMPDIR:-/tmp}/cm-ownership.XXXXXX")" || { echo "cannot create a temp dir" >&2; exit 1; }
 if [ -z "$ROOT" ] || [ ! -d "$ROOT" ]; then echo "temp dir missing" >&2; exit 1; fi
-trap 'rm -rf -- "${ROOT:?}"' EXIT
+trap '[ "${CM_TEST_KEEP_TMP:-}" = 1 ] && echo "cm-test: CM_TEST_KEEP_TMP set, kept $ROOT" >&2 || rm -rf -- "${ROOT:?}"' EXIT
 export CM_HOME="$ROOT"
 export CM_CONFIG="$HERE/fixtures/ownership/config.yaml"
 command -v jq >/dev/null 2>&1 || { echo "missing dependency: jq" >&2; exit 1; }

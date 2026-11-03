@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# cm-test: rm-cleanup (its EXIT trap rm -rf-s its own mktemp dir; CM_TEST_KEEP_TMP=1 keeps it)
 # boot-sweep.sh test: STUBBED orca, fake Claude transcripts with set mtimes, fake boot time.
 # Asserts which lanes get a nudge (no turn since boot) and which are left alone (active since
 # boot, menu, mid-turn, shell, no Claude, duplicates), that a nudge only counts when the
@@ -13,7 +14,7 @@ set -uo pipefail
 SCRIPT="$(cd "$(dirname "$0")/.." && pwd)/boot-sweep.sh"
 ROOT="$(mktemp -d "${TMPDIR:-/tmp}/cm-boot-test.XXXXXX")" || { echo "cannot create a temp dir" >&2; exit 1; }
 [ -n "$ROOT" ] && [ -d "$ROOT" ] || { echo "temp dir missing" >&2; exit 1; }
-trap 'rm -rf -- "${ROOT:?}"' EXIT
+trap '[ "${CM_TEST_KEEP_TMP:-}" = 1 ] && echo "cm-test: CM_TEST_KEEP_TMP set, kept $ROOT" >&2 || rm -rf -- "${ROOT:?}"' EXIT
 export CM_HOME="$ROOT/home" STUB_DIR="$ROOT/stub" CM_CLAUDE_PROJECTS="$ROOT/projects"
 mkdir -p "$CM_HOME" "$STUB_DIR" "$CM_CLAUDE_PROJECTS"
 export CM_PATH_MATCH="/acme-app/" CM_CONFIG=/nonexistent

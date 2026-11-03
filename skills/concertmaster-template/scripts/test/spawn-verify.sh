@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# cm-test: rm-cleanup (its EXIT trap rm -rf-s its own mktemp dir; CM_TEST_KEEP_TMP=1 keeps it)
 # spawn-verify.sh test: fixture panes and a STUBBED orca/ssh/HOME. Asserts that `check` exits 0
 # only for a Claude pane showing the configured model (spawn.expected_model) at the configured effort (banner line or status line) and
 # fails a plain shell prompt (even one that echoes the claude command line), "command not
@@ -12,7 +13,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 SV="$HERE/../spawn-verify.sh"
 ROOT="$(mktemp -d "${TMPDIR:-/tmp}/cm-spawn-verify.XXXXXX")" || { echo "cannot create a temp dir" >&2; exit 1; }
 [ -n "$ROOT" ] && [ -d "$ROOT" ] || { echo "temp dir missing" >&2; exit 1; }
-trap 'rm -rf -- "${ROOT:?}"' EXIT
+trap '[ "${CM_TEST_KEEP_TMP:-}" = 1 ] && echo "cm-test: CM_TEST_KEEP_TMP set, kept $ROOT" >&2 || rm -rf -- "${ROOT:?}"' EXIT
 export CM_HOME="$ROOT/home"; mkdir -p "$CM_HOME"
 # the expected model and effort come from config (spawn.*), not from the script
 printf 'schema: concertmaster.config/v1\nspawn:\n  expected_model: sonnet-5.5\n  expected_effort: high\n' > "$ROOT/config.yaml"

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# cm-test: rm-cleanup (its EXIT trap rm -rf-s its own mktemp dir; CM_TEST_KEEP_TMP=1 keeps it)
 # shellcheck disable=SC2015  # "A && ok || bad": ok never fails
 # followups.sh escalate: behaviour tests with a stubbed gh on a temp CM_HOME. No network, never the live
 # ledger. gh answers `api rate_limit` and `issue create`; every call is logged, nothing is really created.
@@ -11,7 +12,7 @@ command -v jq >/dev/null 2>&1 || { echo "missing dependency: jq" >&2; exit 1; }
 FU="$HERE/../followups.sh"
 ROOT="$(mktemp -d "${TMPDIR:-/tmp}/cm-fu-escalate.XXXXXX")" || { echo "cannot create a temp dir" >&2; exit 1; }
 [ -n "$ROOT" ] && [ -d "$ROOT" ] || { echo "temp dir missing" >&2; exit 1; }
-trap 'rm -rf -- "${ROOT:?}"' EXIT
+trap '[ "${CM_TEST_KEEP_TMP:-}" = 1 ] && echo "cm-test: CM_TEST_KEEP_TMP set, kept $ROOT" >&2 || rm -rf -- "${ROOT:?}"' EXIT
 mkdir -p "$ROOT/bin" "$ROOT/stub" "$ROOT/cmhome"
 export CM_HOME="$ROOT/cmhome" STUB="$ROOT/stub" PATH="$ROOT/bin:$PATH" HOME="$ROOT/home"
 mkdir -p "$HOME"
@@ -333,13 +334,13 @@ fake() { # one fake secret-looking text per shape, built here so no literal toke
     shy)      printf 'g\302\255hp_%s' "$(rep 24 g)" ;;
     fe0f)     printf 'glp\357\270\217at-%s' "$(rep 20 h)" ;;
     cgj)      printf 'AS\315\217IA%s' "$(rep 16 C)" ;;
-  esac
     # round 3: the Stripe-style prefixes behind a JSON or URL escape, which ends in a letter (a letter alone means a longer word)
     skn)      printf '%s' "note:\\n""sk_li""ve_$(rep 24 m)" ;;
     skt)      printf '%s' "tab\\t""sk_te""st_$(rep 24 n)" ;;
     skd)      printf '%s' "key%3D""rk_li""ve_$(rep 24 p)" ;;
     ska)      printf '%s' "k%3A""rk_te""st_$(rep 24 q)" ;;
     skdig)    printf '%s' "id9""sk_li""ve_$(rep 24 r)" ;;
+  esac
 }
 for k in dburl gitlab npm asia sentence slack runner longtitle pguser redis acctok apikey pwd csecret keynl pctsk shy fe0f cgj skn skt skd ska skdig; do
   txt="$(fake "$k")"
@@ -471,7 +472,6 @@ seed; jq --arg t "$(rep 99 a)é end" '.followUps += [{id: "wide-char", worker: "
 "$FU" escalate --create --only "lane-a/wide-char@$(fpof wide-char)" >/dev/null 2>&1
 if iconv -f UTF-8 -t UTF-8 "$STUB"/body.* >/dev/null 2>&1 && grep -q "é end" "$STUB"/body.*; then ok "body keeps a multibyte character whole"; else bad "multibyte body" "$(cat "$STUB"/body.* 2>/dev/null | head -3)"; fi
 
-printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 # 14. escalate minors: --resolve, exit 126/127, the sk_test_ boundary, the stale-lock takeover, a relink after a text change
 LOCK="$CM_HOME/.followups-escalate.lock"
 claim() { jq --arg id "$1" --arg tok "$2" '(.followUps[] | select(.id == $id) | .escalatingAt) = $tok' "$L" > "$ROOT/l.json" && mv "$ROOT/l.json" "$L"; }
@@ -567,4 +567,5 @@ out="$("$FU" escalate --create --only "$only" 2>&1)"
 has "an old issue with other wording is linked by lane and id" "$out" "linked: [lane-a/old-same] https://github.com/AcmeOrg/acme-app/issues/58"
 [ "$(creates)" = 0 ] && [ "$(fu_issue old-same)" = 58 ] && ok "and no second issue is made" || bad "relink" "creates=$(creates) issue=$(fu_issue old-same)"
 
+printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]
