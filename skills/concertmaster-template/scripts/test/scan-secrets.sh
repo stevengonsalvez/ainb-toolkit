@@ -375,6 +375,9 @@ printf '{"h":"BEARER %s"}\n' "$BMIX" > "$ROOT/glue/g$((n + 1)).jsonl"; n=$((n + 
 check "every glued key shape is a strict hit" "$(run "$ROOT/glue")" "1"
 check "one hit per glued file, none missed" "$(grep '^SUMMARY' "$OUT" | sed -E 's/ advisory=[0-9]+//')" "SUMMARY files=$n hits=$n errors=0"
 mkdir -p "$ROOT/glue1"; printf '{"o":"x\\n%s"}\n' "$NONE" > "$ROOT/glue1/g.jsonl"
+# snake_case text that ends in the Stripe prefix letters (task_test_data) is the tail of a longer word, not a key
+mkdir -p "$ROOT/word"; printf '{"o":"the ta%s"}\n' "sk_""test_$(rep T 30)" > "$ROOT/word/w1.jsonl"
+check "a letter before sk_test_ is a longer word, not a key" "$(run "$ROOT/word")" "0"
 check "sk-None- after a JSON newline counts as token_prefix" "$(run "$ROOT/glue1" >/dev/null; row token_prefix)" "1/1/strict"
 check "no secret fragment after the glue runs" "$(leaks "$OUT" "$ERR")" "0"
 

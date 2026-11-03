@@ -104,7 +104,10 @@ RE_PK='-----BEGIN [A-Z ]*PRI''VATE KEY-----'
 # AIza, the legacy bare sk-48 key) need a left boundary: line start, a JSON/URL escape (\n \t \r %XX)
 # or a char that is not alnum, _ or -. awk strips the boundary before classifying.
 BND='(^|\\[ntr]|%[0-9A-Fa-f]{2}|[^A-Za-z0-9_-])'
-RE_TP='(sk-ant-|sk-proj-|sk_live_|sk_test_|rk_live_|rk_test_|whsec_|ghp_|gho_|ghs_|ghu_|ghr_|github_pat_|xox[abeprs]-|sbp_|sb_secret_)[A-Za-z0-9_-]{16,}'
+RE_TP='(sk-ant-|sk-proj-|whsec_|ghp_|gho_|ghs_|ghu_|ghr_|github_pat_|xox[abeprs]-|sbp_|sb_secret_)[A-Za-z0-9_-]{16,}'
+# The Stripe-style keys end in a word snake_case text also ends in (task_test_data): a letter before the prefix
+# is the tail of a longer word. Any other character, a digit or _ included, is a boundary. Same rule as lib.sh.
+RE_TPS='(^|\\[ntr]|%[0-9A-Fa-f]{2}|[^A-Za-z])(sk_live_|sk_test_|rk_live_|rk_test_)[A-Za-z0-9_-]{16,}'
 RE_TPB="${BND}(sk-svcacct-|sk-admin-|sk-or-|sk-None-|AIza)[A-Za-z0-9_-]{16,}"
 RE_SK="${BND}sk-[A-Za-z0-9]{48}"
 RE_JWT='eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}'
@@ -123,7 +126,7 @@ RE_BEARER="$(ci BEARER)[[:space:]]+[A-Za-z0-9._~+/=-]{24,}"
 PWFAM="($(ci PASSWORD)|$(ci PASSWD)|$(ci PWD)|$(ci PASSPHRASE))"
 RE_PWL="${PWFAM}[\\\\\"']{0,6}[[:space:]]*[:=][[:space:]]*[\\\\\"']{0,6}[A-Za-z]{8,}([^A-Za-z0-9]|\$)"
 RE_PWI="${PWFAM}[[:space:]]+($(ci IS)|$(ci WAS))[[:space:]]+[\\\\]{0,3}[\"'][A-Za-z]{8,}[]\\\\.,;:!?)}]{0,3}[\\\\]{0,3}[\"']"   # in JSONL the quotes arrive as \"
-RES=("$RE_PK" "$RE_TP" "$RE_TPB" "$RE_SK" "$RE_JWT" "$RE_AWS" "$RE_URL" "$RE_PW" "$RE_BEARER")
+RES=("$RE_PK" "$RE_TP" "$RE_TPS" "$RE_TPB" "$RE_SK" "$RE_JWT" "$RE_AWS" "$RE_URL" "$RE_PW" "$RE_BEARER")
 RES_PWL=("$RE_PWL" "$RE_PWI")
 
 # shellcheck disable=SC2016  # awk program, no shell expansion wanted
@@ -159,6 +162,7 @@ function pwword(v,   l, r) {
   # the boundary of a bounded-prefix match: an escape, then any run of non-key bytes (multibyte safe)
   if (m ~ /^(\\[ntr]|%[0-9A-Fa-f][0-9A-Fa-f])/) sub(/^(\\[ntr]|%[0-9A-Fa-f][0-9A-Fa-f])/, "", m)
   if (m ~ /^[^A-Za-z0-9_-]/) sub(/^[^A-Za-z0-9_-]+/, "", m)
+  if (m ~ /^[0-9_-][sr]k_(live|test)_/) m = substr(m, 2)   # a digit, _ or - is a boundary of the Stripe shapes, and is not stripped above
   if (m ~ /^-----BEGIN/) c["private_key"]++
   else if (m ~ /^eyJ/) c["jwt"]++
   else if (m ~ /^(AKIA|ASIA)/) c["aws_key"]++

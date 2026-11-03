@@ -570,7 +570,11 @@ _cm_secret_init() {   # lazy: building the case-insensitive names costs forks, a
   # the scan-secrets.sh shapes (case-sensitive; the *_ci ones spell their letters out)
   CM_RE_SECRET_SCAN=(
     '-----BEGIN [A-Z ]*PRIVATE KEY-----'
-    '(sk-ant-|sk-proj-|sk_live_|sk_test_|rk_live_|rk_test_|whsec_|ghp_|gho_|ghs_|ghu_|ghr_|github_pat_|xox[abeprs]-|sbp_|sb_secret_)[A-Za-z0-9_-]{16,}'
+    '(sk-ant-|sk-proj-|whsec_|ghp_|gho_|ghs_|ghu_|ghr_|github_pat_|xox[abeprs]-|sbp_|sb_secret_)[A-Za-z0-9_-]{16,}'
+    # the Stripe-style keys end in a word that snake_case text also ends in (task_test_data): a letter before
+    # the prefix means it is the tail of a longer word, not a key. Any other character before it (=, a space, an underscore, a digit)
+    # is not, and neither is a JSON or URL escape (a literal \n, \t, %3D: they end in a letter but are not part of a word).
+    '(^|\\[ntr]|%[0-9A-Fa-f]{2}|[^A-Za-z])(sk_live_|sk_test_|rk_live_|rk_test_)[A-Za-z0-9_-]{16,}'
     "${CM_RE_SECRET_BND}(sk-svcacct-|sk-admin-|sk-or-|sk-None-|AIza)[A-Za-z0-9_-]{16,}"
     "${CM_RE_SECRET_BND}sk-[A-Za-z0-9]{48}"
     'eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}'
@@ -582,7 +586,7 @@ _cm_secret_init() {   # lazy: building the case-insensitive names costs forks, a
   CM_RE_SECRET_READY=1
 }
 CM_RE_SECRET_CS='(AKIA|ASIA)[A-Z0-9]{12,}|npm_[A-Za-z0-9]{20,}'
-CM_RE_SECRET_CI='(ghp|gho|ghs|ghu|ghr|github_pat)_[A-Za-z0-9_]{10,}|glpat-[A-Za-z0-9_-]{10,}|xapp-[A-Za-z0-9-]{8,}|xox[abeprs]-[A-Za-z0-9-]{8,}|(^|[^A-Za-z0-9-])sk-[A-Za-z0-9_-]{16,}|[sr]k_(live|test)_[A-Za-z0-9]{8,}|whsec_[A-Za-z0-9]{8,}|sb_(secret|publishable)_[A-Za-z0-9_-]{8,}|sbp_[A-Za-z0-9]{12,}|eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.|AIza[0-9A-Za-z_-]{20,}|-----BEGIN|_authToken[[:space:]]*=[[:space:]]*[^[:space:]]{6,}|(password|passwd|passphrase|secret|token|api[_-]?key)[[:space:]]*[=:][[:space:]]*([A-Za-z0-9+/_.-]{3,}[0-9]|[A-Za-z0-9+/_.-]*[0-9][A-Za-z0-9+/_.-]{3,})|(password|passwd|passphrase|secret|api[_-]?key)[[:space:]]+(is|was|are|=)[[:space:]]+[^[:space:]]*[0-9][^[:space:]]*|(password|passwd|passphrase)[[:space:]]+(is|was)[[:space:]]+[^[:space:]]{8,}|\.secrets|(^|[^[:alnum:]_.])\.env([^[:alnum:]_]|$)|briefs?/|/home/[A-Za-z0-9._-]+/|/Users/[A-Za-z0-9._-]+/|/root/|~/|bearer [A-Za-z0-9._-]{12,}'
+CM_RE_SECRET_CI='(ghp|gho|ghs|ghu|ghr|github_pat)_[A-Za-z0-9_]{10,}|glpat-[A-Za-z0-9_-]{10,}|xapp-[A-Za-z0-9-]{8,}|xox[abeprs]-[A-Za-z0-9-]{8,}|(^|[^A-Za-z0-9-])sk-[A-Za-z0-9_-]{16,}|(^|\\[ntr]|%[0-9A-Fa-f]{2}|[^A-Za-z])[sr]k_(live|test)_[A-Za-z0-9]{8,}|whsec_[A-Za-z0-9]{8,}|sb_(secret|publishable)_[A-Za-z0-9_-]{8,}|sbp_[A-Za-z0-9]{12,}|eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.|AIza[0-9A-Za-z_-]{20,}|-----BEGIN|_authToken[[:space:]]*=[[:space:]]*[^[:space:]]{6,}|(password|passwd|passphrase|secret|token|api[_-]?key)[[:space:]]*[=:][[:space:]]*([A-Za-z0-9+/_.-]{3,}[0-9]|[A-Za-z0-9+/_.-]*[0-9][A-Za-z0-9+/_.-]{3,})|(password|passwd|passphrase|secret|api[_-]?key)[[:space:]]+(is|was|are|=)[[:space:]]+[^[:space:]]*[0-9][^[:space:]]*|(password|passwd|passphrase)[[:space:]]+(is|was)[[:space:]]+[^[:space:]]{8,}|\.secrets|(^|[^[:alnum:]_.])\.env([^[:alnum:]_]|$)|briefs?/|/home/[A-Za-z0-9._-]+/|/Users/[A-Za-z0-9._-]+/|/root/|~/|bearer [A-Za-z0-9._-]{12,}'
 _cm_secret_hit() { # $1 = text; 0 when any shape matches (a newline is a line break for grep, so a key after one still counts)
   local re; _cm_secret_init
   for re in "${CM_RE_SECRET_SCAN[@]}"; do grep -Eq -e "$re" <<<"$1" && return 0; done
