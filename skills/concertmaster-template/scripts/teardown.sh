@@ -808,7 +808,7 @@ EOF_K
                                  | select(.value.parent as $p | ($p | type) == "string" and ($f | index($p)) != null) | .key ] | unique - $s) as $new
                             | {seen: ($s + $new), frontier: $new})
                         | .seen ) as $fam
-                      | [ ($r.followUps // [])[] | select(type == "object" and .state != "done" and (.worker as $w | $fam | index($w)) != null)
+                      | [ ($r.followUps // [])[] | select(type == "object" and .state != "done" and ((.issue // .issueUrl) == null) and (.worker as $w | $fam | index($w)) != null)
                           | "\(.worker):\(.id)" ] end) }' 2>/dev/null)" \
            && [ -n "$LW" ]; then
         LEDGER_OK=1
@@ -1312,10 +1312,10 @@ elif [ -n "$LW" ]; then
         check followups "UNKNOWN (live comment ids could not be read)"
         gate "live comment ids unreadable: open follow-up state unknown"
       elif LIVE_OPEN="$(jq -r --argjson ids "$LIVE_IDS" --argjson lanes "$(lw '.lanes')" '
-          . as $L | [ $ids[] | . as $x | select(any(($L.followUps // [])[]?; type == "object" and .id == $x.id and .state == "done" and (.text // "") == $x.text and (.lane as $l | $lanes | index($l)) != null) | not) | .id ] | join(", ")' "$LEDGER" 2>/dev/null)"; then
+          . as $L | [ $ids[] | . as $x | select(any(($L.followUps // [])[]?; type == "object" and .id == $x.id and (.state == "done" or (.issue // .issueUrl) != null) and (.text // "") == $x.text and (.lane as $l | $lanes | index($l)) != null) | not) | .id ] | join(", ")' "$LEDGER" 2>/dev/null)"; then
         if [ -n "$LIVE_OPEN" ]; then
           check followups "OPEN in the live comment: $LIVE_OPEN"
-          gate "open follow-up(s) in live comment ($LIVE_OPEN): not in the ledger as done with the same text (a closed id reused for a new item counts as open); run scripts/followups.sh reconcile, then finish or close them, and post a new item under a new id"
+          gate "open follow-up(s) in live comment ($LIVE_OPEN): not in the ledger as done (or escalated to a GitHub issue) with the same text (a closed id reused for a new item counts as open); run scripts/followups.sh reconcile, then finish or close them, and post a new item under a new id"
         fi
       else
         check followups "UNKNOWN (ledger unreadable for the live comment check)"

@@ -326,6 +326,25 @@ jq '.followUps = {"x":1}' "$L" > "$ROOT/p.json" && mv "$ROOT/p.json" "$L"
 census "lead-a:cm:followup z owner=x t" | "$FU" reconcile >/dev/null 2>&1; rc=$?
 if [ "$rc" != 0 ] && jq -e '.followUps | type == "object"' "$L" >/dev/null; then ok "followUps that is not an array: refused, ledger untouched"; else bad "non-array followUps was rewritten"; fi
 
+echo "== reconcile: new text on an escalated item is a new task"
+seed
+rec "lead-a:cm:running
+cm:followup validate-codes owner=lane-a Codex validation after the load"
+jq '(.followUps[] | select(.id == "validate-codes")) += {issue: 9, issueUrl: "https://github.com/AcmeOrg/acme-app/issues/9", escalatedAt: "2026-10-30T00:00:00Z"}' "$L" > "$ROOT/p.json" && mv "$ROOT/p.json" "$L"
+rec "lead-a:cm:running
+cm:followup validate-codes owner=lane-a Codex validation after the load"
+check "same text: the issue stays"                      '.followUps[] | select(.id == "validate-codes") | .issue == 9'
+rec "lead-a:cm:running
+cm:followup validate-codes owner=lane-a A different job now"
+check "new text: the issue fields are cleared"          '.followUps[] | select(.id == "validate-codes") | (.issue // .issueUrl // .escalatedAt) == null and .text == "A different job now"'
+# an escalate run holds a claim while gh runs; a text change in that window must leave the claim for the run to record against
+rec "lead-a:cm:running
+cm:followup validate-codes owner=lane-a A different job now"
+jq '(.followUps[] | select(.id == "validate-codes")) += {escalatingAt: "tok-123"}' "$L" > "$ROOT/p.json" && mv "$ROOT/p.json" "$L"
+rec "lead-a:cm:running
+cm:followup validate-codes owner=lane-a A third wording"
+check "new text while a claim is held: the claim stays"  '.followUps[] | select(.id == "validate-codes") | .escalatingAt == "tok-123" and .text == "A third wording" and (.issue // .issueUrl // .escalatedAt) == null'
+
 echo "== child adoption (cm:child names a worktree with no ledger row)"
 # lane-a posts its children; child rows carry their own comment, host-a style synthetic names
 adoptseed() { printf '%s' '{"workers":{

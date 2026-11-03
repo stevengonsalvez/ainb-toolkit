@@ -258,7 +258,7 @@ case "$cmd" in
                                                        state: "open", openedAt: $now, closedAt: null}])
             elif .followUps[$i].state == "done" then .
             elif .followUps[$i].worker == $c.worker and .followUps[$i].owner == $c.owner and .followUps[$i].text == $c.text then .
-            else .followUps[$i] |= (. + {worker: $c.worker, owner: $c.owner, text: $c.text}) end)
+            else .followUps[$i] |= ((if .text != $c.text then del(.issue, .issueUrl, .escalatedAt) else . end) + {worker: $c.worker, owner: $c.owner, text: $c.text}) end)   # new text is a new task: an issue made for the old one does not cover it. An escalate claim (escalatingAt) stays: a run that holds it records the issue it made against that claim, and with the claim gone the issue would go unrecorded
       | reduce $dones[] as $d (.;
           fidx($d.lane; $d.id) as $i
           | if $i == null or .followUps[$i].state == "done" then .
