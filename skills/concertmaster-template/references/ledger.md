@@ -304,7 +304,7 @@ may have leaked should run `scripts/ledger-guard.sh` before it.
 | `digests.lastCollaboratorDmAt` | map of collaborator github handle to last daily DM time |
 | `digests.lastSentAt` | last digest send (`cfg.schedule.digest_times`) |
 | `violations[]` | the forbidden-agent rows of the last census (`cfg.agents.forbidden`): classify's `.violations` (`host`, `worktree`, `handle`, `title`, `agent`), replaced every tick, `[]` when none; `scripts/digest.sh` lists them as "Forbidden agents" |
-| `violationCheck` | classify's `.violationCheck` (`enabled`, `complete`, `gaps[]`) plus `checkedAt` (UTC, this tick), replaced every tick; an incomplete check (offline host, failed or cut-off terminal list, no terminal data) is listed in the digest as `CHECK INCOMPLETE`, never read as "none found" |
+| `violationCheck` | classify's `.violationCheck` (`enabled`, `complete`, `gaps[]`) plus `checkedAt` (UTC, this tick), replaced every tick; an incomplete check (offline host, failed or cut-off terminal list, no terminal data, a reachable remote host scanned by terminal only) is listed in the digest as `CHECK INCOMPLETE`, never read as "none found" |
 
 ## `outbox.jsonl`
 
