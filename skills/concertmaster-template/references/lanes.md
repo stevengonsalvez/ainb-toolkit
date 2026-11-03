@@ -77,7 +77,7 @@ orca worktree set --worktree active --comment "cm:<state> <detail>" --json
 | `cm:idle <n> open beads` | standing lead with nothing assigned, or waiting on beads only the owner can decide | records the count, hands new work; never retires or tears it down |
 | `cm:done <deliverable>` | single-task worker finished, nothing left, every bead in its epic closed | checks beads, verifies, retires the worker; teardown once its PR merges or closes |
 | `cm:failed <reason>` | cannot finish from this repo | escalates or respawns |
-| `cm:retire <why>` | set by the concertmaster or the owner on a worktree whose work is finished; also by a lead on a child's comment | classify treats every agent as done: retire, then teardown once clean and merged or closed. A lead's `cm:retire` is the FALLBACK only: a lead that cannot reach the child's host posts it on the CHILD's comment when the child's PR is merged or closed, and the concertmaster tears it down from its host. The normal path is the lead running `scripts/teardown.sh <host> <path> --owner <lead-worktree>` itself |
+| `cm:retire <why>` | set by the concertmaster or the owner on a worktree whose work is finished; also by a lead on a child's comment | classify treats every agent as done: retire, then teardown once clean and merged or closed. A lead's `cm:retire` is the FALLBACK only: a lead that cannot reach the child's host posts it on the CHILD's comment when the child's PR is merged or closed, and the concertmaster tears it down from its host. The normal path is the lead running `scripts/teardown.sh <host> <path> --owner <lead-worktree>` itself. For a child that NEVER had a PR it is also the request that unlocks `--owner ... --allow-no-pr`: it must be the first line of the child's own comment, with a reason |
 | `cm:keep <why, until when>` | set by the concertmaster or the owner to hold a finished worktree on purpose | classify holds it as standing-idle: never retired or torn down; chase the owner once the until-when has passed |
 
 A `cm:merge-ready` marker is genuine only at the start of the comment or right after ` | `, as the
@@ -232,10 +232,14 @@ host. A lead may run on any agent and may move hosts; the protocol must not chan
    git and Orca `--environment <host>`, and never reads or writes the ledger (the concertmaster
    reconciles it from comments). A standing lane and your own worktree are refused. Post
    `cm:retire <reason>` on the child's comment only as a fallback when you cannot reach its host.
-   Lead mode also refuses a child that a second lead on YOUR host lists too, or that declares
-   children of its own. It cannot see a second lead on another host (no ledger, one host read),
-   so list each child under exactly one lead; a double listing across hosts is for the
-   concertmaster to resolve.
+   Lead mode also refuses a child that declares children of its own, and a child that any other
+   worktree on ANY host claims too (the rival scan reads every host's comments with the claim
+   reader `classify.jq` uses, and refuses on an incomplete census), so list each child under
+   exactly one lead. A child that never had a PR (a port of a change, say) is retired the same way
+   with `--allow-no-pr`, only when its OWN comment starts with `cm:retire <reason>`, its terminals
+   are already closed, the tree is clean and pushed, it is zero commits ahead of a freshly fetched
+   `origin/<default>`, and nothing else refuses (open beads, follow-ups, a standing name). Close its
+   terminals and post the `cm:retire` line first; then plan, then `--apply`.
 5a. Children and retirements: post `cm:child <worktree-name>` in your comment for EVERY worker you
    spawn (the concertmaster tick adopts each one into the ledger as a non-standing worker, so it
    can be torn down), and `cm:retire` on each one whose PR is merged or closed. Never ask the
@@ -354,7 +358,8 @@ its ticker does each tick).
 - Retire and ask, never by prose: post `cm:child <name>` for each worker you spawn, and when its PR is merged or
   closed tear it down yourself with `scripts/teardown.sh <host> <child-path> --owner <your-worktree>` (plan, then
   `--apply`; no ledger needed on your host). `cm:retire` on the child's comment is only the fallback request when
-  you cannot reach its host. Never ask the concertmaster in prose: ask with a `cm:blocked <one question>` or
+  you cannot reach its host. A child that never had a PR: close its terminals, post `cm:retire <reason>` as the
+  first line of ITS comment, then add `--allow-no-pr` (see Lead charter 5). Never ask the concertmaster in prose: ask with a `cm:blocked <one question>` or
   `cm:ask <one question>` line in your comment. When you fix something that went wrong, post
   `cm:lesson <lane> | <what happened and fix> | root cause: <gap>` and append it to your lane journal. A newer
   concertmaster instruction wins over an older queued one; ack each instruction by id with `cm:ack <id>`.
