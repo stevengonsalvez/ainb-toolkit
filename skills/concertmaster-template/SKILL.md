@@ -376,12 +376,16 @@ BEFORE asking.
      (subagent reads state); never teardown.
    - **ORPHAN** and **LEAD-DEAD** flags: § Ownership.
    - `cm:merge-ready` from dev/epic workers: make sure the pr-sweeper has the PR.
+   - **Backup check.** Run `scripts/backup-stale.sh` every tick; it reads one local file and
+     writes at most one note per episode (`references/recovery.md` § Off-host backup).
    - **Fleet alert notes** in `$CM_HOME/inbox/` newer than the last tick:
      `cred-check-*.md` (surface every `INVALID` or `MISSING` row and any `FATAL`;
      do not rotate anything yourself, `references/credentials.md`),
      `ci-queue-alert-*.md` (queue alert: look at the runner fleet,
      `references/ci-capacity.md`), `boot-sweep-*.md` (lanes the post-boot sweep
-     could not get going, `references/boot-sweep.md`). Put each in the
+     could not get going, `references/boot-sweep.md`), `backup-stale-*.md` (the
+     off-host backup has not succeeded within `backup.max_age_hours`, or that setting is
+     not a whole number of hours; `references/recovery.md` § Off-host backup). Put each in the
      turn-end report; they are the only way these scripts reach you.
    - Lane queues: research questions always go to research-sweeper. Spawn it (and
      release-tester, when listed) on this host only when no ledger worker has
@@ -700,7 +704,8 @@ idle 45m ─▶ read pane (--screen) ─▶ question? ─▶ answer if factual/d
    `cfg.schedule.max_nudges` nudges**.
 4. After the nudge cap, or `cfg.schedule.stuck_respawn_hours` idle in total:
    write a handover (`$CM_HOME/handovers/<id>-<ts>.md`: task, brief, branch,
-   last commits, PR state, pane summary, what was last attempted), close that
+   last commits, PR state, pane summary, what was last attempted; never a credential value
+   or personal data about a person: the off-host backup copies handovers), close that
    worker's agent terminal by its handle, start a fresh agent in the same
    worktree (`terminal create --worktree id:<wid> --command claude`, wait
    tui-idle, send "Read <handover> and continue from it"), reset `nudges`, emit
@@ -1222,9 +1227,11 @@ shellcheck clean.
 | `scripts/boot-sweep.sh [--dry-run] [--no-wait] [--since <epoch> [--lanes <paths>]]` | after a host restart, nudges standing lanes that ran no turn since boot to re-arm their `/loop` (`references/boot-sweep.md`) |
 | `scripts/runtime-check.sh [--dry-run]` | tick step after an Orca runtime restart: refreshes standing lanes' ledger handles by worktree path and nudges lanes whose `/loop` wake died, via `boot-sweep.sh --since --lanes` (`references/runtime-check.md`) |
 | `scripts/tick-emit.sh [--classify <file>] [--status s] [--task t] [--extra <json>]` | tick step 5: fleet summary from classify JSON (stdin or file) plus the `unlinked-prs.json` count, then `mc-emit.sh --tick` (`MC_NO_FLUSH=1`) and the concertmaster `--fleet-upsert` (flushes); `CM_AGENT_ID`, `CM_WORKSPACE`; always exits 0, prints one line about its own two lines (sent, queued, dead, skipped or refused), never the token or tenant |
+| `scripts/backup-offhost.sh [--check\|--dry-run]` | nightly off-host copy of the ledger, its ring and `handovers/` after the secret scan; `--check` tests the config and the ssh BatchMode link to the peer and writes nothing; a finished run writes `$CM_HOME/cache/backup-offhost.json` (`references/recovery.md` § Off-host backup) |
+| `scripts/backup-stale.sh [--dry-run]` | tick step, backup check: alerts once per episode when that stamp is older than `backup.max_age_hours` (default 50), reads one local file, no network |
 | `scripts/ci-queue-alert.sh [--dry-run]` | alerts when too many workflow runs stay queued, once per episode (`references/ci-capacity.md`) |
 | `scripts/cred-check.sh [--dry-run] [--publish [FILE]]` | weekly validity probe of the credentials in a names-only index (`references/credentials.md`) |
-| `scripts/scan-secrets.sh [--strict] [--since-days n] [PATH...]` | counts secret-shaped strings per class and per transcript file (default dirs: config `credentials.transcript_dirs`, else `~/.claude/projects`); counts only, never the matched text; exit 1 on a strict class hit (`--strict`: advisory `password_assign` too), 2 when anything could not be read or nothing existed to scan, else 0 (`references/credentials.md`) |
+| `scripts/scan-secrets.sh [--strict] [--since-days n] [PATH...]` | counts secret-shaped strings per class and per transcript file (default dirs: config `credentials.transcript_dirs`, else `~/.claude/projects`); counts only, never the matched text; exit 1 on a strict class hit (`--strict`: advisory `password_assign` and `password_word` too; `password_word` is a pure-letter password of 8+ letters after the name password, passwd, pwd or passphrase), 2 when anything could not be read or nothing existed to scan, else 0 (`references/credentials.md`) |
 | `scripts/ask-timeout.sh [--ledger <path>] [--all] [--stamp] [--claim <ask-id>] [--record <ask-id> <comment-url>]` | away timeout (rule 16): lists open asks past `timeoutAt` that are own-scope and safe for an independent verdict, claims and records it; fails closed; the write modes need `cm_ledger_write` in `lib.sh` (`references/away-timeout.md`) |
 | `scripts/queue.sh list [--json] \| add <issue> <lane> [--priority P0\|urgent\|normal] [--host <h>] \| grant (--discover <file> \| --live <h>=<n>,...) [--dry-run] \| mark <id> done\|dropped\|queued \| depth` | the work queue in the ledger: new work waits for a free slot, granted P0, then urgent, then oldest, under the total and per-host caps; the write commands need `cm_ledger_write` in `lib.sh` (`references/queue.md`) |
 | `scripts/queue-audit.sh` | flags granted or queued items with no PR and no worktree comment naming the issue after `CM_QUEUE_STALL_MIN` minutes (STALLED, UNVERIFIED, UNKNOWN-AGE, NO-ISSUE); exit 3 when `gh` fails |
@@ -1239,7 +1246,7 @@ shellcheck clean.
 | `scripts/hooks/mc-worker-hook.sh` | Claude Code hook for workers, in-scope repos only (optional) |
 | `scripts/digest.sh [--full] [--since-hours n]` | digest text, stdout only, `- ` bullets, no Needs, Open follow-ups, Stuck or Fleet section (`--full` adds them for the terminal report): Merged (merged since `digests.lastSentAt`, else 12h) from `gh pr list`, and in `--full` the open PR count (a failed gh prints "unknown (gh failed)", never 0), every other section from the ledger; read-only; `--full` also lists `ledger.violations` and an incomplete `ledger.violationCheck` |
 | `scripts/intake.sh <cmd>` | the deterministic half of `intake` (rules in `scripts/intake.jq`) |
-| `scripts/test/*.sh` | `classify-standing`, `classify-violations`, `teardown-gates`, `resume-flow`, `intake`, `mc-emit`, `boot-sweep`, `runtime-check`, `ci-queue-alert`, `cred-check`, `scan-secrets`, `rm-guard-hook`, `digest-gh`, `orca-json-helpers`, `waiting-autocompact`, `spawn-verify`, `classify-ownership`, `ask-timeout`, `queue`, `queue-audit`, `salv3`, `markers`, `unlinked-prs`, `tick-emit`, `config-check`, `automations-audit`, `followups`, `followups-escalate`, `lane-journal`, `asks`, `teardown-owner`, `lanes-relay`, `fleet-state`, `lessons-recon`, `pane-stalls`, `skill-sync`, `tick-contract`: hermetic tests against `scripts/test/fixtures/config.test.yaml`; run the matching one after any script change |
+| `scripts/test/*.sh` | `classify-standing`, `classify-violations`, `teardown-gates`, `resume-flow`, `intake`, `mc-emit`, `boot-sweep`, `runtime-check`, `ci-queue-alert`, `cred-check`, `backup-offhost`, `backup-stale`, `scan-secrets`, `rm-guard-hook`, `digest-gh`, `orca-json-helpers`, `waiting-autocompact`, `spawn-verify`, `classify-ownership`, `ask-timeout`, `queue`, `queue-audit`, `salv3`, `markers`, `unlinked-prs`, `tick-emit`, `config-check`, `automations-audit`, `followups`, `followups-escalate`, `lane-journal`, `asks`, `teardown-owner`, `lanes-relay`, `fleet-state`, `lessons-recon`, `pane-stalls`, `skill-sync`, `tick-contract`: hermetic tests against `scripts/test/fixtures/config.test.yaml`; run the matching one after any script change |
 
 <!-- project-local: scripts -->
 
