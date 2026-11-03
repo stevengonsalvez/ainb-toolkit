@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# cm-test: rm-cleanup (its EXIT trap rm -rf-s its own mktemp dir; CM_TEST_KEEP_TMP=1 keeps it)
 # classify-standing.sh: behaviour tests for classify's ledger-only standing
 # rules. Feeds a synthetic discover document and ledger to classify.sh and
 # checks each item's class and suggest. Touches nothing outside a mktemp dir.
@@ -11,7 +12,7 @@ export CM_CONFIG="$HERE/fixtures/config.test.yaml"
 unset CM_ORG CM_REPO CM_PROJECT CM_OWNER_NAME CM_OWNER_ID CM_TZ CM_TZ_LABEL CM_EXCLUDE_REPOS CM_PATH_MATCH CM_SELF_WORKTREE
 ROOT="$(mktemp -d "${TMPDIR:-/tmp}/cm-classify.XXXXXX")" || { echo "cannot create a temp dir" >&2; exit 1; }
 [ -n "$ROOT" ] && [ -d "$ROOT" ] || { echo "temp dir missing" >&2; exit 1; }
-trap 'rm -rf -- "${ROOT:?}"' EXIT
+trap '[ "${CM_TEST_KEEP_TMP:-}" = 1 ] && echo "cm-test: CM_TEST_KEEP_TMP set, kept $ROOT" >&2 || rm -rf -- "${ROOT:?}"' EXIT
 export CM_HOME="$ROOT"
 cat > "$ROOT/ledger.json" <<'J'
 {"lanes": {"dev-sweeper": {"lead": "w-lead"}, "pr-sweeper": "running"},

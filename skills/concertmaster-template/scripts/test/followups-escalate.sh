@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# cm-test: rm-cleanup (its EXIT trap rm -rf-s its own mktemp dir; CM_TEST_KEEP_TMP=1 keeps it)
 # shellcheck disable=SC2015  # "A && ok || bad": ok never fails
 # followups.sh escalate: behaviour tests with a stubbed gh on a temp CM_HOME. No network, never the live
 # ledger. gh answers `api rate_limit` and `issue create`; every call is logged, nothing is really created.
@@ -11,7 +12,7 @@ command -v jq >/dev/null 2>&1 || { echo "missing dependency: jq" >&2; exit 1; }
 FU="$HERE/../followups.sh"
 ROOT="$(mktemp -d "${TMPDIR:-/tmp}/cm-fu-escalate.XXXXXX")" || { echo "cannot create a temp dir" >&2; exit 1; }
 [ -n "$ROOT" ] && [ -d "$ROOT" ] || { echo "temp dir missing" >&2; exit 1; }
-trap 'rm -rf -- "${ROOT:?}"' EXIT
+trap '[ "${CM_TEST_KEEP_TMP:-}" = 1 ] && echo "cm-test: CM_TEST_KEEP_TMP set, kept $ROOT" >&2 || rm -rf -- "${ROOT:?}"' EXIT
 mkdir -p "$ROOT/bin" "$ROOT/stub" "$ROOT/cmhome"
 export CM_HOME="$ROOT/cmhome" STUB="$ROOT/stub" PATH="$ROOT/bin:$PATH" HOME="$ROOT/home"
 mkdir -p "$HOME"
@@ -333,9 +334,15 @@ fake() { # one fake secret-looking text per shape, built here so no literal toke
     shy)      printf 'g\302\255hp_%s' "$(rep 24 g)" ;;
     fe0f)     printf 'glp\357\270\217at-%s' "$(rep 20 h)" ;;
     cgj)      printf 'AS\315\217IA%s' "$(rep 16 C)" ;;
+    # round 3: the Stripe-style prefixes behind a JSON or URL escape, which ends in a letter (a letter alone means a longer word)
+    skn)      printf '%s' "note:\\n""sk_li""ve_$(rep 24 m)" ;;
+    skt)      printf '%s' "tab\\t""sk_te""st_$(rep 24 n)" ;;
+    skd)      printf '%s' "key%3D""rk_li""ve_$(rep 24 p)" ;;
+    ska)      printf '%s' "k%3A""rk_te""st_$(rep 24 q)" ;;
+    skdig)    printf '%s' "id9""sk_li""ve_$(rep 24 r)" ;;
   esac
 }
-for k in dburl gitlab npm asia sentence slack runner longtitle pguser redis acctok apikey pwd csecret keynl pctsk shy fe0f cgj; do
+for k in dburl gitlab npm asia sentence slack runner longtitle pguser redis acctok apikey pwd csecret keynl pctsk shy fe0f cgj skn skt skd ska skdig; do
   txt="$(fake "$k")"
   seed; jq --arg id "fake-$k" --arg t "$txt" '.followUps += [{id: $id, worker: "w-a", lane: "lane-a", owner: "w-a", text: $t, state: "open", openedAt: (now - 90000 | todate)}]' "$L" > "$ROOT/l.json" && mv "$ROOT/l.json" "$L"
   out="$("$FU" escalate 2>&1)"
@@ -464,6 +471,101 @@ has "the lock of a dead run is taken over" "$out" "created: [lane-a/old-same]"
 seed; jq --arg t "$(rep 99 a)é end" '.followUps += [{id: "wide-char", worker: "w-a", lane: "lane-a", owner: "w-a", text: $t, state: "open", openedAt: (now - 90000 | todate)}]' "$L" > "$ROOT/l.json" && mv "$ROOT/l.json" "$L"
 "$FU" escalate --create --only "lane-a/wide-char@$(fpof wide-char)" >/dev/null 2>&1
 if iconv -f UTF-8 -t UTF-8 "$STUB"/body.* >/dev/null 2>&1 && grep -q "é end" "$STUB"/body.*; then ok "body keeps a multibyte character whole"; else bad "multibyte body" "$(cat "$STUB"/body.* 2>/dev/null | head -3)"; fi
+
+# 14. escalate minors: --resolve, exit 126/127, the sk_test_ boundary, the stale-lock takeover, a relink after a text change
+LOCK="$CM_HOME/.followups-escalate.lock"
+claim() { jq --arg id "$1" --arg tok "$2" '(.followUps[] | select(.id == $id) | .escalatingAt) = $tok' "$L" > "$ROOT/l.json" && mv "$ROOT/l.json" "$L"; }
+claimed() { jq -r --arg id "$1" '[.followUps[] | select(.id == $id)][0].escalatingAt // "none"' "$L"; }
+# --resolve release while the run that made the claim is still alive: refused, the claim stays
+seed; sleep 60 & LIVE=$!
+claim old-same "$(date -u +%FT%TZ)-$LIVE"
+out="$("$FU" escalate --resolve lane-a/old-same release 2>&1)"; rc=$?
+[ "$rc" = 1 ] && [ "$(claimed old-same)" != none ] && has "release on a live claim: refused, claim kept" "$out" "still alive (pid $LIVE)" || bad "release live" "rc=$rc claim=$(claimed old-same) $out"
+"$FU" escalate --resolve lane-a/old-same 612 >/dev/null 2>&1
+[ "$(fu_issue old-same)" = 612 ] && ok "a number can still be recorded on a live claim" || bad "number on live claim" "$(fu_issue old-same)"
+kill "$LIVE" 2>/dev/null; wait "$LIVE" 2>/dev/null
+seed; claim old-same "2026-11-02T00:00:00Z-$LIVE"
+"$FU" escalate --resolve lane-a/old-same release >/dev/null 2>&1
+[ "$(claimed old-same)" = none ] && ok "release once that run has ended: claim cleared" || bad "release dead" "$(claimed old-same)"
+# a live pid on a claim over an hour old is a reused pid: release goes ahead
+seed; sleep 60 & LIVE=$!
+claim old-same "2026-11-02T00:00:00Z-$LIVE"
+"$FU" escalate --resolve lane-a/old-same release >/dev/null 2>&1; rc=$?
+[ "$rc" = 0 ] && [ "$(claimed old-same)" = none ] && ok "release on an old claim whose pid is alive (reused): goes ahead" || bad "release reused pid" "rc=$rc claim=$(claimed old-same)"
+kill "$LIVE" 2>/dev/null; wait "$LIVE" 2>/dev/null
+# a "/" in the lane or the id cannot move the split: the claim is found by its whole lane/id name
+seed; jq '.followUps += [{id: "pr/12", worker: "w-a", lane: "lane-a", owner: "w-a", text: "slash in the id", state: "open", openedAt: (now - 90000 | todate), escalatingAt: "t-1"},
+  {id: "x", worker: "w-a", lane: "team/ops", owner: "w-a", text: "slash in the lane", state: "open", openedAt: (now - 90000 | todate), escalatingAt: "t-1"}]' "$L" > "$ROOT/l.json" && mv "$ROOT/l.json" "$L"
+"$FU" escalate --resolve lane-a/pr/12 91 >/dev/null 2>&1; rc=$?
+[ "$rc" = 0 ] && [ "$(fu_issue pr/12)" = 91 ] && ok "--resolve: a slash in the id" || bad "resolve id slash" "rc=$rc $(fu_issue pr/12)"
+"$FU" escalate --resolve team/ops/x 92 >/dev/null 2>&1; rc=$?
+[ "$rc" = 0 ] && [ "$(fu_issue x)" = 92 ] && ok "--resolve: a slash in the lane" || bad "resolve lane slash" "rc=$rc $(fu_issue x)"
+seed; jq '.followUps += [{id: "b/c", worker: "w-a", lane: "a", owner: "w-a", text: "one", state: "open", openedAt: (now - 90000 | todate), escalatingAt: "t-1"},
+  {id: "c", worker: "w-a", lane: "a/b", owner: "w-a", text: "two", state: "open", openedAt: (now - 90000 | todate), escalatingAt: "t-1"}]' "$L" > "$ROOT/l.json" && mv "$ROOT/l.json" "$L"
+"$FU" escalate --resolve a/b/c 93 >/dev/null 2>&1; rc=$?
+[ "$rc" = 1 ] && [ "$(fu_issue c)" = none ] && [ "$(fu_issue b/c)" = none ] && ok "--resolve: a name two claims share resolves neither" || bad "resolve ambiguous" "rc=$rc"
+# --resolve <n> needs the repository config for the url; release does not; and the order of the checks is right
+printf 'followups:\n  issue_labels: []\n' > "$ROOT/noorg.yaml"
+sleep 0.2 & DEAD=$!; wait "$DEAD" 2>/dev/null   # a pid that surely no longer exists (pid 1 is alive, and kill -0 1 succeeds as root)
+seed; claim old-same "t-$DEAD"
+out="$(CM_CONFIG="$ROOT/noorg.yaml" "$FU" escalate --resolve lane-a/old-same 5 2>&1)"; rc=$?
+[ "$rc" = 1 ] && [ "$(claimed old-same)" = "t-$DEAD" ] && has "--resolve <n> without github.org: refused, no url built, claim kept" "$out" "not configured" || bad "resolve no org" "rc=$rc $out"
+CM_CONFIG="$ROOT/noorg.yaml" "$FU" escalate --resolve lane-a/old-same release >/dev/null 2>&1; rc=$?
+[ "$rc" = 0 ] && [ "$(claimed old-same)" = none ] && ok "--resolve release works without github.org" || bad "release no org" "rc=$rc"
+# gh exit 126 and 127: it never ran, so nothing was made and the claim goes back
+for code in 126 127; do
+  seed; echo "$code" > "$STUB/create.rc"; echo "gh: command not found" > "$STUB/create.err"
+  out="$("$FU" escalate --create --only "lane-a/old-same@$(fpof old-same)" 2>&1)"; rc=$?
+  [ "$rc" = 1 ] && [ "$(claimed old-same)" = none ] && has "gh exit $code: claim released, run fails" "$out" "gh could not be run" || bad "gh $code" "rc=$rc claim=$(claimed old-same) $out"
+done
+# the Stripe-style prefixes: a letter before sk_test_ means the tail of a longer word, anything else does not
+seed
+jq --arg a "the task_te""st_$(rep 20 x) fixtures" --arg b "stripe key sk_te""st_$(rep 20 y)" --arg c "STRIPE=rk_li""ve_$(rep 20 z)" '.followUps += [
+  {id: "snake", worker: "w-a", lane: "lane-a", owner: "w-a", text: $a, state: "open", openedAt: (now - 90000 | todate)},
+  {id: "real-sk", worker: "w-a", lane: "lane-a", owner: "w-a", text: $b, state: "open", openedAt: (now - 90000 | todate)},
+  {id: "real-rk", worker: "w-a", lane: "lane-a", owner: "w-a", text: $c, state: "open", openedAt: (now - 90000 | todate)}]' "$L" > "$ROOT/l.json" && mv "$ROOT/l.json" "$L"
+out="$("$FU" escalate 2>&1)"
+has "snake_case text that ends in sk_test_ shape: not refused" "$out" "would create: [lane-a/snake]"
+has "a real sk_test_ key after a space: refused" "$out" "escalate refused lane-a/real-sk"
+has "a real rk_live_ key after =: refused" "$out" "escalate refused lane-a/real-rk"
+# the stale-lock takeover happens under its own lock and looks again inside it
+only="lane-a/old-same@$(fpof old-same)"
+seed; mkdir "$LOCK"; echo 999999 > "$LOCK/pid"; mkdir "$LOCK.takeover"
+out="$("$FU" escalate --create --only "$only" 2>&1)"
+has "another run is taking over the stale lock: skipped" "$out" "taking over the stale lock"
+[ "$(creates)" = 0 ] && [ -d "$LOCK" ] && ok "takeover held by another run: nothing created, the lock stays" || bad "takeover held" "creates=$(creates)"
+rm -rf -- "$LOCK" "$LOCK.takeover"
+seed; mkdir "$LOCK"; echo 999999 > "$LOCK/pid"; mkdir "$LOCK.takeover"; touch -t 202001010000 "$LOCK.takeover"
+out="$("$FU" escalate --create --only "$only" 2>&1)"
+has "a takeover lock left by a dead run clears after a minute" "$out" "created: [lane-a/old-same]"
+[ ! -d "$LOCK" ] && [ ! -d "$LOCK.takeover" ] && ok "takeover: neither lock is left behind" || bad "takeover left" "$(ls -d "$LOCK"* 2>&1)"
+# the window itself: the holder looked dead when this run first read the pid, and a fresh run took the lock before the second read.
+# A cat shim makes that happen on the first read of the lock's pid file.
+seed; mkdir "$LOCK"; echo 999999 > "$LOCK/pid"; sleep 60 & LIVE=$!
+cat > "$ROOT/bin/cat" <<S
+#!/bin/sh
+if [ "\$1" = "$LOCK/pid" ] && [ ! -e "$STUB/cat.done" ]; then
+  : > "$STUB/cat.done"; /bin/cat "\$1"; rm -rf "$LOCK"; mkdir "$LOCK"; echo $LIVE > "$LOCK/pid"; exit 0
+fi
+exec /bin/cat "\$@"
+S
+chmod +x "$ROOT/bin/cat"
+out="$("$FU" escalate --create --only "$only" 2>&1)"
+rm -f "$ROOT/bin/cat"
+has "a fresh run took the lock between the two reads: this run stands down" "$out" "another --create run is in progress (pid $LIVE)"
+[ "$(creates)" = 0 ] && [ "$(/bin/cat "$LOCK/pid" 2>/dev/null)" = "$LIVE" ] && ok "and the fresh run's lock is still its own" || bad "fresh lock" "creates=$(creates) pid=$(/bin/cat "$LOCK/pid" 2>&1)"
+kill "$LIVE" 2>/dev/null; wait "$LIVE" 2>/dev/null; rm -rf -- "$LOCK" "$LOCK.takeover"
+# a live pid on a lock older than an hour is a reused pid, not a run
+seed; sleep 60 & LIVE=$!; mkdir "$LOCK"; echo "$LIVE" > "$LOCK/pid"; touch -t 202001010000 "$LOCK"
+out="$("$FU" escalate --create --only "$only" 2>&1)"
+has "a live pid on a lock over an hour old: taken over" "$out" "created: [lane-a/old-same]"
+kill "$LIVE" 2>/dev/null; wait "$LIVE" 2>/dev/null; rm -rf -- "$LOCK" "$LOCK.takeover"
+# an older issue for the same lane and id is linked after the text was reworded: the match is the id and the lane, not the words
+# shellcheck disable=SC2016  # backticks are markdown in the stubbed issue body
+seed; echo '[{"number": 58, "title": "follow-up old-same: the first wording of this text", "url": "https://github.com/AcmeOrg/acme-app/issues/58", "body": "Follow-up `old-same` raised by lane `lane-a`."}]' > "$STUB/list.out"
+out="$("$FU" escalate --create --only "$only" 2>&1)"
+has "an old issue with other wording is linked by lane and id" "$out" "linked: [lane-a/old-same] https://github.com/AcmeOrg/acme-app/issues/58"
+[ "$(creates)" = 0 ] && [ "$(fu_issue old-same)" = 58 ] && ok "and no second issue is made" || bad "relink" "creates=$(creates) issue=$(fu_issue old-same)"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]

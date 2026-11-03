@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# cm-test: rm-cleanup (its EXIT trap rm -rf-s its own mktemp dir; CM_TEST_KEEP_TMP=1 keeps it)
 # tick-emit.sh: behaviour tests for the per-tick mission-control emits.
 # Runs the real mc-emit.sh; curl is a PATH shim answering with $STUB/code.
 # CM_HOME, HOME and TMPDIR live in a mktemp dir. No real network.
@@ -9,7 +10,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 SCRIPT="$HERE/../tick-emit.sh"
 ROOT="$(mktemp -d "${TMPDIR:-/tmp}/cm-tick-emit.XXXXXX")" || { echo "cannot create a temp dir" >&2; exit 1; }
 if [ -z "$ROOT" ] || [ ! -d "$ROOT" ]; then echo "temp dir missing" >&2; exit 1; fi
-trap 'rm -rf -- "${ROOT:?}"' EXIT
+trap '[ "${CM_TEST_KEEP_TMP:-}" = 1 ] && echo "cm-test: CM_TEST_KEEP_TMP set, kept $ROOT" >&2 || rm -rf -- "${ROOT:?}"' EXIT
 STUB="$ROOT/stub"
 mkdir -p "$ROOT/bin" "$ROOT/home" "$ROOT/tmp" "$STUB"
 unset MC_TENANT_ID MC_PROJECT_ID MC_BASE_URL MC_QUIET MC_NO_FLUSH MC_FLUSH_BATCH MC_FLUSH_SECS MC_OUTBOX_MAX CM_INSTALLED_EMIT CM_MC_EMIT

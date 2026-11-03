@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# cm-test: rm-cleanup (its EXIT trap rm -rf-s its own mktemp dir; CM_TEST_KEEP_TMP=1 keeps it)
 # classify-violations.sh: tests for the forbidden-agent census (config agents.forbidden, here
 # [codex]). Runs discover.sh against a STUBBED orca (two hosts, local and host-b), pipes it
 # through classify.sh, and checks that a forbidden-agent terminal under worktrees.path_match
@@ -14,7 +15,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 unset CM_ORG CM_REPO CM_PROJECT CM_OWNER_NAME CM_OWNER_ID CM_TZ CM_TZ_LABEL CM_EXCLUDE_REPOS CM_PATH_MATCH CM_SELF_WORKTREE CM_FORBIDDEN_AGENTS
 ROOT="$(mktemp -d "${TMPDIR:-/tmp}/cm-violations.XXXXXX")" || { echo "cannot create a temp dir" >&2; exit 1; }
 [ -n "$ROOT" ] && [ -d "$ROOT" ] || { echo "temp dir missing" >&2; exit 1; }
-trap 'rm -rf -- "${ROOT:?}"' EXIT
+trap '[ "${CM_TEST_KEEP_TMP:-}" = 1 ] && echo "cm-test: CM_TEST_KEEP_TMP set, kept $ROOT" >&2 || rm -rf -- "${ROOT:?}"' EXIT
 # Hermetic config: the shared test fixture (path_match "/acme/", org AcmeOrg) plus agents.forbidden.
 { cat "$HERE/fixtures/config.test.yaml"; printf 'agents:\n  forbidden: [codex]\n'; } > "$ROOT/config.yaml"
 export CM_CONFIG="$ROOT/config.yaml"

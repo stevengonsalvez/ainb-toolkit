@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# cm-test: rm-cleanup (its EXIT trap rm -rf-s its own mktemp dir; CM_TEST_KEEP_TMP=1 keeps it)
 # shellcheck disable=SC2016,SC2034,SC1091  # check bodies are single-quoted on purpose: they are eval-ed later
 # ledger-guard.sh (test): a ledger of another project is never read or written. Evidence:
 # CM_HOME leaked in from a second project's session on a shared host and teardown.sh read that
@@ -16,7 +17,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 SCRIPTS="$(cd "$HERE/.." && pwd)"
 ROOT="$(mktemp -d "${TMPDIR:-/tmp}/cm-ledgerguard.XXXXXX")" || { echo "cannot create a temp dir" >&2; exit 1; }
 [ -n "$ROOT" ] && [ -d "$ROOT" ] || { echo "temp dir missing" >&2; exit 1; }
-trap 'rm -rf -- "${ROOT:?}"' EXIT
+trap '[ "${CM_TEST_KEEP_TMP:-}" = 1 ] && echo "cm-test: CM_TEST_KEEP_TMP set, kept $ROOT" >&2 || rm -rf -- "${ROOT:?}"' EXIT
 command -v jq >/dev/null 2>&1 || { echo "missing dependency: jq" >&2; exit 1; }
 export CM_CONFIG="$HERE/fixtures/config.test.yaml"
 unset CM_ORG CM_REPO CM_PROJECT CM_OWNER_NAME CM_OWNER_ID CM_TZ CM_TZ_LABEL CM_EXCLUDE_REPOS CM_PATH_MATCH CM_SELF_WORKTREE CM_LEDGER CM_PROJECT_ID

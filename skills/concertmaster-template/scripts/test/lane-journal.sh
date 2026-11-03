@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# cm-test: rm-cleanup (its EXIT trap rm -rf-s its own mktemp dir; CM_TEST_KEEP_TMP=1 keeps it)
 # shellcheck disable=SC2016,SC2034  # check bodies are single-quoted on purpose (eval-ed later) and read variables set outside them
 # lane-journal.sh (test): behaviour tests for scripts/lane-journal.sh, the per-lane journal at
 # $CM_HOME/lanes/<lane>/journal.md. Covers: append writes one stamped line, the directory is 0700 and the
@@ -21,7 +22,7 @@ SKILL="$(cd "$SCRIPTS/.." && pwd)"
 unset CM_ORG CM_REPO CM_PROJECT CM_OWNER_NAME CM_OWNER_ID CM_TZ CM_TZ_LABEL CM_EXCLUDE_REPOS CM_PATH_MATCH CM_SELF_WORKTREE CM_SSH_TARGET CM_LEDGER CM_LEDGER_BAK
 ROOT="$(mktemp -d "${TMPDIR:-/tmp}/cm-lane-journal.XXXXXX")" || { echo "cannot create a temp dir" >&2; exit 1; }
 [ -n "$ROOT" ] && [ -d "$ROOT" ] || { echo "temp dir missing" >&2; exit 1; }
-trap 'rm -rf -- "${ROOT:?}"' EXIT
+trap '[ "${CM_TEST_KEEP_TMP:-}" = 1 ] && echo "cm-test: CM_TEST_KEEP_TMP set, kept $ROOT" >&2 || rm -rf -- "${ROOT:?}"' EXIT
 command -v jq >/dev/null 2>&1 || { echo "missing dependency: jq" >&2; exit 1; }
 command -v yq >/dev/null 2>&1 || { echo "missing dependency: yq" >&2; exit 1; }
 export HOME="$ROOT/home" CM_HOME="$ROOT/cm"

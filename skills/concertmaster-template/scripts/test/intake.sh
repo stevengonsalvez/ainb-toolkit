@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# cm-test: rm-cleanup (its EXIT trap rm -rf-s its own mktemp dir; CM_TEST_KEEP_TMP=1 keeps it)
 # intake.sh tests: dry-run the intake script against a fixture chat export, a
 # fake ledger and fake issue and bead lists, with stubs for wacli, bd, curl and
 # gh. Proves: since parsing, chat aliases, the wacli allow-list, dedupe
@@ -20,7 +21,7 @@ IN="$SCRIPTS/intake.sh"
 FX="$HERE/fixtures/intake"
 ROOT="$(mktemp -d "${TMPDIR:-/tmp}/cm-intake-test.XXXXXX")" || { echo "cannot create a temp dir" >&2; exit 1; }
 [ -n "$ROOT" ] && [ -d "$ROOT" ] || { echo "temp dir missing" >&2; exit 1; }
-trap 'rm -rf -- "${ROOT:?}"' EXIT
+trap '[ "${CM_TEST_KEEP_TMP:-}" = 1 ] && echo "cm-test: CM_TEST_KEEP_TMP set, kept $ROOT" >&2 || rm -rf -- "${ROOT:?}"' EXIT
 export CM_HOME="$ROOT/cmhome" CM_INTAKE_NOW=2026-10-12T14:00:00Z
 mkdir -p "$CM_HOME" "$ROOT/bin"
 export PATH="$ROOT/bin:$PATH"

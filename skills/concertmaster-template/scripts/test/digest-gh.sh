@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# cm-test: rm-cleanup (its EXIT trap rm -rf-s its own mktemp dir; CM_TEST_KEEP_TMP=1 keeps it)
 # digest-gh.sh: behaviour tests for digest.sh sourcing Merged and the open PR count from gh, and for
 # the lastSentAt window. gh is a PATH stub answering from files in $STUB: no network. CM_HOME, HOME
 # and the ledger live in a mktemp dir.
@@ -9,7 +10,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 SCRIPT="$HERE/../digest.sh"
 ROOT="$(mktemp -d "${TMPDIR:-/tmp}/cm-digest-gh.XXXXXX")" || { echo "cannot create a temp dir" >&2; exit 1; }
 if [ -z "$ROOT" ] || [ ! -d "$ROOT" ]; then echo "temp dir missing" >&2; exit 1; fi
-trap 'rm -rf -- "${ROOT:?}"' EXIT
+trap '[ "${CM_TEST_KEEP_TMP:-}" = 1 ] && echo "cm-test: CM_TEST_KEEP_TMP set, kept $ROOT" >&2 || rm -rf -- "${ROOT:?}"' EXIT
 command -v jq >/dev/null 2>&1 || { echo "missing dependency: jq" >&2; exit 1; }
 STUB="$ROOT/stub"
 mkdir -p "$ROOT/bin" "$ROOT/home" "$ROOT/cm" "$STUB"

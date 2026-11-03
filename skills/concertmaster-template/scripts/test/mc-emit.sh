@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# cm-test: rm-cleanup (its EXIT trap rm -rf-s its own mktemp dir; CM_TEST_KEEP_TMP=1 keeps it)
 # mc-emit.sh: behaviour tests for the telemetry emitter. curl is a PATH
 # shim that records its argv and the body it was sent and answers with the
 # code in $STUB/code; CM_HOME, HOME and TMPDIR all live in a mktemp dir.
@@ -10,7 +11,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 EMIT="$HERE/../mc-emit.sh"
 ROOT="$(mktemp -d "${TMPDIR:-/tmp}/cm-mc-emit.XXXXXX")" || { echo "cannot create a temp dir" >&2; exit 1; }
 [ -n "$ROOT" ] && [ -d "$ROOT" ] || { echo "temp dir missing" >&2; exit 1; }
-trap 'rm -rf -- "${ROOT:?}"' EXIT
+trap '[ "${CM_TEST_KEEP_TMP:-}" = 1 ] && echo "cm-test: CM_TEST_KEEP_TMP set, kept $ROOT" >&2 || rm -rf -- "${ROOT:?}"' EXIT
 STUB="$ROOT/stub"
 mkdir -p "$ROOT/bin" "$ROOT/home" "$ROOT/tmp" "$STUB"
 unset MC_TENANT_ID MC_PROJECT_ID MC_BASE_URL MC_QUIET MC_FLUSH_BATCH MC_FLUSH_SECS MC_OUTBOX_MAX CM_INSTALLED_EMIT

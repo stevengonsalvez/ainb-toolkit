@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# cm-test: rm-cleanup (its EXIT trap rm -rf-s its own mktemp dir; CM_TEST_KEEP_TMP=1 keeps it)
 # shellcheck disable=SC2015  # pass() always succeeds, so A && pass || fail is if-then-else here
 # asks.sh (test): every cm:ask, cm:blocked and cm:waiting-owner in every lane's Orca comment is found on
 # every host, wherever it sits in the comment: line 1, line 2 or later, after " | ", after a literal \n.
@@ -14,7 +15,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 S="$HERE/.."
 ROOT="$(mktemp -d "${TMPDIR:-/tmp}/cm-asks.XXXXXX")" || { echo "cannot create a temp dir" >&2; exit 1; }
 if [ -z "$ROOT" ] || [ ! -d "$ROOT" ]; then echo "temp dir missing" >&2; exit 1; fi
-trap 'rm -rf -- "${ROOT:?}"' EXIT
+trap '[ "${CM_TEST_KEEP_TMP:-}" = 1 ] && echo "cm-test: CM_TEST_KEEP_TMP set, kept $ROOT" >&2 || rm -rf -- "${ROOT:?}"' EXIT
 PASS=0; FAIL=0
 pass() { PASS=$((PASS + 1)); printf 'PASS %s\n' "$1"; }
 fail() { FAIL=$((FAIL + 1)); printf 'FAIL %s: %s\n' "$1" "$2"; }

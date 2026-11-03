@@ -177,6 +177,8 @@ cmd_write() {
 }
 
 # push_freeze <window>: one terminal send to every lane matching fleet_state.push_match on every host (a freeze going ON only).
+# These lanes have no lane file, so this does not use a lane-handle reader: it reads a live `terminal list` and sends only when
+# the worktree has exactly ONE Claude terminal (two agents is undecidable, so nothing is sent).
 push_freeze() {
   local msg f h n=0 sent=0 skipped=0 row path name env handles hn pushre
   pushre="${CM_FREEZE_PUSH_MATCH:-$(cm_cfg .fleet_state.push_match "-sweeper")}"
@@ -190,8 +192,10 @@ push_freeze() {
       [ -n "$path" ] || continue
       n=$((n + 1))
       if [ "$h" = local ]; then env=(); else env=(--environment "$h"); fi
-      handles="$(cm_timeout 30 "$ORCA" terminal list --worktree "path:$path" ${env[@]+"${env[@]}"} --json </dev/null 2>/dev/null | jq -r '[.result.terminals[]? | select((.agentIdentity // "") == "claude") | .handle] | first // empty')"
+      handles="$(cm_timeout 30 "$ORCA" terminal list --worktree "path:$path" ${env[@]+"${env[@]}"} --json </dev/null 2>/dev/null | jq -r '[.result.terminals[]? | select((.agentIdentity // "") == "claude") | .handle] | join(" ")')"
       if [ -z "$handles" ]; then skipped=$((skipped + 1)); echo "push: $name@$h no Claude terminal, skipped"; continue; fi
+      # exactly one: a worktree with two agents is undecidable, so this send follows the same rule
+      case "$handles" in *" "*) skipped=$((skipped + 1)); echo "push: $name@$h more than one Claude terminal, skipped"; continue ;; esac
       if cm_timeout 60 "$ORCA" terminal send --terminal "$handles" --text "$msg" --enter ${env[@]+"${env[@]}"} --json </dev/null >/dev/null 2>&1; then
         sent=$((sent + 1)); echo "push: $name@$h sent"
       else skipped=$((skipped + 1)); echo "push: $name@$h send failed, skipped"; fi

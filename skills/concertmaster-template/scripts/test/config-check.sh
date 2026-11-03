@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# cm-test: rm-cleanup (its EXIT trap rm -rf-s its own mktemp dir; CM_TEST_KEEP_TMP=1 keeps it)
 # config-check.sh (test): behaviour tests for the config doctor and for config
 # selection. config.example.yaml must pass; a copy missing a required key, with a
 # value of the wrong shape or with a secret-looking value must fail; a config.yaml
@@ -11,7 +12,7 @@ SKILL="$(cd "$HERE/../.." && pwd)"
 EXAMPLE="$SKILL/config.example.yaml"
 ROOT="$(mktemp -d "${TMPDIR:-/tmp}/cm-config.XXXXXX")" || { echo "cannot create a temp dir" >&2; exit 1; }
 if [ -z "$ROOT" ] || [ ! -d "$ROOT" ]; then echo "temp dir missing" >&2; exit 1; fi
-trap 'rm -rf -- "${ROOT:?}"' EXIT
+trap '[ "${CM_TEST_KEEP_TMP:-}" = 1 ] && echo "cm-test: CM_TEST_KEEP_TMP set, kept $ROOT" >&2 || rm -rf -- "${ROOT:?}"' EXIT
 export CM_HOME="$ROOT/home"
 unset CM_CONFIG
 DOCTOR="$HERE/../config-check.sh"

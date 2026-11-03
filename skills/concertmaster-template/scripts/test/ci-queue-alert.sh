@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# cm-test: rm-cleanup (its EXIT trap rm -rf-s its own mktemp dir; CM_TEST_KEEP_TMP=1 keeps it)
 # ci-queue-alert.sh test: stubbed gh, a fake clock (CM_NOW), a dead telemetry URL. Asserts: no
 # alert under the threshold or before M minutes, exactly one alert per episode (note + outbox event),
 # the 2-sample clear with a cleared note, a restarted clock for a new episode, the blind alert after
@@ -10,7 +11,7 @@ set -uo pipefail
 SCRIPT="$(cd "$(dirname "$0")/.." && pwd)/ci-queue-alert.sh"
 ROOT="$(mktemp -d "${TMPDIR:-/tmp}/cm-queue-test.XXXXXX")" || { echo "cannot create a temp dir" >&2; exit 1; }
 [ -n "$ROOT" ] && [ -d "$ROOT" ] || { echo "temp dir missing" >&2; exit 1; }
-trap 'rm -rf -- "${ROOT:?}"' EXIT
+trap '[ "${CM_TEST_KEEP_TMP:-}" = 1 ] && echo "cm-test: CM_TEST_KEEP_TMP set, kept $ROOT" >&2 || rm -rf -- "${ROOT:?}"' EXIT
 export CM_HOME="$ROOT/home" HOME="$ROOT/home" MC_BASE_URL="http://127.0.0.1:9" MC_QUIET=1
 export CM_CONFIG=/nonexistent CM_QUEUE_REPO="acme/acme-app"
 mkdir -p "$ROOT/bin" "$CM_HOME"

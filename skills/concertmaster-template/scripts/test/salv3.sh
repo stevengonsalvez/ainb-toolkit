@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# cm-test: rm-cleanup (its EXIT trap rm -rf-s its own mktemp dir; CM_TEST_KEEP_TMP=1 keeps it)
 # salv3.sh test: fixture git repos in a mktemp dir, no network. Asserts: the RESULT line for a clean and a
 # dirty worktree, what lands in the salvage (untracked files, a tracked diff, the commits ahead of
 # origin/main as a bundle, gitignored env files), that credential paths are never copied (defaults and
@@ -10,7 +11,7 @@ set -uo pipefail
 SCRIPT="$(cd "$(dirname "$0")/.." && pwd)/salv3.sh"
 ROOT="$(mktemp -d "${TMPDIR:-/tmp}/cm-salv3.XXXXXX")" || { echo "cannot create a temp dir" >&2; exit 1; }
 [ -n "$ROOT" ] && [ -d "$ROOT" ] || { echo "temp dir missing" >&2; exit 1; }
-trap 'rm -rf -- "${ROOT:?}"' EXIT
+trap '[ "${CM_TEST_KEEP_TMP:-}" = 1 ] && echo "cm-test: CM_TEST_KEEP_TMP set, kept $ROOT" >&2 || rm -rf -- "${ROOT:?}"' EXIT
 if ! tar --version 2>/dev/null | grep -q GNU; then echo "skip: GNU tar needed"; exit 0; fi
 export HOME="$ROOT/home" CM_HOME="$ROOT/cm" GIT_CONFIG_GLOBAL="$ROOT/gitconfig" GIT_CONFIG_SYSTEM=/dev/null
 mkdir -p "$HOME"

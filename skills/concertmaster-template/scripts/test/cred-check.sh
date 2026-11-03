@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# cm-test: rm-cleanup (its EXIT trap rm -rf-s its own mktemp dir; CM_TEST_KEEP_TMP=1 keeps it)
 # cred-check.sh test: stubbed bws and curl, a synthetic index. Asserts OK / INVALID / UNKNOWN per
 # case, that the CALLS curl receives never include a fragment of another provider's secret, that no
 # token appears in stdout or the inbox note (with a negative control proving the check can fail),
@@ -10,7 +11,7 @@ set -uo pipefail
 SCRIPT="$(cd "$(dirname "$0")/.." && pwd)/cred-check.sh"
 ROOT="$(mktemp -d "${TMPDIR:-/tmp}/cm-cred-test.XXXXXX")" || { echo "cannot create a temp dir" >&2; exit 1; }
 [ -n "$ROOT" ] && [ -d "$ROOT" ] || { echo "temp dir missing" >&2; exit 1; }
-trap 'rm -rf -- "${ROOT:?}"' EXIT
+trap '[ "${CM_TEST_KEEP_TMP:-}" = 1 ] && echo "cm-test: CM_TEST_KEEP_TMP set, kept $ROOT" >&2 || rm -rf -- "${ROOT:?}"' EXIT
 export CM_CONFIG=/nonexistent CM_BWS_PROJECT=fleet CM_HOME="$ROOT/home" HOME="$ROOT/home" STUB_DIR="$ROOT/stub"; mkdir -p "$ROOT/bin" "$CM_HOME/.secrets" "$STUB_DIR"
 rep() { local c="$1" n="$2"; printf "%${n}s" '' | tr ' ' "$c"; }
 CF2="$(rep d 40)"; HX1="$(rep a 64)"; HX2="$(rep b 64)"; SB="sbp_$(rep A 30)"; CF="$(rep c 40)"; ST="sk_test_$(rep S 30)"; GH="ghp_$(rep G 36)"; VC="$(rep v 24)"

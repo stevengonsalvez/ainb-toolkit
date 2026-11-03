@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# cm-test: rm-cleanup (its EXIT trap rm -rf-s its own mktemp dir; CM_TEST_KEEP_TMP=1 keeps it)
 # shellcheck disable=SC2015  # "A && ok || bad": ok never fails
 # salv3-followups.sh: behaviour tests for the follow-up part of scripts/salv3.sh (remote salvage before a worktree
 # is removed): the open follow-ups of the worktree's ledger worker and its children are written into the
@@ -14,7 +15,7 @@ command -v jq >/dev/null 2>&1 || { echo "missing dependency: jq" >&2; exit 1; }
 tar --version 2>/dev/null | grep -q GNU || { echo "SKIP: salv3.sh needs GNU tar"; exit 0; }
 ROOT="$(mktemp -d "${TMPDIR:-/tmp}/cm-salv3.XXXXXX")" || { echo "cannot create a temp dir" >&2; exit 1; }
 [ -n "$ROOT" ] && [ -d "$ROOT" ] || { echo "temp dir missing" >&2; exit 1; }
-trap 'rm -rf -- "${ROOT:?}"' EXIT
+trap '[ "${CM_TEST_KEEP_TMP:-}" = 1 ] && echo "cm-test: CM_TEST_KEEP_TMP set, kept $ROOT" >&2 || rm -rf -- "${ROOT:?}"' EXIT
 export CM_HOME="$ROOT/cmhome" HOME="$ROOT/home"
 mkdir -p "$CM_HOME" "$HOME" "$ROOT/skill/scripts" "$ROOT/wt"
 cp "$HERE/../salv3.sh" "$HERE/../followups.sh" "$HERE/../lib.sh" "$ROOT/skill/scripts/"

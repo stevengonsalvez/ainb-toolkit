@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# cm-test: rm-cleanup (its EXIT trap rm -rf-s its own mktemp dir; CM_TEST_KEEP_TMP=1 keeps it)
 # shellcheck disable=SC2015,SC2016,SC2012,SC2329  # pass() always succeeds so A && pass || fail is if-then-else; jq filters are single-quoted on purpose; ls output is compared as text; date() is a stub the lib calls
 # ledger-write.sh (test): behaviour tests for cm_ledger_write (scripts/lib.sh), the one way to write
 # the ledger. The 25 Oct 2026 incident: a filter produced no output and an empty file replaced
@@ -15,7 +16,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 LIB="$HERE/../lib.sh"
 ROOT="$(mktemp -d "${TMPDIR:-/tmp}/cm-ledger-write.XXXXXX")" || { echo "cannot create a temp dir" >&2; exit 1; }
 if [ -z "$ROOT" ] || [ ! -d "$ROOT" ]; then echo "temp dir missing" >&2; exit 1; fi
-trap 'rm -rf -- "${ROOT:?}"' EXIT
+trap '[ "${CM_TEST_KEEP_TMP:-}" = 1 ] && echo "cm-test: CM_TEST_KEEP_TMP set, kept $ROOT" >&2 || rm -rf -- "${ROOT:?}"' EXIT
 command -v jq >/dev/null 2>&1 || { echo "missing dependency: jq" >&2; exit 1; }
 unset CM_LEDGER CM_LEDGER_BAK CM_LEDGER_BAK_KEEP CM_ORG CM_REPO CM_PROJECT CM_EXCLUDE_REPOS CM_PATH_MATCH
 export HOME="$ROOT/home" CM_HOME="$ROOT/cm" CM_CONFIG="$HERE/fixtures/config.test.yaml"
