@@ -6,6 +6,7 @@
 #   scripts/followups.sh reconcile [--discover <file>]   # discover JSON on stdin or in <file>
 #   scripts/followups.sh close <id> [--lane <lane>]      # close a follow-up from outside a comment
 #   scripts/followups.sh open [--lane <lane>]            # open items as TSV: id worker lane owner openedAt text
+#   scripts/followups.sh for-worktree <name-or-path>     # open items of that worktree's worker and its children, as `open`
 #   scripts/followups.sh report                          # TSV rows for the turn-end table
 #   scripts/followups.sh escalate [--create --only <lane/id@fp,...> | --create --all-candidates] [--after-hours <n>] [--max <n>] [--show <n>] | escalate --resolve <lane>/<id> <n|release>   # GitHub issue for old or cross-lane items
 #   scripts/followups.sh comment-open                    # one comment on stdin: ids of open tag lines
@@ -42,6 +43,13 @@
 # another poster only when its own worker is no longer live or no longer posts the line (the new
 # poster writes the same lane + id and the old one drops it: the handover rule). Idempotent: a
 # second run writes nothing. Every write goes through cm_ledger_write.
+# for-worktree: the open items (same TSV as `open`) posted by the ledger worker that owns the worktree (path or
+# directory name equals the argument, or the worker id) and by every worker below it (parent chain). Exit 3 when
+# no ledger worker owns it (nothing is known), 1 when the ledger is unusable. An item that already has a GitHub
+# issue (escalate, issue / issueUrl set) lives on there, so it is not listed and does not block a teardown.
+# The match is by path, directory name or worker id, with no host: the same absolute path on two hosts lists
+# both workers' items, which errs toward listing too much. scripts/salv3.sh calls it so a
+# salvage lists what must outlive the worker.
 # escalate: for each OPEN follow-up with no issue yet that has been open over followups.escalate_after_hours
 # (default 24, or --after-hours) OR whose owner lane differs from the lane that posted it (an owner that is a
 # lane, or a worker of another lane; the project owner and an unknown owner never count as cross-lane), it makes
@@ -360,6 +368,26 @@ case "$cmd" in
     jq -r --arg lane "$LANE" "$DEFS"'
       (.followUps // [])[] | select(.state != "done" and ($lane == "" or .lane == $lane))
       | [.id, .worker, .lane, .owner, .openedAt, .text] | map(clean) | @tsv' "$LEDGER"
+    ;;
+
+  for-worktree)
+    need_ledger
+    [ $# -ge 1 ] && [ -n "$1" ] || { cm_warn "followups.sh: for-worktree needs a worktree name or path"; exit 2; }
+    jq -e '(.followUps // []) | type == "array"' "$LEDGER" >/dev/null 2>&1 || { cm_warn "followups.sh: ledger followUps is not an array"; exit 1; }
+    # exit 3 means "nothing is known about this worktree": only true of a sound ledger, never of a broken one
+    jq -e 'type == "object" and ((.workers | type) == "object")' "$LEDGER" >/dev/null 2>&1 || { cm_warn "followups.sh: ledger has no workers object"; exit 1; }
+    OWN="$(jq -r --arg t "$1" "$DEFS"'
+      (.workers // {}) as $W
+      | [ $W | to_entries[] | select(.value | type == "object")
+          | select(((.value.path | npath) == ($t | npath) and ($t | npath) != "") or (.value.path | base) == $t or .key == $t) | .key ] | length' "$LEDGER")"
+    [ "$OWN" -gt 0 ] || exit 3
+    jq -r --arg t "$1" "$DEFS"'
+      (.workers // {}) as $W
+      | [ $W | to_entries[] | select(.value | type == "object")
+          | select(((.value.path | npath) == ($t | npath) and ($t | npath) != "") or (.value.path | base) == $t or .key == $t) | .key ] as $own
+      | [ $W | keys[] | . as $k | select(ups($W; $k) | any(. as $a | $own | index($a) != null)) ] as $fam
+      | (.followUps // [])[] | select(.state != "done" and ((.issue // .issueUrl) == null) and (.worker as $w | $fam | index($w) != null))
+      | [.id, .worker, .lane, .owner, .openedAt, .text] | map(. // "" | clean) | @tsv' "$LEDGER"
     ;;
 
   escalate)
