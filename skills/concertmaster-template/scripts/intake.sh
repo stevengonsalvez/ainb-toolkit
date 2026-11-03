@@ -17,14 +17,15 @@
 #   intake.sh tracker [--out FILE|-] [--beads-map F] [--commit [--accept-gap]
 #                     [--accept-unbeaded] [--accept-replay]]                   < plan
 #   intake.sh ask                                                             < plan
-#   intake.sh media <chat> <full-msg-id> [--out DIR]    one named message only
-#   intake.sh upload <image> --reviewed [--id FULL-MSG-ID --map F]   imgbb, key never on argv
+#   intake.sh media <chat> <full-msg-id> [--out DIR]    one named message only, saved locally
 #
 # Env: CM_HOME (~/.concertmaster), CM_WACLI (wacli), CM_INTAKE_REPO (config
 # intake.issue_repo, else github.org/github.main_repo), CM_INTAKE_ISSUE_LIMIT
 # (1000), CM_INTAKE_NOW (ISO, tests), CM_OPS_EPIC, CM_DEV_EPIC (config
-# beads.ops_epic, beads.dev_epic), IMGBB_API_KEY (else the file named by
-# config intake.media.key_env_file).
+# beads.ops_epic, beads.dev_epic).
+# Reporter media stays local (owner decision): `media` downloads one named
+# message under $CM_HOME/inbox; nothing here uploads it. `plan --media-map F` reads a
+# JSON map of message id -> local path or a description in words.
 set -euo pipefail
 # chat text and media are private: new files and dirs under $CM_HOME are owner-only
 umask 077
@@ -616,7 +617,7 @@ commit_state() {
 
 cmd_ask() { run_mode ask; }
 
-# ------------------------------------------------------------------ media + upload
+# ------------------------------------------------------------------ media
 
 cmd_media() {
   [ $# -ge 2 ] || die "usage: media <chat> <full-msg-id> [--out DIR]  (one named message that carries media a bead needs)" 2
@@ -625,92 +626,21 @@ cmd_media() {
     case "$1" in --out) [ $# -ge 2 ] || die "--out needs a value" 2; out="$2"; shift 2 ;; *) die "media: unknown arg $1" 2 ;; esac
   done
   cj="$(resolve_chat "$chat")"; jid="$(printf '%s' "$cj" | jq -r .jid)"; slug="$(printf '%s' "$cj" | jq -r .slug)"
-  [ -n "$out" ] || out="$CM_HOME/inbox/$slug-media"
+  if [ -z "$out" ]; then
+    local sid="${id//[^A-Za-z0-9_-]/}"
+    [ -n "$sid" ] || die "media: the message id has no usable characters"
+    out="$CM_HOME/inbox/$slug-media/$sid"   # one directory per message
+  fi
   case "$out" in /*) ;; *) out="$PWD/$out" ;; esac
   mkdir -p "$out"
+  echo "media stays local, never uploaded. $(cm_cfg .intake.media.privacy_note 'The chat may carry personal data'): look at each image first." >&2
   WT=180 cm_wacli media download --chat "$jid" --id "$id" --output "$out" >&2 || die "wacli media download failed for $id"
   printf '%s\n' "$out"
 }
 
-imgbb_key() { # prints the key; never echoes it anywhere else
-  { set +x; } 2>/dev/null
-  if [ -n "${IMGBB_API_KEY:-}" ]; then printf '%s' "$IMGBB_API_KEY"; return 0; fi
-  local root f k rel
-  # config intake.media.key_env_file: a NON-production env file, relative to
-  # the repo root; chat media never uses a production credential.
-  rel="$(cm_cfg .intake.media.key_env_file)"
-  root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
-  f=""
-  [ -n "$rel" ] && f="$root/$rel"
-  if [ -n "$f" ] && [ -r "$f" ]; then
-    k="$(grep -E '^IMGBB_API_KEY=' "$f" 2>/dev/null | head -n 1 | cut -d= -f2- | tr -d "\"'" || true)"
-    case "$k" in ''|U2FsdGVk*) ;; *) printf '%s' "$k"; return 0 ;; esac
-  fi
-  die "no IMGBB_API_KEY (set it in the environment, or make config intake.media.key_env_file readable)"
-}
-
-# Escape a value for a curl config file string.
-curl_cfg_escape() { # backslash, quote, and the control characters that would end a config line
-  printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' | tr -d '[:cntrl:]'
-}
-
-cmd_upload() {
-  { set +x; } 2>/dev/null   # a bash -x run must not trace the key into stderr
-  [ $# -ge 1 ] || die "usage: upload <image> --reviewed [--id FULL-MSG-ID --map FILE]" 2
-  local file="$1" id8="" map="" reviewed=0; shift
-  while [ $# -gt 0 ]; do
-    case "$1" in
-      --id|--id8) [ $# -ge 2 ] || die "$1 needs a value" 2; id8="$2"; shift 2 ;;
-      --map) [ $# -ge 2 ] || die "--map needs a value" 2; map="$2"; shift 2 ;;
-      --reviewed) reviewed=1; shift ;;
-      *) die "upload: unknown arg $1" 2 ;;
-    esac
-  done
-  [ "$reviewed" = 1 ] || die "refusing to upload without --reviewed. imgbb URLs are public. Look at the image first ($(cm_cfg .intake.media.privacy_note 'the chat may carry personal data')): no faces, names, emails or phone numbers of people unless redacted, and nothing you would not put on a public page. Then pass --reviewed." 2
-  case "$file" in *[[:cntrl:]]*) die "refusing a file path with control characters" ;; esac
-  [ -r "$file" ] || die "cannot read $file"
-  local ext
-  case "$(cm_lower "$file")" in
-    *.png) ext=png ;; *.jpg|*.jpeg) ext=jpg ;; *.gif) ext=gif ;; *.bmp) ext=bmp ;; *.webp) ext=webp ;; *.tif|*.tiff) ext=tif ;;
-    *) die "imgbb takes images only. For video, extract frames first (ffmpeg -i in.mp4 -vf fps=1/3 frame-%02d.png) and upload each frame." ;;
-  esac
-  local bytes
-  bytes="$(wc -c < "$file" | tr -d ' ')"
-  [ "$bytes" -le 33554432 ] || die "$file is over imgbb's 32MB limit"
-  # A chat-supplied file name never reaches the curl config: upload a copy under a fixed name.
-  local safe="$TMP/upload.$ext"
-  cp -- "$file" "$safe"
-  # imgbb accepts 60s..180d; default 30 days: ops evidence is used within days
-  local exp="${CM_IMGBB_EXPIRATION:-2592000}"
-  [[ "$exp" =~ ^[0-9]+$ ]] && [ "$exp" -ge 60 ] && [ "$exp" -le 15552000 ] || die "CM_IMGBB_EXPIRATION must be 60 to 15552000 seconds"
-  need curl
-  local key resp url
-  key="$(imgbb_key)"
-  # Config on stdin: the key and path never appear in any process argv.
-  resp="$(printf 'url = "https://api.imgbb.com/1/upload"\nform = "key=%s"\nform = "expiration=%s"\nform = "image=@%s"\n' \
-            "$(curl_cfg_escape "$key")" "$exp" "$safe" | curl -sS --max-time 90 -K -)" \
-    || die "imgbb upload failed (network)"
-  url="$(printf '%s' "$resp" | jq -r 'select(.success == true) | .data.url // empty' 2>/dev/null || true)"
-  [ -n "$url" ] || die "imgbb rejected the upload: $(printf '%s' "$resp" | jq -r '.error.message // "no message"' 2>/dev/null | cut -c1-120)"
-  # keep the takedown link, owner-only, never in a bead
-  local del
-  del="$(printf '%s' "$resp" | jq -r '.data.delete_url // empty' 2>/dev/null || true)"
-  if [ -n "$del" ]; then
-    mkdir -p "$CM_HOME"
-    [ -s "$CM_HOME/imgbb-deletes.json" ] || printf '{}' > "$CM_HOME/imgbb-deletes.json"
-    jq --arg u "$url" --arg d "$del" '. + {($u): $d}' "$CM_HOME/imgbb-deletes.json" > "$CM_HOME/imgbb-deletes.json.tmp" \
-      && mv "$CM_HOME/imgbb-deletes.json.tmp" "$CM_HOME/imgbb-deletes.json"
-  fi
-  if [ -n "$id8" ] && [ -n "$map" ]; then
-    [ -s "$map" ] || printf '{}' > "$map"
-    jq --arg k "$id8" --arg u "$url" '. + {($k): $u}' "$map" > "$map.tmp" && mv "$map.tmp" "$map"
-  fi
-  printf '%s\n' "$url"
-}
-
 # ------------------------------------------------------------------ main
 
-usage() { sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,/^set -euo/{/^set -euo/!p;}' "$0" | sed 's/^# \{0,1\}//'; }
 
 cmd="${1:-}"
 [ $# -eq 0 ] || shift
@@ -723,7 +653,6 @@ case "$cmd" in
   tracker) cmd_tracker "$@" ;;
   ask) cmd_ask "$@" ;;
   media) cmd_media "$@" ;;
-  upload) cmd_upload "$@" ;;
   -h|--help|help|'') usage ;;
   *) die "unknown command '$cmd' (try --help)" 2 ;;
 esac
