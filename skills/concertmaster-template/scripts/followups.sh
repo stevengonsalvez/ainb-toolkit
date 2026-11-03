@@ -425,17 +425,31 @@ case "$cmd" in
       # clear a claim left by a run that timed out or could not release it: record the issue number a person
       # found on GitHub, or release the claim so the next run may try again
       case "$RESOLVE" in */*) ;; *) cm_warn "followups.sh: --resolve needs <lane>/<id>"; exit 2 ;; esac
-      rlane="${RESOLVE%%/*}"; rid="${RESOLVE#*/}"
       case "$RESNUM" in release) ;; ''|*[!0-9]*) cm_warn "followups.sh: --resolve needs an issue number or release"; exit 2 ;; esac
-      jq -e --arg lane "$rlane" --arg id "$rid" '[(.followUps // [])[] | select(.lane == $lane and .id == $id and .escalatingAt != null)] | length == 1' "$LEDGER" >/dev/null 2>&1 \
-        || { cm_warn "followups.sh: $RESOLVE has no open claim to resolve"; exit 1; }
+      # a number becomes the issue url, which needs the repository; release does not
+      if [ "$RESNUM" != release ] && { [ -z "$CM_ORG" ] || [ -z "$CM_REPO" ]; }; then
+        cm_warn "followups.sh: github.org / github.main_repo are not configured: cannot build the issue url for $RESNUM"; exit 1
+      fi
+      # the claim is found by its whole "lane/id" name, so a "/" in either part cannot move the split
+      # shellcheck disable=SC2016
+      rtok="$(jq -r --arg r "$RESOLVE" '[(.followUps // [])[] | select(((.lane | tostring) + "/" + (.id | tostring)) == $r and .escalatingAt != null)] | if length == 1 then .[0].escalatingAt | tostring else "" end' "$LEDGER" 2>/dev/null)"
+      [ -n "$rtok" ] || { cm_warn "followups.sh: $RESOLVE has no open claim to resolve"; exit 1; }
+      # a claim is TOKEN = <time>-<pid> of the run that made it. Releasing it while that run is still asking GitHub lets the next
+      # run ask again and make a second issue, so release waits for the run to end (a number is safe: the run then fails to record)
+      # A live pid on an OLD claim is a reused pid, not that run (a --create run lasts minutes): over an hour old, release goes ahead.
+      rpid="${rtok##*-}"; rts="${rtok%-*}"
+      rage="$(jq -nr --arg t "$rts" --argjson n "$(date -u +%s)" '(try ($t | fromdateiso8601) catch null) as $e | if $e == null then 0 else ($n - $e) end' 2>/dev/null || echo 0)"
+      case "$rage" in ''|*[!0-9-]*) rage=0 ;; esac
+      if [ "$RESNUM" = release ] && [ "$rage" -lt 3600 ] && [ -n "$rpid" ] && [ -z "${rpid//[0-9]/}" ] && kill -0 "$rpid" 2>/dev/null; then
+        cm_warn "followups.sh: the claim on $RESOLVE belongs to a --create run that is still alive (pid $rpid): wait for it to end, then release"; exit 1
+      fi
       # shellcheck disable=SC2016
       apply '
-        (.followUps | map(.lane == $lane and .id == $id and .escalatingAt != null) | index(true)) as $i
+        (.followUps | map(((.lane | tostring) + "/" + (.id | tostring)) == $r and .escalatingAt != null) | index(true)) as $i
         | if $i == null then .
           elif $n == "release" then (.followUps[$i] |= del(.escalatingAt) | .updatedAt = $now)
           else (.followUps[$i] |= ((. + {issue: ($n | tonumber), issueUrl: ("https://github.com/" + $org + "/" + $repo + "/issues/" + $n), escalatedAt: $now}) | del(.escalatingAt)) | .updatedAt = $now) end' \
-        --arg lane "$rlane" --arg id "$rid" --arg n "$RESNUM" --arg org "$CM_ORG" --arg repo "$CM_REPO" --arg now "$NOW" || exit 1
+        --arg r "$RESOLVE" --arg n "$RESNUM" --arg org "$CM_ORG" --arg repo "$CM_REPO" --arg now "$NOW" || exit 1
       echo "followups: $RESOLVE: claim resolved ($RESNUM)"
       exit 0
     fi
@@ -483,10 +497,11 @@ case "$cmd" in
                     (if $cross then "owner lane \($ol) differs from the posting lane \($f.lane)" else empty end) ] | join("; ") | clean)}' "$LEDGER")" \
       || { cm_warn "followups.sh: cannot read the ledger"; exit 1; }
     [ -n "$CANDS" ] || { echo "followups: escalate: nothing old or cross-lane without an issue"; exit 0; }
-    BODYF=""; ERRF=""; LOCKD="$CM_HOME/.followups-escalate.lock"; HAVELOCK=0
+    BODYF=""; ERRF=""; LOCKD="$CM_HOME/.followups-escalate.lock"; HAVELOCK=0; HAVETAKE=0; TAKEN="$LOCKD.takeover"
     esc_cleanup() {
       [ -z "$BODYF" ] || rm -f -- "$BODYF"
       [ -z "$ERRF" ] || rm -f -- "$ERRF"
+      if [ "$HAVETAKE" = 1 ]; then rmdir "$TAKEN" 2>/dev/null || true; fi
       # only the run whose pid is in the lock removes it
       if [ "$HAVELOCK" = 1 ] && [ "$(cat "$LOCKD/pid" 2>/dev/null || true)" = "$$" ]; then rm -f -- "$LOCKD/pid"; rmdir "$LOCKD" 2>/dev/null || true; fi
     }
@@ -497,23 +512,29 @@ case "$cmd" in
       mkdir -p "$CM_HOME"
       if ! mkdir "$LOCKD" 2>/dev/null; then
         opid="$(cat "$LOCKD/pid" 2>/dev/null || true)"
-        if [ -n "$opid" ] && kill -0 "$opid" 2>/dev/null; then echo "followups: escalate skipped, another --create run is in progress (pid $opid)"; exit 0; fi
+        if [ -n "$opid" ] && kill -0 "$opid" 2>/dev/null && [ -z "$(find "$LOCKD" -maxdepth 0 -mmin +60 2>/dev/null)" ]; then echo "followups: escalate skipped, another --create run is in progress (pid $opid)"; exit 0; fi
         # no pid yet: its owner is between mkdir and writing it. Give it a minute before calling the lock stale.
         if [ -z "$opid" ] && [ -z "$(find "$LOCKD" -maxdepth 0 -mmin +1 2>/dev/null)" ]; then echo "followups: escalate skipped, another --create run is starting"; exit 0; fi
-        # its owner is gone: move the stale lock aside (one mv wins; the name carries our pid) and take it. Then look at
-        # what we moved: two runs that saw the same dead holder can both reach this mv, and the second would carry away
-        # the fresh lock the first just made. A live pid that is not the dead one we saw, or a young directory, is such a
-        # lock: put it back and stand down.
-        if mv "$LOCKD" "$LOCKD.stale.$$" 2>/dev/null; then
-          npid="$(cat "$LOCKD.stale.$$/pid" 2>/dev/null || true)"
-          if { [ -n "$npid" ] && [ "$npid" != "$opid" ] && kill -0 "$npid" 2>/dev/null; } \
-             || { [ -z "$npid" ] && [ -z "$(find "$LOCKD.stale.$$" -maxdepth 0 -mmin +1 2>/dev/null)" ]; }; then
-            mv "$LOCKD.stale.$$" "$LOCKD" 2>/dev/null || true
-            echo "followups: escalate skipped, another --create run took the stale lock first"; exit 0
-          fi
-          rm -f -- "$LOCKD.stale.$$/pid"; rmdir "$LOCKD.stale.$$" 2>/dev/null || true
+        # its owner is gone, or a live pid holds a lock older than an hour (a dead holder's pid that another process took over: a
+        # --create run lasts minutes). Taking the lock over is itself done under a second lock, and what is there is looked at
+        # again inside it: a run that saw the dead holder a moment ago must not remove the fresh lock another run made since.
+        # a takeover lock left by a run that died inside it clears after ten minutes (the takeover itself takes milliseconds, so
+        # only a holder paused that long loses it; two holders are then still kept from a double create by the per-item claims).
+        # Known and narrow: a live run that really lasts over an hour is taken over too, for the same reason.
+        if [ -d "$TAKEN" ] && [ -n "$(find "$TAKEN" -maxdepth 0 -mmin +10 2>/dev/null)" ]; then rmdir "$TAKEN" 2>/dev/null || true; fi
+        if ! mkdir "$TAKEN" 2>/dev/null; then echo "followups: escalate skipped, another --create run is taking over the stale lock"; exit 0; fi
+        HAVETAKE=1
+        cpid="$(cat "$LOCKD/pid" 2>/dev/null || true)"
+        if [ ! -d "$LOCKD" ]; then :   # gone already: just take it below
+        elif [ -n "$cpid" ] && kill -0 "$cpid" 2>/dev/null && [ -z "$(find "$LOCKD" -maxdepth 0 -mmin +60 2>/dev/null)" ]; then
+          echo "followups: escalate skipped, another --create run is in progress (pid $cpid)"; exit 0
+        elif [ -z "$cpid" ] && [ -z "$(find "$LOCKD" -maxdepth 0 -mmin +1 2>/dev/null)" ]; then
+          echo "followups: escalate skipped, another --create run is starting"; exit 0
+        else
+          rm -f -- "$LOCKD/pid"; rmdir "$LOCKD" 2>/dev/null || true
         fi
         mkdir "$LOCKD" 2>/dev/null || { echo "followups: escalate skipped, another --create run is in progress"; exit 0; }
+        rmdir "$TAKEN" 2>/dev/null || true; HAVETAKE=0
       fi
       HAVELOCK=1; printf '%s\n' "$$" > "$LOCKD/pid"
       if [ -e "$STAMP" ]; then
@@ -634,7 +655,11 @@ case "$cmd" in
         # GitHub definitely refused: an HTTP 4xx answer (not 408), a validation error, no auth, an unknown repo or label
         refused=0
         grep -qiE 'HTTP (40[0-79]|4[1-9][0-9])|validation failed|could not add label|gh auth login|authentication required|could not resolve to a (repository|user)|label .* not found' "$ERRF" 2>/dev/null && refused=1
-        if [ "$grc" -ge 124 ] || [ "$refused" = 0 ]; then
+        if [ "$grc" = 126 ] || [ "$grc" = 127 ]; then
+          # 126 not executable, 127 not found: gh never ran, so it made nothing and the claim goes back
+          release_claim
+          cm_warn "followups.sh: gh could not be run for $flane/$fid (exit $grc, ${why:-no message}): nothing created, left unmarked, stopping this run"
+        elif [ "$grc" -ge 124 ] || [ "$refused" = 0 ]; then
           # 124 timeout, 137 killed, 142 perl alarm, or exit 1 with no refusal: a dropped connection can follow a
           # created issue, so GitHub may have made it
           cm_warn "followups.sh: gh did not confirm for $flane/$fid (${why:-no message}): the issue may exist; the claim stays, look on GitHub, then: followups.sh escalate --resolve $flane/$fid <number|release>"
