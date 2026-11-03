@@ -33,5 +33,11 @@ grep -qiE 'stall rows?.*pane-stalls\.sh' <<<"$rep" && pass "§ Reporting prints 
 # a STALL permission prompt is never approved by the concertmaster
 grep -qE 'NEVER approve' <<<"$tick" && pass "§ The tick says a stall prompt is never approved" || fail "never approve" "missing"
 
+# the tick runs the stale-backup check as its own instruction, not inside the description of a file pattern
+bk="$(grep -F 'Backup check.' <<<"$tick")"
+# shellcheck disable=SC2016  # the pattern holds literal backticks
+case "$bk" in *'**Backup check.** Run `scripts/backup-stale.sh` every tick;'*) pass "§ The tick has a Backup check instruction that runs backup-stale.sh every tick" ;; *) fail "backup check" "$(printf '%s' "$bk" | head -c 200)" ;; esac
+[ -x "$HERE/../backup-stale.sh" ] && pass "and the script it names exists and is executable" || fail "backup-stale.sh" "not executable"
+
 printf '\npassed=%s failed=%s\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

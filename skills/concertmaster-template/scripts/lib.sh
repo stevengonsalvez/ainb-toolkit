@@ -566,7 +566,7 @@ _cm_ci() { printf '%s' "$1" | awk '{ o = ""; for (i = 1; i <= length($0); i++) {
 _cm_secret_init() {   # lazy: building the case-insensitive names costs forks, and every script sources this file
   [ -z "${CM_RE_SECRET_READY:-}" ] || return 0
   CM_RE_SECRET_BND='(^|\\[ntr]|%[0-9A-Fa-f]{2}|[^A-Za-z0-9_-])'
-  CM_RE_SECRET_PWNAME="($(_cm_ci PASSWORD)|$(_cm_ci PASSWD)|$(_cm_ci PWD)|$(_cm_ci SECRET)|$(_cm_ci API)_?$(_cm_ci KEY)|$(_cm_ci ACCESS)_?$(_cm_ci TOKEN)|$(_cm_ci AUTH)_?$(_cm_ci TOKEN))"
+  CM_RE_SECRET_PWNAME="($(_cm_ci PASSWORD)|$(_cm_ci PASSWD)|$(_cm_ci PWD)|$(_cm_ci PASSPHRASE)|$(_cm_ci SECRET)|$(_cm_ci API)_?$(_cm_ci KEY)|$(_cm_ci ACCESS)_?$(_cm_ci TOKEN)|$(_cm_ci AUTH)_?$(_cm_ci TOKEN))"
   # the scan-secrets.sh shapes (case-sensitive; the *_ci ones spell their letters out)
   CM_RE_SECRET_SCAN=(
     '-----BEGIN [A-Z ]*PRIVATE KEY-----'
