@@ -254,6 +254,16 @@ messaging:
   collaborators:                   # non-owner PR authors the pr-sweeper may push to
     - { name: Sam, github: sam-dev, pr_comments: true, daily_dm: null }
 
+# Deployed section of the digest (scripts/digest.sh): the push-event runs of this workflow that finished in the
+# digest window, merged by tag with the ledger deployWindows[] rows. A release counts as deployed only when the
+# named job of its run concluded success: the run's own conclusion proves nothing (an advisory job that is
+# cancelled or red turns the whole run "cancelled" or "failure" after prod shipped). A run with no succeeded
+# deploy job lists as "ran, no prod deploy job succeeded". Both keys unset: the ledger is the only source.
+# deploy_workflow without deploy_job is a usage error.
+digest:
+  deploy_workflow: Production Deploy    # [script] the workflow name as `gh run list --workflow` takes it
+  deploy_job: deploy-prod               # [script] the job name inside that workflow whose success means "prod deployed"
+
 # What may leave the concertmaster without a human OK.
 outward_messages:
   owner_digest: autonomous
