@@ -20,6 +20,45 @@ _cm_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 cm_warn() { printf 'concertmaster: %s\n' "$*" >&2; }
 
+# cm_proc_root: where /proc is. CM_PROC_ROOT replaces it with CM_TEST=1 only (tests).
+cm_proc_root() {
+  if [ "${CM_TEST:-}" = 1 ] && [ -n "${CM_PROC_ROOT:-}" ]; then printf '%s' "$CM_PROC_ROOT"; else printf '/proc'; fi
+}
+
+# cm_claude_pids <proc-root> [pgrep options]: pids of real claude agents, one per line. `pgrep -x claude`
+# matches the process NAME (comm) only, and Claude Code's Bash tool runs its embedded grep and find helpers
+# by re-executing the claude binary with argv[0] = ugrep or bfs: comm is still claude, the helper lives 2 to
+# 3 seconds in the cwd of whichever lane ran the grep, and it made a false "DUPLICATE live agents" row
+# (seen on a live host). A pid counts only when comm is claude (pgrep) AND the basename of the first
+# element of its NUL-separated cmdline is claude (a path with spaces is one element; a process title such
+# as "claude --resume" counts by its first word). A pid that exited since pgrep is dropped; an empty cmdline
+# (zombie) is dropped; a cmdline that cannot be read keeps the pid (it cannot be told apart, and "a claude
+# may be alive" is the safe side for every caller). With no /proc (macOS) the pgrep list is returned as is.
+# Extra arguments go to pgrep (-u UID). Returns 0 (also for no match), 127 with no pgrep, else pgrep's
+# status above 1, so a caller can fail closed.
+cm_claude_pids() {
+  local root=$1 pids rc p a0
+  shift
+  command -v pgrep >/dev/null 2>&1 || return 127
+  pids=$(pgrep "$@" -x claude 2>/dev/null); rc=$?
+  [ "$rc" -le 1 ] || return "$rc"
+  if [ ! -d "$root" ]; then
+    for p in $pids; do printf '%s\n' "$p"; done
+    return 0
+  fi
+  for p in $pids; do
+    [ -d "$root/$p" ] || continue
+    if [ ! -r "$root/$p/cmdline" ]; then printf '%s\n' "$p"; continue; fi
+    a0=""
+    { IFS= read -r -d '' a0 < "$root/$p/cmdline"; } 2>/dev/null || true
+    [ -n "$a0" ] || continue
+    case "$a0" in   # claude, a path ending in /claude (spaces allowed), or a process title that starts that way
+      claude|*/claude|claude\ *|*/claude\ *) printf '%s\n' "$p" ;;
+    esac
+  done
+  return 0
+}
+
 # cm_config_file: print the config path in use, or return 1.
 cm_config_file() {
   local f
