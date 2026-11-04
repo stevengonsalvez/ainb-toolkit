@@ -61,7 +61,8 @@ check "host-a (Orca): untracked tool scratch is dirty 0, ignored 2" '[ "$(gv hos
 check "host-a (Orca): a path with a space is read" '[ "$(gv host-a "lane with space" statusOk)" = true ]'
 check "host-a (Orca): collected via orca" '[ "$(gv host-a lane-a via)" = orca ]'
 check "host-a (Orca): a listed row the host has no worktree for is exists:false, not clean" '[ "$(gv host-a lane-gone exists)" = false ]'
-check "host-a: no ssh attempted when Orca worked" '! grep -q "^ssh .*host-a" "$STUB/calls.log"'
+# The one ssh call to host-a is the Supabase stack scan (docker needs a plain shell); git itself never fell back to ssh.
+check "host-a: no ssh git fallback when Orca worked" '[ "$(grep "^ssh .*host-a" "$STUB/calls.log" | grep -c " git ")" = 0 ] && [ "$(grep -c "^ssh .*host-a" "$STUB/calls.log")" -le 1 ]'
 check "host-a: one terminal created, closed by its exact handle" '
   [ "$(grep -c "^terminal create host=host-a" "$STUB/calls.log")" = 1 ] &&
   grep -q "^terminal close host=host-a handle=term_host-a_" "$STUB/calls.log"'
