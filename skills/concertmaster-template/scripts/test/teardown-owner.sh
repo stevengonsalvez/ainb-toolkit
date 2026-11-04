@@ -72,6 +72,11 @@ case "$1 $2" in
     repo=""; envh=0
     for a in "$@"; do [ "$a" = "--environment" ] && envh=1; [ "$a" = "--environment" ] && [ "${STUB_ENV_DOWN:-0}" = 1 ] && exit 1; case "$a" in name:*) repo="${a#name:}" ;; esac; done
     [ "${STUB_LIST_FAIL:-0}" = 1 ] && exit 1
+    # STUB_ENV_NOREPO=1: a remote host with no repo of this project answers the repo-scoped list with repo_not_found;
+    # STUB_ENV_ERRCODE=<code>: it answers that other error code. Both exit 1 with a JSON error, as the real CLI does.
+    if [ "$envh" = 1 ] && [ -n "$repo" ] && { [ "${STUB_ENV_NOREPO:-0}" = 1 ] || [ -n "${STUB_ENV_ERRCODE:-}" ]; }; then
+      jq -cn --arg c "$([ "${STUB_ENV_NOREPO:-0}" = 1 ] && echo repo_not_found || echo "$STUB_ENV_ERRCODE")" '{ok:false,error:{code:$c,message:"stub"}}'; exit 1
+    fi
     # the local host reads STUB_LIST_LOCAL, any other host STUB_LIST_ENV; both default to STUB_LIST
     f="$STUB_LIST"
     if [ "$envh" = 1 ]; then f="${STUB_LIST_ENV:-$STUB_LIST}"
@@ -81,6 +86,8 @@ case "$1 $2" in
     { if [ -n "$repo" ]; then jq -c --arg r "$repo" '.result.worktrees |= map(select((.repoName // $r) == $r))' "$f"
       else cat "$f"; fi; } | jq -c --argjson tr "$([ "$envh" = 1 ] && echo "${STUB_ENV_TRUNC:-0}" || echo 0)" \
         '. + {ok:true} | if $tr == 1 then .result += {truncated:true,totalCount:900} else . end' ;;
+  "repo list") [ "${STUB_REPOS_FAIL:-0}" = 1 ] && { echo '{"ok":false,"error":{"code":"internal","message":"stub"}}'; exit 1; }
+    if [ -n "${STUB_REPOS:-}" ]; then cat "$STUB_REPOS"; else echo '{"ok":true,"result":{"repos":[{"id":"r1","displayName":"other-app","path":"/rival/other-app","kind":"git"}]}}'; fi ;;
   "terminal list")
     if [ "${STUB_TERMS:-0}" = 1 ] && { [ -z "${STUB_CLOSED:-}" ] || [ ! -e "$STUB_CLOSED" ]; }; then echo '{"result":{"terminals":[{"handle":"term-1"}]}}'
     else echo '{"result":{"terminals":[]}}'; fi ;;
@@ -346,6 +353,23 @@ OUT="$(STUB_HOSTS=host-b STUB_ENV_TRUNC=1 STUB_LIST_ENV="$ROOT/env.json" STUB_PA
 if [ "$rc" = 3 ] && printf '%s' "$OUT" | grep -q 'truncated'; then ok "a host list cut off at the limit: refused"; else bad "truncated host accepted" "rc=$rc $OUT"; fi
 OUT="$(STUB_HOSTS=host-b STUB_HOSTS_FAIL=1 STUB_LIST_ENV="$ROOT/env.json" STUB_PATH="$RV1" STUB_NAME=rv-1 "$TD" local "$RV1" --owner lane-a 2>&1)"; rc=$?
 if [ "$rc" = 3 ] && printf '%s' "$OUT" | grep -q 'orca host list failed'; then ok "the host list itself failing: refused"; else bad "host list failure accepted" "rc=$rc $OUT"; fi
+echo "-- a host with no repo of this project (repo_not_found) is complete only when proven; the dry run of a child does not refuse because of it"
+envlist 'cm:running'
+# CM_ORCA_REPO=acme-app on each case below scopes every list to the project repo, as production does (config worktrees.orca_repo)
+LOGNR="$ROOT/norepo.log"; : > "$LOGNR"
+OUT="$(CM_ORCA_REPO=acme-app STUB_LOG="$LOGNR" STUB_HOSTS=host-b STUB_ENV_NOREPO=1 STUB_LIST_ENV="$ROOT/env.json" STUB_PATH="$RV1" STUB_NAME=rv-1 "$TD" local "$RV1" --owner lane-a 2>&1)"; rc=$?
+if [ "$rc" = 0 ] && printf '%s' "$OUT" | grep -q 'census complete' && ! printf '%s' "$OUT" | grep -q 'incomplete' \
+   && grep -E -q -- '^repo list .*host-b' "$LOGNR" && grep -E -- '^worktree list .*host-b' "$LOGNR" | grep -q -v -- '--repo'; then ok "host-b has no repo (proven): census complete, the child's dry run is not refused"; else bad "repo_not_found host refused or not complete" "rc=$rc $OUT"; fi
+jq -cn '{ok:true,result:{repos:[{id:"r9",displayName:"renamed-app",path:"/w/acme/main",kind:"git"}]}}' > "$ROOT/repos-match.json"
+OUT="$(CM_ORCA_REPO=acme-app STUB_HOSTS=host-b STUB_ENV_NOREPO=1 STUB_REPOS="$ROOT/repos-match.json" STUB_LIST_ENV="$ROOT/env.json" STUB_PATH="$RV1" STUB_NAME=rv-1 "$TD" local "$RV1" --owner lane-a 2>&1)"; rc=$?
+if [ "$rc" = 3 ] && printf '%s' "$OUT" | grep -q 'census of all hosts is incomplete' && printf '%s' "$OUT" | grep -q '/w/acme/main'; then ok "repo_not_found but the repo exists under another name: refused, reason names its path"; else bad "renamed repo not caught" "rc=$rc $OUT"; fi
+jq -cn '{result:{worktrees:[{path:"/w/acme/lane-q",displayName:"lane-q",comment:"cm:running"}]}}' > "$ROOT/env-match.json"
+OUT="$(CM_ORCA_REPO=acme-app STUB_HOSTS=host-b STUB_ENV_NOREPO=1 STUB_LIST_ENV="$ROOT/env-match.json" STUB_PATH="$RV1" STUB_NAME=rv-1 "$TD" local "$RV1" --owner lane-a 2>&1)"; rc=$?
+if [ "$rc" = 3 ] && printf '%s' "$OUT" | grep -q 'census of all hosts is incomplete' && printf '%s' "$OUT" | grep -q '/w/acme/lane-q'; then ok "repo_not_found but a worktree matches path_match: refused, reason names its path"; else bad "matching worktree not caught" "rc=$rc $OUT"; fi
+OUT="$(CM_ORCA_REPO=acme-app STUB_HOSTS=host-b STUB_ENV_NOREPO=1 STUB_REPOS_FAIL=1 STUB_LIST_ENV="$ROOT/env.json" STUB_PATH="$RV1" STUB_NAME=rv-1 "$TD" local "$RV1" --owner lane-a 2>&1)"; rc=$?
+if [ "$rc" = 3 ] && printf '%s' "$OUT" | grep -q 'census of all hosts is incomplete'; then ok "repo_not_found and the repo list fails: refused (fail closed)"; else bad "failed repo list accepted" "rc=$rc $OUT"; fi
+OUT="$(CM_ORCA_REPO=acme-app STUB_HOSTS=host-b STUB_ENV_ERRCODE=unauthorized STUB_LIST_ENV="$ROOT/env.json" STUB_PATH="$RV1" STUB_NAME=rv-1 "$TD" local "$RV1" --owner lane-a 2>&1)"; rc=$?
+if [ "$rc" = 3 ] && printf '%s' "$OUT" | grep -q 'census of all hosts is incomplete'; then ok "a different error code (unauthorized) on a host: refused"; else bad "other error code accepted" "rc=$rc $OUT"; fi
 echo "-- no destructive call after a refusal; the scan repeats after the terminals are closed"
 OUT="$(STUB_HOSTS=host-b STUB_LIST_ENV="$ROOT/env.json" STUB_PATH="$RV1" STUB_NAME=rv-1 "$TD" local "$RV1" --owner lane-a 2>&1)"; rc=$?
 if [ "$rc" = 0 ] && ! printf '%s' "$OUT" | grep -q 'repeats on the re-run'; then ok "no terminals to close: the plan does not promise a re-run scan"; else bad "plan promises a re-run with no terminals" "rc=$rc $OUT"; fi

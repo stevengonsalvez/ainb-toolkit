@@ -17,22 +17,26 @@
 # If the gh call fails (rate limit, network) it prints `STALE gh call failed, no verdicts`
 # and exits 3: a tick must never read "no PRs" as "no progress". Run it only after the tick's
 # rate-limit check (SKILL.md, The tick). Hosts that could not be read are listed on stderr
-# as `unread: <host>`.
+# as `unread: <host>`, with ` (<reason>)` added when a repo_not_found host could not be proven project-less.
 #
-# Read-only. Network use: ONE gh call plus one Orca worktree list per host.
+# Read-only. Network use: ONE gh call plus one Orca worktree list per host (two more Orca calls on a host that
+# answered repo_not_found, see fleet-read.sh cm_fleet_repo_absent).
 # Needs: gh, jq, the Orca CLI. Scope comes from config (github.org/main_repo,
 # worktrees.orca_repo, worktrees.path_match) through lib.sh.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=SCRIPTDIR/lib.sh
 . "$HERE/lib.sh"
+# shellcheck source=SCRIPTDIR/fleet-read.sh
+. "$HERE/fleet-read.sh"
 [ -n "$CM_ORG" ] && [ -n "$CM_REPO" ] || { cm_warn "queue-audit.sh: set github.org and github.main_repo in config"; exit 2; }
 [ -n "$CM_PATH_MATCH" ] || { cm_warn "queue-audit.sh: set worktrees.path_match in config (or CM_PATH_MATCH)"; exit 2; }
 ORCA="$(cm_orca)"
+SAN="$HERE/jsanitize"
 L="$CM_HOME/ledger.json"
 [ -r "$L" ] || { cm_warn "queue-audit.sh: no ledger at $L"; exit 2; }
 STALL_MIN="${CM_QUEUE_STALL_MIN:-30}"
-ORCA_REPO="$(cm_cfg .worktrees.orca_repo)"
+ORCA_REPO="${CM_ORCA_REPO:-$(cm_cfg .worktrees.orca_repo)}"   # same override as fleet-read.sh
 
 now=$(date -u +%s)
 # Portable ISO-8601 to epoch (no GNU date): jq parses it, fractions dropped.
@@ -55,10 +59,19 @@ for e in $("$ORCA" host list --json 2>/dev/null </dev/null | jq -r '.result.host
 done
 unread=""
 for h in $hosts; do
-  args=()
-  [ "$h" = local ] || args=(--environment "$h")
-  [ -n "$ORCA_REPO" ] && args+=(--repo "name:$ORCA_REPO")
-  raw=$(cm_timeout 30 "$ORCA" worktree list ${args[@]+"${args[@]}"} --limit 500 --json 2>/dev/null </dev/null)
+  largs=()
+  [ "$h" = local ] || largs=(--environment "$h")
+  [ -n "$ORCA_REPO" ] && largs+=(--repo "name:$ORCA_REPO")
+  rc=0
+  raw=$(cm_timeout 30 "$ORCA" worktree list ${largs[@]+"${largs[@]}"} --limit 500 --json 2>/dev/null </dev/null | "$SAN") || rc=$?
+  # repo_not_found on a scoped list: no worktrees of this project there, if provable (fleet-read.sh, cm_fleet_repo_absent)
+  if [ -n "$ORCA_REPO" ] && cm_fleet_is_repo_not_found "$rc" "$raw"; then
+    sel=(); [ "$h" = local ] || sel=(--environment "$h")
+    if CM_FLEET_REPO="$ORCA_REPO" cm_fleet_repo_absent 30 "$ORCA" "$SAN" ${sel[@]+"${sel[@]}"}; then
+      continue
+    fi
+    unread="$unread $h"; echo "unread: $h ($CM_FLEET_WHY)" >&2; continue
+  fi
   if ! jq -e '.result.worktrees | type == "array"' <<<"$raw" >/dev/null 2>&1; then
     unread="$unread $h"; echo "unread: $h" >&2; continue
   fi
