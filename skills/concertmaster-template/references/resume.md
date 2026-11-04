@@ -90,7 +90,7 @@ or briefs.
    read as zero: a live-state agent counts as live, an agent entry in any other
    state is **unknown**. The count is the number of top-level panes (no
    `parentPaneKey`). On the local host also count `claude` processes of this user
-   whose cwd is the worktree or inside it (canonical paths; `pgrep -u`, then
+   whose cwd is the worktree or inside it (canonical paths; `cm_claude_pids` in `scripts/lib.sh`, which is `pgrep -u` plus an argv[0] check so Claude Code's embedded `ugrep` / `bfs` helper is not counted, then
    `/proc/<pid>/cwd` or `lsof`): a shell tab can sit beside a live agent tab, and
    a process Orca does not track still counts. The count is the larger of the two.
    Any input that cannot be read is **unknown**, left alone. The local process
