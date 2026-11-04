@@ -251,12 +251,14 @@ awk -F'\t' '{ c[$2 FS $3]++ } END { for (k in c) if (c[k] > 1) print k }' "$TMP/
 claude_cwds() {
   if [ -n "${CM_TEST_CLAUDE_CWDS_CMD:-}" ] && [ "${CM_TEST:-}" = 1 ]; then sh -c "$CM_TEST_CLAUDE_CWDS_CMD" </dev/null 2>/dev/null; return; fi
   command -v pgrep >/dev/null 2>&1 || return 1
-  local pids rc p
-  pids="$(pgrep -u "$(id -u)" -x claude 2>/dev/null)"; rc=$?
-  [ "$rc" -le 1 ] || return 1                       # 1 = no process matched
+  local pids rc p root
+  root="$(cm_proc_root)"
+  # real claude agents only: pgrep -x claude also lists Claude Code's embedded ugrep/bfs helper
+  pids="$(cm_claude_pids "$root" -u "$(id -u)")"; rc=$?
+  [ "$rc" -eq 0 ] || return 1
   for p in $pids; do
-    if [ -d /proc/self ]; then
-      readlink "/proc/$p/cwd" 2>/dev/null || { [ -e "/proc/$p" ] && return 1; }   # a vanished pid is fine
+    if [ -d "$root/self" ] || [ "$root" != /proc ]; then
+      readlink "$root/$p/cwd" 2>/dev/null || { [ -e "$root/$p" ] && return 1; }   # a vanished pid is fine
     else
       command -v lsof >/dev/null 2>&1 || return 1
       lsof -a -p "$p" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p'
