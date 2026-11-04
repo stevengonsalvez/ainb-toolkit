@@ -93,7 +93,9 @@
 #     items the owner approved on the first-boot kill list)
 #   - Orca shows a live agent (working/waiting/permission) or child worktrees
 #   - a terminal hosts an agent, or a non-shell process has its cwd in the
-#     worktree, unless every such terminal is named with --close-handle
+#     worktree, unless every such terminal is named with --close-handle (a leftover
+#     codex process and its children are the exception to the PROCESS check only: --apply
+#     stops them by pid; a terminal that still hosts an agent is closed with --close-handle)
 #   - PROJECT: $CM_HOME/ledger.json belongs to another project (its `project` field is not this
 #     project's id, or it has none and sits outside this project's state dir; cm_ledger_guard in
 #     lib.sh). It is refused BEFORE any read of it, naming both projects. Never reached with --owner,
@@ -142,7 +144,19 @@
 #                  script re-runs itself so every check, the beads read and
 #                  the salvage happen with those terminals closed (any
 #                  refusal then stops it, terminals closed, nothing removed)
-#   both:          salvage, then delete the untracked bd runtime files
+#   both:          stop leftover codex processes whose cwd is inside the worktree (a codex
+#                  app-server and its children; .agents/scratch dirs are inside it) by EXACT pid,
+#                  children first: TERM, a bounded wait (CM_TD_PROC_WAIT, default 10s), then KILL
+#                  for survivors, each pid re-checked just before it is signalled. Never by name,
+#                  never pkill. The pids stopped are printed; a process that survives KILL fails
+#                  the teardown before anything is removed
+#   both:          salvage, then stop the worktree's local Supabase stack: `supabase stop
+#                  --project-id <id>` for the id in its supabase/config.toml (or a container
+#                  with a bind mount inside it), only when no other live worktree carries that
+#                  id or a mount proves it is this one's; the shared default id is otherwise
+#                  warned about and left running. No --no-backup (data volumes are kept). No
+#                  docker, an unreadable docker or no supabase CLI is a warning, never a refusal
+#   both:          delete the untracked bd runtime files
 #                  (allow-listed paths only; each must be gone and git status
 #                  empty, else stop with the salvage kept)
 #   Orca-tracked:  orca worktree rm (no --force;
@@ -150,6 +164,9 @@
 #   git-only:      git worktree remove (no --force), then git branch -d only
 #                  when GitHub says the PR MERGED; -D only when the local tip
 #                  equals the merged PR's head sha
+# The codex and Supabase stops are not undone when a later step refuses or fails (the beads read, the bd
+# runtime cleanup, the Orca or git removal): the worktree then stays, its processes and stack already
+# stopped. Both are safe to repeat and leave nothing that blocks a re-run.
 # Then emits a worktree.teardown event via mc-emit.sh (fire and forget).
 #
 # Exit: 0 plan ok / done, 2 usage, 3 refused, 4 an apply step failed.
@@ -594,6 +611,89 @@ fi
 # on Linux, ps eww on macOS). A non-shell process is exempt ONLY when its
 # handle was named with --close-handle; with no handle (started outside an
 # Orca terminal, or the mapping failed) it always refuses.
+# Leftover codex processes. A codex app-server (and the node or shell children it spawned) outlives its
+# terminal and keeps burning CPU after the worktree is gone. They are found by cwd and by tree, never by
+# name alone, and stopped by EXACT pid on --apply, before the worktree is removed:
+#   - the process cwd is the worktree or below it (a path boundary match: /x/foo never matches /x/foo-bar;
+#     a scratch dir under .agents/scratch is below the worktree, so it matches too), AND
+#   - it is a codex process (argv[0] is `codex` or `codex.js`, or an interpreter such as node or sh with a
+#     PATH to a file named `codex` or `codex.js` among its first arguments: a bare word `codex` after a
+#     script, as in `bash run.sh codex`, is an argument and does not count) or a descendant of one.
+# Order: deepest descendants first. TERM, a bounded wait (CM_TD_PROC_WAIT seconds, default 10), then KILL
+# for the survivors, each pid re-checked (still alive, cwd still inside) just before it is signalled so a
+# reused pid is never hit. Never pkill, never by name, never this script or any ancestor of it. Every other
+# non-shell process in the worktree still refuses below.
+# shellcheck disable=SC2016
+CODEX_SNAP_SH='wt=$1
+echo "S $$"
+if [ -d /proc/self ]; then
+  ls -l /proc/[0-9]*/cwd 2>/dev/null | awk -v wt="$wt" "{ i = index(\$0, \" /proc/\"); s = substr(\$0, i + 1); split(s, a, \"/\"); j = index(s, \" -> \"); if (j == 0) next; c = substr(s, j + 4); if (c == wt || index(c, wt \"/\") == 1) print \"C \" a[3] }"
+elif command -v lsof >/dev/null 2>&1; then
+  lsof -w -d cwd -Fpn 2>/dev/null | awk -v wt="$wt" "/^p/{p=substr(\$0,2)} /^n/{n=substr(\$0,2); if (n == wt || index(n, wt \"/\") == 1) print \"C \" p}"
+else
+  echo "NOSCAN"
+fi
+ps -eo pid=,ppid=,args= 2>/dev/null | awk "{p=\$1; q=\$2; sub(/^[ \t]*[0-9]+[ \t]+[0-9]+[ \t]+/, \"\"); print \"P \" p \" \" q \" \" \$0}"
+echo END'
+# codex_targets: sets CODEX_LINES (one "pid depth name" per line, deepest first, the order to signal) and
+# CODEX_PIDS (the pids, space separated, same order). CODEX_OK=0 when the host could not be read.
+codex_targets() {
+  local snap
+  CODEX_LINES=""; CODEX_PIDS=""; CODEX_OK=1
+  if ! snap="$(RRUN_SECS=60 rrun "$CODEX_SNAP_SH" "$WT" 2>/dev/null)" || ! printf '%s\n' "$snap" | grep -qx 'END' || printf '%s\n' "$snap" | grep -qx 'NOSCAN'; then
+    CODEX_OK=0; return 0
+  fi
+  CODEX_LINES="$(printf '%s\n' "$snap" | awk '
+    function base(t) { sub(/.*\//, "", t); return t }
+    function iscodex(a,   n, t, i, b0) {
+      n = split(a, t, " "); b0 = base(t[1])
+      if (b0 ~ /^codex(\.m?js)?$/) return 1
+      if (b0 ~ /^(node|nodejs|sh|bash|dash|zsh|python|python3)$/) {
+        for (i = 2; i <= n && i <= 8; i++) { if (t[i] ~ /\// && t[i] !~ /^-/ && base(t[i]) ~ /^codex(\.m?js)?$/) return 1 }
+        return 0
+      }
+      return 0
+    }
+    function nm(a,   n, t, i, b0) {
+      n = split(a, t, " "); b0 = base(t[1])
+      if (b0 ~ /^(node|nodejs|sh|bash|dash|zsh|python|python3)$/) for (i = 2; i <= n && i <= 8; i++) { if (t[i] ~ /\// && t[i] !~ /^-/ && base(t[i]) ~ /^codex(\.m?js)?$/) return base(t[i]) }
+      return b0
+    }
+    $1 == "S" { self = $2 }
+    $1 == "C" { inside[$2] = 1 }
+    $1 == "P" { pid = $2; par[pid] = $3; a = $0; sub(/^P [0-9]+ [0-9]+ ?/, "", a); args[pid] = a; ids[++n] = pid }
+    END {
+      for (i = 1; i <= n; i++) if (iscodex(args[ids[i]])) { depth[ids[i]] = 0; cx[ids[i]] = 1 }
+      rounds = 0
+      do { ch = 0; rounds++
+        for (i = 1; i <= n; i++) { p = ids[i]
+          if (par[p] in depth) { nd = depth[par[p]] + 1
+            if (!(p in depth) || depth[p] < nd) { depth[p] = nd; ch = 1 } } }
+      } while (ch && rounds < 64)   # depth is the real distance from the top codex, also for a codex under a codex
+      for (p = self; p != "" && p != 0 && !(p in anc); p = par[p]) anc[p] = 1
+      m = 0
+      for (i = 1; i <= n; i++) { p = ids[i]
+        if ((p in depth) && (p in inside) && !(p in anc)) { m++; tp[m] = p } }
+      for (i = 1; i <= m; i++) for (j = i + 1; j <= m; j++)
+        if (depth[tp[j]] > depth[tp[i]] || (depth[tp[j]] == depth[tp[i]] && tp[j] + 0 > tp[i] + 0)) { t = tp[i]; tp[i] = tp[j]; tp[j] = t }
+      for (i = 1; i <= m; i++) print tp[i], depth[tp[i]], nm(args[tp[i]])
+    }')"
+  CODEX_PIDS="$(printf '%s\n' "$CODEX_LINES" | awk 'NF { printf "%s ", $1 }' | sed 's/ $//')"
+}
+CODEX_LINES=""; CODEX_PIDS=""; CODEX_OK=1
+CODEX_WAIT="${CM_TD_PROC_WAIT:-10}"
+case "$CODEX_WAIT" in ''|*[!0-9]*|0) CODEX_WAIT=10 ;; esac
+if [ -n "$WT" ] && [ "$RETIRE_CHECK" -eq 0 ]; then   # --retire-check never acts, so it exempts nothing
+  codex_targets
+  if [ "$CODEX_OK" -eq 0 ]; then
+    check codex "WARNING could not read the process list on $HOST: leftover codex processes not checked"
+  elif [ -n "$CODEX_PIDS" ]; then
+    check codex "leftover codex processes in the worktree, to stop by pid on --apply (children first): $(printf '%s\n' "$CODEX_LINES" | awk 'NF { printf "%s:%s ", $1, $3 }' | sed 's/ $//')"
+  else
+    check codex "no leftover codex process in the worktree"
+  fi
+fi
+
 NONSHELL=""
 if [ -n "$WT" ]; then
   # shellcheck disable=SC2016
@@ -624,6 +724,13 @@ list | while read -r pid comm; do printf "%s:%s:%s\n" "$pid" "$comm" "$(handle_o
       [ -n "$pl" ] || continue
       ph="${pl##*:}"; pc="${pl%:*}"; pc="${pc#*:}"
       case "$pc" in bash|zsh|sh|dash|fish|login|tmux|-bash|-zsh|-sh) continue ;; esac
+      # a leftover codex process (or its child) is stopped by pid on --apply, so it does not block
+      # unless it still belongs to a LIVE terminal of this worktree that --close-handle does not name: that is
+      # a running session, not a leftover, and it refuses like any other process.
+      case " $CODEX_PIDS " in *" ${pl%%:*} "*)
+        if [ -z "$ph" ] || ! printf '%s\n' "${HANDLES:-}" | grep -qxF -- "$ph"; then continue; fi
+        case "$CLOSE_HANDLES" in *" $ph "*) continue ;; esac ;;
+      esac
       if [ -n "$ph" ]; then
         case "$CLOSE_HANDLES" in *" $ph "*) EXEMPT="$EXEMPT ${pl%%:*}:$pc@$ph"; continue ;; esac
       fi
@@ -640,6 +747,92 @@ EOF_PROCS
   else
     check processes "BLOCKING:$NONSHELL"
     refuse "non-shell processes run in the worktree:$NONSHELL (stop them first)"
+  fi
+fi
+
+# ---- local Supabase stack ------------------------------------------------------
+# A worker that ran `supabase start` in this worktree leaves its containers running when the worktree
+# goes: the stack is keyed by its project id (config.toml project_id; a --project-id the worker passed on the
+# command line is not written anywhere teardown can read, so such a stack is left alone), not by the path. Before the worktree is removed, --apply runs `supabase stop --project-id
+# <id>` for the stack that is provably this worktree's. The CLI labels every
+# container `com.supabase.cli.project=<id>` and nothing more (no path label, named volumes, no bind
+# mount into the worktree), so the id comes from (a) this worktree's supabase/config.toml and (b) any
+# container with a bind mount inside this worktree (a path boundary match, kept for stacks that do
+# have one). The checked-in default id is shared by every worktree that does not override it, so an id
+# is stopped only when NO other live worktree (Orca rows and git worktrees of this repo, on this host)
+# carries it and the list of them was read in full; a mount (b) never overrides that. Otherwise it is
+# warned about and left running. Only containers
+# labelled as a Supabase CLI project are ever looked at, and never by name. No docker, an unreadable
+# docker, or no supabase CLI is a warning, never a refusal: the host may simply have none.
+# Skipped with --retire-check (it never acts).
+SB_STOP=""      # project ids to stop on --apply, one per line
+SB_IDS_DESC=""  # "<id> (<n> containers)" for the plan, one per line
+if [ -n "$WT" ] && [ "$RETIRE_CHECK" -eq 0 ]; then
+  SB_PARTIAL=0
+  # The git list is read on its own: a failed read (ssh blip, git error, lock) is a partial view, never an empty one.
+  SB_GITLIST=""; SB_GITLIST="$(g worktree list --porcelain 2>/dev/null)" || SB_PARTIAL=1
+  SB_OTHERS="$({ [ -z "${PS:-}" ] || printf '%s' "$PS" | jq -r '.result.worktrees[]?.path // empty' 2>/dev/null
+                 printf '%s\n' "$SB_GITLIST" | sed -n 's/^worktree //p'; } \
+               | canon_paths 2>/dev/null | CM_WT="$WT" awk -F '\t' '$2 != "" && $2 != ENVIRON["CM_WT"] { print $2 }' | sort -u)"
+  [ -n "${PS:-}" ] || SB_PARTIAL=1   # no Orca list (the call failed): the other Orca worktrees are unknown
+  [ -z "${PS:-}" ] || ! printf '%s' "$PS" | jq -e '(.result.truncated == true) or ((.result.totalCount // 0) > ((.result.worktrees // []) | length))' >/dev/null 2>&1 || SB_PARTIAL=1
+  # This worktree is a linked one, so `git worktree list` always names at least the main checkout: an empty
+  # list of OTHER worktrees means a source failed (ssh timeout, git error), and "nobody else has this id" can
+  # not be proved from it.
+  [ -n "$SB_OTHERS" ] || SB_PARTIAL=1
+  SB_ARGS=("$WT")
+  while IFS= read -r _p; do [ -z "$_p" ] || SB_ARGS+=("$_p"); done <<<"$SB_OTHERS"
+  if SB_RAW="$(RRUN_SECS=60 rrun "$CM_SB_SCAN_SH" "${SB_ARGS[@]}" 2>/dev/null)" \
+     && SB_JSON="$(printf '%s\n' "$SB_RAW" | cm_sb_parse 2>/dev/null)" && [ -n "$SB_JSON" ]; then
+    SB_DOCKER="$(printf '%s' "$SB_JSON" | jq -r '.docker')"
+    if [ "$SB_DOCKER" != ok ] || [ "$(printf '%s' "$SB_JSON" | jq -r '.complete')" != true ]; then
+      case "$SB_DOCKER" in
+        nodocker) check supabase "WARNING docker is not installed on $HOST: local Supabase stacks not checked" ;;
+        *) check supabase "WARNING docker did not answer on $HOST (or the scan was cut off): local Supabase stacks not checked" ;;
+      esac
+    else
+      SB_CANDS="$(printf '%s' "$SB_JSON" | jq -c --arg wt "$WT" '
+        (.worktrees | map(select(.path == $wt)) | .[0].projectId // "") as $mine
+        | (.worktrees | map(select(.path != $wt and .projectId != ""))) as $others
+        | .stacks[] | . as $s
+        | ($s.mounts | map(select(. == $wt or startswith($wt + "/"))) | length > 0) as $proven
+        | select($proven or ($mine != "" and $s.projectId == $mine))
+        | {id: $s.projectId, containers: $s.containers, proven: $proven,
+           sharedWith: [$others[] | select(.projectId == $s.projectId) | .path]}')"
+      if [ -z "$SB_CANDS" ]; then
+        check supabase "no running Supabase stack for this worktree"
+      else
+        SB_HAVE_CLI=0; [ "$(printf '%s' "$SB_JSON" | jq -r '.supabaseCli')" != true ] || SB_HAVE_CLI=1
+        while IFS= read -r sc; do
+          [ -n "$sc" ] || continue
+          sid="$(printf '%s' "$sc" | jq -r '.id')"; sn="$(printf '%s' "$sc" | jq -r '.containers')"
+          sproven="$(printf '%s' "$sc" | jq -r '.proven')"; sshared="$(printf '%s' "$sc" | jq -r '.sharedWith | map(split("/") | last) | join(", ")')"
+          if ! cm_sb_id_ok "$sid"; then
+            check supabase "WARNING stack id '$sid' is not a plain project id: left running"
+          elif [ "$sproven" = true ] && [ -z "$sshared" ] && [ "$SB_PARTIAL" -eq 0 ]; then
+            if [ "$SB_HAVE_CLI" -eq 1 ]; then check supabase "stack $sid ($sn containers): a mount is inside this worktree, will stop"; SB_STOP="$SB_STOP$sid
+"; SB_IDS_DESC="$SB_IDS_DESC$sid ($sn containers)
+"
+            else check supabase "WARNING stack $sid ($sn containers) is this worktree's but the supabase CLI is not on $HOST: left running"; fi
+          elif [ -n "$sshared" ]; then
+            check supabase "WARNING stack $sid ($sn containers) NOT stopped: the id is also the config id of live worktree(s) $sshared (a shared id is never stopped, a mount inside this worktree does not override that)"
+          elif [ "$SB_PARTIAL" -eq 1 ]; then
+            check supabase "WARNING stack $sid ($sn containers) NOT stopped: the worktree list was cut off, so another live worktree may use this id (a mount inside this worktree does not override that)"
+          elif [ "$SB_HAVE_CLI" -eq 1 ]; then
+            check supabase "stack $sid ($sn containers): config id of this worktree, no other live worktree has it, will stop"
+            SB_STOP="$SB_STOP$sid
+"; SB_IDS_DESC="$SB_IDS_DESC$sid ($sn containers)
+"
+          else
+            check supabase "WARNING stack $sid ($sn containers) is this worktree's but the supabase CLI is not on $HOST: left running"
+          fi
+        done <<EOF_SBC
+$SB_CANDS
+EOF_SBC
+      fi
+    fi
+  else
+    check supabase "WARNING could not scan $HOST for local Supabase stacks (host unreachable or scan failed)"
   fi
 fi
 
@@ -1499,6 +1692,14 @@ fi
 if [ -n "${BDRT:-}" ]; then
   BDRT_PLAN="remove untracked bd runtime files, then require git status clean: $(printf '%s\n' "$BDRT" | tr '\n' ' ')"
 fi
+if [ -n "$CODEX_PIDS" ]; then
+  plan "stop leftover codex processes on $HOST by exact pid, children first (TERM, wait up to ${CODEX_WAIT}s, then KILL): $CODEX_PIDS"
+fi
+if [ -n "$SB_STOP" ]; then
+  while IFS= read -r _s; do
+    [ -z "$_s" ] || plan "supabase stop --project-id ${_s%% *} on $HOST, before the worktree is removed (stack $_s; data volumes are kept)"
+  done <<<"$SB_IDS_DESC"
+fi
 if [ -n "$ROW" ]; then
   [ -z "${BDRT_PLAN:-}" ] || plan "$BDRT_PLAN"
   plan "$ORCA worktree rm --worktree id:$WID --json ${ENVF}"
@@ -1546,6 +1747,83 @@ if [ -n "$CLOSE_FIRST" ]; then
   sleep 2
   CM_TD_TERMINALS_CLOSED=1 exec bash "$HERE/$(basename -- "$0")" "${ORIG_ARGS[@]}"
 fi
+# Stop the leftover codex processes (chosen above, re-read now) by exact pid while the worktree still
+# exists, BEFORE the salvage copy so nothing they write after it is lost (and before the beads read of the
+# apply run, which happens on the re-run with the terminals closed): children first, TERM, a bounded wait, then KILL for the survivors. Fixed script, the worktree and
+# the pids arrive as arguments; each pid is re-checked (alive, cwd still inside the worktree) right before
+# it is signalled, so a pid reused since the scan is left alone. A process that survives KILL fails the
+# teardown before anything is removed.
+# shellcheck disable=SC2016
+CODEX_STOP_SH='wt=$1; wait=$2; shift 2
+alive() { s=$(ps -o stat= -p "$1" 2>/dev/null) || return 1; case "$s" in ""|Z*) return 1 ;; esac; return 0; }
+inside() {
+  if [ -d /proc/self ]; then c=$(readlink "/proc/$1/cwd" 2>/dev/null) || return 1
+  else c=$(lsof -a -w -p "$1" -d cwd -Fn 2>/dev/null | sed -n "s/^n//p" | head -n 1); fi
+  case "$c" in "$wt"|"$wt"/*) return 0 ;; esac
+  return 1
+}
+sent=""; exited=""
+for p in "$@"; do
+  if ! alive "$p"; then exited="$exited $p"   # gone already (a parent that left with its child): nothing to signal
+  elif inside "$p"; then kill -TERM "$p" 2>/dev/null; sent="$sent $p"; fi
+done
+i=0
+while [ "$i" -lt "$wait" ]; do
+  left=""; for p in $sent; do alive "$p" && left="$left $p"; done
+  [ -n "$left" ] || break
+  sleep 1; i=$((i + 1))
+done
+killed=""
+for p in $sent; do alive "$p" && inside "$p" && { kill -KILL "$p" 2>/dev/null; killed="$killed $p"; }; done
+j=0
+while [ -n "$killed" ] && [ "$j" -lt 5 ]; do
+  left=""; for p in $killed; do alive "$p" && left="$left $p"; done
+  [ -n "$left" ] || break
+  sleep 1; j=$((j + 1))
+done
+for p in "$@"; do
+  case " $exited " in *" $p "*) echo "TERMED $p"; continue ;; esac
+  case " $sent " in *" $p "*) ;; *) continue ;; esac
+  if alive "$p"; then echo "SURVIVED $p"
+  else case " $killed " in *" $p "*) echo "KILLED $p" ;; *) echo "TERMED $p" ;; esac; fi
+done'
+stop_codex_leftovers() {
+  [ "$CODEX_OK" -eq 1 ] || return 0
+  local planned="$CODEX_PIDS"
+  codex_targets
+  if [ "$CODEX_OK" -eq 0 ]; then
+    # The plan exempted these pids from the process gate on the strength of the stop: if it cannot run, nothing is removed.
+    [ -z "$planned" ] || fail "could not re-read the process list on $HOST to stop leftover codex processes ($planned; nothing removed)"
+    cm_warn "teardown: could not re-read the process list on $HOST; leftover codex processes not stopped"; return 0
+  fi
+  [ -n "$CODEX_PIDS" ] || return 0
+  local out rc=0 termed="" killed="" surv="" pass t k
+  # Two passes: a codex parent can fork a helper after the first snapshot, so the list is read again once the
+  # first stop is done and anything new is stopped the same way. A pid left after the second pass is a survivor.
+  for pass in 1 2; do
+    rc=0   # per pass: a failed first call must not fail the teardown when the second pass stopped everything
+    # shellcheck disable=SC2086  # CODEX_PIDS is a list of numeric pids
+    out="$(RRUN_SECS=$((CODEX_WAIT + 40)) rrun "$CODEX_STOP_SH" "$WT" "$CODEX_WAIT" $CODEX_PIDS 2>/dev/null)" || rc=$?
+    t="$(printf '%s\n' "$out" | awk '$1 == "TERMED" { printf "%s ", $2 }' | sed 's/ $//')"
+    k="$(printf '%s\n' "$out" | awk '$1 == "KILLED" { printf "%s ", $2 }' | sed 's/ $//')"
+    surv="$(printf '%s\n' "$out" | awk '$1 == "SURVIVED" { printf "%s ", $2 }' | sed 's/ $//')"
+    termed="${termed:+$termed }$t"; killed="${killed:+$killed }$k"
+    [ -z "$surv" ] || break
+    [ "$pass" -eq 1 ] || break
+    codex_targets
+    # Nothing left on the re-read: whatever the first call reported, there is nothing to fail about.
+    if [ "$CODEX_OK" -eq 1 ] && [ -z "$CODEX_PIDS" ]; then rc=0; break; fi
+    [ "$CODEX_OK" -eq 1 ] || break
+  done
+  termed="${termed% }"; killed="${killed% }"
+  [ -z "$termed" ] || printf 'stopped codex processes on %s by pid (TERM): %s\n' "$HOST" "$termed"
+  [ -z "$killed" ] || printf 'stopped codex processes on %s by pid (KILL after %ss): %s\n' "$HOST" "$CODEX_WAIT" "$killed"
+  [ -z "$surv" ] || fail "codex process(es) still running after KILL: $surv (nothing removed)"
+  [ "$rc" -eq 0 ] || fail "stopping codex processes (rc=$rc; nothing removed)"
+  return 0
+}
+stop_codex_leftovers
+
 if [ "$BEADS_WHOLE" -eq 1 ] && [ -n "$SALVAGE_DIR" ]; then
   # The store bd could not read is copied out WHOLE (its Dolt dir, backups, config,
   # issues.jsonl), then compared, so a later migration or an old bd can still read it.
@@ -1635,6 +1913,31 @@ exit "$rc"'
   [ -z "$LEFT" ] || fail "tree not clean after removing bd runtime files: $(printf '%s\n' "$LEFT" | head -n 3 | tr '\n' ' ') (salvage kept at $SALVAGE_DIR)"
   printf 'removed untracked bd runtime files: %s\n' "$(printf '%s\n' "$BDRT" | tr '\n' ' ')"
 }
+# Stop this worktree's local Supabase stack(s) (chosen in the checks above) while the worktree still
+# exists. `supabase stop` WITHOUT --no-backup: that flag also deletes the data volumes, an irreversible
+# step the leak does not need. The leak is the running containers (CPU, ports, memory); stopping them
+# fixes it and keeps the volumes, so a stack stopped by mistake can be started again. Data loss cannot
+# be shown to be irrelevant here (a shared default id keys its volume by that id), so the volumes stay.
+# Run from / so nothing holds the worktree as a cwd. A failed stop is a warning, never a failed
+# teardown: the worktree is still safe to remove and the census flags a stack left behind.
+stop_sb_stacks() {
+  local sid left
+  [ -n "$SB_STOP" ] || return 0
+  while IFS= read -r sid; do
+    [ -n "$sid" ] || continue
+    # shellcheck disable=SC2016
+    if RRUN_SECS=180 rrun "$CM_REMOTE_PATH_FIX"'; cd / && exec supabase stop --project-id "$1"' "$sid" >/dev/null 2>&1; then
+      printf 'stopped supabase stack %s on %s\n' "$sid" "$HOST"
+      # Exit 0 is not proof: look for containers of that id still running, and say so (the census is the backstop).
+      left="$(RRUN_SECS=60 rrun "$CM_REMOTE_PATH_FIX"'; docker ps -q --filter "label=com.supabase.cli.project=$1" 2>/dev/null | head -n 1' "$sid" 2>/dev/null)" || left=""
+      [ -z "$left" ] || printf 'WARNING supabase stack %s still has running containers on %s after the stop\n' "$sid" "$HOST"
+    else
+      cm_warn "teardown: supabase stop --project-id $sid failed on $HOST; the stack may still be running"
+      printf 'WARNING supabase stack %s may still be running on %s (stop failed)\n' "$sid" "$HOST"
+    fi
+  done <<<"$SB_STOP"
+}
+stop_sb_stacks
 if [ -n "$ROW" ]; then
   # Keep the comment (open follow-up lines, notes): Orca drops it with the worktree.
   CMT="$(printf '%s' "$ROW" | jq -r '.comment // ""')"
