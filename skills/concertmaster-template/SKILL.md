@@ -1128,7 +1128,11 @@ When there is no ledger:
   The Merged section is the PRs `gh` reports merged since `digests.lastSentAt` exactly
   (else 12h; `--since-hours` wins), and the open PR count (`--full` only) is `gh`'s: the
   ledger is not their source, and "unknown (gh failed)" in either is a failed read, never
-  a zero (say so in the tick report). With the wacli adapter: never
+  a zero (say so in the tick report). Deployed lists a release when the `digest.deploy_job` job of its
+  tag-push `digest.deploy_workflow` run succeeded in the window (read from `gh`; the run's own conclusion
+  proves nothing, and the ledger `deployWindows[]` rows are merged in by tag, never double-listed), so a
+  tag-push deploy the ledger lost still shows; a run with no succeeded deploy job lists as "ran, no prod deploy
+  job succeeded", and "Deployed: unknown (gh failed)" is a failed read too. With the wacli adapter: never
   pass `--download-media`; `wacli sync --once` only, never `--follow`.
 - **Collaborators** (`cfg.messaging.collaborators`): pr-sweeper workers post a
   PR comment to the author on every push to, or merge of, their PR when
@@ -1276,7 +1280,7 @@ shellcheck clean.
 | `scripts/sync-from-toolkit.sh <project-skill-dir>` | copies this engine into a project's skill directory without touching its `config.yaml` or `references/project-local.md` (README, "Update a project") |
 | `scripts/config-check.sh [--config <file>]` | the config doctor: required keys, shape of the optional blocks, no secret-looking text, no em-dash; exit 1 on any failure, 2 on bad usage; read-only; `--config config.example.yaml` checks the template itself |
 | `scripts/hooks/mc-worker-hook.sh` | Claude Code hook for workers, in-scope repos only (optional) |
-| `scripts/digest.sh [--full] [--since-hours n]` | digest text, stdout only, `- ` bullets, no Needs, Open follow-ups, Stuck or Fleet section (`--full` adds them for the terminal report): Merged (merged since `digests.lastSentAt`, else 12h) from `gh pr list`, and in `--full` the open PR count (a failed gh prints "unknown (gh failed)", never 0), every other section from the ledger; read-only; `--full` also lists `ledger.violations` and an incomplete `ledger.violationCheck` |
+| `scripts/digest.sh [--full] [--since-hours n]` | digest text, stdout only, `- ` bullets, no Needs, Open follow-ups, Stuck or Fleet section (`--full` adds them for the terminal report): Merged (merged since `digests.lastSentAt`, else 12h) from `gh pr list`, Deployed from `gh run list` and `gh run view` (config `digest.deploy_workflow` and `digest.deploy_job`, merged by tag with the ledger `deployWindows[]` rows), and in `--full` the open PR count (a failed gh prints "unknown (gh failed)", never 0), every other section from the ledger; read-only; `--full` also lists `ledger.violations` and an incomplete `ledger.violationCheck` |
 | `scripts/intake.sh <cmd>` | the deterministic half of `intake` (rules in `scripts/intake.jq`) |
 | `scripts/test/*.sh` | `classify-standing`, `classify-violations`, `teardown-gates`, `resume-flow`, `intake`, `mc-emit`, `boot-sweep`, `runtime-check`, `ci-queue-alert`, `cred-check`, `backup-offhost`, `backup-stale`, `scan-secrets`, `rm-guard-hook`, `digest-gh`, `orca-json-helpers`, `waiting-autocompact`, `spawn-verify`, `classify-ownership`, `ask-timeout`, `queue`, `queue-audit`, `salv3`, `salv3-followups`, `markers`, `unlinked-prs`, `tick-emit`, `config-check`, `automations-audit`, `followups`, `followups-escalate`, `lane-journal`, `asks`, `teardown-owner`, `lanes-relay`, `fleet-state`, `lessons-recon`, `pane-stalls`, `skill-sync`, `tick-contract`, `keep-tmp`: hermetic tests against `scripts/test/fixtures/config.test.yaml`; run the matching one after any script change |
 
