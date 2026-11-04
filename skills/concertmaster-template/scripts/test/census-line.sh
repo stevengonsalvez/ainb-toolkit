@@ -80,7 +80,8 @@ hasnot "the other-repo row is not named"              "$OUT" "elsewhere"
 hasnot "a main checkout is not counted"               "$OUT" "acme-main"
 hasnot "clean rows are not named"                     "$OUT" "lane-clean"
 has "other-project is a separate count"               "$OUT" "other-project: 2 (listed apart, not counted)"
-eq "no row line past the three kinds plus the apart line" "$(printf '%s\n' "$OUT" | wc -l | tr -d ' ')" 7
+# the Supabase stack line (no scan data in these synthetic documents: INCOMPLETE, never a clean zero) follows the apart line
+eq "no row line past the three kinds plus the apart line and the stack line" "$(printf '%s\n' "$OUT" | wc -l | tr -d ' ')" 8
 J1="$(CM_CONFIG="$ROOT/scoped.yaml" "$HERE/../classify.sh" < "$ROOT/d1.json" 2>/dev/null)"
 eq "JSON carries the same counts (.census)" "$(jq -r '.census | "\(.orphans) \(.unknownGit) \(.dirty) \(.otherProject)"' <<< "$J1")" "1 2 2 2"
 eq "JSON rows are structured (kind, worktree, host, reason)" "$(jq -r '.census.rows[0] | keys | join(",")' <<< "$J1")" "host,kind,reason,worktree"
@@ -89,7 +90,8 @@ eq "JSON rows are structured (kind, worktree, host, reason)" "$(jq -r '.census.r
 { row host-a lane-clean acme-app; row host-a tool-x acme-app; } | doc > "$ROOT/d0.json"
 OUT0="$(CM_CONFIG="$ROOT/scoped.yaml" "$HERE/../classify.sh" --census < "$ROOT/d0.json" 2>/dev/null)"
 eq "all clean: the line reads zero and no row follows" "$OUT0" "census: orphans 0, unknown-git 0, dirty 0 (target 0)
-other-project: 1 (listed apart, not counted)"
+other-project: 1 (listed apart, not counted)
+supabase-stacks: orphans 0 (target 0) (CHECK INCOMPLETE: discover document has no Supabase stack data (older discover.sh): stack check not run)"
 
 # ---- ownership not configured: orphans cannot be counted, never guessed as 0 ----
 OUTU="$(CM_CONFIG="$ROOT/unscoped.yaml" "$HERE/../classify.sh" --census < "$ROOT/d1.json" 2>/dev/null)"

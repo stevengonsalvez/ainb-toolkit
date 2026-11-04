@@ -21,6 +21,9 @@
 # cut-off or failed hosts make the check incomplete (CHECK INCOMPLETE), never "none"; so does a
 # reachable remote host that is only terminal-scanned (a forbidden-agent process there with no Orca
 # terminal is not seen). A local-only fleet is complete.
+# Orphan Supabase stacks (running stacks no live worktree names): `.supabaseStacks` {orphans, complete, gaps};
+# --census adds a `supabase-stacks: orphans N (target 0)` line (CHECK INCOMPLETE when docker or a host could
+# not be read) and one row per stack, --table a `supabase-stacks: N` line and SUPABASE-STACK rows.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -96,7 +99,11 @@ if [ "$MODE" = census ]; then
     | "census: orphans \($c.orphans // "?"), unknown-git \($c.unknownGit), dirty \($c.dirty) (target 0)",
       ($c.rows[] | "  \(.kind): \(.worktree) @ \(.host): \(.reason)"),
       (if $c.ownershipConfigured then empty else "  orphans: ? (ownership off: \(.ownership.error))" end),
-      "other-project: \($c.otherProject) (listed apart, not counted)"'
+      "other-project: \($c.otherProject) (listed apart, not counted)",
+      (.supabaseStacks as $sb
+       | "supabase-stacks: orphans \($sb.orphans | length) (target 0)"
+         + (if $sb.complete then "" else " (CHECK INCOMPLETE: \($sb.gaps | join("; ")))" end),
+         ($sb.orphans[] | "  supabase-stack: \(.projectId) @ \(.host): \(.reason)"))'
   exit 0
 fi
 
@@ -108,6 +115,10 @@ printf '%s\n' "$OUT" | jq -r 'if .violationCheck.enabled | not then "violations:
 printf '%s\n' "$OUT" | jq -r '.violations[] | ["VIOLATION", .agent, .host, .worktree, (.handle // "-"), (.title // "-")] | @tsv' | {
   if command -v column >/dev/null 2>&1; then column -t -s "$(printf '\t')"; else cat; fi
 }
+# Running Supabase stacks with no live worktree: always a line, incomplete is never read as none.
+printf '%s\n' "$OUT" | jq -r '.supabaseStacks as $sb | "supabase-stacks: \($sb.orphans | length)"
+  + (if $sb.complete then "" else " (CHECK INCOMPLETE: \($sb.gaps | join("; ")))" end),
+  ($sb.orphans[] | ["SUPABASE-STACK", .host, .projectId, "\(.containers) containers"] | @tsv)'
 printf '%s\n' "$OUT" | jq -r '"ownership: " + (if .ownership.configured then "orphans=\(.ownership.orphans) lead-dead=\(.ownership.leadDead | length)" else "NOT CONFIGURED, ownership is off: \(.ownership.error)" end)'
 printf '%s\n' "$OUT" | jq -r '
   (["host", "class", "worktree", "owner", "branch", "pr", "idle", "flags", "suggest"] | @tsv),

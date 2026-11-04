@@ -639,3 +639,106 @@ cm_text_looks_secret() {
   [ "$a" = "$t" ] && return 1
   _cm_secret_hit "$a"
 }
+
+# ---- local Supabase stacks -----------------------------------------------------------------------
+# The Supabase CLI keys a local stack by its project id (`project_id` in supabase/config.toml), and
+# labels every container `com.supabase.cli.project=<id>`. Nothing ties a container to a worktree:
+# the containers carry only that label and the compose project label, and
+# their mounts are named volumes, so a stack outlives the worktree that started it. The checked-in id
+# is shared by every worktree that does not override it, so an id alone never proves ownership.
+#
+# CM_SB_SCAN_SH: ONE fixed POSIX sh script, run on the target host with every worktree path as a
+# positional argument (locally `sh -c "$CM_SB_SCAN_SH" sh <paths>`, over ssh `sh -s -- <paths>` with
+# the script on stdin, teardown.sh through its rrun). Tab separated facts, then an end marker:
+#   W <path> <project id>         the project_id in <path>/supabase/config.toml ("" when none)
+#   D ok|nodocker|unreachable     whether docker could be read at all
+#   CLI yes|no                    whether the supabase CLI is on PATH (only after D ok)
+#   C <container id> <project id> a RUNNING container carrying the Supabase CLI label
+#   M <container id> <source>     a bind mount of that container
+#   END
+# Over ssh the shell is non-interactive with a short PATH, so the usual docker and supabase install dirs are
+# appended there (only when the shell is an ssh session). docker never reads this script's stdin (over ssh the script itself arrives there). A host with no docker, or a docker that does not answer, says so: callers never read that as "no
+# stacks" (cm_sb_parse keeps it as docker=nodocker|unreachable). Read-only.
+# shellcheck disable=SC2016,SC2034  # single quotes on purpose (the text runs on the target host); used by teardown.sh and discover.sh
+CM_REMOTE_PATH_FIX='if [ -n "${SSH_CONNECTION:-}" ]; then PATH="$PATH:/usr/local/bin:/opt/homebrew/bin:$HOME/.local/bin:/snap/bin"; export PATH; fi'
+# shellcheck disable=SC2016,SC2034
+CM_SB_SCAN_SH="$CM_REMOTE_PATH_FIX"'
+q=$(printf "\047")
+for p in "$@"; do
+  id=$(sed -n -e "s/^[[:space:]]*project_id[[:space:]]*=[[:space:]]*\"\([^\"]*\)\".*/\1/p" -e "s/^[[:space:]]*project_id[[:space:]]*=[[:space:]]*$q\([^$q]*\)$q.*/\1/p" "$p/supabase/config.toml" 2>/dev/null | head -n 1)
+  printf "W\t%s\t%s\n" "$p" "$id"
+done
+if ! command -v docker >/dev/null 2>&1; then printf "D\tnodocker\nEND\n"; exit 0; fi
+t=""; command -v timeout >/dev/null 2>&1 && t="timeout 20"
+if ! rows=$($t docker ps --filter label=com.supabase.cli.project --format "{{.ID}} {{.Label \"com.supabase.cli.project\"}}" 2>/dev/null </dev/null); then
+  printf "D\tunreachable\nEND\n"; exit 0
+fi
+printf "D\tok\n"
+if command -v supabase >/dev/null 2>&1; then printf "CLI\tyes\n"; else printf "CLI\tno\n"; fi
+printf "%s\n" "$rows" | while read -r cid pid; do
+  [ -n "$cid" ] && printf "C\t%s\t%s\n" "$cid" "$pid"
+done
+ids=$(printf "%s\n" "$rows" | awk "NF { printf \"%s \", \$1 }")
+if [ -n "$ids" ]; then
+  # One inspect for every container (a host can hold many): "<12 char id> <bind mount source>".
+  # shellcheck disable=SC2086
+  $t docker inspect -f "{{\$id := printf \"%.12s\" .Id}}{{range .Mounts}}{{if eq .Type \"bind\"}}{{\$id}} {{.Source}}{{\"\\n\"}}{{end}}{{end}}" $ids 2>/dev/null </dev/null | while read -r cid src; do
+    [ -z "$src" ] || printf "M\t%s\t%s\n" "$cid" "$src"
+  done
+fi
+printf "END\n"'
+
+# cm_sb_id_ok <id>: a Supabase project id is safe to pass on a command line (the CLI allows
+# letters, digits, dot, dash and underscore). Anything else is ignored with a warning, never run.
+cm_sb_id_ok() {
+  case "$1" in ''|*[!A-Za-z0-9_.-]*|-*) return 1 ;; esac
+  return 0
+}
+
+# cm_sb_parse: stdin = the CM_SB_SCAN_SH output; stdout = one JSON object
+#   {complete, docker, worktrees:[{path, projectId}], stacks:[{projectId, containers, mounts:[...]}]}
+# complete is false when the END marker is missing (cut off) or docker was not readable.
+cm_sb_parse() {
+  jq -Rsc '
+    split("\n") | map(select(length > 0) | split("\t")) as $r
+    | ([$r[] | select(.[0] == "D") | .[1]] | first // "missing") as $d
+    | ($r | map(select(.[0] == "END")) | length > 0) as $end
+    | {complete: ($end and $d == "ok"),
+       ended: $end,
+       docker: $d,
+       supabaseCli: (([$r[] | select(.[0] == "CLI") | .[1]] | first // "no") == "yes"),
+       worktrees: [$r[] | select(.[0] == "W") | {path: .[1], projectId: (.[2] // "")}],
+       stacks: ([$r[] | select(.[0] == "C") | {cid: .[1], projectId: (.[2] // "")}] as $c
+         | [$r[] | select(.[0] == "M") | {cid: .[1], source: (.[2] // "")}] as $m
+         | $c | group_by(.projectId)
+         | map({projectId: .[0].projectId, containers: length,
+                mounts: ([ .[] as $x | $m[] | select(.cid == $x.cid) | .source ] | unique)}))}'
+}
+
+# cm_sb_collect <host> <kind> <ssh-target> <truncated:true|false> <worktree path>...: one census entry
+#   {host, ok, error, docker, truncated, worktrees:[{path, projectId}], stacks:[{projectId, containers, mounts}]}
+# for a reachable host: the scan runs here when <kind> is local, over `ssh <ssh-target>` (key auth only,
+# bounded) otherwise. ok is false when the scan did not finish (ssh failed, timed out, cut off); docker says
+# ok, nodocker or unreachable, and neither of the last two is ever read as "no stacks" (classify.jq
+# turns them into a CHECK INCOMPLETE gap). <truncated> says the host's worktree list was cut off.
+cm_sb_collect() {
+  local h="$1" kind="$2" target="$3" trunc="$4" raw="" rc=0 args="" a parsed
+  shift 4
+  if [ "$kind" = local ]; then
+    raw="$(cm_timeout 40 sh -c "$CM_SB_SCAN_SH" sh "$@" 2>/dev/null)" || rc=$?
+  else
+    case "$target" in -*|*[[:space:]]*|'')
+      jq -cn --arg h "$h" --arg t "$target" '{host:$h, ok:false, error:("invalid ssh target " + ($t | tojson)), docker:"unknown", truncated:false, worktrees:[], stacks:[]}'
+      return 0 ;; esac
+    for a in "$@"; do args="$args '$(printf '%s' "$a" | sed "s/'/'\\\\''/g")'"; done
+    raw="$(printf '%s\n' "$CM_SB_SCAN_SH" | cm_timeout 40 ssh -o BatchMode=yes -o ConnectTimeout=8 -- "$target" "sh -s --$args" 2>/dev/null)" || rc=$?
+  fi
+  parsed="$(printf '%s\n' "$raw" | cm_sb_parse 2>/dev/null)" || parsed=""
+  [ -n "$parsed" ] || parsed='{"ended":false,"docker":"missing","worktrees":[],"stacks":[]}'
+  printf '%s' "$parsed" | jq -c --arg h "$h" --argjson rc "$rc" --argjson tr "$trunc" '
+    {host: $h, ok: (.ended and $rc == 0),
+     error: (if .ended and $rc == 0 then null
+             elif $rc == 124 or $rc == 142 then "stack scan timed out"
+             else "stack scan did not finish (exit \($rc))" end),
+     docker: .docker, truncated: $tr, worktrees: .worktrees, stacks: .stacks}'
+}

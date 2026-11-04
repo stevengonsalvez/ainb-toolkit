@@ -34,6 +34,10 @@
 # both fail is a remote row's git null, and `gitScope.hosts[]` names the host and both errors,
 # so classify reports unknown-git with the reason: a timeout is listed, never clean, never gone.
 # Untracked tool scratch (census.ignore_untracked) is counted in git.ignoredUntracked, not dirty.
+# Supabase stacks: per reachable host, `supabaseScope.hosts[]` = the running stacks (docker label
+# com.supabase.cli.project: project id, container count, bind mounts) and the project_id of every Orca
+# worktree there; classify.sh turns it into orphan stacks. docker missing or silent, a failed ssh and a
+# cut-off worktree list are recorded, never read as "no stacks".
 # Known gap: git-only worktrees on remote hosts are not discovered (SKILL.md § Open config).
 # A failed git check is recorded as null with statusOk:false, never as clean.
 #
@@ -75,6 +79,7 @@ trap 'rm -rf -- "${TMP:?}"' EXIT
 : > "$TMP/terminals.ndjson"
 : > "$TMP/termhosts.ndjson"
 : > "$TMP/gitscope.ndjson"
+: > "$TMP/sbscope.ndjson"
 
 err() { jq -cn --arg where "$1" --arg msg "$2" '{where:$where, message:$msg}' >> "$TMP/errors.ndjson"; }
 
@@ -263,6 +268,7 @@ fi
 jq -r '.result.hosts[] | [.kind, .name] | @tsv' "$TMP/hostlist.json" > "$TMP/hosts.tsv"
 i=0
 RGIT_PIDS=""; RGIT_IDX=""
+SB_PIDS=""; SB_IDX=""
 while IFS="$(printf '\t')" read -r kind name; do
   i=$((i + 1))
   if [ "$kind" = "local" ]; then
@@ -370,6 +376,21 @@ while IFS="$(printf '\t')" read -r kind name; do
         pr: null
       }' "$ps" >> "$TMP/rows.ndjson" 2>/dev/null || err "normalise $hname" "jq failed on worktree ps output"
 
+  # Running local Supabase stacks on this host, and the project_id in the config.toml of EVERY Orca
+  # worktree on it (any repo, from the unfiltered worktree list), so classify can flag a stack no live
+  # worktree names. Local: docker here. Remote: one bounded ssh (the git census above may have used
+  # an Orca terminal, but a docker read needs a plain shell). A failed read is ok:false, never "none".
+  SB_P=()
+  while IFS= read -r _sp; do [ -z "$_sp" ] || SB_P+=("$_sp"); done < <(jq -r '.result.worktrees[]? | .path // empty' "$ps" 2>/dev/null)
+  _sbt=""
+  if [ "$kind" != "local" ]; then
+    if [ -s "$CM_HOME/ledger.json" ] && cm_ledger_guard "$CM_HOME/ledger.json" 2>/dev/null; then _sbt="$(jq -r --arg h "$hname" '.hosts[$h].hostname // empty' "$CM_HOME/ledger.json" 2>/dev/null)"; fi
+    _sbt="${CM_SSH_TARGET:-${_sbt:-$hname}}"
+  fi
+  # In the background, like the git census: hosts answer in parallel and each writes its own file.
+  cm_sb_collect "$hname" "$kind" "$_sbt" "$(jq -r '((.result.truncated // false) or ((.result.totalCount // 0) > ((.result.worktrees // []) | length)))' "$ps" 2>/dev/null || echo false)" ${SB_P[@]+"${SB_P[@]}"} > "$TMP/sbscope-$i.ndjson" &
+  SB_PIDS="$SB_PIDS $!"; SB_IDX="$SB_IDX $i"
+
   # Remote git state, in the background (hosts answer in parallel). One repo path per Orca repo on
   # the host (its main checkout when listed); the remote enumerates the repo's worktrees itself.
   if [ "$kind" = "local" ]; then
@@ -388,6 +409,8 @@ while IFS="$(printf '\t')" read -r kind name; do
   fi
 done < "$TMP/hosts.tsv"
 for _pid in $RGIT_PIDS; do wait "$_pid" 2>/dev/null || true; done
+for _pid in $SB_PIDS; do wait "$_pid" 2>/dev/null || true; done
+for _i in $SB_IDX; do cat "$TMP/sbscope-$_i.ndjson" >> "$TMP/sbscope.ndjson" 2>/dev/null || true; done
 for _i in $RGIT_IDX; do
   cat "$TMP/rgit-$_i.ndjson" >> "$TMP/git.ndjson" 2>/dev/null || true
   cat "$TMP/rgitscope-$_i.ndjson" >> "$TMP/gitscope.ndjson" 2>/dev/null || true
@@ -494,6 +517,7 @@ jq -n \
   --slurpfile terms "$TMP/terminals.ndjson" \
   --slurpfile termHosts "$TMP/termhosts.ndjson" \
   --slurpfile gitScope "$TMP/gitscope.ndjson" \
+  --slurpfile sbScope "$TMP/sbscope.ndjson" \
   --argjson ignoreUntracked "$(jq -nc --arg s "$CM_IGNORE_UNTRACKED" '$s | split(" ") | map(select(length > 0))')" \
   --arg pathMatch "$CM_PATH_MATCH" \
   --arg forbidden "$CM_FORBIDDEN_AGENTS" \
@@ -525,5 +549,6 @@ jq -n \
       terminalScope: {enabled: ($forbidden != ""),
                       pathMatch: (if $pathMatch == "" then null else $pathMatch end),
                       hosts: $termHosts},
+      supabaseScope: {hosts: $sbScope},
       errors: $errors
     }'

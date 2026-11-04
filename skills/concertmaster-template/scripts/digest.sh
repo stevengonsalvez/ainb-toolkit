@@ -34,7 +34,8 @@
 # text, chat friendly, no em-dashes. Read-only: it never writes the ledger (the
 # digests.lastSentAt write after a send is the concertmaster's).
 # --full also lists forbidden agents (host, worktree and handle, so never for a group), only when
-# ledger.violations has rows or ledger.violationCheck is incomplete.
+# ledger.violations has rows or ledger.violationCheck is incomplete. It also lists Supabase stacks
+# without a worktree (only when ledger.supabaseStacks has orphans or is incomplete).
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -213,6 +214,14 @@ TZ="$CM_TZ" jq -r --argjson sinceH "$SINCE_H" --argjson since "$SINCE_EPOCH" --a
          + (if ($vc.checkedAt | ts) != null then ["census \($vc.checkedAt | ago) old"] else [] end)) as $lines
         | if ($lines | map(select(startswith("census ") | not)) | length) == 0 then empty
           else section("Forbidden agents on \($project) work"; $lines) end end end ),
+    ( if $full | not then empty else def clean: tostring | gsub("[[:cntrl:]]+"; " ");
+      (.supabaseStacks // {}) as $sb
+      | ([ ($sb.orphans // [])[] | "\(.host // "?" | clean) \(.projectId // "?" | clean): \(.containers // "?" | clean) containers, no live Orca worktree names it" ]
+         + (if ($sb | length) == 0 then ["CHECK NOT RUN: the ledger has no supabaseStacks (tick step 3 writes it), not proof of none"] else [] end)
+         + (if $sb.complete == false then ["CHECK INCOMPLETE, not proof of none: \(($sb.gaps // []) | join("; ") | clean | .[0:600])"] else [] end)
+         + (if ($sb.checkedAt | ts) != null then ["census \($sb.checkedAt | ago) old"] else [] end)) as $lines
+      | if ($lines | map(select(startswith("census ") | not)) | length) == 0 then empty
+        else section("Supabase stacks without a worktree"; $lines) end end ),
     ( if $full | not then empty else
       [ $workers[] | select(.state == "running") ] as $run
       | ($run | group_by(.host) | map("\(.[0].host) \(length)") | join(", ")) as $byHost

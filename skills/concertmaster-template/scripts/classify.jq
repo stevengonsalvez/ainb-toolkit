@@ -401,6 +401,35 @@ def nrm: ascii_downcase | gsub("[^a-z0-9]"; "-");
         + [ $hosts[] | select(.reachable) | .name as $n
             | select(([($ts.hosts // [])[] | select(.host == $n)] | length) == 0)
             | "\($n): terminals not listed" ] end) + $pgaps) as $vgaps
+# Orphan Supabase stacks (teardown stops a worktree's stack, so a running one with no live worktree is a
+# leak). Per reachable host, discover's `supabaseScope.hosts[]` entry lists the running Supabase CLI stacks
+# (project id, container count, bind mount sources) and the project_id in the config.toml of EVERY Orca
+# worktree on that host (any repo, so another project's own stack is matched to its own worktree and not
+# flagged). Only Orca-tracked worktrees count as live: a stack started in a checkout Orca does not list (a
+# personal clone, say) is reported too, so read an orphan row as "nothing Orca tracks owns it". A stack is
+# an orphan when no live worktree's config carries its id and no bind mount of it lies inside a live
+# worktree path (a path-boundary match). The shared default id is carried by the main checkout, so a stack
+# under it is never an orphan: it cannot be told apart from a live one. A host whose worktree list was cut
+# off emits no orphan rows (a stack could belong to an unlisted worktree). The check is incomplete, never
+# clean, when the document has no such data, a host is offline, its scan failed, docker is missing or did
+# not answer, or the worktree list was cut off.
+| (.supabaseScope // null) as $sbs
+| ([ if $sbs == null then ["discover document has no Supabase stack data (older discover.sh): stack check not run"]
+     else ([ ($sbs.hosts // [])[] | select(.ok != true) | "\(.host): \(.error // "stack scan failed")" ]
+        + [ ($sbs.hosts // [])[] | select(.ok == true and .docker != "ok") | "\(.host): docker \(if .docker == "nodocker" then "is not installed" else "did not answer" end), stacks not checked" ]
+        + [ ($sbs.hosts // [])[] | select(.ok == true and .truncated == true) | "\(.host): worktree list cut off, stack ownership not provable" ]
+        + [ $hosts[] | select(.reachable | not) | "\(.name): host offline, stacks not listed" ]
+        + [ $hosts[] | select(.reachable) | .name as $n
+            | select(([($sbs.hosts // [])[] | select(.host == $n)] | length) == 0)
+            | "\($n): stacks not listed" ]) end ] | flatten) as $sbGaps
+| ([ ($sbs.hosts // [])[] | select(.ok == true and .docker == "ok" and .truncated != true) | . as $h
+     | ([$h.worktrees[] | .projectId | select(. != "")] | unique) as $ids
+     | ([$h.worktrees[] | .path | select(. != "")]) as $wts
+     | $h.stacks[]
+     | select(.projectId as $p | ($ids | index($p)) == null)
+     | select(([.mounts[]? as $m | $wts[] as $w | select($m == $w or ($m | startswith($w + "/")))] | length) == 0)
+     | {host: $h.host, projectId, containers, reason: "\(.containers) containers, no live Orca worktree config or mount names it"} ]
+   | sort_by(.host, .projectId)) as $sbOrphans
 | {
     schema: "concertmaster.classify/v1",
     generatedAt: .generatedAt,
@@ -422,5 +451,6 @@ def nrm: ascii_downcase | gsub("[^a-z0-9]"; "-");
       otherProject: ($items | map(select(.class == "other-project")) | length),
       rows: ($cOrph + $cUnk + $cDirty | sort_by(.kind, .host, .worktree))
     },
+    supabaseStacks: {orphans: $sbOrphans, complete: ($sbGaps | length == 0), gaps: $sbGaps},
     items: $items
   }
