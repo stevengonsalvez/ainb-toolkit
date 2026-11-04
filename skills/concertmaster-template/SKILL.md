@@ -182,8 +182,9 @@ The lane set above is the default; `cfg.lanes` is the list in use.
     post-release walk) is published with `cfg.evidence.publish_cmd` when it is set (it prints
     a shareable URL; empty means no publisher, so the worker attaches the file to the PR
     through GitHub and says so) and linked in a PR comment or the worker's `cm:done` line.
-    Screenshots of REAL users (a chat message, a parent, any named person) stay local under
-    `$CM_HOME/inbox` and never enter the repo or any branch; one that shows a child's name,
+    Screenshots of REAL users (a chat message, a parent, any named person) stay local in the
+    concertmaster's own inbox (under its state dir, on its host; never shared, never sent to
+    another host) and never enter the repo or any branch; one that shows a child's name,
     face or score is checked by viewing it, then redacted or described in words only. Tests
     and examples use test accounts only. Standard and file naming: `references/lanes.md`
     § Evidence standard; the project's own paths, themes and accounts go in the `evidence`
@@ -199,6 +200,12 @@ The lane set above is the default; `cfg.lanes` is the list in use.
     (`references/lanes.md`) and the Lead charter. There is no stamp helper script; the rule
     is text. (Parallel PRs collide on stamps, the merge-time check catches it late, and the
     worker is the one who can rename for free.)
+24. **Cross-host handoff goes through Orca or GitHub, never a host-local path.** The inbox
+    and `$CM_HOME` stay on the concertmaster's host: never tell a lane to read them, and never
+    put one in a brief, a nudge or a comment. For a remote target share each file the brief
+    points at with `scripts/handoff.sh share` and pass the printed link, put durable content
+    in a GitHub issue or Discussion, and run `scripts/handoff.sh check <brief>` before
+    sending. Every script calls Orca through `cm_orca` (`scripts/test/no-bare-orca.sh`).
 
 <!-- project-local: hard-rules -->
 
@@ -653,11 +660,16 @@ deterministic parts are `scripts/intake.sh`.
 ## Spawn recipe
 
 ```bash
-ORCA=orca                                   # or orca-ide, per cm_orca
+. scripts/lib.sh                            # defines cm_orca
+ORCA="$(cm_orca)"                           # never a bare orca
 H=build-host                                # host chosen from capacity
 ENV="--environment $H"                      # empty for local
 ID=w-dev-101                                # worker id, also the brief name
 cat > $CM_HOME/briefs/$ID.md                # filled brief from references/lanes.md
+# Remote host ($ENV set): files the brief points at go as links, never as paths on this host:
+#   link="$(scripts/handoff.sh share <file.md>)" || exit 1                    # put the link in the brief
+#   scripts/handoff.sh check $CM_HOME/briefs/$ID.md --target remote || exit 1 # exit 1 lists host-local paths
+# (in an interactive shell read "exit 1" as "stop, send nothing"; a local target skips both lines)
 
 $ORCA worktree create $ENV --repo name:<cfg.worktrees.orca_repo> \
   --name dev-101-calendar-export --no-parent \
@@ -665,6 +677,13 @@ $ORCA worktree create $ENV --repo name:<cfg.worktrees.orca_repo> \
   --comment "cm:spawning issue #101 calendar export" --json
 ```
 
+- Cross-host handoff: the inbox and `$CM_HOME` are local to this host by design, so a lane on
+  another host can never read them and must never be told to. For a remote target the brief
+  text goes inline (as above) and every file it points at is first shared with
+  `scripts/handoff.sh share` and referenced by the printed link;
+  `scripts/handoff.sh check <brief>` must exit 0 before the send. Durable content (plans,
+  specs, evidence kept after the task) goes to a GitHub issue or Discussion instead. Details:
+  `references/lanes.md` § Remote targets.
 - Name: `<lane>-<slug>` (`dev-101-calendar-export`, `ops-reset-account`,
   `research-cost-model`, `epic-billing-lead`). `--no-parent`, no `--base-branch`.
 - Record from the JSON: `worktree.id` (the full `<repoId>::<path>`) and the
@@ -1287,13 +1306,14 @@ shellcheck clean.
 | `scripts/unlinked-prs.sh [--json\|--message\|--mark-sent <n>...]` | open PRs with no linked issue (`closingIssuesReferences` or a `Closes`/`Fixes`/`Resolves`/`Part of`/`Refs` link in the body) created at or after `unlinked_prs.since`: ONE `gh pr list --limit 100` per run (retry at `--limit 30` only on failure, backoff after 2 failures, `truncated` set then); drafts and bots skipped; state in `$CM_HOME/unlinked-prs.json`, a failed call keeps the last list marked stale (`FAILING` from the 3rd run); `--message` text for the pr-sweeper, each PR sent once; exit 0 |
 | `scripts/automations-audit.sh` | tick step: Orca automations on every host whose name matches `project.name`, a lane or `automations.names`, flagged `FORBIDDEN` (enabled, runs an agent in `automations.forbidden_agents`) or `DUPLICATE` (enabled lane-recovery timer, not listed in `automations.expected`); TSV, read-only, exit 2 when the config names nothing to match |
 | `scripts/hooks/rm-guard-hook.sh` | PreToolUse hook: denies an unguarded variable path under a recursive `rm` at once, and a raw `orca worktree rm` / `remove` typed in a Bash command, pointing at `scripts/teardown.sh` (`references/prompt-stalls.md`) |
+| `scripts/handoff.sh` | cross-host handoff: `share <file.md\|file.html> [--environment <sel>] [--allow <ERE>] [--no-check] [--no-secret-scan]` first lints the file (`check` plus `scan-secrets.sh`), then runs `artifacts share --json` through `cm_orca` and prints the link (exit 1 and a clear stderr line when the file is missing or not .md/.html, the CLI fails or refuses, or the reply has no link; the reply body and any token are never printed); `check <file\|-> [--target remote\|local] [--allow <ERE>]` lints a brief for `~/.concertmaster`, `$CM_HOME`, the configured `state_dir`, `/home/<user>/`, `/Users/<user>/` (exit 1 lists each hit with its line number; `--target local` skips) |
 | `scripts/spawn-verify.sh` | guards for a claude session started in a terminal: `resolve [--ssh <target>]` prints an absolute, non-stub claude path (exit 1 with the npm fix otherwise); `check (--terminal <h> [--environment <host>] [--wait <s>] \| --file <screen>) [--model <m>] [--effort <e>]` exits 0 only when the bottom of the pane shows the expected model (`cfg.spawn.expected_model` / `expected_effort`) on a Claude footer, else `verify: FAIL <reason>` (send no brief) |
 | `scripts/sync-from-toolkit.sh <project-skill-dir>` | copies this engine into a project's skill directory without touching its `config.yaml` or `references/project-local.md` (README, "Update a project") |
 | `scripts/config-check.sh [--config <file>]` | the config doctor: required keys, shape of the optional blocks, no secret-looking text, no em-dash; exit 1 on any failure, 2 on bad usage; read-only; `--config config.example.yaml` checks the template itself |
 | `scripts/hooks/mc-worker-hook.sh` | Claude Code hook for workers, in-scope repos only (optional) |
 | `scripts/digest.sh [--full] [--since-hours n]` | digest text, stdout only, `- ` bullets, no Needs, Open follow-ups, Stuck or Fleet section (`--full` adds them for the terminal report): Merged (merged since `digests.lastSentAt`, else 12h) from `gh pr list`, Deployed from `gh run list` and `gh run view` (config `digest.deploy_workflow` and `digest.deploy_job`, merged by tag with the ledger `deployWindows[]` rows), and in `--full` the open PR count (a failed gh prints "unknown (gh failed)", never 0), every other section from the ledger; read-only; `--full` also lists `ledger.violations` and an incomplete `ledger.violationCheck`, and `ledger.supabaseStacks` orphans or an incomplete check |
 | `scripts/intake.sh <cmd>` | the deterministic half of `intake` (rules in `scripts/intake.jq`) |
-| `scripts/test/*.sh` | `classify-standing`, `classify-violations`, `teardown-gates`, `teardown-supabase`, `teardown-codex-procs`, `census-supabase`, `resume-flow`, `intake`, `mc-emit`, `boot-sweep`, `runtime-check`, `ci-queue-alert`, `cred-check`, `backup-offhost`, `backup-stale`, `scan-secrets`, `rm-guard-hook`, `digest-gh`, `orca-json-helpers`, `waiting-autocompact`, `spawn-verify`, `classify-ownership`, `ask-timeout`, `queue`, `queue-audit`, `salv3`, `salv3-followups`, `markers`, `unlinked-prs`, `tick-emit`, `config-check`, `automations-audit`, `followups`, `followups-escalate`, `lane-journal`, `asks`, `teardown-owner`, `lanes-relay`, `fleet-state`, `lessons-recon`, `pane-stalls`, `skill-sync`, `tick-contract`, `keep-tmp`: hermetic tests against `scripts/test/fixtures/config.test.yaml`; run the matching one after any script change |
+| `scripts/test/*.sh` | `classify-standing`, `classify-violations`, `teardown-gates`, `teardown-supabase`, `teardown-codex-procs`, `census-supabase`, `resume-flow`, `intake`, `mc-emit`, `boot-sweep`, `runtime-check`, `ci-queue-alert`, `cred-check`, `backup-offhost`, `backup-stale`, `scan-secrets`, `rm-guard-hook`, `digest-gh`, `orca-json-helpers`, `waiting-autocompact`, `spawn-verify`, `classify-ownership`, `ask-timeout`, `queue`, `queue-audit`, `salv3`, `salv3-followups`, `markers`, `unlinked-prs`, `tick-emit`, `config-check`, `handoff`, `no-bare-orca`, `automations-audit`, `followups`, `followups-escalate`, `lane-journal`, `asks`, `teardown-owner`, `lanes-relay`, `fleet-state`, `lessons-recon`, `pane-stalls`, `skill-sync`, `tick-contract`, `keep-tmp`: hermetic tests against `scripts/test/fixtures/config.test.yaml`; run the matching one after any script change |
 
 <!-- project-local: scripts -->
 
