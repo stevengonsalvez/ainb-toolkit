@@ -1427,6 +1427,21 @@ if [ "$BEADS_UNREAD" = 1 ] && [ "$BEADS_AUTO" = 0 ] && [ -z "$BEADS_OK_REASON" ]
    && [ "$BRED_ST" != failed-outside-main-checkout ]; then
   BD_HINT=" | bd cannot read this beads store: its state is UNKNOWN (for example a store schema older than the installed bd). If the tree is otherwise clean and pushed and $CM_OWNER_NAME agrees, re-run with --salvage --beads-unreadable-ok '<reason>'; never migrate the store or run bd writes on this worktree"
 fi
+# A store BEHIND the installed bd ("schema version mismatch: database is at vN, binary
+# expects vM", N < M) has a sanctioned manual fix. This script still only refuses and
+# never migrates; the hint names the recovery steps so the refusal is not a dead end.
+# A store NEWER than bd (N >= M), or a message whose versions cannot be read, gets no hint:
+# migrating with the older binary is wrong, so fail closed. It also gets none where the general
+# hint above is held back (another source failed, or the flag was given): the store may not be
+# this worktree's own.
+case "$([ -n "$BD_HINT" ] && cm_lower "$BBD_ERR")" in
+  *"schema version mismatch"*)
+    SVM="$(printf '%s' "$(cm_lower "$BBD_ERR")" | sed -n 's/.*database is at v\([0-9][0-9]*\), binary expects v\([0-9][0-9]*\).*/\1 \2/p')"
+    if [ -n "$SVM" ] && [ "${SVM% *}" -lt "${SVM#* }" ]; then
+      BD_HINT="${BD_HINT//; never migrate the store or run bd writes on this worktree/}"
+      BD_HINT="$BD_HINT | schema version mismatch: this script never migrates; fix it by hand, see references/recovery.md, section 'Beads schema version mismatch at teardown': back up .beads, then bd migrate schema, only with no live agent in the worktree, never wipe or recreate the store"
+    fi ;;
+esac
 if [ "$BEADS_UNREAD" = 1 ] && [ -n "$BEADS_OK_REASON" ]; then
   check beads-unread "bd cannot read the store: UNKNOWN, accepted by --beads-unreadable-ok ($BEADS_OK_REASON); the other beads sources are still checked"
   [ "$SALVAGE" -eq 1 ] || refuse "--beads-unreadable-ok needs --salvage: the whole .beads dir is copied out before anything is removed"
