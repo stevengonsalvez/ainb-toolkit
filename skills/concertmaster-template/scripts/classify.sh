@@ -18,7 +18,9 @@
 # Forbidden agents (config agents.forbidden, env CM_FORBIDDEN_AGENTS): each terminal in
 # discover's `terminals` running one is a `.violations` row (host, worktree, handle, title,
 # agent); --table prints a `violations:` line and one VIOLATION row each. Unlisted, offline,
-# cut-off or failed hosts make the check incomplete (CHECK INCOMPLETE), never "none".
+# cut-off or failed hosts make the check incomplete (CHECK INCOMPLETE), never "none"; so does a
+# reachable remote host that is only terminal-scanned (a forbidden-agent process there with no Orca
+# terminal is not seen). A local-only fleet is complete.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"

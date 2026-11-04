@@ -67,9 +67,17 @@
 # "resumed <agent>", the resumer's title before Orca has identified the process) becomes a
 # row in `.violations`: host, worktree (name), path, handle, title, agent. Independent of
 # class. The check is `violationCheck.complete` only when discover listed terminals on every
-# reachable host, untruncated; a document without terminal data, an offline host, or a host
-# whose terminal list failed or was cut off, is incomplete and names why, so "no violations"
-# is never claimed unchecked. With agents.forbidden empty the census is off:
+# reachable host, untruncated, and no reachable remote host is only terminal-scanned. A document
+# without terminal data, an offline host, or a host whose terminal list failed or was cut off, is
+# incomplete and names why, so "no violations" is never claimed unchecked.
+# The scan reads Orca terminals only. A forbidden-agent process on a remote host with no Orca
+# terminal (a script-started review, say) is invisible, so a clean count there would be a false
+# clean. Each reachable remote host (kind not "local") whose terminal list was read in full
+# therefore gets one "terminal-only scan" gap line and the check is incomplete. A host that is
+# offline, failed, was cut off or was not listed already has its own gap line and gets no second
+# one; a run that never scanned (no terminal data, path_match unset) makes no terminal-only claim.
+# A missing kind counts as remote (a false incomplete beats a false clean). Detected violations are
+# still reported. A local-only fleet stays complete. With agents.forbidden empty the census is off:
 # `violationCheck.enabled` is false and `complete` is true with no gaps.
 # Ownership (when --argjson own is not null; rules in config.yaml `ownership`):
 # every in-scope worktree (the configured Orca repo, never a main checkout, never a
@@ -381,14 +389,18 @@ def nrm: ascii_downcase | gsub("[^a-z0-9]"; "-");
       | ([.flags[] | select(startswith("dirty:") or startswith("unpushed:"))]) as $df | select(($df | length) > 0)
       | {kind: "dirty", worktree: .name, host, reason: (($df | join(", ")) + " (class \(.class))")} ]) as $cDirty
 | (.terminalScope // null) as $ts
-| (if ($forbid | length) == 0 then []
+| (if ($forbid | length) == 0 or $ts == null or ($ts.enabled | not) or ($ts.pathMatch // "") == "" then []
+   else [ $hosts[] | select(.reachable and (.kind // "") != "local") | .name as $n
+          | select(([($ts.hosts // [])[] | select(.host == $n and .ok == true)] | length) > 0)
+          | "\($n): terminal-only scan, processes without an Orca terminal not checked" ] end) as $pgaps
+| ((if ($forbid | length) == 0 then []
    elif $ts == null or ($ts.enabled | not) then ["discover document has no terminal data (older discover.sh, or agents.forbidden unset when it ran): forbidden-agent check not run"]
    elif ($ts.pathMatch // "") == "" then ["worktrees.path_match is unset: forbidden-agent check not run"]
    else [ ($ts.hosts // [])[] | select(.ok != true) | "\(.host): \(.error // "terminal list failed")" ]
         + [ $hosts[] | select(.reachable | not) | "\(.name): host offline, terminals not listed" ]
         + [ $hosts[] | select(.reachable) | .name as $n
             | select(([($ts.hosts // [])[] | select(.host == $n)] | length) == 0)
-            | "\($n): terminals not listed" ] end) as $vgaps
+            | "\($n): terminals not listed" ] end) + $pgaps) as $vgaps
 | {
     schema: "concertmaster.classify/v1",
     generatedAt: .generatedAt,

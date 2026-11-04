@@ -5,8 +5,9 @@
 # through classify.sh, and checks that a forbidden-agent terminal under worktrees.path_match
 # becomes a VIOLATION row (agent, host, worktree, handle, title) and a claude, shell or
 # out-of-scope one does not. Also checks the incomplete-check paths: an offline host, a host
-# whose terminal list fails or is cut off, and a discover document with no terminal data must
-# never read as "no violations"; and that an empty agents.forbidden turns the census off.
+# whose terminal list fails or is cut off, a discover document with no terminal data, and any
+# reachable remote host (terminal-only scan) must never read as "no violations"; a local-only
+# fleet stays complete; and an empty agents.forbidden turns the census off.
 # Touches nothing outside a mktemp dir. No real orca, no network.
 #
 #   scripts/test/classify-violations.sh         # exit 0 when every case passes
@@ -31,7 +32,9 @@ host=local
 args=("$@")
 for ((i = 0; i < ${#args[@]}; i++)); do [ "${args[$i]}" = "--environment" ] && host="${args[$((i + 1))]}"; done
 case "$1 $2" in
-  "host list") printf '{"ok":true,"result":{"hosts":[{"kind":"local","name":"this machine"},{"kind":"environment","name":"host-b"}]}}\n' ;;
+  "host list")
+    if [ -e "$STUB_DIR/local-only" ]; then printf '{"ok":true,"result":{"hosts":[{"kind":"local","name":"this machine"}]}}\n'
+    else printf '{"ok":true,"result":{"hosts":[{"kind":"local","name":"this machine"},{"kind":"environment","name":"host-b"}]}}\n'; fi ;;
   "worktree ps")
     if [ -e "$STUB_DIR/ps-fail-$host" ]; then echo '{"ok":false,"error":{"message":"down"}}'; exit 1; fi
     cat "$STUB_DIR/ps-$host.json" ;;
@@ -88,24 +91,54 @@ check "claude terminals give no violation row" test "$(q '[.violations[] | selec
 check "a shell terminal gives no violation row" test "$(q '[.violations[] | select(.handle == "t_local_shell")] | length')" = 0
 check "codex terminal outside path_match gives no violation row" \
   test "$(q '[.violations[] | select(.handle == "t_local_other")] | length')" = 0
-check "every reachable host listed: check complete" test "$(q '.violationCheck.complete')" = true
+# A remote host is scanned by Orca terminal only: the check is incomplete even though its terminal list
+# succeeded, and the detected violations are still reported.
+check "remote host, terminal list ok: check incomplete" test "$(q '.violationCheck.complete')" = false
+check "remote host, terminal list ok: exactly one gap, naming the remote host, terminal-only" \
+  test "$(q '.violationCheck.gaps | length')/$(q '.violationCheck.gaps[0] | startswith("host-b: terminal-only scan")')" = 1/true
+check "remote host gap says processes without a terminal were not checked" \
+  test "$(q '.violationCheck.gaps[0] | contains("not checked")')" = true
+check "local host gives no gap line" test "$(q '[.violationCheck.gaps[] | select(startswith("local:"))] | length')" = 0
 
 TABLE="$("$HERE/../classify.sh" --table < "$ROOT/discover.json" 2>/dev/null)"
-check "--table prints the violation count" grep -q '^violations: 3$' <<<"$TABLE"
+check "--table prints the violation count with CHECK INCOMPLETE for the remote host" \
+  grep -q '^violations: 3 (CHECK INCOMPLETE: host-b: terminal-only scan' <<<"$TABLE"
 check "--table prints a VIOLATION row with host, worktree, handle, title" \
   grep -qE '^VIOLATION +codex +local +codex-lane-local +t_local_codex +resumed codex$' <<<"$TABLE"
 check "--table prints no VIOLATION row for a claude terminal" test "$(gcount '^VIOLATION.*claude-lane' "$TABLE")" = 0
 
-# Claude-only census: no violations, no VIOLATION row.
+# Claude-only census: no violations, no VIOLATION row. host-b is remote, so the check stays incomplete.
 term t_c /nonexistent/acme/claude-lane-local "resumed claude" claude | jq -s '{ok: true, result: {terminals: .}}' > "$STUB_DIR/terms-local.json"
 term t_d /nonexistent/acme/claude-lane-host-b "resumed claude" claude | jq -s '{ok: true, result: {terminals: .}}' > "$STUB_DIR/terms-host-b.json"
 "$HERE/../discover.sh" --no-prs > "$ROOT/discover2.json" 2>/dev/null
 OUT="$("$HERE/../classify.sh" < "$ROOT/discover2.json" 2>/dev/null)"
 check "claude-only census: zero violations" test "$(q '.violations | length')" = 0
-check "claude-only census: check complete" test "$(q '.violationCheck.complete')" = true
+check "claude-only census with a remote host: check incomplete, never a clean none" test "$(q '.violationCheck.complete')" = false
 TABLE="$("$HERE/../classify.sh" --table < "$ROOT/discover2.json" 2>/dev/null)"
-check "claude-only --table: 'violations: 0'" grep -q '^violations: 0$' <<<"$TABLE"
+check "claude-only --table: 'violations: 0' carries CHECK INCOMPLETE" grep -q '^violations: 0 (CHECK INCOMPLETE: host-b: terminal-only scan' <<<"$TABLE"
 check "claude-only --table: no VIOLATION row" test "$(gcount '^VIOLATION' "$TABLE")" = 0
+
+# A remote host whose terminal list succeeded but is EMPTY is still incomplete: no terminal does not mean no process.
+printf '{"ok":true,"result":{"terminals":[]}}\n' > "$STUB_DIR/terms-host-b.json"
+"$HERE/../discover.sh" --no-prs > "$ROOT/discover2e.json" 2>/dev/null
+OUT="$("$HERE/../classify.sh" < "$ROOT/discover2e.json" 2>/dev/null)"
+check "remote host, empty terminal list: zero violations" test "$(q '.violations | length')" = 0
+check "remote host, empty terminal list: check incomplete" test "$(q '.violationCheck.complete')/$(q '.violationCheck.gaps | length')" = false/1
+
+# A local-only fleet (no remote host) stays complete; a forbidden-agent terminal there is still a violation row.
+: > "$STUB_DIR/local-only"
+"$HERE/../discover.sh" --no-prs > "$ROOT/discover2l.json" 2>/dev/null
+OUT="$("$HERE/../classify.sh" < "$ROOT/discover2l.json" 2>/dev/null)"
+check "local-only fleet: check complete, no gaps" test "$(q '.violationCheck.complete')/$(q '.violationCheck.gaps | length')" = true/0
+TABLE="$("$HERE/../classify.sh" --table < "$ROOT/discover2l.json" 2>/dev/null)"
+check "local-only --table: plain 'violations: 0'" grep -q '^violations: 0$' <<<"$TABLE"
+term t_l_codex /nonexistent/acme/codex-lane-local "resumed codex" codex | jq -s '{ok: true, result: {terminals: .}}' > "$STUB_DIR/terms-local.json"
+"$HERE/../discover.sh" --no-prs > "$ROOT/discover2m.json" 2>/dev/null
+OUT="$("$HERE/../classify.sh" < "$ROOT/discover2m.json" 2>/dev/null)"
+check "local-only fleet with a forbidden agent: violation row kept, check still complete" test "$(q '.violations | length')/$(q '.violationCheck.complete')" = 1/true
+term t_c /nonexistent/acme/claude-lane-local "resumed claude" claude | jq -s '{ok: true, result: {terminals: .}}' > "$STUB_DIR/terms-local.json"
+rm -f "$STUB_DIR/local-only"
+term t_d /nonexistent/acme/claude-lane-host-b "resumed claude" claude | jq -s '{ok: true, result: {terminals: .}}' > "$STUB_DIR/terms-host-b.json"
 
 # A host whose terminal list fails: the check is incomplete and says which host, never "none".
 : > "$STUB_DIR/term-fail-host-b"
@@ -113,6 +146,7 @@ check "claude-only --table: no VIOLATION row" test "$(gcount '^VIOLATION' "$TABL
 OUT="$("$HERE/../classify.sh" < "$ROOT/discover3.json" 2>/dev/null)"
 check "failed terminal list: check incomplete" test "$(q '.violationCheck.complete')" = false
 check "failed terminal list: the gap names the host" test "$(q '.violationCheck.gaps[0] | startswith("host-b:")')" = true
+check "failed terminal list: one gap line for the host, no second terminal-only line" test "$(q '.violationCheck.gaps | length')" = 1
 TABLE="$("$HERE/../classify.sh" --table < "$ROOT/discover3.json" 2>/dev/null)"
 check "failed terminal list: --table says CHECK INCOMPLETE" grep -q '^violations: 0 (CHECK INCOMPLETE: host-b:' <<<"$TABLE"
 
@@ -130,6 +164,7 @@ rm -f "$STUB_DIR/term-trunc-host-b"
 "$HERE/../discover.sh" --no-prs > "$ROOT/discover5.json" 2>/dev/null
 OUT="$("$HERE/../classify.sh" < "$ROOT/discover5.json" 2>/dev/null)"
 check "offline host: check incomplete, names the host" test "$(q '.violationCheck.complete')/$(q '.violationCheck.gaps | join(" ") | contains("host-b: host offline")')" = false/true
+check "offline host: one gap line for the host, no false terminal-only claim" test "$(q '.violationCheck.gaps | length')" = 1
 rm -f "$STUB_DIR/ps-fail-host-b"
 
 # Odd terminal data: a non-string agentIdentity must not break classify; a "resumed codex" title with no
@@ -143,6 +178,24 @@ check "title 'resumed codex' with no agentIdentity: violation row" test "$(q '[.
 # A discover document with no terminal data (older discover.sh) is never "no violations".
 OUT="$(jq 'del(.terminals, .terminalScope)' "$ROOT/discover2.json" | "$HERE/../classify.sh" 2>/dev/null)"
 check "document without terminal data: check incomplete" test "$(q '.violationCheck.complete')" = false
+check "document without terminal data: one gap, no terminal-only claim for the remote host" \
+  test "$(q '.violationCheck.gaps | length')/$(q '.violationCheck.gaps[0] | startswith("discover document has no terminal data")')" = 1/true
+# path_match unset: the check did not run, so no terminal-only claim either.
+OUT="$(jq '.terminalScope.pathMatch = ""' "$ROOT/discover2.json" | "$HERE/../classify.sh" 2>/dev/null)"
+check "path_match unset: one gap, no terminal-only claim" \
+  test "$(q '.violationCheck.gaps | length')/$(q '.violationCheck.gaps[0] | startswith("worktrees.path_match is unset")')" = 1/true
+# A reachable remote host missing from the terminal scope: one "terminals not listed" gap, no second line.
+OUT="$(jq '.terminalScope.hosts |= map(select(.host != "host-b"))' "$ROOT/discover2.json" | "$HERE/../classify.sh" 2>/dev/null)"
+check "remote host missing from terminal scope: one 'terminals not listed' gap" \
+  test "$(q '.violationCheck.gaps | length')/$(q '.violationCheck.gaps[0] | startswith("host-b: terminals not listed")')" = 1/true
+# A host row with no kind counts as remote: a false incomplete beats a false clean.
+OUT="$(jq 'del(.hosts[] | select(.name == "host-b") | .kind)' "$ROOT/discover2.json" | "$HERE/../classify.sh" 2>/dev/null)"
+check "remote host row with no kind: still gets the terminal-only gap" \
+  test "$(q '.violationCheck.gaps | length')/$(q '.violationCheck.gaps[0] | startswith("host-b: terminal-only scan")')" = 1/true
+# Two remote hosts: one terminal-only line each.
+OUT="$(jq '.hosts += [(.hosts[] | select(.name == "host-b") | .name = "host-c")] | .terminalScope.hosts += [{host: "host-c", ok: true, error: null}]' "$ROOT/discover2.json" | "$HERE/../classify.sh" 2>/dev/null)"
+check "two remote hosts: one terminal-only gap each" \
+  test "$(q '[.violationCheck.gaps[] | select(contains("terminal-only scan"))] | length')/$(q '.violationCheck.gaps | map(select(startswith("host-c:"))) | length')" = 2/1
 
 # Census off: with agents.forbidden empty discover lists no terminals and classify reports the
 # check as off, not as "complete, none found".

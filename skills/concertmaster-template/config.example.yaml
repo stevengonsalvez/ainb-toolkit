@@ -142,7 +142,9 @@ hosts:
 
 # Agent types the project does not allow. Each census (discover.sh, classify.sh) lists every
 # terminal under worktrees.path_match whose Orca agentIdentity is one of these as a
-# violation, and says CHECK INCOMPLETE (never "none") when a host could not be read.
+# violation, and says CHECK INCOMPLETE (never "none") when a host could not be read. The scan sees
+# Orca terminals only, so every reachable remote host also makes the check incomplete (a process
+# with no Orca terminal there is not seen); a local-only fleet is complete.
 # Empty (the default) turns the census off. Example: [codex]
 agents:
   forbidden: []                    # [script] lowercase Orca agentIdentity values; CM_FORBIDDEN_AGENTS overrides
