@@ -2,7 +2,8 @@
 
 The concertmaster's own state (`$CM_HOME`, default `~/.concertmaster`) is the one part of the
 system that git cannot rebuild. This file covers the copy of that state kept on a second host,
-the alarm that fires when the copy stops, and the restore onto a fresh host.
+the alarm that fires when the copy stops, and the restore onto a fresh host. It also covers what `teardown.sh` stops
+before a worktree goes: its local Supabase stack and leftover codex processes.
 
 ## What is in git, what is not
 
@@ -116,3 +117,63 @@ while is harmless, repeated means a hung run.
    gone by design, the work is in git and PRs.
 5. Continue with `SKILL.md` § First boot; the first census reconciles the restored ledger with what is
    actually running.
+
+## Leftover local Supabase stacks
+
+A worker that ran `supabase start` in its worktree leaves the stack running when the worktree goes. The
+stack is keyed by its project id (`project_id` in `supabase/config.toml`, or an id the worker passed), not
+by the path, and the Supabase CLI labels each container `com.supabase.cli.project=<id>` and nothing more:
+no path label, named volumes, usually no bind mount into the worktree. A host can accumulate
+orphan containers this way.
+
+- `teardown.sh --apply` stops the stack that is provably the torn-down worktree's, before the worktree is
+  removed: `supabase stop --project-id <id>` for the id in its `config.toml`, or for any container with a bind
+  mount inside the worktree. It never passes `--no-backup`: the leak is the running containers (CPU, ports,
+  memory), so the data volumes are kept and a stack stopped by mistake can be started again.
+- The checked-in default id is shared by every worktree that does not override it. A shared id is never
+  stopped: an id is stopped only when no other live worktree (Orca rows and the repo's git worktrees on that
+  host) carries it and that list was read in full, and a bind mount inside the worktree does not override
+  this. Otherwise teardown warns (`supabase  WARNING stack <id> ... NOT stopped`) and leaves it. A separate
+  clone of the repo on the same host that is in neither list is not seen, so its stack can be stopped when it
+  shares an id: keep clones off the default id.
+- No docker, a docker that does not answer, or no `supabase` CLI is a warning, never a refusal. The census
+  (`classify.sh --census`) then says `CHECK INCOMPLETE` for that host instead of a clean zero.
+- A stack left behind shows as `supabase-stack: <id> @ <host>` in the census. Before stopping one by hand,
+  confirm no live worktree uses that id (`grep project_id` in the live worktrees' `supabase/config.toml`),
+  then `supabase stop --project-id <id>`. Never stop the shared default id while another worktree is live. A
+  stopped stack's volumes stay: list them with `docker volume ls --filter name=<id>` and remove them only with
+  the owner's agreement.
+- Other projects' stacks that run in an Orca worktree are matched to that worktree and are never flagged or
+  touched by teardown. Only Orca-tracked worktrees count as live, so a stack started in a checkout Orca does not
+  list (a personal clone) is reported by the census too: read an orphan row as "nothing Orca tracks owns it" and
+  check who started it before stopping it. A host with no docker, or whose docker is silent, is reported as
+  `CHECK INCOMPLETE` on every tick until docker is readable; that is deliberate (never a false clean).
+- A live worker that started its stack with `--project-id <id>` and no matching `config.toml` id is not
+  attributable: teardown leaves its stack alone and the census shows it as an orphan while the worker runs.
+  Check for a live worker before stopping any orphan row.
+- The shared default id is carried by the main checkout, so a leaked stack under it is not reported as an orphan:
+  it cannot be told apart from a live one. The leak this section fixes is the per-worker ids. A host whose
+  worktree list was cut off reports no orphan rows (only `CHECK INCOMPLETE`).
+- Stopped stacks leave their data volumes behind (teardown never passes `--no-backup`). The census flags only
+  running stacks, so review `docker volume ls` on a worker host now and then.
+
+## Leftover codex processes at teardown
+
+A codex app-server, and the node or shell children it spawned, can outlive the terminal that started it and
+keep burning CPU after the worktree is removed. Before `orca worktree rm`, `teardown.sh --apply` stops them:
+
+- Which processes: those whose cwd resolves inside the worktree (a path boundary match, so `/x/foo` never
+  matches `/x/foo-bar`; `.agents/scratch/...` is inside the worktree) AND that are a codex process (argv[0] is
+  `codex` or `codex.js`, or an interpreter such as node or sh with a PATH to a file named `codex` or `codex.js` among its first arguments; a bare word `codex` after a script is an argument and does not count) or a descendant of one. A codex
+  process whose cwd is elsewhere is never touched. Any other non-shell process in the worktree still refuses the
+  teardown, as before. This covers the process gate only: a terminal that still hosts an agent is closed with
+  `--close-handle <h>` first, exactly as before.
+- How: by exact pid, deepest children first. TERM, a bounded wait (`CM_TD_PROC_WAIT`, default 10 seconds), then
+  KILL for the survivors. Each pid is re-checked (still alive, cwd still inside) just before it is signalled, so
+  a reused pid is left alone. Never `pkill`, never by name. The pids stopped are printed
+  (`stopped codex processes on <host> by pid (TERM): ...`, `(KILL after Ns): ...`). A process that survives KILL
+  fails the teardown before anything is removed. The stop is not undone if a later step refuses or fails (the
+  worktree stays, its processes already stopped); it is safe to repeat.
+- The dry run lists the pids it would stop (`codex  leftover codex processes ... (children first): <pid>:<name>`).
+  If the process list cannot be read on the host, the dry run says so and the existing non-shell process gate
+  still decides.
