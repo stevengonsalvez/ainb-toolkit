@@ -237,7 +237,7 @@ echo "--- cm_worker_set_handle (lib.sh)"
 # shellcheck source=SCRIPTDIR/../lib.sh
 . "$SCRIPTS/lib.sh"
 mkledger() {
-  jq -n --arg wt "$WT" '{schema: "concertmaster.ledger/v1", updatedAt: "2026-01-01T00:00:00Z",
+  jq -n --arg wt "$WT" '{schema: "concertmaster.ledger/v1", updatedAt: "2000-01-01T00:00:00Z",
     workers: {"w-prs": {lane: "lane-a", host: "local", agent: "claude", model: "sonnet", path: $wt, state: "running",
                         terminal: "term_stale", task: "task-a", lastComment: "cm:running"}}}' > "$CM_HOME/ledger.json"
 }
