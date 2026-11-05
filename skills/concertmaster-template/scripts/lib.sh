@@ -629,6 +629,92 @@ _cm_ledger_write_locked() {
   fi
   return 0
 }
+
+# ---- dead ledger records ----------------------------------------------------------------------
+# A finished record (state gone or repurposed, or the old spelling torn-down) is dead: it holds no
+# terminal handle and is ignored when a worktree path is matched. CM_JQ_STATE_DEFS puts the jq
+# definition `cm_state_dead` in front of a jq program:
+#   jq "$CM_JQ_STATE_DEFS"' .workers[] | select((.state // "running") | cm_state_dead | not)'
+# shellcheck disable=SC2034  # read by lane-handles.sh
+CM_JQ_STATE_DEFS='def cm_state_dead: type == "string" and IN("gone", "repurposed", "torn-down"); '
+
+# ---- worker terminal handle setter ------------------------------------------------------------
+# cm_worker_set_handle <worker-id> <handle>
+# cm_worker_set_handle --by-path <host> <path> <handle>
+# Refreshes workers.<id>.terminal (and terminalRefreshedAt) when the live agent process shows the
+# ledger handle is stale (scripts/live-agent.sh, run by scripts/lane-handles.sh). The second
+# form finds the worker by host and normalised path INSIDE the ledger lock: exactly one worker must
+# match. Guarded like cm_worker_set_state: refuses (ledger untouched, reason on stderr) a handle that
+# is not a plain token and a worker id the ledger does not hold. Also refuses a handle another worker
+# already holds (an agent started from someone else's terminal inherits THAT terminal's handle).
+# It changes nothing else, state included. Returns 0 written, 1 refused, 2 bad usage, 4 handle held by
+# another worker, 5 no single worker for that host and path.
+CM_JQ_NORMP='def normp: gsub("/\\.(?=/|$)"; "") | gsub("//+"; "/") | sub("(?<=.)/+$"; "");'
+cm_worker_set_handle() {
+  local id="" host="" path="" h="" held=0 rc=0 mode=id
+  if [ "${1:-}" = "--by-path" ]; then
+    mode=path
+    if [ $# -ne 4 ] || [ -z "${2:-}" ] || [ -z "${3:-}" ] || [ -z "${4:-}" ]; then
+      cm_warn "cm_worker_set_handle: usage: cm_worker_set_handle --by-path <host> <path> <handle>"; return 2
+    fi
+    host="$2"; path="$3"; h="$4"
+  else
+    id="${1:-}"; h="${2:-}"
+    if [ $# -ne 2 ] || [ -z "$id" ] || [ -z "$h" ]; then
+      cm_warn "cm_worker_set_handle: usage: cm_worker_set_handle <worker-id> <handle>"; return 2
+    fi
+  fi
+  case "$h" in -*|*[!A-Za-z0-9._:-]*) cm_warn "cm_worker_set_handle: refused: \"$h\" is not a terminal handle"; return 1 ;; esac
+  if _cm_ledger_lock_held; then held=1; fi
+  cm_ledger_lock || return 1
+  _cm_worker_set_handle_locked "$mode" "$id" "$host" "$path" "$h" || rc=$?
+  if [ "$held" = 0 ]; then cm_ledger_unlock; fi
+  return "$rc"
+}
+
+# _cm_worker_set_handle_locked <id|path> <worker-id> <host> <path> <handle>: the body of
+# cm_worker_set_handle, lock held. Lookup and the held-by-another check happen here, under the lock.
+_cm_worker_set_handle_locked() {
+  local mode="$1" id="$2" host="$3" path="$4" h="$5" L other
+  L="$(cm_ledger_path)"
+  if [ "$mode" = path ]; then
+    id="$(jq -r --arg h "$host" --arg p "$path" "$CM_JQ_NORMP"'
+      [ (.workers // {}) | to_entries[] | select(.value | type == "object")
+        | select((.value.host // "") == $h)
+        | select(((.value.path // .value.worktree // .value.worktreePath // "") | normp) == ($p | normp))
+        | .key ] | if length == 1 then .[0] else empty end' "$L" 2>/dev/null)"
+    if [ -z "$id" ]; then cm_warn "cm_worker_set_handle: no single worker at $path on $host in $L"; return 5; fi
+  fi
+  if ! jq -e --arg id "$id" '(.workers | type) == "object" and (.workers[$id] | type) == "object"' "$L" >/dev/null 2>&1; then
+    cm_warn "cm_worker_set_handle: refused: no worker \"$id\" in $L"; return 1
+  fi
+  # A ledger we cannot read for this question fails closed: no write.
+  if ! other="$(jq -r --arg id "$id" --arg h "$h" "$CM_JQ_STATE_DEFS"'[ .workers | to_entries[] | select(.key != $id and (.value | type == "object") and .value.terminal == $h)
+      | select((.value.state // "running") | cm_state_dead | not) | .key ] | .[0] // empty' "$L" 2>/dev/null)"; then
+    cm_warn "cm_worker_set_handle: refused: cannot check which worker holds \"$h\""; return 1
+  fi
+  if [ -n "$other" ]; then cm_warn "cm_worker_set_handle: refused: worker \"$other\" already holds handle \"$h\""; return 4; fi
+  # shellcheck disable=SC2016  # a jq program: $id, $h, $now are jq variables bound by --arg
+  cm_ledger_write '.workers[$id].terminal = $h | .workers[$id].terminalRefreshedAt = $now | .workers[$id].updatedAt = $now | .updatedAt = $now' \
+    --arg id "$id" --arg h "$h" --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+}
+
+# cm_lane_for_path <host> <path>: the worker id of the one non-dead ledger worker at that host and path, else
+# nothing (return 1). Same path normalisation as cm_worker_set_handle.
+cm_lane_for_path() {
+  local host="${1:-}" path="${2:-}" L out
+  [ -n "$host" ] && [ -n "$path" ] || return 1
+  L="$(cm_ledger_path)"
+  out="$(jq -r --arg h "$host" --arg p "$path" "$CM_JQ_STATE_DEFS $CM_JQ_NORMP"'
+    [ (.workers // {}) | to_entries[] | select(.value | type == "object")
+      | select((.value.state // "running") | cm_state_dead | not)
+      | select((.value.host // "local") == $h)
+      | select(((.value.path // .value.worktree // .value.worktreePath // "") | normp) == ($p | normp))
+      | .key ] | unique | if length == 1 then .[0] else empty end' "$L" 2>/dev/null)"
+  [ -n "$out" ] || return 1
+  printf '%s\n' "$out"
+}
+
 # A healthy Claude pane ends with one of these footers (boot-sweep.sh tick mode): the status line, the
 # permissions line, the shortcuts hint, or a subagent/task row. A shell prompt (any style) or an error never does.
 # shellcheck disable=SC2034  # read by boot-sweep.sh
