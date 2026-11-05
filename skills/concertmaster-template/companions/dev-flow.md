@@ -17,8 +17,7 @@ without a bead gets one under your lane's epic (`bd create --external-ref gh-<n>
    [evidence: screenshot | command]`. A criterion you cannot check with evidence is
    not a criterion. Stuck or unclear here: escalate (below).
 3. **Implement.** One branch per item, from `origin/main`. Touch only the planned files; a new file is a plan change, update
-   `--design` first. Small, single-concern commits via `/commit` (signed, conventional,
-   no AI mention). PROJECT: apply the terminology rules from the concertmaster
+   `--design` first. Small, single-concern commits, conventional, no AI mention. Commit ONLY through the /commit skill (named-path staging, pre-commit cleanup, signed); never a raw `git commit`, `git add -A` or `git add .`. PROJECT: apply the terminology rules from the concertmaster
    config (`terminology.rules`) to user-facing text.
 4. **Validate.** Check each criterion and record pass or fail with evidence:
    UI = screenshot of the PR preview deployment (PROJECT: name the CI job that

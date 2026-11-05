@@ -193,8 +193,8 @@ recommended option, and ends its turn. The answer arrives as a typed message.
 - Never merge unless this brief says you are the merger. Never deploy staging or
   production. Never change shared infrastructure (databases, secrets, hosting)
   outside the reviewed pipeline.
-- Commits: signed (-S), atomic, staged by named path, conventional format, no
-  mention of AI. Never force-push over someone else's commits; on another
+- Commit ONLY through the /commit skill (named-path staging, pre-commit cleanup, signed); never a raw `git commit`, `git add -A` or `git add .`. Atomic commits, conventional
+  format, no mention of AI. Never force-push over someone else's commits; on another
   author's branch merge main in instead of rebasing.
 - {{terminology_lines}} No em-dashes anywhere.
 - Every wait is bounded and polls failure states too. Kill processes and tmux
@@ -806,7 +806,7 @@ PRODUCTION RULES (hard):
 - Screenshots: never capture other real users' personal data (names, faces,
   data about children). Skip or blur such screens. Publish them per § Evidence
   standard and link the results in the report. Other evidence files (the matrix)
-  go in signed commits on the git branch {{evidence_branch}} (version filled in).
+  go in commits on the git branch {{evidence_branch}} (version filled in). Commit ONLY through the /commit skill (named-path staging, pre-commit cleanup, signed); never a raw `git commit`, `git add -A` or `git add .`.
 
 COVERAGE each run: {{coverage_list}}; one deep link per area; sign-in, sign-out
 and token refresh; themes {{themes}}; viewports {{viewports}}; console errors;
@@ -891,6 +891,7 @@ nothing else changed) to a stamp above the highest of them, then rerun the dupli
 `ls <migrations-dir> | cut -d_ -f1 | sort | uniq -d` (it must print nothing). Main and other
 PRs move while you work: do this on every push, not once. `<migrations-dir>` and the shape of a
 migration file come from the project overlay (`references/project-local.md`).
+Commit ONLY through the /commit skill (named-path staging, pre-commit cleanup, signed); never a raw `git commit`, `git add -A` or `git add .`.
 Never run rm; mktemp -d under the scratchpad and leave it (a harness rm raises a "Dangerous rm
 operation" approval prompt that nobody answers, and you stall for hours). Say the same in every
 subagent brief you write.
