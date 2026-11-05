@@ -912,6 +912,12 @@ freeze time; delta from {{from_tag}}). Before your first action (your own merge 
 trigger production. Never run staging validation in parallel with the
 production trigger. Staging red: STOP, set "cm:failed staging red: <job +
 reason>", do not trigger production.
+Migration guard: re-run `scripts/deploy-migration-check.sh {{from_tag}} {{main_sha}}`
+on the pinned sha before staging (for a file the owner approved, with that PR's `--pr-body-file` and
+`--only <path>`). Any exit other than 0 blocks the window: exit 3 is a STOP (set "cm:failed migration
+guard stop: <file>", never trigger production), exit 2 is an ask for the owner (set "cm:blocked migration
+guard ask: <file>"), and exit 1 or 127 means the check did not run (set "cm:blocked migration guard did
+not run: <exit code>"). Read its "<n> migration files examined" line: n must match the delta you expect.
 Evidence: screenshots of the staging checks and of the post-release production walk (test
 personas only, no real user data) are published per references/lanes.md § Evidence standard
 (<PR> is the release or deploy PR the brief names). Screenshots of real users stay in the
