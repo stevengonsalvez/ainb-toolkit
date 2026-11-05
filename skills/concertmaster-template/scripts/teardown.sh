@@ -308,6 +308,32 @@ rrun() {
     cm_timeout "${RRUN_SECS:-20}" ssh -o BatchMode=yes -o ConnectTimeout=8 -- "$SSH_TARGET" "$line"
   fi
 }
+# SALVAGE_VERIFY_FN: shell text prepended to the salvage copy scripts (rrun passes it with the
+# script, so it also runs on a remote host). cm_same <source> <copy> succeeds only when the copy
+# matches the source WITHOUT following symlinks: diff -rq follows a link and reports a false
+# mismatch on a dangling one. Links are compared by target text (find -type l plus readlink,
+# sorted, so a changed, missing or extra link is a mismatch); everything else by entry list and
+# cmp per regular file. POSIX find, sort, readlink and cmp only: the same on GNU and BSD tools.
+# The text holds no single quote, so it nests in a single-quoted script.
+SALVAGE_VERIFY_FN='cm_links() { (cd -- "$1" && find . -type l | LC_ALL=C sort | while IFS= read -r l; do printf "%s\t%s\n" "$l" "$(readlink "$l")"; done); }
+cm_ents() { (cd -- "$1" && find . ! -type l | LC_ALL=C sort); }
+cm_same() {
+  if [ -L "$1" ] || [ -L "$2" ]; then
+    [ -L "$1" ] && [ -L "$2" ] && [ "$(readlink "$1")" = "$(readlink "$2")" ]
+    return
+  fi
+  if [ -f "$1" ]; then [ -f "$2" ] && cmp -s "$1" "$2"; return; fi
+  [ -d "$1" ] && [ -d "$2" ] || return 1
+  cs_d=$(cd -- "$2" && pwd -P) || return 1
+  cs_a=$(cm_links "$1") || return 1
+  cs_b=$(cm_links "$cs_d") || return 1
+  [ "$cs_a" = "$cs_b" ] || return 1
+  cs_a=$(cm_ents "$1") || return 1
+  cs_b=$(cm_ents "$cs_d") || return 1
+  [ "$cs_a" = "$cs_b" ] || return 1
+  (cd -- "$1" && find . -type f | while IFS= read -r f; do cmp -s "$f" "$cs_d/$f" || exit 1; done)
+}
+'
 # g <git args...>: git in the worktree, locally or over ssh.
 g() {
   if [ "$HOST" = local ]; then
@@ -1844,14 +1870,14 @@ if [ "$BEADS_WHOLE" -eq 1 ] && [ -n "$SALVAGE_DIR" ]; then
   # issues.jsonl), then compared, so a later migration or an old bd can still read it.
   # Plain cp and diff only: nothing here opens the store, nothing writes to it.
   # shellcheck disable=SC2016
-  BW_OUT="$(RRUN_SECS=600 rrun 'rel=$1; wt=$2
+  BW_OUT="$(RRUN_SECS=600 rrun "$SALVAGE_VERIFY_FN"'rel=$1; wt=$2
 [ -L "$wt/.beads" ] && exit 3
 [ -d "$wt/.beads" ] || { echo none; exit 0; }
 dest="$HOME/.concertmaster/$rel/beads-whole"
 mkdir -p -- "$dest" && cp -Rp -- "$wt/.beads/." "$dest/" || exit 1
 sn=$(find "$wt/.beads" -type f 2>/dev/null | wc -l); dn=$(find "$dest" -type f 2>/dev/null | wc -l)
 [ "$sn" -eq "$dn" ] || { echo "count mismatch on .beads: $sn vs $dn" >&2; exit 2; }
-diff -rq -- "$wt/.beads" "$dest" >/dev/null || { echo "content mismatch on .beads" >&2; exit 2; }
+cm_same "$wt/.beads" "$dest" || { echo "content mismatch on .beads" >&2; exit 2; }
 echo copied' "$SALVAGE_REL" "$WT")" \
     || fail "whole .beads copy or verification (nothing removed)"
   BW_DIR="$SALVAGE_DIR/beads-whole"
@@ -1876,7 +1902,7 @@ $PRECIOUS
 EOF_PRECIOUS
   # A copy of a Dolt store can take a while over ssh: 10 minutes, not 20s.
   # shellcheck disable=SC2016
-  RRUN_SECS=600 rrun 'rel=$1; wt=$2; shift 2
+  RRUN_SECS=600 rrun "$SALVAGE_VERIFY_FN"'rel=$1; wt=$2; shift 2
 dest="$HOME/.concertmaster/$rel"
 mkdir -p -- "$dest" && cd -- "$wt" || exit 1
 for p in "$@"; do
@@ -1885,7 +1911,7 @@ done
 for p in "$@"; do
   sn=$(find "./$p" -type f 2>/dev/null | wc -l); dn=$(find "$dest/$p" -type f 2>/dev/null | wc -l)
   [ "$sn" -eq "$dn" ] || { echo "count mismatch on $p: $sn vs $dn" >&2; exit 2; }
-  diff -rq -- "./$p" "$dest/$p" >/dev/null || { echo "content mismatch on $p" >&2; exit 2; }
+  cm_same "./$p" "$dest/$p" || { echo "content mismatch on $p" >&2; exit 2; }
 done' "$SALVAGE_REL" "$WT" "$@" || fail "salvage copy or verification (nothing removed)"
   printf 'salvaged to %s on %s\n' "$SALVAGE_DIR" "$HOST"
 fi
