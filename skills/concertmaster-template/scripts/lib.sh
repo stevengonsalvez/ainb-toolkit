@@ -822,9 +822,9 @@ _cm_lane_handle_write() {
 
 # _cm_lane_handle_commit <lane> <dir> <handle> <host> <agent> <pid> <at>: the part of the write that runs under the lock
 _cm_lane_handle_commit() {
-  local lane="$1" dir="$2" h="$3" host="$4" agent="$5" pid="$6" at="$7" tmp old oldat oldts
+  local lane="$1" dir="$2" h="$3" host="$4" agent="$5" pid="$6" at="$7" tmp oldat oldts
   if [ -s "$dir/handle" ]; then
-    IFS=$'\t' read -r old _ _ _ oldat < "$dir/handle" || true
+    IFS=$'\t' read -r _ _ _ _ oldat < "$dir/handle" || true
     # only a well-formed time that is not a clock-skewed future one decides; ISO 8601 UTC strings of one shape sort as time
     oldts="$(jq -rn --arg t "$oldat" '$t | fromdateiso8601' 2>/dev/null)"
     case "$oldts" in ''|*[!0-9]*) ;; *) if [ "$oldts" -le "$(( $(date +%s) + 60 ))" ] && [[ "$oldat" > "$at" ]]; then return 3; fi ;; esac

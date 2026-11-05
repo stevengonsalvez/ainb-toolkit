@@ -222,15 +222,16 @@ CM_SSH_TARGET="-oProxyCommand=x" "$LA" "$WT" --host remote-1 >/dev/null 2>&1; RC
 check "an ssh target that looks like an option is refused: exit 3" '[ "$RC" = 3 ]'
 reset_proc; mkproc 142 "$WT" "ORCA_TERMINAL_HANDLE=term_secs" claude
 for bad in abc 1.5 -3 0 00 000 ""; do
+  # shellcheck disable=SC2034  # OUT is read inside the eval-ed check below
   OUT="$(PATH="$ROOT/bin:$PATH" CM_PROC_ROOT="$P" CM_SSH_TARGET=fleet-box CM_SSH_EXPECT_HOSTNAME="$(hostname -s)" CM_LIVE_AGENT_SSH_S="$bad" "$LA" "$WT" --host remote-1 2>"$ROOT/err")"; RC=$?
   case "$bad" in "") want_warn=0 ;; *) want_warn=1 ;; esac
   check "CM_LIVE_AGENT_SSH_S='$bad': falls back to 20 s, still scans" '[ "$RC" = 0 ] && [ "$OUT" = "$(printf "142\tterm_secs\tclaude")" ] && { [ '"$want_warn"' = 0 ] || grep -q "using 20" "$ROOT/err"; }'
 done
-OUT="$(PATH="$ROOT/bin:$PATH" CM_PROC_ROOT="$P" CM_SSH_TARGET=fleet-box CM_SSH_EXPECT_HOSTNAME="$(hostname -s)" CM_LIVE_AGENT_SSH_S=08 "$LA" "$WT" --host remote-1 2>"$ROOT/err")"; RC=$?
+PATH="$ROOT/bin:$PATH" CM_PROC_ROOT="$P" CM_SSH_TARGET=fleet-box CM_SSH_EXPECT_HOSTNAME="$(hostname -s)" CM_LIVE_AGENT_SSH_S=08 "$LA" "$WT" --host remote-1 >/dev/null 2>"$ROOT/err"; RC=$?
 check "CM_LIVE_AGENT_SSH_S=08 is eight seconds (not bad octal), no warning" '[ "$RC" = 0 ] && ! grep -q "using 20" "$ROOT/err"'
 PATH="$ROOT/bin:$PATH" CM_PROC_ROOT="$P" CM_SSH_TARGET=fleet-box CM_SSH_EXPECT_HOSTNAME=".fleet.example.test" "$LA" "$WT" --host remote-1 >/dev/null 2>&1; RC=$?
 check "an expected hostname with an empty short part (.fleet.example.test) is refused: exit 3, never a match" '[ "$RC" = 3 ]'
-OUT="$(PATH="$ROOT/bin:$PATH" CM_PROC_ROOT="$P" CM_SSH_TARGET=fleet-box CM_SSH_EXPECT_HOSTNAME="$(hostname -s)" CM_LIVE_AGENT_SSH_S=7 "$LA" "$WT" --host remote-1 2>"$ROOT/err")"; RC=$?
+PATH="$ROOT/bin:$PATH" CM_PROC_ROOT="$P" CM_SSH_TARGET=fleet-box CM_SSH_EXPECT_HOSTNAME="$(hostname -s)" CM_LIVE_AGENT_SSH_S=7 "$LA" "$WT" --host remote-1 >/dev/null 2>"$ROOT/err"; RC=$?
 check "CM_LIVE_AGENT_SSH_S=7: a plain number is taken as it is, no warning" '[ "$RC" = 0 ] && ! grep -q "using 20" "$ROOT/err"'
 
 echo "--- cm_worker_set_handle (lib.sh)"
@@ -263,7 +264,9 @@ cm_worker_set_handle --by-path local /no/such/worktree term_x 2>/dev/null; RC=$?
 check "--by-path with no worker at that path: exit 5, ledger untouched" '[ "$RC" = 5 ] && cmp -s "$ROOT/before.json" "$CM_HOME/ledger.json"'
 jq --arg wt "$WT" '.workers["w-twin"] = {lane: "twin", host: "local", path: $wt, state: "running", terminal: "term_twin"}' "$CM_HOME/ledger.json" > "$CM_HOME/ledger.tmp" && mv "$CM_HOME/ledger.tmp" "$CM_HOME/ledger.json"
 cp "$CM_HOME/ledger.json" "$ROOT/before.json"
-cm_worker_set_handle --by-path local "$WT" term_y 2>/dev/null; RC=$?
+cm_worker_set_handle --by-path local "$WT" term_y 2>/dev/null
+# shellcheck disable=SC2034  # RC is read inside the eval-ed check below
+RC=$?
 check "--by-path with two workers at that path: exit 5, nothing guessed" '[ "$RC" = 5 ] && cmp -s "$ROOT/before.json" "$CM_HOME/ledger.json"'
 
 echo
