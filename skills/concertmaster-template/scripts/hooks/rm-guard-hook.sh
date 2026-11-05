@@ -13,7 +13,7 @@
 # this project's checkouts: exit 0, allow. Scope comes from config: the session cwd matches
 # worktrees.path_match, or its git origin is a repo of github.org (exclude patterns left out).
 #
-# Also denies a raw `orca worktree rm` / `orca worktree remove` (also as orca-ide, orca-dev, $ORCA_CLI_COMMAND or
+# Also denies a raw `orca worktree rm` / `orca worktree remove` (also as orca-ide, orca-dev, plugly, plugly-dev, plugly-ide, $ORCA_CLI_COMMAND or
 # an $ORCA... variable; any flags; any position in a chain or pipeline; also inside an ssh / bash -c / sh -c
 # string, $( ) and backticks, find -exec) when the session cwd or the command text is in the path match (worktrees.path_match). The
 # teardown gates (beads, open follow-ups, salvage, parent and child worktrees) live in scripts/teardown.sh, which
@@ -41,7 +41,7 @@ cmd="$(printf '%s' "$input" | jq -r '.tool_input.command // empty' 2>/dev/null)"
 cmd="${cmd//[$'\001'$'\002'$'\003']/_}"   # the parser uses these bytes as boundary markers: input must not forge them
 # backslash-newline joins lines, so "worktree \<newline> remove" is "worktree remove" (the segment parser below does the same)
 norm="${cmd//\\$'\n'/}"; norm="${norm//[\"\']/}"; norm="${norm//\\/}"   # orca "worktree" "rm" is the same command
-printf '%s' "$norm" | grep -qE '(^|[^[:alnum:]_.-])rm([[:space:]]|$)|worktree[[:space:]].*(rm|remove)([^[:alnum:]_-]|$)' || exit 0
+printf '%s' "$norm" | grep -qE '(^|[^[:alnum:]_.-])rm([[:space:]]|$)|worktree[[:space:]].*(rm|remove|delete)([^[:alnum:]_-]|$)' || exit 0
 
 # Scope: this project's checkouts only (a global hook must not change other projects). The
 # config loader sits next to the hook, one level up (skill tree) or in ~/.concertmaster/bin.
@@ -166,11 +166,14 @@ bad=""; rawwt=""; rm_n=0; heavy_n=0; over=""
 # command starts after -c and a quote, or after ; & | or ( ; ssh, where everything after the host is the remote command.
 # A few wrappers may sit in front of orca (env, sudo, exec, nohup, time, timeout N, VAR=x), and orca global flags
 # may take a value (orca --environment host-a worktree rm).
-# The CLI is orca, orca-ide (cm_orca picks it on Linux outside an Orca terminal) or the basename of $ORCA_CLI_COMMAND.
+# The CLI is orca, orca-ide (cm_cli picks it on Linux outside an Orca terminal), plugly, plugly-dev, plugly-ide, or the basename of
+# $ORCA_CLI_COMMAND or $PLUGLY_CLI_COMMAND.
 cli_base="${ORCA_CLI_COMMAND:-}"; cli_base="${cli_base##*/}"
 case "$cli_base" in *[!A-Za-z0-9._-]*) cli_base="" ;; esac
-is_orca_bin() { local b="${1##*/}"; b="${b#\\}"; case "$1" in '$'*|'`'*) return 0 ;; esac; case "$b" in orca|orca-ide|orca-dev|cm_orca) return 0 ;; esac; [ -n "$cli_base" ] && [ "$b" = "$cli_base" ]; }
-# $1 = text; true when it starts (after wrappers) with <orca> [flags] worktree rm|remove
+plugly_base="${PLUGLY_CLI_COMMAND:-}"; plugly_base="${plugly_base##*/}"
+case "$plugly_base" in *[!A-Za-z0-9._-]*) plugly_base="" ;; esac
+is_orca_bin() { local b="${1##*/}"; b="${b#\\}"; case "$1" in '$'*|'`'*) return 0 ;; esac; case "$b" in orca|orca-ide|orca-dev|plugly|plugly-dev|plugly-ide|cm_cli|cm_orca) return 0 ;; esac; { [ -n "$cli_base" ] && [ "$b" = "$cli_base" ]; } || { [ -n "$plugly_base" ] && [ "$b" = "$plugly_base" ]; }; }
+# $1 = text; true when it starts (after wrappers) with <orca> [flags] worktree rm|remove|delete
 starts_wt_rm() {
   local t="$1" i=0 n nx x wd; local -a w
   while :; do case "$t" in [[:space:]]*|\"*|\'*|\(*|\;*|\&*|\|*) t="${t:1}" ;; *) break ;; esac; done
@@ -215,7 +218,7 @@ starts_wt_rm() {
         i=$((i + 1))
         while [ "$i" -lt "$n" ]; do   # flags, with their values, may sit before the subcommand
           nx="${w[i]%%[\"\';&|)<>]*}"   # rm</dev/null is rm
-          case "$nx" in rm|remove) return 0 ;; -*) i=$((i + 1)); case "${w[i]:-}" in ''|-*|rm|remove|create|current|list|ps|set|show) ;; *) i=$((i + 1)) ;; esac ;; *) return 1 ;; esac
+          case "$nx" in rm|remove|delete) return 0 ;; -*) i=$((i + 1)); case "${w[i]:-}" in ''|-*|rm|remove|delete|create|current|list|ps|set|show) ;; *) i=$((i + 1)) ;; esac ;; *) return 1 ;; esac
         done
         return 1 ;;
       -*) i=$((i + 1)); nx="${w[i]:-}"; case "$nx" in ''|-*|worktree) ;; *) i=$((i + 1)) ;; esac ;;
@@ -284,7 +287,7 @@ subst_bodies() {
 # $1 = text, $2 = depth. Every body is split and judged like any other command (ssh, cd x && orca ..., wrappers).
 subst_wt_rm() {
   local b z
-  if [ "${2:-0}" -ge 3 ]; then case "$1" in *worktree*rm*|*worktree*remove*) return 0 ;; esac; return 1; fi   # at the depth cap a removal still in sight is denied
+  if [ "${2:-0}" -ge 3 ]; then case "$1" in *worktree*rm*|*worktree*remove*|*worktree*delete*) return 0 ;; esac; return 1; fi   # at the depth cap a removal still in sight is denied
   case "$1" in *'$('*|*'`'*|*'<('*|*'>('*) ;; *) return 1 ;; esac
   while IFS= read -r b; do
     [ -n "$b" ] || continue
@@ -376,7 +379,7 @@ raw_wt_rm_seg() {
       done ;;
   esac
   subst_wt_rm "$s" "$d" && return 0
-  if [ "$d" -ge 3 ]; then case "$s" in *worktree*rm*|*worktree*remove*) return 0 ;; esac; return 1; fi
+  if [ "$d" -ge 3 ]; then case "$s" in *worktree*rm*|*worktree*remove*|*worktree*delete*) return 0 ;; esac; return 1; fi
   if [[ "$s" == *'<<<'* ]]; then   # bash <<< "orca worktree rm ...", bash -s <<< ..., ssh host bash -s <<< ...: the string is the script
     x="${s%%<<<*}"; x=" ${x//[\"\']/} "
     if [[ "$x" =~ [[:space:]/](bash|sh|zsh|dash|ksh|ash)[[:space:]] ]]; then
