@@ -149,17 +149,63 @@ if [ -z "${CM_IGNORE_UNTRACKED+x}" ]; then
   fi
 fi
 
-# Resolve the Orca CLI per the orca-cli skill: $ORCA_CLI_COMMAND, else
-# orca-ide on Linux outside an Orca terminal (bare `orca` there is the GNOME
-# screen reader), else orca.
-cm_orca() {
-  if [ -n "${ORCA_CLI_COMMAND:-}" ]; then
-    printf '%s\n' "$ORCA_CLI_COMMAND"
-  elif [ "$(uname -s)" = "Linux" ] && [ "${TERM_PROGRAM:-}" != "Orca" ] && command -v orca-ide >/dev/null 2>&1; then
-    printf '%s\n' orca-ide
-  else
-    printf '%s\n' orca
-  fi
+# Which CLI drives the fleet: config key `cli`, `orca` (default) or `plugly`. CM_CLI_KIND in the
+# environment beats the file, so a test or a one-off run can switch it. Any other value fails closed
+# in cm_cli and cm_cli_host (a message on stderr, status 2, nothing printed).
+CM_CLI_KIND="${CM_CLI_KIND:-$(cm_cfg .cli orca)}"
+
+# cm_cli: print the command that runs the configured CLI.
+#   orca:   $ORCA_CLI_COMMAND, else orca-ide on Linux outside an Orca terminal (bare `orca` there is
+#           the GNOME screen reader), else orca. This is the resolution the orca-cli skill describes.
+#   plugly: $PLUGLY_CLI_COMMAND, else plugly.
+# Callers run it once: ORCA="$(cm_cli)" || exit 2.
+cm_cli() {
+  case "$CM_CLI_KIND" in
+    orca)
+      if [ -n "${ORCA_CLI_COMMAND:-}" ]; then
+        printf '%s\n' "$ORCA_CLI_COMMAND"
+      elif [ "$(uname -s)" = "Linux" ] && [ "${TERM_PROGRAM:-}" != "Orca" ] && command -v orca-ide >/dev/null 2>&1; then
+        printf '%s\n' orca-ide
+      else
+        printf '%s\n' orca
+      fi ;;
+    plugly)
+      if [ -n "${PLUGLY_CLI_COMMAND:-}" ]; then printf '%s\n' "$PLUGLY_CLI_COMMAND"; else printf '%s\n' plugly; fi ;;
+    *)
+      cm_warn "unknown cli '$CM_CLI_KIND' (config key cli, or CM_CLI_KIND): use orca or plugly"
+      return 2 ;;
+  esac
+}
+# Older briefs and lanes still say cm_orca: keep the name working for one release.
+cm_orca() { cm_cli "$@"; }
+
+# cm_cli_host <host>: the host selector words for a CLI call, on one line (nothing for the local
+# host). <host> is "local" for this machine, else the environment name.
+#   orca:   local -> nothing;   other -> --environment <name>
+#   plugly: local -> nothing;   other -> --environment <name>
+# plugly's `host list` advertises `--host local` for this machine, but plugly 1.0.0 rejects --host on every
+# command the scripts use ("Unknown flag --host for command: worktree list"; the bare call addresses the local
+# runtime). Should a later plugly accept it, change the plugly arm here and cli-argv.sh/cli-parity.sh follow.
+# Do not quote the result into one argument; use cm_cli_host_into to get an array.
+cm_cli_host() {
+  local h="${1-}"
+  [ -n "$h" ] || { cm_warn "cm_cli_host: an empty host (use local for this machine)"; return 2; }
+  case "$CM_CLI_KIND" in
+    orca)   [ "$h" = local ] || printf -- '--environment %s\n' "$h" ;;
+    plugly) [ "$h" = local ] || printf -- '--environment %s\n' "$h" ;;   # same as orca: see above
+    *)      cm_warn "unknown cli '$CM_CLI_KIND' (config key cli, or CM_CLI_KIND): use orca or plugly"; return 2 ;;
+  esac
+}
+
+# cm_cli_host_into <array-name> <host>: cm_cli_host as an array (empty for the local host), for
+# "${arr[@]}" at the call. bash 3.2 has no namerefs, so the array is filled by name with eval. The host name stays
+# ONE element, whatever characters it holds (an environment name may hold a space).
+cm_cli_host_into() {
+  local _cm_h="${2-}"
+  case "$1" in ''|[0-9]*|_cm_*|*[!A-Za-z0-9_]*) cm_warn "cm_cli_host_into: bad array name '$1'"; return 2 ;; esac
+  eval "$1=()"   # a refused host leaves an empty array, never the previous host's selector
+  cm_cli_host "$_cm_h" >/dev/null || return $?
+  if [ "$_cm_h" = local ]; then eval "$1=()"; else eval "$1=(--environment \"\$_cm_h\")"; fi
 }
 
 # cm_timeout <seconds> <cmd...>: timeout(1), gtimeout(1), or a perl alarm.
