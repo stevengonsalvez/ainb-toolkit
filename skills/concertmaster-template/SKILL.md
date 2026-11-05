@@ -1030,6 +1030,21 @@ zero commits ahead of `origin/<default>` fetched now (a failed fetch or an unrea
 beads, process, follow-up and salvage gate still runs, and the rival scan above applies. It cannot be combined
 with `--force-standing`, `--accept-unmerged-beads` or `--retire-check`.
 
+A detached HEAD is a review worktree (a reviewer checks out a PR head sha on purpose). It has no branch, so
+there is no PR to look up: the line reads `no PR (detached)` and never counts as a merged-PR proof. It is
+accepted, in lead mode and in concertmaster mode alike, ONLY when ALL hold; each is its own `detach-*` check
+line, any miss refuses and a check that cannot run is UNKNOWN and refuses: (1) the FIRST line of the child's OWN
+Orca comment is `cm:retire <reason>` (same reader as above); (2) no tracked change and no untracked file; (3) no
+precious ignored path unless `--salvage` copies and verifies it (the salvage flow is unchanged); (4) no stash entry
+at all, because stashes are shared per repo and none can be told apart from this worktree's (an entry may be
+another session's work: find its owner, never drop it to get past this); (5) after a fresh
+bounded `git fetch origin` (a failed or timed-out fetch refuses; nothing is pruned, and a branch already deleted on
+origin does not count: it must still be listed by `git ls-remote --heads origin`) the HEAD commit is contained in a remote-tracking
+ref of origin, and the plan line names it, otherwise `HEAD is not on any remote ref`; (6) no
+rebase/merge/cherry-pick/revert/bisect in progress. Live process, codex leftovers, terminals, owner listing and
+the beads gate are unchanged, and a branch worktree is untouched. This is the only way to retire one: never a raw
+`orca worktree rm`.
+
 A lead that cannot reach the child's host posts `cm:retire <reason>` on the child's comment as the
 fallback request instead; the concertmaster then runs `teardown.sh` from its host.
 
@@ -1072,7 +1087,8 @@ anything. Nothing overrides the epic beads gate or a missing ledger.
 `teardown.sh` canonicalises the path, then refuses (exit 3): not a worktree
 root, a main checkout, its own or the `cfg.worktrees.self_name` worktree, a repo
 outside `cfg.github.org` (or matching `cfg.github.exclude_repo_patterns`), a
-dirty tree, unpushed commits, any failed git check, detached HEAD, a
+dirty tree, unpushed commits, any failed git check, a detached HEAD that
+does not meet the review-worktree rule above, a
 rebase/merge/cherry-pick/revert/bisect in progress, precious git-ignored files
 (env files, research notes, plans, handovers, keys; everything ignored except
 build noise and `cfg.worktrees.regenerable_ignored`) without `--salvage`, an

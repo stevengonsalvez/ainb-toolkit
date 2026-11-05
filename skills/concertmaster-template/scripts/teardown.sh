@@ -88,7 +88,20 @@
 #     precious: it refuses without --salvage and is copied out with it. On
 #     --apply the untracked paths are deleted after the salvage and git status
 #     must then be empty
-#   - detached HEAD, or a rebase, merge, cherry-pick, revert or bisect in progress
+#   - a rebase, merge, cherry-pick, revert or bisect in progress
+#   - detached HEAD, unless ALL of these hold (a review worktree is detached on purpose, there is no branch to
+#     look a PR up by, so "no PR (detached)" is reported and never counts as a merged-PR proof). Each is its
+#     own check line (detach-*), any miss refuses, and a check that cannot run is UNKNOWN and refuses:
+#       1. the first line of the child's OWN Orca comment is an anchored `cm:retire <reason>` (same source in
+#          lead mode and concertmaster mode; a worktree with no Orca row has no request to read and is refused)
+#       2. no tracked change and no untracked file
+#       3. no precious ignored path unless --salvage copies AND verifies it (the salvage flow is unchanged)
+#       4. no stash entry at all: stashes are shared per repo, not per worktree, so none can be told apart
+#       5. after a fresh bounded `git fetch origin` (a failed or timed-out fetch refuses; nothing is pruned, the
+#          branch must still be listed by `git ls-remote --heads origin`) the HEAD commit is
+#          contained in a remote-tracking ref of origin; the plan line names it. Otherwise "HEAD is not on
+#          any remote ref"
+#       6. no rebase, merge, cherry-pick, revert or bisect in progress
 #   - git-ignored files that are not regenerable noise (.env.local,
 #     .agents/research, plans, handover, .keys/, ...): removal would
 #     delete them silently. --salvage copies them to
@@ -313,6 +326,39 @@ gate() {
 plan() { PLAN="${PLAN}  $*
 "; }
 check() { printf '  %-14s %s\n' "$1" "$2"; }
+UNPUSHED_DEFER=0  # commits on no known remote ref of a detached HEAD: judged again after the detached fetch
+DETACHED=0     # 1 when HEAD is detached: judged by the detached HEAD section, after the Orca row is read
+ROW=""         # the child's Orca row; set by the Orca state section
+# origin_default_branch: the branch origin/HEAD names, else main. It is repo data: judge it with branch_name_ok.
+origin_default_branch() {
+  local b
+  b="$(g symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null || true)"
+  b="${b#origin/}"
+  printf '%s' "${b:-main}"
+}
+# branch_name_ok <name>: a plain branch name that git cannot read as an option or a revision range.
+branch_name_ok() {
+  case "$1" in ''|-*|/*|*/|*//*|*..*|*.lock|*@\{*|*[!A-Za-z0-9._/-]*) return 1 ;; esac
+  return 0
+}
+# dt_refuse <reason>: a detached HEAD refusal; also marks that one detached check failed (refuse() dedupes, so
+# the refusal text itself is not a reliable signal).
+DT_FAILED=0
+dt_refuse() { DT_FAILED=1; refuse "$@"; }
+# child_retire_request: the child's OWN Orca comment must START with an anchored `cm:retire <reason>` (the reason
+# holds a letter or digit). Sets RETIRE_WHY and RETIRE_ST: ok, none (no such request), unreadable, norow.
+child_retire_request() {
+  RETIRE_WHY=""; RETIRE_ST=ok
+  if [ -z "$ROW" ]; then RETIRE_ST=norow; return 0; fi
+  # shellcheck disable=SC2016  # jq program
+  if ! RETIRE_WHY="$(printf '%s' "$ROW" | jq -r -L "$HERE" 'include "comment-segs";
+        (.comment | comment_segs | first // "") | capture("^cm:retire\\s+(?<r>.*)$") | .r | select(test("[A-Za-z0-9]"))' 2>/dev/null)"; then
+    RETIRE_WHY=""; RETIRE_ST=unreadable
+  elif [ -z "$RETIRE_WHY" ]; then
+    RETIRE_ST=none
+  fi
+  return 0
+}
 
 # rrun <fixed-script> [args...]: run a FIXED bash script on the target host
 # with every variable passed as a positional argument ($1, $2, ...). No path,
@@ -509,8 +555,17 @@ if [ "$GITOK" -eq 1 ]; then
 
   if UNPUSHED="$(g rev-list --count HEAD --not --remotes 2>/dev/null)" && [ -n "$UNPUSHED" ]; then
     if [ "$UNPUSHED" != 0 ]; then
-      check unpushed "YES ($UNPUSHED commits on no remote)"
-      refuse "unpushed commits ($UNPUSHED)"
+      # A detached HEAD (git's rc 1 for "not a symbolic ref") may sit on a remote branch this checkout has not
+      # fetched yet, as a review worktree made from a PR head sha does: it is judged again after the fresh fetch
+      # in the detached HEAD section, where the commit must be on a live remote ref. A branch is refused now.
+      g symbolic-ref -q HEAD >/dev/null 2>&1; SYMREF_RC=$?
+      if [ "$SYMREF_RC" -eq 1 ]; then
+        UNPUSHED_DEFER="$UNPUSHED"
+        check unpushed "$UNPUSHED commit(s) on no known remote ref (detached HEAD: judged again after the fresh fetch)"
+      else
+        check unpushed "YES ($UNPUSHED commits on no remote)"
+        refuse "unpushed commits ($UNPUSHED)"
+      fi
     else
       check unpushed "none"
     fi
@@ -520,6 +575,7 @@ if [ "$GITOK" -eq 1 ]; then
   fi
 
   # In-progress operations live in the per-worktree git dir.
+  INPROG_ST=unknown
   # shellcheck disable=SC2016
   if ! INPROG="$(rrun 'cd -- "$1" 2>/dev/null || exit 3
 for f in rebase-merge rebase-apply MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD BISECT_LOG; do [ -e "$f" ] && printf "%s " "$f"; done
@@ -527,15 +583,19 @@ exit 0' "$GITDIR" 2>/dev/null)"; then
     check inprogress "UNKNOWN (cannot read git dir $GITDIR)"
     refuse "in-progress check failed: state unknown"
   elif [ -n "$INPROG" ]; then
+    INPROG_ST=yes
     check inprogress "YES: $INPROG"
     refuse "git operation in progress ($INPROG): finish or abort it first"
   else
+    INPROG_ST=none
     check inprogress "none"
   fi
 
   # Ignored files: worktree removal deletes them silently.
   PRECIOUS=""
+  IGN_OK=0
   if IGN="$(g --no-optional-locks status --ignored --porcelain 2>/dev/null)"; then
+    IGN_OK=1
     PRECIOUS="$(printf '%s\n' "$IGN" | sed -n 's/^!! //p' | sed 's/^"//; s/"$//; s:/$::' \
       | grep -vE "(^|/)(node_modules|dist|build|\\.vite|coverage|\\.turbo)(/|\$)|\\.log\$${REGEN_RE}" || true)"
     # Untracked bd runtime is precious like the ignored kind (never skipped).
@@ -557,9 +617,18 @@ exit 0' "$GITDIR" 2>/dev/null)"; then
   fi
 
   HEADSHA="$(g rev-parse HEAD 2>/dev/null || true)"
-  BRANCH="$(g symbolic-ref --short -q HEAD 2>/dev/null || true)"
+  BRANCH="$(g symbolic-ref --short -q HEAD 2>/dev/null)"; BRANCH_RC=$?
   check branch "${BRANCH:-(detached)} at ${HEADSHA:0:12}"
-  [ -n "$BRANCH" ] || refuse "detached HEAD: no branch, so no PR state to prove it safe"
+  if [ -z "$BRANCH" ]; then
+    # rc 1 is git's "not a symbolic ref" (detached); anything else is a failed check, never read as detached.
+    # A detached HEAD is judged by the detached HEAD section below, once the Orca row (the cm:retire request) is read.
+    if [ "$BRANCH_RC" -eq 1 ] && [ -n "$HEADSHA" ]; then
+      DETACHED=1
+    else
+      [ "$UNPUSHED_DEFER" = 0 ] || refuse "unpushed commits ($UNPUSHED_DEFER)"
+      refuse "branch check failed: HEAD is neither a branch nor a readable detached commit (state unknown)"
+    fi
+  fi
   case "$BRANCH" in */concertmaster|concertmaster) refuse "concertmaster branch: never torn down" ;; esac
 fi
 
@@ -653,6 +722,125 @@ elif PS="$(orca_cmd worktree ps --limit 500 --json 2>/dev/null)"; then
 else
   check orca "UNREACHABLE on $HOST"
   refuse "Orca host $HOST unreachable: host-offline, no teardown"
+fi
+
+# ---- detached HEAD -----------------------------------------------------------------
+# A review worktree is created detached on purpose (a reviewer checks out a PR head sha), so there is no branch to
+# look a PR up by: that is reported as "no PR (detached)" and never counts as a merged-PR proof. The commit itself
+# is the proof instead. A detached HEAD is accepted ONLY when every check below holds, each on its own detach-*
+# line (any miss refuses; a check that cannot run is UNKNOWN and refuses). A branch worktree never reaches this.
+# Every other gate (live process, codex leftovers, terminals, owner listing, beads) runs as for any worktree.
+DT_REFS=""
+if [ "$GITOK" -eq 1 ] && [ "$DETACHED" -eq 1 ]; then
+  check nopr "no PR (detached): no branch to look up, never a merged-PR proof; the commit on a remote ref is the proof"
+  # 1. the child's own request, from the Orca row comment (the one source lead mode and concertmaster mode share)
+  child_retire_request
+  case "$RETIRE_ST" in
+    ok) check detach-retire "cm:retire request: $(printf '%s' "$RETIRE_WHY" | tr -cd 'A-Za-z0-9 ._:,()/=#@-' | cut -c 1-120)" ;;
+    norow)
+      check detach-retire "no Orca row: no cm:retire request to read"
+      dt_refuse "detached HEAD: needs the child's cm:retire request in its Orca comment, and this worktree has no Orca row" ;;
+    unreadable)
+      check detach-retire "UNKNOWN (the child's comment could not be read)"
+      dt_refuse "detached HEAD: child comment unreadable, the cm:retire request cannot be proven" ;;
+    none)
+      check detach-retire "NO cm:retire request: the first line of the child's comment is not 'cm:retire <reason>'"
+      dt_refuse "detached HEAD: needs the child's comment to start with 'cm:retire <reason>' (a reason with a letter or digit); a cm:retire later in the comment, or with a blank reason, does not count" ;;
+    *)
+      check detach-retire "UNKNOWN (retire state '$RETIRE_ST')"
+      dt_refuse "detached HEAD: the cm:retire request state is unknown" ;;
+  esac
+  # 2. no tracked change, no untracked file (judged by the dirty check above; this line reports it for the detached path)
+  if [ -z "${DIRTY:-}" ]; then
+    check detach-clean "UNKNOWN (git status failed)"
+    dt_refuse "detached HEAD: tree state unknown"
+  elif [ "$DIRTY" != 0 ]; then
+    check detach-clean "NO ($DIRTY changed or untracked paths)"
+    dt_refuse "detached HEAD: the tree is not clean ($DIRTY changed or untracked paths)"
+  else
+    check detach-clean "no tracked change, no untracked file (bd runtime files count under detach-ignored)"
+  fi
+  # 3. nothing precious ignored unless the existing --salvage flow copies and verifies it
+  if [ "$IGN_OK" -ne 1 ]; then
+    check detach-ignored "UNKNOWN (git status --ignored failed)"
+    dt_refuse "detached HEAD: ignored-file state unknown"
+  elif [ -z "${PRECIOUS:-}" ]; then
+    check detach-ignored "no precious ignored path (regenerable noise only)"
+  else
+    DT_NPREC="$(printf '%s\n' "$PRECIOUS" | grep -c . || true)"
+    if [ "$SALVAGE" -eq 1 ]; then
+      check detach-ignored "$DT_NPREC precious path(s), accepted only because --salvage copies and verifies them first"
+    else
+      check detach-ignored "$DT_NPREC precious path(s) and no --salvage"
+      dt_refuse "detached HEAD: ignored files would be deleted ($DT_NPREC: $(printf '%s\n' "$PRECIOUS" | head -n 3 | tr '\n' ' ')): a detached worktree should hold nothing precious, re-run with --salvage to copy them out and verify the copy"
+    fi
+  fi
+  # 4. no stash entry at all: refs/stash is shared by every worktree of the repo, so no entry can be told from this one's
+  if DT_STASH="$(g stash list 2>/dev/null)"; then
+    if [ -z "$DT_STASH" ]; then
+      check detach-stash "none in the repo"
+    else
+      DT_NSTASH="$(printf '%s\n' "$DT_STASH" | grep -c . || true)"
+      check detach-stash "$DT_NSTASH entr(y/ies) in the repo (stashes are shared per repo, not per worktree)"
+      dt_refuse "detached HEAD: the repo has $DT_NSTASH stash entr(y/ies); stashes are shared per repo, not per worktree, so none can be proven not to hold this worktree's work: find out who owns them, never drop another session's stash, and keep this worktree until they are gone"
+    fi
+  else
+    check detach-stash "UNKNOWN (git stash list failed)"
+    dt_refuse "detached HEAD: stash state unknown"
+  fi
+  # 5. HEAD must sit on a remote-tracking ref of origin after a fresh fetch (bounded, never prompts), and that
+  # branch must still exist on origin: a plain fetch keeps the tracking ref of a branch deleted there, so the live
+  # branch list (git ls-remote --heads) is read in the same bounded call. Nothing is pruned: a dry run changes no
+  # ref other than the ordinary fetch update. The fetch is skipped when an earlier detached check already refuses.
+  # shellcheck disable=SC2016
+  DT_FETCH_SCRIPT='GIT_TERMINAL_PROMPT=0 git -C "$1" fetch -q --no-tags -- origin || exit 1
+GIT_TERMINAL_PROMPT=0 exec git -C "$1" ls-remote --heads origin'
+  DT_LIVE=""; DT_FETCH=failed
+  if [ "$DT_FAILED" -eq 1 ]; then
+    DT_FETCH=skipped
+  elif [ "$HOST" = local ]; then
+    if DT_LIVE="$(cm_timeout 60 bash -c "$DT_FETCH_SCRIPT" cm-fetch "$WT" 2>/dev/null)"; then DT_FETCH=ok; fi
+  elif DT_LIVE="$(RRUN_SECS=60 rrun "$DT_FETCH_SCRIPT" "$WT" 2>/dev/null)"; then
+    DT_FETCH=ok
+  fi
+  if [ "$DT_FETCH" = skipped ]; then
+    check detach-remote "not checked (an earlier detached check already refuses, so no fetch was made)"
+  elif [ "$DT_FETCH" != ok ]; then
+    check detach-remote "UNKNOWN (git fetch or ls-remote of origin failed or timed out)"
+    dt_refuse "detached HEAD: the fetch of origin failed or timed out, so whether HEAD is on a remote ref is unknown"
+  elif ! DT_ALL="$(g for-each-ref --contains "$HEADSHA" --format='%(refname)' refs/remotes/origin/ 2>/dev/null)"; then
+    check detach-remote "UNKNOWN (git for-each-ref --contains failed)"
+    dt_refuse "detached HEAD: could not test which remote refs hold HEAD (state unknown)"
+  else
+    # origin/HEAD is only an alias of a real branch, never a ref of its own. Only branches that still exist on
+    # origin count. The default branch is named first, so the plan line reads the same however many topic branches
+    # hold the commit.
+    DT_DEFB="$(origin_default_branch)"
+    branch_name_ok "$DT_DEFB" || DT_DEFB=main
+    DT_LIVE_NAMES="$(printf '%s\n' "$DT_LIVE" | awk -F '\t' 'NF >= 2 { n = $2; sub(/^refs\/heads\//, "", n); print "origin/" n }')"
+    DT_REFS="$(printf '%s\n' "$DT_ALL" | grep -v '/HEAD$' | sed 's:^refs/remotes/::' | grep . \
+      | grep -Fx -f <(printf '%s\n' "$DT_LIVE_NAMES") \
+      | awk -v d="origin/$DT_DEFB" '$0 == d { print; next } { rest[++n] = $0 } END { for (i = 1; i <= n; i++) print rest[i] }' || true)"
+    if [ -n "$DT_REFS" ]; then
+      DT_REF_NAMES="$(printf '%s\n' "$DT_REFS" | head -n 3 | tr '\n' ' ' | sed 's/ $//')"
+      DT_NREFS="$(printf '%s\n' "$DT_REFS" | grep -c . || true)"
+      [ "$DT_NREFS" -le 3 ] || DT_REF_NAMES="$DT_REF_NAMES (+$((DT_NREFS - 3)) more)"
+      check detach-remote "HEAD ${HEADSHA:0:12} is on $DT_REF_NAMES (after a fresh fetch, branch still on origin)"
+    else
+      check detach-remote "HEAD ${HEADSHA:0:12} is on no live remote-tracking ref of origin (after a fresh fetch)"
+      dt_refuse "detached HEAD: HEAD is not on any remote ref: push the commit or keep the worktree"
+    fi
+  fi
+  # 6. no operation in progress (refused above by the inprogress check; reported here for the detached path)
+  case "${INPROG_ST:-unknown}" in
+    none) check detach-inprog "none" ;;
+    yes)
+      check detach-inprog "YES: ${INPROG:-?}"
+      dt_refuse "detached HEAD: git operation in progress (${INPROG:-?})" ;;
+    *)
+      check detach-inprog "UNKNOWN (git dir unreadable)"
+      dt_refuse "detached HEAD: in-progress state unknown" ;;
+  esac
 fi
 
 # ---- processes with cwd in the worktree --------------------------------------
@@ -1292,15 +1480,12 @@ if [ -n "$WT" ] && [ "$GITOK" -eq 1 ]; then
   # Default branch from origin/HEAD. It is repo data, so it is validated as a
   # plain branch name before it reaches git, and only ever passed after "--"
   # or inside a full refs/... name: a value like "--upload-pack=x" never runs.
-  DEFB="$(g symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null || true)"
-  DEFB="${DEFB#origin/}"
-  [ -n "$DEFB" ] || DEFB=main
-  case "$DEFB" in
-    -*|/*|*/|*//*|*..*|*.lock|*@\{*|*[!A-Za-z0-9._/-]*)
-      check beads "UNKNOWN (origin/HEAD names an invalid branch)"
-      gate "origin/HEAD names an invalid branch name: refusing to pass it to git"
-      DEFB=""; BFETCH=failed ;;
-  esac
+  DEFB="$(origin_default_branch)"
+  if ! branch_name_ok "$DEFB"; then
+    check beads "UNKNOWN (origin/HEAD names an invalid branch)"
+    gate "origin/HEAD names an invalid branch name: refusing to pass it to git"
+    DEFB=""; BFETCH=failed
+  fi
   if [ -n "$DEFB" ]; then
     DEF="refs/remotes/origin/$DEFB"
     # Fetched now so new beads are visible; bounded, never prompts.
@@ -1743,22 +1928,23 @@ fi
 # What this adds: (1) the request, (2) terminals already closed, (3) zero commits ahead of origin/<default> as
 # fetched by the beads gate just now. Anything unknown refuses.
 if [ "$NOPR_LEAD" -eq 1 ]; then
-  if [ -z "$ROW" ]; then
-    check nopr "no Orca row: no cm:retire request to read"
-    refuse "no-PR retirement needs the child's cm:retire request in its Orca comment, and this worktree has no Orca row"
-  else
-    # shellcheck disable=SC2016  # jq program
-    if ! RETIRE_WHY="$(printf '%s' "$ROW" | jq -r -L "$HERE" 'include "comment-segs";
-          (.comment | comment_segs | first // "") | capture("^cm:retire\\s+(?<r>.*)$") | .r | select(test("[A-Za-z0-9]"))' 2>/dev/null)"; then
+  child_retire_request
+  case "$RETIRE_ST" in
+    norow)
+      check nopr "no Orca row: no cm:retire request to read"
+      refuse "no-PR retirement needs the child's cm:retire request in its Orca comment, and this worktree has no Orca row" ;;
+    unreadable)
       check nopr "UNKNOWN (the child's comment could not be read)"
-      refuse "child comment unreadable: the cm:retire request cannot be proven"
-    elif [ -z "$RETIRE_WHY" ]; then
+      refuse "child comment unreadable: the cm:retire request cannot be proven" ;;
+    none)
       check nopr "NO cm:retire request: the first line of the child's comment is not 'cm:retire <reason>'"
-      refuse "no-PR retirement needs the child's comment to start with 'cm:retire <reason>' (a reason with a letter or digit); a cm:retire later in the comment, or with a blank reason, does not count"
-    else
-      check nopr "cm:retire request: $(printf '%s' "$RETIRE_WHY" | tr -cd 'A-Za-z0-9 ._:,()/=#@-' | cut -c 1-120)"
-    fi
-  fi
+      refuse "no-PR retirement needs the child's comment to start with 'cm:retire <reason>' (a reason with a letter or digit); a cm:retire later in the comment, or with a blank reason, does not count" ;;
+    ok)
+      check nopr "cm:retire request: $(printf '%s' "$RETIRE_WHY" | tr -cd 'A-Za-z0-9 ._:,()/=#@-' | cut -c 1-120)" ;;
+    *)
+      check nopr "UNKNOWN (retire state '$RETIRE_ST')"
+      refuse "no-PR retirement: the cm:retire request state is unknown" ;;
+  esac
   if [ "$TERMS_READ" -ne 1 ]; then
     check nopr-terms "UNKNOWN (terminals not read)"
     refuse "no-PR retirement needs the terminals proven closed, and the terminal list was not read"
@@ -1899,12 +2085,15 @@ if [ -n "$ROW" ] && [ -n "${HANDLES:-}" ]; then
   plan "re-run every check (beads read included) with those terminals closed; any refusal stops here"
   CLOSE_FIRST=1
 fi
+if [ "$DETACHED" -eq 1 ] && [ -n "$DT_REFS" ]; then
+  plan "detached HEAD ${HEADSHA:0:12} is contained in remote ref ${DT_REF_NAMES}: no commit is unique to this worktree (no PR (detached): not a merged-PR proof)"
+fi
 SALVAGE_DIR=""
 BEADS_WHOLE=0
 [ "$BEADS_UNREAD" = 1 ] && [ -n "$BEADS_OK_REASON" ] && BEADS_WHOLE=1
 if { [ -n "${PRECIOUS:-}" ] || [ "$BEADS_WHOLE" -eq 1 ]; } && [ "$SALVAGE" -eq 1 ]; then
   # Relative to ~/.concertmaster on the target host; every component sanitised.
-  SALVAGE_REL="salvage/$(cm_safe_name "$HOST")/$(cm_safe_name "${BRANCH:-detached}")-$(date -u +%Y%m%dT%H%M%SZ)"
+  SALVAGE_REL="salvage/$(cm_safe_name "$HOST")/$(cm_safe_name "${BRANCH:-detached-${WT##*/}-${HEADSHA:0:12}}")-$(date -u +%Y%m%dT%H%M%SZ)"
   # shellcheck disable=SC2088  # display only: the remote side expands $HOME
   SALVAGE_DIR="~/.concertmaster/$SALVAGE_REL"
   [ "$BEADS_WHOLE" -eq 0 ] || plan "copy the WHOLE .beads dir to $SALVAGE_DIR/beads-whole (on $HOST), verified, before anything is removed; log '$BEADS_OK_REASON' and the open-bead count of a migrated copy ($([ "$BCOPY_ST" = ok ] && echo "$BCOPY_OPEN" || echo "unknown")) to $CM_HOME/teardown-beads-unreadable.log"
@@ -1924,7 +2113,7 @@ fi
 if [ -n "$ROW" ]; then
   [ -z "${BDRT_PLAN:-}" ] || plan "$BDRT_PLAN"
   plan "$ORCA worktree rm --worktree id:$WID --json ${ENVF}"
-  plan "(Orca deletes branch ${BRANCH:-n/a} only if it can prove it merged)"
+  if [ "$DETACHED" -eq 1 ]; then plan "(detached: no branch to delete)"; else plan "(Orca deletes branch ${BRANCH:-n/a} only if it can prove it merged)"; fi
 elif [ "$GITOK" -eq 1 ]; then
   [ -z "${BDRT_PLAN:-}" ] || plan "$BDRT_PLAN"
   plan "git -C ${MAINDIR:-?} worktree remove $WT"
@@ -1939,6 +2128,7 @@ elif [ "$GITOK" -eq 1 ]; then
   fi
 fi
 [ "$HOST" = local ] || [ -n "$ROW" ] || plan "(git steps run over: ssh $SSH_TARGET)"
+[ "$DETACHED" -ne 1 ] || plan "(detached HEAD retired on the child's own cm:retire request; clean tree, no stash, nothing precious unsalvaged)"
 [ "$NOPR_LEAD" -ne 1 ] || plan "(no PR: retired on the child's own cm:retire request, 0 commits ahead of origin/${DEFB:-main})"
 [ "$OWNER_MODE" -ne 1 ] || [ -z "$CLOSE_FIRST" ] || plan "(the rival scan repeats on the re-run after the terminals close; a claim then stops it before anything is removed)"
 plan "mc-emit.sh worktree.teardown \"$HOST:$WT\""

@@ -178,6 +178,27 @@ keep burning CPU after the worktree is removed. Before `orca worktree rm`, `tear
   If the process list cannot be read on the host, the dry run says so and the existing non-shell process gate
   still decides.
 
+## Detached review worktree at teardown
+
+Symptom: a finished review worktree (created detached on purpose, a reviewer checked out a PR head sha) is refused
+by `scripts/teardown.sh`. Do not run `orca worktree rm` by hand: it skips every gate. `teardown.sh` is the only
+way, and it accepts a detached HEAD only when ALL of these hold (each is a `detach-*` line in the dry run):
+
+- The child's own comment starts with `cm:retire <reason>` (`detach-retire`). Post it, then re-run.
+- No tracked change and no untracked file (`detach-clean`): commit and push what matters, or discard it by hand.
+- No precious ignored path (`detach-ignored`): pass `--salvage` so it is copied out and verified first.
+- No stash entry anywhere in the repo (`detach-stash`): stashes are shared per repo, not per worktree, so an entry
+  may be another session's work. Read `git stash list`, find the owner, and never drop one to get past this
+  check; keep the worktree until the stashes are gone.
+- HEAD is contained in a remote-tracking ref of origin after a fresh `git fetch` (`detach-remote`; the plan
+  line names the ref; a branch already deleted on origin does not count, nothing is pruned). `HEAD is not on any remote ref` means a commit only this worktree holds: push it or keep the worktree.
+  A failed or timed-out fetch refuses too (`UNKNOWN`): fix the network or remote and re-run.
+- No rebase, merge, cherry-pick, revert or bisect in progress (`detach-inprog`): finish or abort it.
+
+The line `nopr  no PR (detached)` is expected: there is no branch to look a PR up by, and it never counts as a
+merged-PR proof. Live processes, codex leftovers, open terminals, owner listing and the beads gate still apply as
+for any worktree.
+
 ## Beads schema version mismatch at teardown
 
 Symptom: `scripts/teardown.sh` refuses at the beads gate and the refusal quotes `bd: failed to open database: schema version mismatch: database is at vN, binary expects vM`.
