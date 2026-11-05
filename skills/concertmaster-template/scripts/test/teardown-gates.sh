@@ -108,6 +108,32 @@ O
 cat > "$ROOT/bin/bd-stub" <<'B'
 #!/usr/bin/env bash
 printf '%s|%s\n' "$PWD" "$*" >> "${STUB_BD_LOG:-/dev/null}"
+# A call against the COPY teardown makes of a store it cannot read ("-C <CM_HOME>/tmp/beads-copy.XXXXXX"):
+# STUB_COPY_MIGRATE_FAIL=1 fails the migrate, STUB_COPY_LIST_FAIL=1 fails the list, STUB_COPY_LIST is the
+# list JSON (default: an empty array). The migrate drops a marker in the copy, never anywhere else.
+case "$*" in *"/tmp/beads-copy."*)
+  [ -z "${STUB_COPY_ENV_LOG:-}" ] || printf '%s\n' "BEADS_DOLT_DATA_DIR=${BEADS_DOLT_DATA_DIR:-unset} BEADS_DIR=${BEADS_DIR:-unset}" >> "$STUB_COPY_ENV_LOG"
+  [ -z "${STUB_COPY_HOME_LOG:-}" ] || printf '%s\n' "HOME=$HOME XDG_CONFIG_HOME=${XDG_CONFIG_HOME:-unset}" >> "$STUB_COPY_HOME_LOG"
+  case " $* " in
+    *" dolt commit"*) exit 0 ;;
+    *" where "*)
+      a="$*"; d="${a#*-C }"; d="${d%% *}"
+      if [ -n "${STUB_COPY_WHERE_OUTSIDE:-}" ]; then printf '{"path":"%s","database_path":"%s"}\n' "$STUB_COPY_WHERE_OUTSIDE" "$STUB_COPY_WHERE_OUTSIDE/embeddeddolt"
+      else printf '{"path":"%s/.beads","database_path":"%s/.beads/embeddeddolt"}\n' "$d" "$d"; fi
+      exit 0 ;;
+    *" migrate schema"*)
+      if [ "${STUB_COPY_NEWDB:-0}" = 1 ]; then a="$*"; d="${a#*-C }"; d="${d%% *}"; mkdir -p "$d/.beads/embeddeddolt/freshdb"; fi
+      if [ "${STUB_COPY_MIGRATE_FAIL:-0}" = 1 ]; then echo 'Error: migrate schema failed on the copy' >&2; exit 1; fi
+      [ "${STUB_COPY_SERVER:-0}" != 1 ] || echo 'Using the shared server for this run' >&2
+      a="$*"; d="${a#*-C }"; d="${d%% *}"; : > "$d/.beads/migrated"; exit 0 ;;
+    *" list "*)
+      if [ "${STUB_COPY_LIST_FAIL:-0}" = 1 ]; then echo 'Error: list failed on the copy' >&2; exit 1; fi
+      # STUB_COPY_IMPORT=1: like bd, import the copy's issues.jsonl on first use (two open beads) when it has content
+      a="$*"; d="${a#*-C }"; d="${d%% *}"
+      if [ "${STUB_COPY_IMPORT:-0}" = 1 ] && [ -s "$d/.beads/issues.jsonl" ]; then echo '[{"id":"t-i1","status":"open"},{"id":"t-i2","status":"open"}]'; exit 0; fi
+      printf '%s\n' "${STUB_COPY_LIST-[]}"; exit 0 ;;
+  esac ;;
+esac
 case " $* " in *" where "*) [ -n "${STUB_BD_WHERE:-}" ] || exit 1; printf '%s\n' "$STUB_BD_WHERE"; exit 0 ;; esac
 [ -n "${STUB_BD_SLEEP:-}" ] && sleep "$STUB_BD_SLEEP"
 if [ -n "${STUB_BD_ERR:-}" ]; then printf 'Warning: noise\n%s\n' "$STUB_BD_ERR" >&2; exit 1; fi
@@ -673,16 +699,35 @@ CM_BD_CMD=bd-stub STUB_BD_ERR="$BDX" \
   run "other bd error: the existing hint is unchanged"       3 'bd cannot read this beads store: its state is UNKNOWN' "$W23"
 CM_BD_CMD=bd-stub STUB_BD_ERR="$BDV" \
   run_without "older-schema pending-migration error: no schema hint" 3 'recovery.md' "$W23"
-# Safety: across every case above bd only ever ran read-only and sandboxed, never a write or a migrate.
-if [ -s "$ROOT/bd-schema.log" ] && ! grep -v -e '--readonly --sandbox' "$ROOT/bd-schema.log" | grep -q .; then
-  PASS=$((PASS + 1)); echo "PASS bd only ran with --readonly --sandbox (no migrate, no write)"
+# Safety: every bd call against the LIVE worktree ran read-only and sandboxed, never a write or a migrate.
+# The one sanctioned exception is the copy-read the --beads-unreadable-ok cases make: a migrate and a list
+# on a COPY under $CM_HOME/tmp/beads-copy.* (never the worktree).
+LIVE_LOG="$(grep -v '/tmp/beads-copy\.' "$ROOT/bd-schema.log" || true)"
+if [ -n "$LIVE_LOG" ] && ! printf '%s\n' "$LIVE_LOG" | grep -v -e '--readonly --sandbox' | grep -q .; then
+  PASS=$((PASS + 1)); echo "PASS live-store bd calls only ran with --readonly --sandbox (no migrate, no write)"
 else
-  FAIL=$((FAIL + 1)); echo "FAIL bd invocations not all read-only: $(cat "$ROOT/bd-schema.log")"
+  FAIL=$((FAIL + 1)); echo "FAIL live-store bd invocations not all read-only: $LIVE_LOG"
 fi
-if grep -qiE 'migrate|init|update|create|close|import|dolt' "$ROOT/bd-schema.log"; then
-  FAIL=$((FAIL + 1)); echo "FAIL a bd write-ish verb was run: $(cat "$ROOT/bd-schema.log")"
+# match the bd verb words only, never the -C path (a worktree path may contain "close", say)
+if printf '%s\n' "$LIVE_LOG" | sed -e 's/^[^|]*|//' -e 's/-C [^ ]* //' | grep -qiE '(^| )(migrate|init|update|create|close|import|dolt)( |$)'; then
+  FAIL=$((FAIL + 1)); echo "FAIL a bd write-ish verb was run on the live store: $LIVE_LOG"
 else
-  PASS=$((PASS + 1)); echo "PASS no bd write-ish verb was run"
+  PASS=$((PASS + 1)); echo "PASS no bd write-ish verb was run on the live store"
+fi
+if ! grep '/tmp/beads-copy\.' "$ROOT/bd-schema.log" | grep -v -F -e "-C $(cd "$CM_HOME" && pwd -P)/tmp/beads-copy." | grep -q .; then
+  PASS=$((PASS + 1)); echo "PASS every copy-read bd call targets -C \$CM_HOME/tmp/beads-copy.*"
+else
+  FAIL=$((FAIL + 1)); echo "FAIL a copy-read bd call is not aimed at the copy: $(grep '/tmp/beads-copy\.' "$ROOT/bd-schema.log")"
+fi
+# bd hides gates, infra beads, wisps and templates unless asked: the copy list must ask for all four
+if grep '/tmp/beads-copy\.' "$ROOT/bd-schema.log" | grep -F -e ' list ' | grep -q .; then
+  if grep '/tmp/beads-copy\.' "$ROOT/bd-schema.log" | grep -F -e ' list ' | awk '!(/--include-gates/ && /--include-infra/ && /--include-ephemeral/ && /--include-templates/) {bad=1} END {exit bad}'; then
+    PASS=$((PASS + 1)); echo "PASS every copy list asks for gates, infra beads, wisps and templates"
+  else
+    FAIL=$((FAIL + 1)); echo "FAIL a copy list leaves out a hidden bead kind"
+  fi
+else
+  FAIL=$((FAIL + 1)); echo "FAIL no copy list call was logged"
 fi
 # --apply: the whole .beads dir (store and all) is copied out and verified, the reason is
 # logged, then the worktree goes. The store files stay byte-identical in the copy.
@@ -869,7 +914,192 @@ CM_BD_CMD=bd-stub STUB_BD_ERR='Error: cannot reach the schema registry: connecti
   run "an Error that only names a schema is not excused"   3 'beads-unreadable-ok' "$W27"
 CM_BD_CMD=bd-stub STUB_BD_FAIL=1 \
   run "a bd failure with no Error line is not excused"     3 'bd:failed' "$W27"
-if ! grep -qE ' (migrate|init|create|update|close|sync|import|export)( |$)' "$STUB_BD_LOG"; then echo "PASS bd was never asked to migrate or write"; PASS=$((PASS + 1)); else FAIL=$((FAIL + 1)); echo "FAIL a bd write/migrate command ran"; fi
+# The live store is never migrated or written: only calls aimed at a copy under $CM_HOME/tmp/beads-copy.* may.
+if ! grep -v '/tmp/beads-copy\.' "$STUB_BD_LOG" | grep -qE ' (migrate|init|create|update|close|sync|import|export|dolt)( |$)'; then echo "PASS bd was never asked to migrate or write the live store"; PASS=$((PASS + 1)); else FAIL=$((FAIL + 1)); echo "FAIL a bd write/migrate command ran on the live store"; fi
+
+echo "== unreadable store: open beads are read on a migrated COPY, fail closed"
+# The tracked-file diff cannot see open beads: they sit in the git-ignored embedded store, the thing bd could
+# not read. The gate copies .beads under $CM_HOME/tmp, runs bd migrate schema there, lists the beads on the
+# copy and refuses on any open bead or any failed step. The live store is never touched.
+treesum() { # treesum <wt>: listing + content digest of everything under <wt>/.beads
+  ( cd "$1/.beads" && find . \( -type f -o -type l -o -type d \) | LC_ALL=C sort | while IFS= read -r f; do
+      printf '%s ' "$f"
+      if [ -L "$f" ]; then readlink "$f"; elif [ -f "$f" ]; then sha256sum < "$f"; else echo dir; fi
+    done ) | sha256sum
+}
+COPY_OPEN1='[{"id":"t-a","status":"open"},{"id":"t-b","status":"in_progress"},{"id":"t-c","status":"closed"},{"id":"t-d","status":"tombstone"}]'
+mkstore() { bdrt "$1"; printf 'live-store-marker\n' > "$1/.beads/embeddeddolt/beads/.dolt/noms-live"; one "$1" '"standing":false'; }
+: > "$ROOT/bd-copy.log"
+export STUB_BD_LOG="$ROOT/bd-copy.log"
+C7="$(mkwt copy-g)"; C8="$(mkwt copy-h)"
+C1="$(mkwt copy-a)"; C2="$(mkwt copy-b)"; C3="$(mkwt copy-c)"; C4="$(mkwt copy-d)"; C5="$(mkwt copy-e)"
+mkstore "$C1"; SUM1="$(treesum "$C1")"
+CM_BD_CMD=bd-stub STUB_BD_ERR="$BDV2" STUB_COPY_LIST="$COPY_OPEN1" \
+  run "copy lists open + in-progress beads: refuses"        3 'lists 2 open or in-progress bead(s)' "$C1" --salvage
+CM_BD_CMD=bd-stub STUB_BD_ERR="$BDV2" STUB_COPY_LIST="$COPY_OPEN1" \
+  run "copy lists open beads: the hint does not offer the flag" 3 'do not override this with --beads-unreadable-ok' "$C1" --salvage
+CM_BD_CMD=bd-stub STUB_BD_ERR="$BDV2" STUB_COPY_LIST='[{"id":"t-a","status":"deferred"}]' \
+  run "a deferred bead on the copy is open work: refuses"   3 'lists 1 open or in-progress bead(s)' "$C1" --salvage
+CM_BD_CMD=bd-stub STUB_BD_ERR="$BDV2" STUB_COPY_MIGRATE_FAIL=1 \
+  run "copy migrate fails: refuses"                         3 'migrated copy failed (bd migrate schema failed on the copy' "$C1" --salvage
+CM_BD_CMD=bd-stub STUB_BD_ERR="$BDV2" STUB_COPY_LIST_FAIL=1 \
+  run "copy list fails: refuses"                            3 'migrated copy failed (bd list failed on the migrated copy' "$C1" --salvage
+CM_BD_CMD=bd-stub STUB_BD_ERR="$BDV2" STUB_COPY_LIST='not json' \
+  run "copy list is not JSON: refuses"                      3 'did not print a JSON array' "$C1" --salvage
+CM_BD_CMD=bd-stub STUB_BD_ERR="$BDV2" STUB_COPY_LIST='{"status":"open"}' \
+  run "copy list is an object, not an array: refuses"       3 'did not print a JSON array' "$C1" --salvage
+CM_BD_CMD=bd-stub STUB_BD_ERR="$BDV2" STUB_COPY_LIST='[{"id":"t-nostatus"}]' \
+  run "a bead with no status counts as open: refuses"       3 'lists 1 open or in-progress bead(s)' "$C1" --salvage
+CM_BD_CMD=bd-stub STUB_BD_ERR="$BDV2" STUB_COPY_LIST='[]' \
+  run "copy lists 0 open: excused"                          0 'migrated COPY of the store lists 0 open beads' "$C1" --salvage
+CM_BD_CMD=bd-stub STUB_BD_ERR="$BDV2" STUB_COPY_LIST='[{"id":"t-a","status":"closed"},{"id":"t-b","status":"tombstone"}]' \
+  run "copy lists only closed and tombstone: excused"       0 'lists 0 open beads' "$C1" --salvage
+if [ "$(treesum "$C1")" = "$SUM1" ] && [ ! -e "$C1/.beads/migrated" ]; then
+  PASS=$((PASS + 1)); echo "PASS live .beads is byte-identical after every copy-read case (listing and checksums)"
+else
+  FAIL=$((FAIL + 1)); echo "FAIL the live .beads changed during a copy-read"
+fi
+if [ -z "$(find "$CM_HOME/tmp" -maxdepth 1 -name 'beads-copy.*' 2>/dev/null)" ]; then
+  PASS=$((PASS + 1)); echo "PASS no copy is left behind under \$CM_HOME/tmp"
+else
+  FAIL=$((FAIL + 1)); echo "FAIL a copy was left behind: $(ls "$CM_HOME/tmp")"
+fi
+if grep -q ' migrate schema' "$STUB_BD_LOG" && ! grep -v '/tmp/beads-copy\.' "$STUB_BD_LOG" | grep -qE ' (migrate|dolt)( |$)'; then
+  PASS=$((PASS + 1)); echo "PASS migrate ran on the copy and never on the live store"
+else
+  FAIL=$((FAIL + 1)); echo "FAIL migrate did not run on a copy, or ran on the live store"
+fi
+# tracked change: refused before any copy is made
+tbead "$C2"; mkstore "$C2"
+: > "$STUB_BD_LOG"
+CM_BD_CMD=bd-stub STUB_BD_ERR="$BDV2" \
+  run "tracked .beads change: refused, no copy made"       3 'beads-unreadable-ok' "$C2" --salvage
+if ! grep -q 'beads-copy' "$STUB_BD_LOG"; then PASS=$((PASS + 1)); echo "PASS no copy-read when the tracked diff already refuses"; else FAIL=$((FAIL + 1)); echo "FAIL a copy-read ran for a refused worktree"; fi
+# a symlink inside .beads: a copy could write through it
+mkstore "$C3"; ln -s /nonexistent-target "$C3/.beads/embeddeddolt/link"
+CM_BD_CMD=bd-stub STUB_BD_ERR="$BDV2" \
+  run "symlink inside .beads: refuses"                      3 'a symlink inside .beads' "$C3" --salvage
+# runtime files of a Dolt server in .beads: refuses before bd touches the copy
+printf '/.beads/dolt-server*\n' >> "$M/.git/info/exclude"
+C9="$(mkwt copy-i)"; mkstore "$C9"; printf '3306\n' > "$C9/.beads/dolt-server.port"
+CM_BD_CMD=bd-stub STUB_BD_ERR="$BDV2" \
+  run "dolt-server runtime file in .beads: refuses"         3 'a Dolt server runtime file' "$C9" --salvage
+# a copy must be the store: a server-mode metadata.json, dolt options in config.yaml, a redirect and a
+# bd that resolves a store outside the copy all refuse, and a leaked BEADS_DOLT_* env never reaches the copy's bd
+# metadata.json and config.yaml are tracked in a normal repo; here they are just ignored (info/exclude), so the
+# tracked diff stays empty and the copy-read is what judges them
+printf '/.beads/metadata.json\n/.beads/config.yaml\n' >> "$M/.git/info/exclude"
+mkstore "$C7"; printf '{"database":"beads.db","dolt_mode":"server","dolt_server_host":"db.example.test"}\n' > "$C7/.beads/metadata.json"
+SUM7="$(treesum "$C7")"
+CM_BD_CMD=bd-stub STUB_BD_ERR="$BDV2" \
+  run "metadata.json names a server: refuses"               3 'metadata.json names a server' "$C7" --salvage
+printf '{"database":"beads.db","jsonl_export":"issues.jsonl"}\n' > "$C7/.beads/metadata.json"; SUM7="$(treesum "$C7")"
+printf 'dolt.shared-server: true\n' > "$C7/.beads/config.yaml"
+CM_BD_CMD=bd-stub STUB_BD_ERR="$BDV2" \
+  run "config.yaml sets dolt options: refuses"              3 'config.yaml sets options beyond issue-prefix' "$C7" --salvage
+for CFG in '"dolt.shared-server": true' '{dolt: {shared-server: true}}' "'dolt': {shared-server: true}"; do
+  printf '%s\n' "$CFG" > "$C7/.beads/config.yaml"
+  CM_BD_CMD=bd-stub STUB_BD_ERR="$BDV2" \
+    run "config.yaml dolt option, form $CFG: refuses"       3 'config.yaml sets options beyond issue-prefix' "$C7" --salvage
+done
+for CFG in 'backup.enabled: true' 'backup.git-repo: /somewhere/else' 'sync-branch: beads-sync' '  nested: value' 'export.path: /x'; do
+  printf '%s\n' "$CFG" > "$C7/.beads/config.yaml"
+  CM_BD_CMD=bd-stub STUB_BD_ERR="$BDV2" \
+    run "config.yaml option outside the allowlist ($CFG): refuses" 3 'config.yaml sets options beyond issue-prefix' "$C7" --salvage
+done
+# bytes grep and the YAML parser could read differently (NUL, invalid UTF-8, a lone CR as a line break) must not
+# hide a dolt option: a file with such bytes is refused outright, and a CR is a line break for the screen
+printf 'issue-prefix: a\ndolt.shared-server: true\n# \000\n' > "$C7/.beads/config.yaml"
+CM_BD_CMD=bd-stub STUB_BD_ERR="$BDV2" \
+  run "config.yaml with a NUL byte: refuses"                3 'config.yaml has bytes beyond printable ASCII' "$C7" --salvage
+printf 'issue-prefix: a\nx\377: 1\n' > "$C7/.beads/config.yaml"
+CM_BD_CMD=bd-stub STUB_BD_ERR="$BDV2" \
+  run "config.yaml with invalid UTF-8: refuses"             3 'config.yaml has bytes beyond printable ASCII' "$C7" --salvage
+printf 'issue-prefix: a\n# note \342\200\250dolt.shared-server: true\n' > "$C7/.beads/config.yaml"
+CM_BD_CMD=bd-stub STUB_BD_ERR="$BDV2" \
+  run "config.yaml with a Unicode line break: refuses"      3 'config.yaml has bytes beyond printable ASCII' "$C7" --salvage
+printf 'issue-prefix: a\n# x\rdolt.shared-server: true\n' > "$C7/.beads/config.yaml"
+CM_BD_CMD=bd-stub STUB_BD_ERR="$BDV2" \
+  run "config.yaml with a lone CR hiding a dolt option: refuses" 3 'config.yaml sets options beyond issue-prefix' "$C7" --salvage
+printf '# Beads Configuration File\r\n# note\r\nissue-prefix: acme\r\n' > "$C7/.beads/config.yaml"
+CM_BD_CMD=bd-stub STUB_BD_ERR="$BDV2" \
+  run "config.yaml with CRLF line endings and issue-prefix: ok" 0 'lists 0 open beads' "$C7" --salvage
+printf '# nothing set\nissue-prefix: "acme"\n' > "$C7/.beads/config.yaml"
+CM_BD_CMD=bd-stub STUB_BD_ERR="$BDV2" STUB_COPY_NEWDB=1 \
+  run "bd created a new database in the copy: refuses"      3 'bd created a new database in the copy' "$C7" --salvage
+CM_BD_CMD=bd-stub STUB_BD_ERR="$BDV2" STUB_COPY_SERVER=1 \
+  run "bd on the copy reports a shared server: refuses"     3 'talked to a Dolt server' "$C7" --salvage
+CM_BD_CMD=bd-stub STUB_BD_ERR="$BDV2" STUB_COPY_IMPORT=1 \
+  run "copy would re-import issues.jsonl: it is emptied, excused" 0 'lists 0 open beads' "$C7" --salvage
+: > "$ROOT/copy-home.log"
+HOME="$ROOT/real-home" XDG_CONFIG_HOME="$ROOT/real-home/.config" CM_BD_CMD=bd-stub STUB_BD_ERR="$BDV2" STUB_COPY_HOME_LOG="$ROOT/copy-home.log" \
+  run "user-level bd config is out of reach: excused"       0 'lists 0 open beads' "$C7" --salvage
+if [ -s "$ROOT/copy-home.log" ] && ! grep -v -E "^HOME=.*/tmp/beads-copy\.[^/]+/home XDG_CONFIG_HOME=unset$" "$ROOT/copy-home.log" | grep -q .; then
+  PASS=$((PASS + 1)); echo "PASS the copy's bd runs with its own HOME and no XDG_CONFIG_HOME"
+else
+  FAIL=$((FAIL + 1)); echo "FAIL copy bd HOME not isolated: $(cat "$ROOT/copy-home.log")"
+fi
+CM_BD_CMD=bd-stub STUB_BD_ERR="$BDV2" STUB_COPY_WHERE_OUTSIDE="$ROOT/elsewhere/.beads" \
+  run "bd on the copy resolves a store outside it: refuses" 3 'resolves a store outside the copy' "$C7" --salvage
+: > "$ROOT/copy-env.log"
+BEADS_DOLT_DATA_DIR="$ROOT/elsewhere" BEADS_DIR="$ROOT/elsewhere/.beads" CM_BD_CMD=bd-stub STUB_BD_ERR="$BDV2" STUB_COPY_ENV_LOG="$ROOT/copy-env.log" \
+  run "leaked BEADS_* env: the copy-read still excuses"     0 'lists 0 open beads' "$C7" --salvage
+if [ -s "$ROOT/copy-env.log" ] && ! grep -v -x 'BEADS_DOLT_DATA_DIR=unset BEADS_DIR=unset' "$ROOT/copy-env.log" | grep -q .; then
+  PASS=$((PASS + 1)); echo "PASS no BEADS_* env reaches the copy's bd"
+else
+  FAIL=$((FAIL + 1)); echo "FAIL BEADS_* env leaked into the copy's bd: $(cat "$ROOT/copy-env.log")"
+fi
+printf '# live beads\n%s\n' "$M/.beads" > "$C7/.beads/redirect"
+SUM7="$(treesum "$C7")"
+CM_BD_CMD=bd-stub STUB_BD_ERR="$BDV2" STUB_BD_JSON="$ROOT/bd-empty.json" \
+  run "a .beads/redirect: the copy is not the store, refuses" 3 'puts the store outside this worktree' "$C7" --salvage
+if [ "$(treesum "$C7")" = "$SUM7" ]; then PASS=$((PASS + 1)); echo "PASS live .beads of the server-mode fixture is untouched"; else FAIL=$((FAIL + 1)); echo "FAIL live .beads changed"; fi
+# the copied dolt repo state must not keep the live backup dir or a remote
+mkdir -p "$C8/.beads/embeddeddolt/beads/.dolt"; one "$C8" '"standing":false'
+printf '{"head":"refs/heads/main","remotes":{"origin":{"url":"https://example.test/r"}},"backups":{"b":{"url":"file:///live/.beads/backup"}}}\n' > "$C8/.beads/embeddeddolt/beads/.dolt/repo_state.json"
+# a second one under a directory name with a space and a glob character: it must stay ONE path
+mkdir -p "$C8/.beads/embeddeddolt/odd name [x]*/.dolt"
+cp "$C8/.beads/embeddeddolt/beads/.dolt/repo_state.json" "$C8/.beads/embeddeddolt/odd name [x]*/.dolt/repo_state.json"
+SUM8="$(treesum "$C8")"
+CM_BD_CMD=bd-stub STUB_BD_ERR="$BDV2" \
+  run "repo_state.json with backups and remotes (one under a spaced dir name): copy-read ok" 0 'lists 0 open beads' "$C8" --salvage
+if [ "$(treesum "$C8")" = "$SUM8" ] && grep -q '"backups":{"b"' "$C8/.beads/embeddeddolt/beads/.dolt/repo_state.json" \
+  && grep -q '"backups":{"b"' "$C8/.beads/embeddeddolt/odd name [x]*/.dolt/repo_state.json"; then
+  PASS=$((PASS + 1)); echo "PASS live repo_state.json keeps its backups and remotes (only the copy is rewritten)"
+else
+  FAIL=$((FAIL + 1)); echo "FAIL live repo_state.json changed"
+fi
+# the flag stays an override, and says what it overrode
+mkstore "$C4"; SUM4="$(treesum "$C4")"
+CM_BD_CMD=bd-stub STUB_BD_ERR="$BDV2" STUB_COPY_LIST="$COPY_OPEN1" \
+  run "flag with 2 open beads on the copy: still proceeds, says so" 0 'OVERRIDING 2 open or in-progress bead(s)' "$C4" --salvage --beads-unreadable-ok "v18 store bd v66"
+CM_BD_CMD=bd-stub STUB_BD_ERR="$BDV2" STUB_COPY_LIST='[]' \
+  run "flag with 0 open beads on the copy: says 0"          0 'copy of the store lists 0 open beads' "$C4" --salvage --beads-unreadable-ok "v18 store bd v66"
+CM_BD_CMD=bd-stub STUB_BD_ERR="$BDV2" STUB_COPY_MIGRATE_FAIL=1 \
+  run "flag with a failed copy-read: proceeds, open UNKNOWN" 0 'open beads UNKNOWN, the migrated-copy read failed' "$C4" --salvage --beads-unreadable-ok "v18 store bd v66"
+CM_BD_CMD=bd-stub STUB_BD_ERR="$BDV2" STUB_COPY_LIST="$COPY_OPEN1" \
+  run "flag, dry run: the plan names the open count"        0 'open-bead count of a migrated copy (2)' "$C4" --salvage --beads-unreadable-ok "v18 store bd v66"
+if [ "$(treesum "$C4")" = "$SUM4" ]; then PASS=$((PASS + 1)); echo "PASS flag path leaves the live .beads byte-identical"; else FAIL=$((FAIL + 1)); echo "FAIL flag path changed the live .beads"; fi
+# --apply with the flag: the log records the count it found (or null when the read failed)
+mkstore "$C5"
+: > "$CM_HOME/teardown-beads-unreadable.log"
+STUB_ORCA_NONE=1 CM_BD_CMD=bd-stub STUB_BD_ERR="$BDV2" STUB_COPY_LIST="$COPY_OPEN1" \
+  run "flag, apply, 2 open on the copy: torn down"          0 'done: .* torn down' "$C5" --apply --salvage --beads-unreadable-ok "v18 store bd v66"
+if jq -e '.reason == "v18 store bd v66" and .copyRead == "ok" and .openBeads == 2' "$CM_HOME/teardown-beads-unreadable.log" >/dev/null 2>&1; then
+  PASS=$((PASS + 1)); echo "PASS log records copyRead=ok and openBeads=2"
+else
+  FAIL=$((FAIL + 1)); echo "FAIL log lacks the open-bead count: $(cat "$CM_HOME/teardown-beads-unreadable.log" 2>&1)"
+fi
+C6="$(mkwt copy-f)"; mkstore "$C6"
+: > "$CM_HOME/teardown-beads-unreadable.log"
+STUB_ORCA_NONE=1 CM_BD_CMD=bd-stub STUB_BD_ERR="$BDV2" STUB_COPY_MIGRATE_FAIL=1 \
+  run "flag, apply, copy-read fails: torn down, logged"     0 'done: .* torn down' "$C6" --apply --salvage --beads-unreadable-ok "v18 store bd v66"
+if jq -e '.copyRead == "failed" and .openBeads == null and (.copyReadError | contains("migrate"))' "$CM_HOME/teardown-beads-unreadable.log" >/dev/null 2>&1; then
+  PASS=$((PASS + 1)); echo "PASS log records a failed copy-read with openBeads null"
+else
+  FAIL=$((FAIL + 1)); echo "FAIL log wrong for a failed copy-read: $(cat "$CM_HOME/teardown-beads-unreadable.log" 2>&1)"
+fi
+unset STUB_BD_LOG
 
 echo "== project guard: a ledger of another project is never read (synthetic projects project-a, project-b)"
 SAVED_HOME="$CM_HOME"; SAVED_HOME_ENV="$HOME"

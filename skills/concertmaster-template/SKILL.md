@@ -1026,10 +1026,20 @@ fallback request instead; the concertmaster then runs `teardown.sh` from its hos
 
 A store `bd` cannot read because its schema is older than the installed bd (bd's error names a
 schema, a migration or a missing column; any other bd error, such as a refused connection, is not
-excused) is excused WITHOUT the flag when no tracked `.beads` path differs from the merge-base with
-the default branch (and no untracked bead file exists) and the epic gate, or with no epic the
-unmerged-beads check, passes on the other sources; otherwise it refuses as below. The store is never
-migrated or written.
+excused) is excused WITHOUT the flag only when no tracked `.beads` path differs from the merge-base with
+the default branch (and no untracked bead file exists), a read of the store on a COPY lists 0 open
+beads, and the epic gate, or with no epic the unmerged-beads check, passes on the other sources;
+otherwise it refuses as below. The tracked diff alone cannot see open beads (they live in the
+git-ignored embedded store), so the gate copies `.beads` to a `mktemp -d` dir under `$CM_HOME/tmp`,
+runs `bd migrate schema` there (`CM_BD_MIGRATE_SECS`, default 300), lists every bead on the copy
+(anything not closed or tombstone is open work, gates, infra beads, wisps and templates included)
+and removes the copy. Any open bead, or any failed step (a `.beads/redirect`, a symlink inside
+`.beads`, a Dolt server runtime file or a `metadata.json` naming a Dolt server, a `config.yaml` with
+any option beyond `issue-prefix` or any byte beyond printable ASCII (a lone CR counts as a line
+break), a bd that created a new database in the copy, a migrate or list error or timeout),
+refuses. The copy's bd runs with its own empty HOME and no `BEADS_*`, `BD_*` or `DOLT_*` env, and
+the copy's `*.jsonl` are emptied so only the store itself is counted; only a clean read of 0 open
+beads excuses. The live store is never migrated or written.
 
 `--beads-unreadable-ok <reason>` is the safe path when `bd` cannot read a worktree's beads store
 (for example a pending-schema-migrations error that `--readonly` will not apply). The unread store
@@ -1038,8 +1048,10 @@ only when the tree is otherwise clean and pushed: every other gate, and every ot
 (origin/<default>, the worktree and redirect files), still applies, so open beads still refuse. It
 requires `--salvage`: the WHOLE `.beads` dir is copied out (verified) to
 `$CM_HOME/salvage/<host>/<branch>-<ts>/beads-whole/` before anything is removed, and the reason goes
-to `$CM_HOME/teardown-beads-unreadable.log`. Never migrate the store in place and never run a bd
-write command on the worktree. `--retire-check` ignores the flag.
+to `$CM_HOME/teardown-beads-unreadable.log`. The flag stays an explicit override, but it says what
+it overrode: the same copy-read runs, and the open-bead count it found (or that the read failed) is
+printed and logged (`openBeads`, `copyRead`). Never migrate the live store in place and never run a
+bd write command on the worktree. `--retire-check` ignores the flag.
 
 Overrides are bound to a structured ledger ask (`references/ledger.md`
 § asks): `kind` (`remove-standing` or `accept-unmerged-beads`), `host`, and
