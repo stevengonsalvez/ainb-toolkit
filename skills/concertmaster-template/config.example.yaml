@@ -181,6 +181,12 @@ deploy:
       paths: [".github/workflows/deploy-*.yml"]
       note: "secret lines in deploy workflows, payments, auth flows"
 
+respawn:
+  live_agents: [claude, codex, agy]  # [script] command names scripts/live-agent.sh counts as a live agent before any respawn
+
+handles:
+  max_age_s: 900                   # [script] a lane handle file (lanes/<worker-id>/handle) older than this is re-checked before any send, never trusted
+
 queue:                             # scripts/queue.sh (references/queue.md)
   cap: 12                          # [script] total live agent sessions across hosts; no cap means nothing is granted
   grant_hold_minutes: 30           # [script] a fresh grant counts as live on its host for this long
