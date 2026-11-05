@@ -89,7 +89,7 @@ own_comment() { # <selector> -> prints the comment text; dies when unreadable
   out="$(cm_timeout "${CM_HOST_TIMEOUT:-30}" "$ORCA" worktree show --worktree "$wsel" --json </dev/null 2>"$TMP/show.err")" \
     || die "orca worktree show $wsel failed: $(head -c 160 "$TMP/show.err")"
   printf '%s' "$out" | jq -er 'if .ok == true and (.result.worktree | type == "object") then (.result.worktree.comment // "" | if type == "string" then . else "" end) else error("not a worktree") end' 2>/dev/null \
-    || die "orca worktree show $wsel: not a worktree reply"
+    || die "orca worktree show $wsel: not a worktree response"
 }
 own_name() { # <selector>
   cm_timeout "${CM_HOST_TIMEOUT:-30}" "$ORCA" worktree show --worktree "$1" --json </dev/null 2>/dev/null | jq -r '.result.worktree.displayName // empty'
