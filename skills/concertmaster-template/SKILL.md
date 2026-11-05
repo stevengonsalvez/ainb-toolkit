@@ -276,6 +276,8 @@ name it in the `next:` line, and keep ticking. Use `AskUserQuestion` only in a t
 owner started (they just wrote to the concertmaster), and even then call `ScheduleWakeup`
 BEFORE asking.
 
+**No owner question before a deploy is spawned.** Do not open an owner question (any picker that waits for the owner) in the 2 hours before a deploy window until the deploy sha is pinned, rails are checked and the deploy worker is spawned; ask after the worker is running, or hold the question until the window has passed. A rails hit (Deploy windows step 2, rails) is the exception: that ask is raised at once as a `WAITING: <owner>, <question>, <age>` row in the tick table, never as a picker, because the window waits on the answer and no worker can be spawned until then. Why: an open question stops the loop, so the pin, the check and the spawn never happen and the window is missed.
+
 ```text
 ┌─────────┐  ┌──────────────┐  ┌────────────┐  ┌───────────┐  ┌──────────┐
 │ wake    │─▶│ discover     │─▶│ reconcile  │─▶│ act       │─▶│ report + │
