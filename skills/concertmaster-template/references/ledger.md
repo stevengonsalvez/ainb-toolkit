@@ -101,7 +101,10 @@ Test: `scripts/test/ledger-write.sh`.
 ## Lane journal
 
 `$CM_HOME/lanes/<lane>/journal.md`: one append-only log per lane, outside the worktree, so it survives a
-compaction, a respawn and a torn-down worktree. `<lane>` is the lane name (lower case, see below). What goes in:
+compaction, a respawn and a torn-down worktree. `<lane>` is the lane name (lower case, see below). The
+handle file (`$CM_HOME/lanes/<worker-id>/handle`, `scripts/lane-handles.sh`) is keyed by worker id and shares the
+`lanes/` directory, so a lane named like a worker id would share its directory: the journal script never reads or
+writes `handle`, and rotate only touches `journal.md`. What goes in:
 what the lane did each pass, the decisions and why, the PRs it relayed, and what its NEXT session needs.
 
 | | |
@@ -280,6 +283,7 @@ may have leaked should run `scripts/ledger-guard.sh` before it.
 | lead-mode teardown (no ledger field) | the ledger exists only on the concertmaster host, so a lead on another host never touches it: it runs `teardown.sh <host> <path> --owner <lead-worktree>` (the child must be listed in the lead's `cm:child` / `WORKERS I OWN` lines; no ledger read or write). The tick then reconciles the ledger from the comments (adoption by `followups.sh reconcile`; a child that is gone drops out). `cm:retire <reason>` on a child's comment is the fallback request only, except for a child that never had a PR, where its own first-line `cm:retire <reason>` is the request `--owner ... --allow-no-pr` requires. Lead mode scans every host's comments for a rival claim on the child (`scripts/claims.jq`) and refuses on one or on an incomplete census |
 | `workers.<id>.parent` | the worker id of the lead that owns this worker, or null when the concertmaster owns it. Set at spawn by whoever spawns, and filled by `scripts/followups.sh reconcile` from the Orca row's `parentWorktreeId` first, then from `cm:child <worktree-name>` comment lines (only while unset; a cycle or two different claimants set nothing). `teardown.sh` follows the chain: a worker is not done while a descendant has an open follow-up |
 | `workers.<id>.terminal` | the ONE agent handle (`agentTerminalHandle` or `startupTerminal.handle`); refreshed after an Orca restart |
+| `workers.<id>.terminalRefreshedAt` | UTC time `terminal` was last rewritten by `cm_worker_set_handle` (lib.sh) or `scripts/runtime-check.sh`; absent until the first refresh |
 | `workers.<id>.agent` | `claude`, `codex` or `agy`. Unset (some adopted lanes): `resume` never starts claude there, the row is `manual` |
 | `workers.<id>.model` | optional model name for the roster (`sonnet`, `opus`, ...), or null; set at spawn when known |
 | `workers.<id>.current` | optional one-line item the worker is on, for the roster and the resume nudge; falls back to `task` |
@@ -307,6 +311,48 @@ may have leaked should run `scripts/ledger-guard.sh` before it.
 | `violations[]` | the forbidden-agent rows of the last census (`cfg.agents.forbidden`): classify's `.violations` (`host`, `worktree`, `handle`, `title`, `agent`), replaced every tick, `[]` when none; `scripts/digest.sh` lists them as "Forbidden agents" |
 | `violationCheck` | classify's `.violationCheck` (`enabled`, `complete`, `gaps[]`) plus `checkedAt` (UTC, this tick), replaced every tick; an incomplete check (offline host, failed or cut-off terminal list, no terminal data, a reachable remote host scanned by terminal only) is listed in the digest as `CHECK INCOMPLETE`, never read as "none found" |
 | `supabaseStacks` | classify's `.supabaseStacks` (`orphans[]` of `host`, `projectId`, `containers`, `reason`; `complete`; `gaps[]`) plus `checkedAt` (UTC, this tick), replaced every tick; `digest.sh --full` lists the orphans and an incomplete check (no docker, docker silent, failed ssh, offline host, cut-off worktree list) as `CHECK INCOMPLETE`, never as "no stacks" |
+
+## Lane handle file
+
+`$CM_HOME/lanes/<worker-id>/handle`, one file per ledger worker, next to the per-lane journal
+in the same directory. `<worker-id>` is the ledger key (`w-lane-a`), not the worker's `lane` field: a lane
+is a group (the standing sweeper plus the children it spawns; `epic:*` rows), a handle belongs to one agent,
+and lane names also hold `:`, which is not a path token. One line, tab
+separated: `handle  host  agent  pid  written-at` (UTC, ISO 8601), mode 600, never a token.
+`scripts/lane-handles.sh` writes it, atomically (temp file in
+the lane directory, then `mv`), from `scripts/live-agent.sh`: the handle is the
+`ORCA_TERMINAL_HANDLE` in the live agent process's own environment, not the ledger's `terminal`. Why: a
+ledger terminal handle goes stale after a restart or a moved terminal, and a send that trusted one typed
+into the wrong terminal or started a second agent in a live lane.
+
+| file says | meaning | `cm_lane_handle` (lib.sh) / `lane-handles.sh --get` |
+|---|---|---|
+| a handle, fresh | the one live agent, checked within `handles.max_age_s` (default 900 s); for a local agent its pid must also still exist and still carry that terminal (`/proc/<pid>/environ` `ORCA_TERMINAL_HANDLE`: proof it was started there, not that Orca has not moved it since), else the file counts as stale | prints it, exit 0 |
+| `-` (dead mark), fresh | no agent, two agents, a hand-started one beside an Orca one, or a handle another lane's ledger row holds | nothing printed, exit 1: no send |
+| older than `handles.max_age_s`, unparsable, empty, dated in the future, or a failed write on record | not trusted | the live check is re-run for this lane first; fresh after that: as above; otherwise exit 3, no send |
+| missing | never checked | the same re-check as a stale file; the ledger `terminal` is NEVER used as a fallback. Fresh after it: as above; otherwise exit 3, no send |
+
+A dead mark is written, not a deleted file, so that "checked, nothing there" is on record; a missing
+file is "never checked" and is re-checked on every read, never answered from the ledger. When the live
+check cannot run (no `/proc`, ssh down, wrong host), the file is left alone and ages out: reads of it are served while it is fresh (up to `handles.max_age_s`, the window in
+which a REMOTE agent that has moved is not yet noticed; a local one is caught by the pid check), then every read gets exit 3 (stale, re-check cannot run). `written-at` is when the agent was OBSERVED (phase 1 of the run), and a write
+carrying an older observation never replaces a newer file. A write that fails removes the old file, or
+(when the lane directory is not writable) leaves a marker `lanes/.failed/<worker-id>` that makes the
+reader distrust the old file until a write succeeds. A full run removes the file of a worker that is no
+longer a live ledger record (`gone`), along with temp files of an interrupted write (older than 5 minutes)
+and failure markers of finished workers. The check-and-replace of one lane file runs under a short per-lane
+lock (`lanes/<worker-id>/.lock`, a mkdir lock, taken over after a minute, a write that cannot get it in about
+3 s fails closed). A symlinked `lanes/.failed` makes the reader distrust every file. `lane-handles.sh` exits 1
+when `live-agent.sh` is missing beside it, and exits 2 for an empty `--get` or `--worker` id. An id or field with a control character (a newline would forge a
+second row) is `invalid` and gets no file. A handle must be a plain token that does not start with `-`
+(it would read as an option after `--terminal`); the dead mark, a lone `-`, is the only exception. Lane
+directories are created mode 700 and a symlinked `lanes/<worker-id>` is refused. The ledger `terminal` is brought in line with a live handle when they differ
+(`cm_worker_set_handle`, refused when another worker holds that handle). A terminal send to a lane that has a handle file goes through the reader
+(`cm_lane_handle` in lib.sh, or `lane-handles.sh --get <worker-id>`), never to the ledger `terminal`. `resume.sh` and
+`boot-sweep.sh` do not read it yet. A handle that two workers claim (a ledger terminal, a live process in the same run, or
+a fresh file) marks every claimant dead. A caller resolves the handle into a variable and tests it
+(`h="$(scripts/lane-handles.sh --get <worker-id>)" && [ -n "$h" ]`): an empty `--terminal` is read by Orca as
+unset and sends to the caller's own active terminal.
 
 ## `outbox.jsonl`
 
