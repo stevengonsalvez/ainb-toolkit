@@ -1139,5 +1139,114 @@ run "--owner with --retire-check is still a usage error"                   2 'ca
 run "--owner with --force-standing is still a usage error"                 2 'cannot be combined' "$NP1" --owner no-such-lead --force-standing x
 run "--owner with --accept-unmerged-beads is still a usage error"          2 'cannot be combined' "$NP1" --owner no-such-lead --accept-unmerged-beads x
 
+echo "== detached HEAD (a review worktree), concertmaster mode: accepted only on the full fail-closed rule"
+export CM_HOME="$ROOT/cmhome"
+mkdet() {
+  git -C "$M" worktree add -q --detach "$ROOT/wt/$1" "${2:-main}" >/dev/null 2>&1
+  (cd "$ROOT/wt/$1" && pwd -P)
+}
+for _i in 1 2 3 4 5 6 7 8 9 10 11 12; do eval "DT$_i=\"\$(mkdet dt-$_i)\""; done
+DGOOD='cm:retire review done'
+dtled() { one "$1" '"standing":false'; }
+dtled "$DT1"
+STUB_COMMENT="$DGOOD" run "detached, all rules hold: plan ok"                      0 'dry-run: nothing changed' "$DT1"
+STUB_COMMENT="$DGOOD" run "accepted: the request is reported on its own line"      0 'detach-retire .*cm:retire request: review done' "$DT1"
+STUB_COMMENT="$DGOOD" run "accepted: clean tree reported on its own line"          0 'detach-clean .*no tracked change, no untracked file' "$DT1"
+STUB_COMMENT="$DGOOD" run "accepted: ignored files reported on their own line"     0 'detach-ignored .*no precious ignored path' "$DT1"
+STUB_COMMENT="$DGOOD" run "accepted: stash reported on its own line"               0 'detach-stash .*none in the repo' "$DT1"
+STUB_COMMENT="$DGOOD" run "accepted: the remote ref is named on the check line"    0 'detach-remote .*is on origin/main' "$DT1"
+STUB_COMMENT="$DGOOD" run "accepted: the plan line names the remote ref"           0 'contained in remote ref origin/main' "$DT1"
+STUB_COMMENT="$DGOOD" run "accepted: no operation in progress, own line"           0 'detach-inprog .*none' "$DT1"
+STUB_COMMENT="$DGOOD" run "accepted: reported as no PR (detached) on the nopr line" 0 'nopr .*no PR (detached)' "$DT1"
+STUB_COMMENT="$DGOOD" STUB_GH=none run "no PR lookup is needed: the branch has none to find" 0 'dry-run: nothing changed' "$DT1"
+OUT="$(STUB_PATH="$DT1" STUB_COMMENT="$DGOOD" "$TD" local "$DT1" 2>&1)"
+if ! printf '%s' "$OUT" | grep -q 'MERGED'; then PASS=$((PASS + 1)); echo "PASS a merged-PR lookup never counts as the proof for a detached HEAD"; else FAIL=$((FAIL + 1)); echo "FAIL detached HEAD reported a merged PR"; echo "$OUT"; fi
+# one refusal per rule, each on its own
+dtled "$DT2"
+STUB_COMMENT=$'cm:done review finished' run "no cm:retire: refused"                  3 'detach-retire .*NO cm:retire request' "$DT2"
+run "no comment at all: refused"                                                     3 'detach-retire .*NO cm:retire request' "$DT2"
+STUB_COMMENT=$'cm:running\ncm:retire later' run "cm:retire not on the first line: refused" 3 'detach-retire .*NO cm:retire request' "$DT2"
+dtled "$DT3"; printf 'changed\n' >> "$DT3/.beads/.gitignore"
+STUB_COMMENT="$DGOOD" run "dirty tracked file: refused"                              3 'detach-clean .*NO (1 changed or untracked paths)' "$DT3"
+dtled "$DT4"; printf 'scratch\n' > "$DT4/notes.txt"
+STUB_COMMENT="$DGOOD" run "untracked file: refused"                                  3 'detach-clean .*NO (1 changed or untracked paths)' "$DT4"
+# an ignored file that is not regenerable noise (info/exclude is shared by every worktree of the repo)
+printf 'review-notes.txt\n' >> "$M/.git/info/exclude"
+dtled "$DT5"; printf 'secret\n' > "$DT5/review-notes.txt"
+STUB_COMMENT="$DGOOD" run "ignored (precious) file, no --salvage: refused"           3 'detach-ignored .*1 precious path(s) and no --salvage' "$DT5"
+STUB_COMMENT="$DGOOD" run "ignored file with --salvage: accepted, the salvage copies it" 0 'accepted only because --salvage copies and verifies them' "$DT5" --salvage
+dtled "$DT6"; git -C "$DT6" commit -q --allow-empty -m local-only --no-gpg-sign
+STUB_COMMENT="$DGOOD" run "HEAD only local (on no remote ref): refused"              3 'HEAD is not on any remote ref' "$DT6"
+dtled "$DT7"; mv -- "$BARE" "$BARE.off"
+STUB_COMMENT="$DGOOD" run "fetch of origin fails: refused, not read as contained"    3 'detach-remote .*UNKNOWN (git fetch or ls-remote of origin failed or timed out)' "$DT7"
+mv -- "$BARE.off" "$BARE"
+dtled "$DT8"; mkdir -- "$(git -C "$DT8" rev-parse --absolute-git-dir)/rebase-merge"
+STUB_COMMENT="$DGOOD" run "rebase in progress: refused"                              3 'detach-inprog .*YES: rebase-merge' "$DT8"
+dtled "$DT9"; dtled "$DT10"
+printf 'wip\n' >> "$DT9/.beads/.gitignore"; git -C "$DT9" stash push -q -m wip
+STUB_COMMENT="$DGOOD" run "a stash entry in the repo: refused"                       3 'stashes are shared per repo, not per worktree' "$DT10"
+git -C "$DT9" stash drop -q
+STUB_COMMENT="$DGOOD" run "stash dropped: the same worktree is accepted again"       0 'detach-stash .*none in the repo' "$DT10"
+# a review worktree made from a PR head sha: the commit is on origin's branch but this checkout has no tracking ref yet,
+# so it is on no known remote ref until the fresh fetch (a push to the URL, not the remote name, updates no tracking ref)
+git -C "$M" worktree add -q --detach "$ROOT/wt/dt-late" main >/dev/null 2>&1
+DTL="$(cd "$ROOT/wt/dt-late" && pwd -P)"
+git -C "$DTL" commit -q --allow-empty -m pr-head --no-gpg-sign && git -C "$DTL" push -q "$BARE" HEAD:refs/heads/b-late >/dev/null 2>&1
+dtled "$DTL"
+STUB_COMMENT="$DGOOD" run "PR head not yet fetched: first run defers the unpushed check, accepted" 0 'unpushed .*judged again after the fresh fetch' "$DTL"
+STUB_COMMENT="$DGOOD" run "PR head not yet fetched: once fetched, its remote ref is named" 0 'detach-remote .*is on origin/b-late' "$DTL"
+STUB_COMMENT=$'cm:done review finished' run "an earlier detached refusal skips the fetch" 3 'detach-remote .*not checked' "$DT2"
+# a branch deleted on origin must not keep "holding" the commit through a stale remote-tracking ref (fetch --prune)
+git -C "$M" worktree add -q -b b-stale "$ROOT/wt/dt-stale" main >/dev/null 2>&1
+DTS="$(cd "$ROOT/wt/dt-stale" && pwd -P)"
+git -C "$DTS" commit -q --allow-empty -m only-on-the-branch --no-gpg-sign && git -C "$DTS" push -q origin b-stale >/dev/null 2>&1
+git -C "$DTS" checkout -q --detach && git -C "$DTS" branch -q -D b-stale
+dtled "$DTS"
+STUB_COMMENT="$DGOOD" run "branch still on origin: HEAD is on its remote ref, accepted" 0 'detach-remote .*is on origin/b-stale' "$DTS"
+git --git-dir="$BARE" update-ref -d refs/heads/b-stale
+STUB_COMMENT="$DGOOD" run "branch deleted on origin (stale tracking ref kept): refused" 3 'HEAD is not on any remote ref' "$DTS"
+if git -C "$DTS" show-ref --verify -q refs/remotes/origin/b-stale; then PASS=$((PASS + 1)); echo "PASS a dry run prunes nothing: the stale tracking ref is still there"; else FAIL=$((FAIL + 1)); echo "FAIL the dry run pruned a tracking ref"; fi
+# over ssh (a stub that runs the remote command here): the branch rc, the bounded fetch and the stash read all go through it
+cat > "$ROOT/bin/ssh" <<'S'
+#!/usr/bin/env bash
+while [ $# -gt 0 ]; do case "$1" in -o) shift 2 ;; --) shift; break ;; *) break ;; esac; done
+shift
+exec bash -c "$*"
+S
+chmod +x "$ROOT/bin/ssh"
+DT14="$(mkdet dt-14)"; DT15="$(mkdet dt-15)"; DT16="$(mkdet dt-16)"
+git -C "$DT15" commit -q --allow-empty -m local-only --no-gpg-sign
+rdt() { # rdt <label> <want> <pattern> <path>: the detached teardown over the stub ssh, concertmaster mode on host remote-1
+  local label="$1" want="$2" pat="$3" p="$4" out rc
+  ledger "{\"workers\":{\"w-a\":{\"host\":\"remote-1\",\"path\":\"$p\",\"standing\":false}}}"
+  out="$(STUB_PATH="$p" STUB_COMMENT="$DGOOD" CM_SSH_TARGET=fleet-box CM_SSH_EXPECT_HOSTNAME="$(hostname -s)" "$TD" remote-1 "$p" 2>&1)"; rc=$?
+  if [ "$rc" = "$want" ] && grep -q -- "$pat" <<<"$out"; then PASS=$((PASS + 1)); printf 'PASS %-58s rc=%s\n' "$label" "$rc"
+  else FAIL=$((FAIL + 1)); printf 'FAIL %-58s rc=%s want=%s\n%s\n' "$label" "$rc" "$want" "$out"; fi
+}
+rdt "remote host, detached, all rules hold: plan ok"                     0 'detach-remote .*is on origin/main' "$DT14"
+rdt "remote host: the stash read goes through ssh"                       0 'detach-stash .*none in the repo' "$DT14"
+rdt "remote host, HEAD only local: refused"                              3 'HEAD is not on any remote ref' "$DT15"
+printf 'wip\n' >> "$DT16/.beads/.gitignore"; git -C "$DT16" stash push -q -m wip
+rdt "remote host, a stash entry in the repo: refused"                    3 'stashes are shared per repo' "$DT14"
+git -C "$DT16" stash drop -q
+rm -f -- "$ROOT/bin/ssh"
+# the ledger and standing gates still run for a detached HEAD
+ledger '{"workers":{}}'
+STUB_COMMENT="$DGOOD" run "detached, no live ledger worker: still refused"           3 'no live ledger worker' "$DT11"
+one "$DT11" '"standing":true'
+STUB_COMMENT="$DGOOD" run "detached, standing lane: still refused"                   3 'standing lane' "$DT11"
+# the salvage dir of a detached worktree is named for the worktree and sha, so two salvages in one second cannot collide
+DT13="$(mkdet dt-13)"; dtled "$DT13"; printf 'secret\n' > "$DT13/review-notes.txt"
+STUB_COMMENT="$DGOOD" STUB_ORCA_RM_MAIN="$M" run "detached with an ignored file: --apply --salvage" 0 'done: .* torn down' "$DT13" --apply --salvage
+SALV13="$(find "$HOME/.concertmaster/salvage" -path '*/detached-dt-13-*/review-notes.txt' 2>/dev/null | head -n 1)"
+exists "detached salvage dir carries the worktree name and sha" "${SALV13:-$ROOT/none}" yes
+# apply
+dtled "$DT12"
+: > "$ROOT/seq-detached.log"
+STUB_BD_LOG="$ROOT/seq-detached.log" STUB_COMMENT='cm:done x' STUB_ORCA_RM_MAIN="$M" run "apply with no cm:retire: refused" 3 'detach-retire .*NO cm:retire request' "$DT12" --apply
+exists "refused detached apply: worktree kept" "$DT12" yes
+STUB_BD_LOG="$ROOT/seq-detached.log" STUB_COMMENT="$DGOOD" STUB_ORCA_RM_MAIN="$M" run "apply removes an accepted detached worktree" 0 'done: .* torn down' "$DT12" --apply
+exists "accepted detached apply: worktree gone" "$DT12" no
+
 echo "passed=$PASS failed=$FAIL"
 [ "$FAIL" = 0 ]
