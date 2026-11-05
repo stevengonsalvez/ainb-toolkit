@@ -906,8 +906,8 @@ Boundary: {{boundary, usually "PR at the merge gate"}}. Stop there.
 ```text
 You are the deploy worker for window {{window_id}}, spawned by the concertmaster.
 Rails already checked by the concertmaster: {{rails_summary}}.
-Load {{ship_verb}} and follow it for main at {{main_sha}} (delta from
-{{from_tag}}). Order is fixed: staging deploy, staging validate, ONLY THEN
+Load {{ship_verb}} and follow it for main at {{main_sha}} (the sha pinned at
+freeze time; delta from {{from_tag}}). Before your first action (your own merge step may move main), fetch origin/main; if it has moved past that sha, set "cm:failed main moved past <sha>" and stop. Order is fixed: staging deploy, staging validate, ONLY THEN
 trigger production. Never run staging validation in parallel with the
 production trigger. Staging red: STOP, set "cm:failed staging red: <job +
 reason>", do not trigger production.

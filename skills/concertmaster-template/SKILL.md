@@ -910,11 +910,13 @@ window due ─▶ delta since last tag? ─ no ─▶ skipped
                                            STOP, never prod
 ```
 
-0. 30 minutes before a window: FREEZE. Set the ledger `freeze` (`state: on`, the window time) and, in the same step, run `scripts/fleet-state.sh write --freeze on --window <window> --push` (the `cm:state` line is what every lane reads; the push messages each lane matching `fleet_state.push_match`), then message every other lane that can merge "merge freeze until prod verifies". The moment the production run passes its jobs gate: UNFREEZE (`freeze.state=off`, release any production lock, run `scripts/fleet-state.sh write --freeze off --prod <tag>` in the same step, message lanes). A freeze never waits for `cm:done` or a post-deploy watch; a `skipped` window lifts at once.
+0. 30 minutes before a window: FREEZE. Set the ledger `freeze` (`state: on`, the window time) and, in the same step, run `scripts/fleet-state.sh write --freeze on --window <window> --push` (the `cm:state` line is what every lane reads; the push messages each lane matching `fleet_state.push_match`), then message every other lane that can merge "merge freeze until prod verifies". **Pin the deploy sha at freeze time, never earlier:** run `git fetch origin main` then `git rev-parse origin/main` in the same step that writes the freeze, and store the result as `freeze.sha` in the ledger freeze entry; that is the deploy sha. A sha read before the freeze goes stale as soon as one more PR merges, and a deploy worker that finds main moved must stop (why: a pin taken before the freeze left the deploy blocked once another PR landed). The moment the production run passes its jobs gate: UNFREEZE (`freeze.state=off`, release any production lock, run `scripts/fleet-state.sh write --freeze off --prod <tag>` in the same step, message lanes). A freeze never waits for `cm:done` or a post-deploy watch; a `skipped` window lifts at once.
 1. At or after the window time (and not already handled today), compute the
-   delta: last production tag (`cfg.deploy.production_tag_glob`) to
-   `origin/main` (`git log --oneline <tag>..origin/main`,
-   `git diff --name-only <tag>..origin/main`). Empty: `skipped`.
+   delta: last production tag (`cfg.deploy.production_tag_glob`) to the
+   sha pinned at freeze time, never to a fresh `origin/main`
+   (`git log --oneline <tag>..<pinned sha>`,
+   `git diff --name-only <tag>..<pinned sha>`), so the delta and the deploy
+   worker's `main_sha` cannot differ. Empty: `skipped`. If `freeze.sha` is missing at the window (the freeze step was missed), pin at window start with the same fetch and `git rev-parse origin/main` and note it in the tick table; after a stop because main moved, re-pin by re-running the freeze step.
 2. Rails: every `cfg.deploy.rails` entry, by changed path and, where given,
    by content pattern in the changed files. Any hit: ASK, window waits.
 3. Clear: spawn the deploy worker (`references/lanes.md` § deploy worker),
