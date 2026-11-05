@@ -22,9 +22,13 @@
 #     still gates, and every other gate, a dirty or unpushed tree included, still
 #     refuses. It also needs --salvage: the WHOLE .beads dir is copied out to
 #     ~/.concertmaster/salvage/<host>/<branch>-<ts>/beads-whole/ first (verified),
-#     and the reason is logged to $CM_HOME/teardown-beads-unreadable.log. It never
-#     migrates the store and never runs a bd write command (bd runs --readonly
-#     --sandbox from /, as above). Ignored by --retire-check.
+#     and the reason is logged to $CM_HOME/teardown-beads-unreadable.log. The flag
+#     stays an explicit override, but it says what it overrode: the gate reads the
+#     open beads on a migrated COPY of the store (see the schema paragraph under
+#     OPEN BEADS below) and records the count it found in the check line and the
+#     log (openBeads; null when the copy-read failed). It never migrates the live
+#     store and never runs a bd write command on it (bd runs --readonly --sandbox
+#     from /, as above). Ignored by --retire-check.
 #   add --owner <lead-worktree> [--owner-host <host>] for LEAD MODE: a lead on ANY host tears
 #     down its OWN child. <lead-worktree> is the lead's worktree name or absolute path, read with
 #     `orca worktree list` on --owner-host (default local, the host the lead runs on). The child
@@ -132,11 +136,27 @@
 #     every other bd failure, and a timeout (CM_BD_SECS, default 90 per bd
 #     call, enforced on the host too), refuses).
 #     A store bd cannot read because its schema is OLDER than the installed bd (bd prints an
-#     Error line, opens nothing) is excused without any flag when BOTH hold: no tracked change
+#     Error line, opens nothing) is excused without any flag only when ALL hold: no tracked change
 #     under .beads versus the merge-base with origin/<default> (no untracked bead file either;
-#     bd runtime files do not count) AND the epic gate below (or, with no epic, the unmerged
-#     beads check) passes on the other sources. If either fails it refuses as before. The store
-#     is never migrated and never written. --beads-unreadable-ok <reason> stays for the
+#     bd runtime files do not count); a read of the store on a COPY lists 0 open beads; AND the
+#     epic gate below (or, with no epic, the unmerged beads check) passes on the other sources.
+#     The tracked diff alone proves nothing about open beads: they live in the git-ignored
+#     embedded Dolt store, which is the very thing bd could not read. So the gate copies .beads
+#     into a mktemp -d dir under $CM_HOME/tmp (never the live store), runs bd migrate schema on
+#     the copy (CM_BD_MIGRATE_SECS, default 300), lists every bead on the copy (anything not
+#     closed or tombstone counts as open work) and removes the copy again (only a path under
+#     $CM_HOME/tmp/beads-copy.*). It refuses when any open bead is found or any step fails: a
+#     .beads/redirect (the store is elsewhere), a symlink inside .beads, a migrate or list
+#     error or timeout (a store bd cannot open on the copy included), a list that is not a
+#     JSON array, a metadata.json that names a Dolt server, a config.yaml with any option beyond
+#     issue-prefix (an allowlist), a bd that reports talking to a server, a bd whose store
+#     resolves outside the copy, or a bd that CREATED a database in the copy (a store it did not
+#     find would otherwise list 0). The copy's bd
+#     runs with its own empty HOME (no user-level config), no BEADS_*/BD_* env, the copied
+#     dolt backups and remotes cleared and the copy's *.jsonl emptied (so it counts what the
+#     store holds, not a re-import of the tracked issues.jsonl). Only a clean read of 0
+#     open beads excuses. The live store is never migrated and never written (recovery.md still
+#     covers the manual backup plus migrate path). --beads-unreadable-ok <reason> stays for the
 #     remaining unreadable cases.
 #     An epic found nowhere, or an open epic with no children, refuses.
 #     With no epic: refuses when the worktree holds open beads newer than in
@@ -1429,7 +1449,8 @@ fi
 # file is not a refusal. Excused when NO tracked .beads path differs from the merge-base with the
 # default branch (and no untracked bead file exists; bd runtime paths are not bead files), with the
 # other sources readable. The epic / unmerged-beads checks below still run on those sources, so open
-# beads still refuse. Nothing is migrated or written.
+# beads still refuse. The live store is never migrated or written: the excusal reads a migrated COPY
+# (under the state dir of the host that holds the worktree, local or remote) and refuses unless it lists 0 open beads.
 # Only an error that says the SCHEMA is older (migration pending, a column the new bd expects is
 # missing) is excused on its own, matched on those phrases and not on the bare word 'schema': any other
 # bd Error (a refused connection to a configured external database, a store schema NEWER than bd, an
@@ -1438,6 +1459,144 @@ BEADS_SCHEMA_ERR=0
 case "$(cm_lower "$BBD_ERR")" in
   *"pending schema migration"*|*"pending migration"*|*"migrate: pending"*|*"older schema"*|*"schema is older"*|*"schema older"*|*"does not have column"*|*"no such column"*|*"unknown column"*) BEADS_SCHEMA_ERR=1 ;;
 esac
+# The tracked-file diff cannot see open beads: they live in the git-ignored embedded Dolt store, the
+# very thing bd could not read. So the excusal also READS that store, on a COPY. beads_copy_read copies
+# .beads into a fresh mktemp dir under $CM_HOME/tmp, runs bd migrate schema there, lists the beads on the
+# copy and removes the copy. The live store is never migrated, never written. Only a clean migrated read
+# of 0 open beads excuses; open beads, or any failed step, refuse. A copy of a store whose .beads/redirect
+# points elsewhere is not the store, so that case fails too (as does a symlink inside .beads).
+# CM_BD_MIGRATE_SECS (default 300) bounds the migrate; CM_BD_SECS bounds each other bd call.
+BD_MIG_SECS="${CM_BD_MIGRATE_SECS:-300}"
+case "$BD_MIG_SECS" in ''|*[!0-9]*|0*) BD_MIG_SECS=300 ;; esac
+BCOPY_ST=""; BCOPY_OPEN=""; BCOPY_ERR=""
+# shellcheck disable=SC2016
+BCOPY_SCRIPT='bd=$2; secs=$3; msecs=$4; base=${5:-$HOME/.concertmaster}; c=""; p=""
+cd / || exit 6
+for v in $(env | sed -n "s/^\(BEADS_[A-Za-z0-9_]*\)=.*/\1/p; s/^\(BD_[A-Za-z0-9_]*\)=.*/\1/p; s/^\(DOLT_[A-Za-z0-9_]*\)=.*/\1/p"); do unset "$v"; done
+cleanup() {
+  # p is the pid of this script own bd child (set by runbd), killed by exact pid, never by name
+  [ -z "$p" ] || kill "$p" 2>/dev/null
+  case "$c" in "$base"/tmp/beads-copy.?*) chmod -R u+rwx -- "$c" 2>/dev/null; rm -rf -- "${c:?}" ;; esac
+}
+trap cleanup EXIT
+trap "exit 143" HUP INT TERM ALRM
+fail() { printf "cm-copy-error: %s\n" "$1"; exit 1; }
+command -v "$bd" >/dev/null 2>&1 || fail "bd not found on this host"
+command -v jq >/dev/null 2>&1 || fail "jq not found on this host"
+src="$1/.beads"
+[ -d "$src" ] && [ ! -L "$src" ] || fail "no .beads dir in the worktree"
+[ ! -e "$src/redirect" ] && [ ! -L "$src/redirect" ] || fail ".beads/redirect puts the store outside this worktree, so a copy is not the store"
+case "$base" in /*) ;; *) fail "state dir is not an absolute path" ;; esac
+case "$base" in *[[:space:]]*) fail "state dir has whitespace in its path" ;; esac
+mkdir -p -- "$base/tmp" 2>/dev/null || fail "cannot create $base/tmp"
+base=$(cd -- "$base" 2>/dev/null && pwd -P) || fail "cannot resolve the state dir"
+d=$(mktemp -d "$base/tmp/beads-copy.XXXXXX" 2>/dev/null) || fail "mktemp -d failed under $base/tmp"
+c=$d
+case "$c" in "$base"/tmp/beads-copy.?*) ;; *) c=""; fail "unexpected temp dir" ;; esac
+# no -quit (BSD find lacks it) and a failing find is a refusal, never an empty answer
+find "$src" -type l -print >"$c/links" 2>/dev/null || fail "cannot scan .beads for symlinks"
+[ ! -s "$c/links" ] || fail "a symlink inside .beads: a copy could write through it"
+need=$(du -sk -- "$src" 2>/dev/null | cut -f1); avail=$(df -Pk -- "$base/tmp" 2>/dev/null | awk "NR==2 {print \$4}")
+case "$need$avail" in ""|*[!0-9]*) fail "cannot size the store or the free space under $base/tmp" ;; esac
+[ "$need" -ge 1 ] || need=1
+[ "$avail" -ge $((need * 3 + 1024)) ] || fail "not enough free space under $base/tmp for a copy of the store (${need}K store, ${avail}K free)"
+cp -a -- "$src" "$c/.beads" 2>/dev/null || fail "copy of .beads failed"
+find "$c/.beads" -type l -print >"$c/links" 2>/dev/null || fail "cannot scan the copy of .beads for symlinks"
+[ ! -s "$c/links" ] || fail "a symlink inside the copy of .beads: a copy could write through it"
+# runtime files of a Dolt server: a store that was ever served may still point bd at a live server
+for f in "$c"/.beads/dolt-server*; do
+  if [ -e "$f" ] || [ -L "$f" ]; then fail "a Dolt server runtime file in .beads: bd on the copy could reach a live server"; fi
+done
+m="$c/.beads/metadata.json"
+if [ -e "$m" ]; then
+  jq -e "type == \"object\" and ((.dolt_mode // \"embedded\") == \"embedded\") and ((keys - [\"dolt_server_host\", \"dolt_server_port\", \"dolt_data_dir\", \"shared_server\"]) == keys)" "$m" >/dev/null 2>&1 \
+    || fail "metadata.json names a server or an external data dir: a copy would not be the store"
+fi
+# config.yaml: an ALLOWLIST. Any key other than a plain issue-prefix (a server, a remote, backup.*, export.*,
+# git-repo, sync options, nested or quoted keys) could send bd on the copy somewhere outside the copy.
+y="$c/.beads/config.yaml"
+if [ -e "$y" ]; then
+  # Only tab, CR, LF and printable ASCII: NUL, high bytes and the Unicode line breaks make grep and the YAML
+  # parser disagree about where a line ends. A lone CR is a YAML line break too, so it becomes LF before the filter.
+  [ "$(LC_ALL=C tr -d "\t\r\n -~" <"$y" | wc -c | tr -d " ")" = 0 ] || fail "config.yaml has bytes beyond printable ASCII: it cannot be screened"
+  if [ -n "$(LC_ALL=C tr "\r" "\n" <"$y" | LC_ALL=C grep -a -Ev "^[[:space:]]*(#|$)" | LC_ALL=C grep -a -Ev "^(issue-prefix|issue_prefix):[[:space:]]*[A-Za-z0-9._\"-]*[[:space:]]*$")" ]; then
+    fail "config.yaml sets options beyond issue-prefix: a copy could reach a server, a remote or a backup target"
+  fi
+fi
+# bd also reads user-level config (~/.config/bd, ~/.beads) that can switch it to a shared server: give the copy
+# its own empty HOME. And never let the copy re-import the tracked issues.jsonl: the list must show only
+# what the store itself holds, not every bead the project has.
+mkdir -- "$c/home" 2>/dev/null || fail "cannot create the copy home"
+export HOME="$c/home"
+unset XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME XDG_CACHE_HOME
+for f in "$c"/.beads/*.jsonl; do
+  if [ -e "$f" ]; then : >"$f" || fail "cannot empty $f in the copy"; fi
+done
+# The copied dolt repo state names the live backup dir and any remote by absolute path: drop both, so a
+# migrate on the copy cannot export or push into the live worktree.
+# NUL separated list in a file, read without a subshell: a name with a space or a glob character stays one path.
+find "$c/.beads" -name repo_state.json -type f -print0 >"$c/rs.list" 2>/dev/null || fail "cannot list the copied dolt repo state"
+while IFS= read -r -d "" f; do
+  case "$f" in "$c"/.beads/*) ;; *) fail "repo_state.json path outside the copy" ;; esac
+  jq ".backups = {} | .remotes = {}" "$f" >"$f.new" 2>/dev/null && mv -f -- "$f.new" "$f" || fail "cannot neutralise backups and remotes in the copied dolt repo state"
+done <"$c/rs.list"
+tmo=""
+if command -v timeout >/dev/null 2>&1; then tmo=timeout; elif command -v gtimeout >/dev/null 2>&1; then tmo=gtimeout; fi
+runbd() {
+  s=$1; shift
+  if [ -n "$tmo" ]; then "$tmo" "$s" "$bd" -C "$c" --sandbox "$@" & p=$!
+  else "$bd" -C "$c" --sandbox "$@" & p=$!; fi
+  wait "$p"; r=$?; p=""; return "$r"
+}
+runbd "$secs" --readonly where --json >"$c/where.json" 2>/dev/null || fail "bd where failed on the copy"
+jq -e --arg c "$c/" "type == \"object\" and ((.path // \"\") | startswith(\$c)) and (((.database_path // \"\") == \"\") or ((.database_path | startswith(\$c))))" "$c/where.json" >/dev/null 2>&1 \
+  || fail "bd on the copy resolves a store outside the copy"
+dbs() { find "$c/.beads/embeddeddolt" "$c/.beads/dolt" -mindepth 1 -maxdepth 1 2>/dev/null | LC_ALL=C sort | tr "\n" " "; }
+dbs0=$(dbs)
+runbd "$secs" dolt commit >"$c/out" 2>"$c/err" || true
+if cat "$c/out" "$c/err" | grep -Eiq "shared.server|dolt server|server mode"; then fail "bd on the copy talked to a Dolt server"; fi
+r=0; runbd "$msecs" migrate schema >"$c/out" 2>"$c/err" || r=$?
+if [ "$r" != 0 ]; then
+  case $r in 124|137|142|143) fail "bd migrate schema timed out on the copy after ${msecs}s" ;; esac
+  fail "bd migrate schema failed on the copy: $(grep -m 1 "^Error" "$c/err" || echo "exit $r")"
+fi
+if grep -Eiq "shared.server|dolt server|server mode" "$c/err"; then fail "bd migrate on the copy talked to a Dolt server"; fi
+r=0; runbd "$secs" --readonly list --all --include-gates --include-infra --include-ephemeral --include-templates --limit 0 --json >"$c/out" 2>"$c/err" || r=$?
+if [ "$r" != 0 ]; then
+  case $r in 124|137|142|143) fail "bd list timed out on the migrated copy after ${secs}s" ;; esac
+  fail "bd list failed on the migrated copy: $(grep -m 1 "^Error" "$c/err" || echo "exit $r")"
+fi
+if grep -Eiq "shared.server|dolt server|server mode" "$c/err"; then fail "bd on the migrated copy talked to a Dolt server"; fi
+# A database bd could not find is CREATED empty by the first write, and an empty database lists 0 beads: refuse
+# when the set of databases under the copy changed, so a missing store never reads as 0 open.
+[ "$(dbs)" = "$dbs0" ] || fail "bd created a new database in the copy: the store it was asked about was not found"
+n=$(jq -e "if type == \"array\" then [.[] | select((.status // \"\") as \$s | \$s != \"closed\" and \$s != \"tombstone\")] | length else error(\"not an array\") end" "$c/out" 2>/dev/null) \
+  || fail "bd list on the migrated copy did not print a JSON array"
+case "$n" in ""|*[!0-9]*) fail "open-bead count unreadable" ;; esac
+printf "cm-copy-open: %s\n" "$n"'
+beads_copy_read() {
+  [ -z "$BCOPY_ST" ] || return 0
+  local out rc total
+  total=$((BD_SECS * 3 + BD_MIG_SECS + 60))
+  if [ "$HOST" = local ]; then
+    out="$(cm_timeout "$total" bash -c "$BCOPY_SCRIPT" cm-copy "$WT" "$BD_CMD" "$BD_SECS" "$BD_MIG_SECS" "$CM_HOME" 2>/dev/null)"; rc=$?
+  else
+    out="$(RRUN_SECS="$total" rrun "$BCOPY_SCRIPT" "$WT" "$BD_CMD" "$BD_SECS" "$BD_MIG_SECS" "" 2>/dev/null)"; rc=$?
+  fi
+  BCOPY_OPEN="$(printf '%s\n' "$out" | sed -n 's/^cm-copy-open: //p' | tail -n 1)"
+  if [ "$rc" = 0 ]; then
+    case "$BCOPY_OPEN" in
+      ''|*[!0-9]*) BCOPY_ST=failed; BCOPY_OPEN=""; BCOPY_ERR="open-bead count unreadable" ;;
+      *) BCOPY_ST=ok ;;
+    esac
+  else
+    BCOPY_ST=failed; BCOPY_OPEN=""
+    BCOPY_ERR="$(printf '%s\n' "$out" | sed -n 's/^cm-copy-error: //p' | tail -n 1)"
+    case $rc in 124|137|142|143) BCOPY_ERR="${BCOPY_ERR:-timed out after ${total}s}" ;; esac
+    BCOPY_ERR="${BCOPY_ERR:-exit $rc}"
+  fi
+  BCOPY_ERR="$(printf '%s' "$BCOPY_ERR" | tr -cd 'A-Za-z0-9 ._:,()/="-' | cut -c 1-200)"
+}
 BEADS_AUTO=0
 if [ "$BEADS_UNREAD" = 1 ] && [ "$BEADS_SCHEMA_ERR" = 1 ] && [ -z "$BEADS_OK_REASON" ] && [ "$GITOK" -eq 1 ] && [ "$BFETCH" = ok ] \
    && [ "$BWT_ST" != failed ] && [ "$BMAIN_ST" != failed ] && [ "$BRED_ST" != failed ] && [ "$BRED_ST" != failed-outside-main-checkout ]; then
@@ -1446,15 +1605,23 @@ if [ "$BEADS_UNREAD" = 1 ] && [ "$BEADS_SCHEMA_ERR" = 1 ] && [ -z "$BEADS_OK_REA
      && BUNT="$(g ls-files --others --exclude-standard -- .beads 2>/dev/null; echo "rc=$?")" \
      && [ -z "$(printf '%s\n' "$BUNT" | grep -v '^rc=' | grep -Ev "$BD_RUNTIME_PATH_RE" || true)" ] \
      && [ "${BUNT##*rc=}" = 0 ]; then
-    BEADS_AUTO=1
-    check beads-unread "bd cannot read the store (UNKNOWN, likely an older schema): excused, no tracked .beads change vs $DEF; epic and open-bead checks still read the other sources"
+    beads_copy_read
+    if [ "$BCOPY_ST" = ok ] && [ "$BCOPY_OPEN" = 0 ]; then
+      BEADS_AUTO=1
+      check beads-unread "bd cannot read the store (UNKNOWN, likely an older schema): excused, no tracked .beads change vs $DEF and a migrated COPY of the store lists 0 open beads (live store untouched); epic and open-bead checks still read the other sources"
+    fi
   fi
 fi
 BD_HINT=""
 if [ "$BEADS_UNREAD" = 1 ] && [ "$BEADS_AUTO" = 0 ] && [ -z "$BEADS_OK_REASON" ] \
    && [ "$BFETCH" != failed ] && [ "$BWT_ST" != failed ] && [ "$BMAIN_ST" != failed ] && [ "$BRED_ST" != failed ] \
    && [ "$BRED_ST" != failed-outside-main-checkout ]; then
-  BD_HINT=" | bd cannot read this beads store: its state is UNKNOWN (for example a store schema older than the installed bd). If the tree is otherwise clean and pushed and $CM_OWNER_NAME agrees, re-run with --salvage --beads-unreadable-ok '<reason>'; never migrate the store or run bd writes on this worktree"
+  if [ "$BCOPY_ST" = ok ] && [ "$BCOPY_OPEN" != 0 ]; then
+    BD_HINT=" | bd cannot read this beads store, and a migrated COPY of it lists $BCOPY_OPEN open or in-progress bead(s): finish, close or hand over that work first; the live store is untouched (to migrate it by hand see references/recovery.md); do not override this with --beads-unreadable-ok"
+  else
+    BD_HINT=" | bd cannot read this beads store: its state is UNKNOWN (for example a store schema older than the installed bd). If the tree is otherwise clean and pushed and $CM_OWNER_NAME agrees, re-run with --salvage --beads-unreadable-ok '<reason>'; never migrate the store or run bd writes on this worktree"
+    [ "$BCOPY_ST" != failed ] || BD_HINT="$BD_HINT | the read of a migrated copy failed ($BCOPY_ERR), so open beads could not be ruled out"
+  fi
 fi
 # A store BEHIND the installed bd ("schema version mismatch: database is at vN, binary
 # expects vM", N < M) has a sanctioned manual fix. This script still only refuses and
@@ -1472,8 +1639,16 @@ case "$([ -n "$BD_HINT" ] && cm_lower "$BBD_ERR")" in
     fi ;;
 esac
 if [ "$BEADS_UNREAD" = 1 ] && [ -n "$BEADS_OK_REASON" ]; then
-  check beads-unread "bd cannot read the store: UNKNOWN, accepted by --beads-unreadable-ok ($BEADS_OK_REASON); the other beads sources are still checked"
+  # The flag stays an explicit override, but it says what it overrode: the same copy-read as the
+  # automatic excusal, whose result (open-bead count, or why it failed) goes to the check line and the log.
   [ "$SALVAGE" -eq 1 ] || refuse "--beads-unreadable-ok needs --salvage: the whole .beads dir is copied out before anything is removed"
+  beads_copy_read
+  case "$BCOPY_ST:$BCOPY_OPEN" in
+    ok:0) BCOPY_NOTE="a migrated copy of the store lists 0 open beads" ;;
+    ok:*) BCOPY_NOTE="OVERRIDING $BCOPY_OPEN open or in-progress bead(s) found on a migrated copy of the store" ;;
+    *) BCOPY_NOTE="open beads UNKNOWN, the migrated-copy read failed ($BCOPY_ERR)" ;;
+  esac
+  check beads-unread "bd cannot read the store: UNKNOWN, accepted by --beads-unreadable-ok ($BEADS_OK_REASON); $BCOPY_NOTE; the other beads sources are still checked"
 fi
 beads_failed() {
   local bd="$BBD_ST"
@@ -1730,7 +1905,7 @@ if { [ -n "${PRECIOUS:-}" ] || [ "$BEADS_WHOLE" -eq 1 ]; } && [ "$SALVAGE" -eq 1
   SALVAGE_REL="salvage/$(cm_safe_name "$HOST")/$(cm_safe_name "${BRANCH:-detached}")-$(date -u +%Y%m%dT%H%M%SZ)"
   # shellcheck disable=SC2088  # display only: the remote side expands $HOME
   SALVAGE_DIR="~/.concertmaster/$SALVAGE_REL"
-  [ "$BEADS_WHOLE" -eq 0 ] || plan "copy the WHOLE .beads dir to $SALVAGE_DIR/beads-whole (on $HOST), verified, before anything is removed; log '$BEADS_OK_REASON' to $CM_HOME/teardown-beads-unreadable.log"
+  [ "$BEADS_WHOLE" -eq 0 ] || plan "copy the WHOLE .beads dir to $SALVAGE_DIR/beads-whole (on $HOST), verified, before anything is removed; log '$BEADS_OK_REASON' and the open-bead count of a migrated copy ($([ "$BCOPY_ST" = ok ] && echo "$BCOPY_OPEN" || echo "unknown")) to $CM_HOME/teardown-beads-unreadable.log"
   [ -z "${PRECIOUS:-}" ] || plan "salvage $(printf '%s\n' "$PRECIOUS" | grep -c .) ignored path(s) to $SALVAGE_DIR (on $HOST)"
 fi
 if [ -n "${BDRT:-}" ]; then
@@ -1893,9 +2068,11 @@ echo copied' "$SALVAGE_REL" "$WT")" \
   BLOG="$CM_HOME/teardown-beads-unreadable.log"
   ( umask 077 && mkdir -p -- "$CM_HOME" && jq -cn --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg host "$HOST" --arg path "$WT" \
       --arg branch "${BRANCH:-}" --arg reason "$BEADS_OK_REASON" --arg bd "$BBD_ERR" --arg salvage "$BW_DIR" \
-      '{at:$at, host:$host, path:$path, branch:$branch, reason:$reason, bdError:$bd, salvage:$salvage}' >> "$BLOG" ) \
+      --arg copy "${BCOPY_ST:-not-run}" --arg open "$BCOPY_OPEN" --arg cerr "$BCOPY_ERR" \
+      '{at:$at, host:$host, path:$path, branch:$branch, reason:$reason, bdError:$bd, salvage:$salvage,
+        copyRead:$copy, openBeads:(if $open == "" then null else ($open | tonumber) end), copyReadError:$cerr}' >> "$BLOG" ) \
     || fail "log write to $BLOG (nothing removed; the .beads copy is kept at ${BW_DIR:-n/a} on $HOST)"
-  printf 'logged --beads-unreadable-ok reason to %s\n' "$BLOG"
+  printf 'logged --beads-unreadable-ok reason (open beads on a migrated copy: %s) to %s\n' "${BCOPY_OPEN:-unknown}" "$BLOG"
 fi
 if [ -n "$SALVAGE_DIR" ] && [ -n "${PRECIOUS:-}" ]; then
   # Fixed script; salvage dir, worktree and every path arrive as arguments.
