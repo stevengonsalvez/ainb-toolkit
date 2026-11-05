@@ -177,3 +177,25 @@ keep burning CPU after the worktree is removed. Before `orca worktree rm`, `tear
 - The dry run lists the pids it would stop (`codex  leftover codex processes ... (children first): <pid>:<name>`).
   If the process list cannot be read on the host, the dry run says so and the existing non-shell process gate
   still decides.
+
+## Beads schema version mismatch at teardown
+
+Symptom: `scripts/teardown.sh` refuses at the beads gate and the refusal quotes `bd: failed to open database: schema version mismatch: database is at vN, binary expects vM`.
+
+Why: a worktree normally holds its own embedded Dolt store under `.beads/`. The store is git-ignored; the tracked `.beads/issues.jsonl` is the truth. A store created by an older bd sits behind a newer bd binary (N lower than M; hosts on bd 0.49 hit this once bd 1.x is installed there, and stores from the 1.1 and 1.2 line sit below the current schema too). Teardown opens the store read-only, and a read-only open cannot migrate. A live agent in that worktree self-migrates the store on its next bd write, so only a worktree with no agent needs the steps below.
+
+If N is higher than M, the store is newer than the installed bd. Do not migrate: upgrade bd on that host instead.
+
+Steps, in order. Run every bd command with `-C <worktree>` so it acts on that worktree and not on the directory you are standing in.
+
+1. Check that no live agent, and no `bd`, `node` or `claude` process, has its cwd in that worktree or holds its store open (`lsof -a -d cwd`, then look for the worktree path; also `lsof +D <worktree>/.beads`; this shows an idle shell or tmux pane that could start bd mid-migration). If one does, STOP: do not migrate under a running agent.
+2. Back up first, before any bd command: `cp -a <worktree>/.beads <backup-dir>`. Put the backup dir outside the worktree, on the same host. It must not exist yet, so the copy lands as a full `.beads` tree and never merges into an older backup.
+3. STOP and hand to the owner if any of these is true: `<worktree>/.beads/redirect` exists or `bd -C <worktree> --readonly --sandbox where` shows a path outside the worktree (the store is shared, so the backup above missed it and the migration would hit a store other worktrees use); a Dolt remote is configured (`bd -C <worktree> --readonly --sandbox dolt remote list` shows one); that command itself errors (the remote is unknown).
+4. `bd -C <worktree> dolt commit`. A plain `bd migrate schema` refuses on a dirty Dolt working set. "Nothing to commit" is fine.
+5. `bd -C <worktree> migrate schema` with a generous timeout (minutes under load; do not kill it early).
+6. `bd -C <worktree> --readonly --sandbox list --limit 1 --json` must open and print JSON. If it does not, stop and keep the backup.
+7. bd may leave an untracked `.beads/.auto-import-issues.jsonl`. Move it into the backup dir with `mv -n` (under a new name if one is already there) so `git status` is clean.
+
+Then re-run the teardown dry-run: the beads gate reads the store normally.
+
+Never wipe the store, never recreate it, never run `bd init`: the store can hold bead state not yet exported to `issues.jsonl`. `teardown.sh` itself never migrates; it only refuses and points here.

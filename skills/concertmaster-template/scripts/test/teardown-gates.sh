@@ -559,6 +559,58 @@ exists "hostile reason was not executed" "$ROOT/pwned" no
 # bd healthy: the flag changes nothing and does not demand --salvage.
 CM_BD_CMD=bd-stub STUB_BD_JSON="$ROOT/bd-empty.json" \
   run "bd reads fine: flag is a no-op, no --salvage needed" 0 'no unmerged open beads' "$W23" --beads-unreadable-ok "v53 store bd v66"
+# A store BEHIND the installed bd ("schema version mismatch") gets a recovery hint in the
+# refusal. It stays a refusal (exit 3, nothing migrated: the safety checks below cover these
+# cases too); another bd error carries no such hint.
+BDM='Error: bd: failed to open database: schema version mismatch: database is at v39, binary expects v66'
+BDX='Error: dial tcp 127.0.0.1:3307: connect: connection refused'
+run_without() { # run_without <label> <expect-exit> <absent-pattern> <path> [args...]
+  local label="$1" want="$2" pat="$3" p="$4" out rc
+  shift 4
+  out="$(STUB_PATH="$p" "$TD" local "$p" "$@" 2>&1)"; rc=$?
+  if [ "$rc" = "$want" ] && ! grep -q -- "$pat" <<<"$out"; then
+    PASS=$((PASS + 1)); printf 'PASS %-58s rc=%s\n' "$label" "$rc"
+  else
+    FAIL=$((FAIL + 1)); printf 'FAIL %-58s rc=%s want=%s\n%s\n' "$label" "$rc" "$want" "$out"
+  fi
+}
+CM_BD_CMD=bd-stub STUB_BD_ERR="$BDM" \
+  run "schema mismatch: still a refusal, names the bd error" 3 'bd said: Error: bd: failed to open database: schema version mismatch' "$W23"
+CM_BD_CMD=bd-stub STUB_BD_ERR="$BDM" \
+  run "schema mismatch: hint points at the recovery section" 3 "references/recovery.md, section 'Beads schema version mismatch at teardown'" "$W23"
+CM_BD_CMD=bd-stub STUB_BD_ERR="$BDM" \
+  run "schema mismatch: hint names the steps"                3 'back up .beads, then bd migrate schema, only with no live agent in the worktree, never wipe' "$W23"
+CM_BD_CMD=bd-stub STUB_BD_ERR="$BDM" \
+  run "schema mismatch: existing unreadable hint kept"       3 're-run with --salvage --beads-unreadable-ok' "$W23"
+BDN='Error: bd: failed to open database: schema version mismatch: database is at v70, binary expects v66'
+BDU='Error: schema version mismatch (database v70, binary v66)'
+CM_BD_CMD=bd-stub STUB_BD_ERR="$BDU" \
+  run "mismatch with unreadable versions: still a refusal" 3 'bd said: Error: schema version mismatch (database v70' "$W23"
+CM_BD_CMD=bd-stub STUB_BD_ERR="$BDU" \
+  run_without "mismatch with unreadable versions: no migrate hint" 3 'recovery.md' "$W23"
+BDP='bd: failed to open database: schema version mismatch: database is at v39, binary expects v66'
+CM_BD_CMD=bd-stub STUB_BD_ERR="$BDP" \
+  run "mismatch with no Error line: unchanged, bd said exit 1" 3 'bd said: exit 1' "$W23"
+CM_BD_CMD=bd-stub STUB_BD_ERR="$BDP" \
+  run_without "mismatch with no Error line: no hint, as before" 3 'recovery.md' "$W23"
+CM_BD_CMD=bd-stub STUB_BD_ERR="$BDP" \
+  run "mismatch with no Error line: the flag still does not excuse it" 3 'bd:failed' "$W23" --salvage --beads-unreadable-ok "v39 store bd v66"
+CM_BD_CMD=bd-stub STUB_BD_ERR="$BDN" \
+  run "store newer than bd: still a refusal"                 3 'bd said: Error: bd: failed to open database: schema version mismatch' "$W23"
+CM_BD_CMD=bd-stub STUB_BD_ERR="$BDN" \
+  run_without "store newer than bd: no migrate hint"         3 'recovery.md' "$W23"
+CM_BD_CMD=bd-stub STUB_BD_ERR="$BDM" \
+  run_without "schema mismatch: no contradictory never-migrate text" 3 'never migrate the store or run bd writes' "$W23"
+ep "$W25" t-ep1
+CM_BD_CMD=bd-stub STUB_BD_ERR="$BDM" \
+  run "schema mismatch: epic gate carries the hint too"      3 "references/recovery.md, section 'Beads schema version mismatch at teardown'" "$W25"
+one "$W23" '"standing":false'   # one() rewrites the ledger: put W23 back for the cases below
+CM_BD_CMD=bd-stub STUB_BD_ERR="$BDX" \
+  run_without "other bd error: refuses with no schema hint"  3 'recovery.md' "$W23"
+CM_BD_CMD=bd-stub STUB_BD_ERR="$BDX" \
+  run "other bd error: the existing hint is unchanged"       3 'bd cannot read this beads store: its state is UNKNOWN' "$W23"
+CM_BD_CMD=bd-stub STUB_BD_ERR="$BDV" \
+  run_without "older-schema pending-migration error: no schema hint" 3 'recovery.md' "$W23"
 # Safety: across every case above bd only ever ran read-only and sandboxed, never a write or a migrate.
 if [ -s "$ROOT/bd-schema.log" ] && ! grep -v -e '--readonly --sandbox' "$ROOT/bd-schema.log" | grep -q .; then
   PASS=$((PASS + 1)); echo "PASS bd only ran with --readonly --sandbox (no migrate, no write)"
