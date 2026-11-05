@@ -299,6 +299,20 @@ OUT="$(CM_CONFIG="$ROOT/config-host.yaml" CM_SSH_TARGET=fleet-box STUB_PATH="$K1
 if printf '%s' "$OUT" | grep -q "ssh .*fleet-box is $SHORT"; then ok "configured hosts.per_host hostname satisfies the ssh identity check in lead mode"; else bad "config hostname ignored in lead mode" "$OUT"; fi
 OUT="$(CM_SSH_TARGET=fleet-box STUB_PATH="$K1" STUB_NAME=kid-1 "$TD" host-b "$K1" --owner lane-a 2>&1)"
 if printf '%s' "$OUT" | grep -q "ssh target is not host host-b"; then ok "no configured hostname: the host alias is still expected"; else bad "alias fallback lost" "$OUT"; fi
+# A child on ANOTHER host must be listed as name@host: a bare name only matches a child on the lead's own host.
+remote_owner() { CM_CONFIG="$ROOT/config-host.yaml" CM_SSH_TARGET="fleet-box" STUB_PATH="$K1" STUB_NAME=kid-1 "$TD" host-b "$K1" --owner lane-a 2>&1; }
+lists $'cm:running\ncm:child kid-1'
+OUT="$(remote_owner)"; rc=$?
+if [ "$rc" = 3 ] && printf '%s' "$OUT" | grep -q 'not listed in the comment of'; then ok "remote child listed by bare name: refused as not listed"; else bad "remote child bare name accepted" "rc=$rc $OUT"; fi
+lists $'cm:running\nWORKERS I OWN: kid-1 (x)'
+OUT="$(remote_owner)"; rc=$?
+if [ "$rc" = 3 ] && printf '%s' "$OUT" | grep -q 'not listed in the comment of'; then ok "remote child in WORKERS I OWN by bare name: refused as not listed"; else bad "remote child bare WORKERS I OWN accepted" "rc=$rc $OUT"; fi
+lists $'cm:running\ncm:child kid-1@host-b'
+OUT="$(remote_owner)"; rc=$?
+if printf '%s' "$OUT" | grep -q 'listed in the comment of lane-a' && ! printf '%s' "$OUT" | grep -q 'not listed'; then ok "remote child listed as name@host: accepted"; else bad "remote child name@host refused" "rc=$rc $OUT"; fi
+lists $'cm:running\nWORKERS I OWN: kid-1@host-b (x)'
+OUT="$(remote_owner)"; rc=$?
+if printf '%s' "$OUT" | grep -q 'listed in the comment of lane-a' && ! printf '%s' "$OUT" | grep -q 'not listed'; then ok "remote child in WORKERS I OWN as name@host: accepted"; else bad "remote child WORKERS I OWN name@host refused" "rc=$rc $OUT"; fi
 rm -f -- "$ROOT/bin/ssh"
 lists $'cm:running\ncm:child kid-1'
 
