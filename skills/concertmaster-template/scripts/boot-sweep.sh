@@ -60,7 +60,7 @@ command -v jq >/dev/null 2>&1 || { cm_warn "boot-sweep.sh: missing dependency: j
 # from anyone else's on a shared host.
 [ -n "$CM_PATH_MATCH" ] || { cm_warn "boot-sweep.sh: set worktrees.path_match in config.yaml (or CM_PATH_MATCH)"; exit 0; }
 
-ORCA="$(cm_orca)"
+ORCA="$(cm_cli)" || exit 2
 SETTLE="${CM_BOOT_SETTLE_S:-45}"
 WAIT_MAX="${CM_BOOT_ORCA_WAIT_S:-300}"
 CONFIRM_S="${CM_BOOT_CONFIRM_S:-60}"

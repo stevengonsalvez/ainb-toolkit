@@ -29,6 +29,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=SCRIPTDIR/lib.sh
 . "$HERE/lib.sh"
+cm_cli >/dev/null || exit 2   # an unknown cli must stop here, not read as "0 open" and rewrite asks-seen.json
 # shellcheck source=SCRIPTDIR/fleet-read.sh
 . "$HERE/fleet-read.sh"
 

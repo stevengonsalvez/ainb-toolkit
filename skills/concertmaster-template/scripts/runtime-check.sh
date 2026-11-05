@@ -61,7 +61,7 @@ if ! [ -r "$LEDGER" ] || ! jq -e 'type == "object"' "$LEDGER" >/dev/null 2>&1; t
   cm_warn "runtime-check.sh: ledger $LEDGER missing or unreadable: nothing checked"; exit 1
 fi
 
-ORCA="$(cm_orca)"
+ORCA="$(cm_cli)" || exit 2
 SWEEP="${CM_RUNTIME_SWEEP:-$HERE/boot-sweep.sh}"
 DEFAULT_MIN="$(cm_cfg .schedule.lane_loop_minutes 30)"
 { [[ "$DEFAULT_MIN" =~ ^[0-9]+$ ]] && [ "$DEFAULT_MIN" -gt 0 ]; } || DEFAULT_MIN=30

@@ -70,7 +70,7 @@ done
 command -v jq >/dev/null 2>&1 || { cm_warn "resume.sh: missing dependency: jq"; exit 1; }
 
 umask 077
-ORCA="$(cm_orca)"
+ORCA="$(cm_cli)" || exit 2
 HOST_TIMEOUT="${CM_HOST_TIMEOUT:-25}"
 WAIT_MS="${CM_TERM_WAIT_MS:-60000}"
 BUDGET="${CM_RESUME_BUDGET_S:-540}"
@@ -198,11 +198,9 @@ fi
 # fetch_ps <host> <file>: 0 and a valid document in <file>, else non-zero.
 fetch_ps() {
   local rc
-  if [ "$1" = local ]; then
-    cm_timeout "$HOST_TIMEOUT" "$ORCA" worktree ps --limit 500 --json </dev/null > "$2" 2>"$2.err"
-  else
-    cm_timeout "$HOST_TIMEOUT" "$ORCA" worktree ps --environment "$1" --limit 500 --json </dev/null > "$2" 2>"$2.err"
-  fi
+  local -a hsel
+  cm_cli_host_into hsel "$1"
+  cm_timeout "$HOST_TIMEOUT" "$ORCA" worktree ps ${hsel[@]+"${hsel[@]}"} --limit 500 --json </dev/null > "$2" 2>"$2.err"
   rc=$?
   [ "$rc" -eq 0 ] && jq -e '.ok == true and (.result.worktrees | type == "array")' "$2" >/dev/null 2>&1
 }
@@ -345,7 +343,7 @@ resume_dead() {
   # metacharacter, backtick, dollar, quote, backslash, redirect or pipe survives.
   ok_chars='A-Za-z0-9 #:.,_/()+@=-'
   cur_s="$(printf '%s' "$cur" | tr -cd "$ok_chars")"; state_s="$(printf '%s' "$state" | tr -cd "$ok_chars")"
-  [ "$host" = local ] || envargs=(--environment "$host")
+  cm_cli_host_into envargs "$host"
   if [ -n "$wid" ]; then sel="id:$wid"; else sel="path:$path"; fi
   cmd="claude --continue"
   model="$(rf "$row" model)"

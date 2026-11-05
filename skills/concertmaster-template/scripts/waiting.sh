@@ -14,7 +14,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=SCRIPTDIR/lib.sh
 . "$HERE/lib.sh"
 [ -n "$CM_PATH_MATCH" ] || { cm_warn "waiting.sh: set worktrees.path_match in config (or CM_PATH_MATCH)"; exit 2; }
-ORCA="$(cm_orca)"
+ORCA="$(cm_cli)" || exit 2
 # Remote Orca JSON can carry lone UTF-16 surrogates and raw control characters that make
 # jq fail and silently hide the session: sanitize before jq, flatten pane text with jstrings.
 # Every Orca read has stdin closed (</dev/null) so none of them can swallow the loop's own input.
@@ -49,7 +49,10 @@ scan() { # $1=host label, $2.. = extra orca args
       done
 }
 
-scan local
+hsel=()
+cm_cli_host_into hsel local
+scan local ${hsel[@]+"${hsel[@]}"}
 for e in $("$ORCA" host list --json 2>/dev/null </dev/null | "$SAN" | jq -r '.result.hosts[]? | select(.name!="this machine") | .name'); do
-  cm_timeout 60 bash -c "$(declare -f scan); scan \"\$1\" --environment \"\$1\"" _ "$e" 2>/dev/null
+  cm_cli_host_into hsel "$e"
+  cm_timeout 60 bash -c "$(declare -f scan); scan \"\$@\"" _ "$e" ${hsel[@]+"${hsel[@]}"} 2>/dev/null
 done

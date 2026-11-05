@@ -87,7 +87,7 @@ cm_fleet_repo_absent() {
 cm_fleet_worktrees() {
   local out="$1" orca san repo timeout hl i kind name hname wl rc why restore_pf
   local -a sel args
-  orca="$(cm_orca)"
+  orca="$(cm_cli)" || return 2
   # shellcheck disable=SC2154  # _cm_lib_dir is set by lib.sh, which every caller sources first
   san="$_cm_lib_dir/jsanitize"
   repo="${CM_ORCA_REPO:-$(cm_cfg .worktrees.orca_repo)}"
@@ -108,7 +108,8 @@ cm_fleet_worktrees() {
   while IFS="$(printf '\t')" read -r kind name; do
     i=$((i + 1))
     [ -n "$name" ] || continue
-    if [ "$kind" = local ]; then hname=local; sel=(); else hname="$name"; sel=(--environment "$name"); fi
+    if [ "$kind" = local ]; then hname=local; else hname="$name"; fi
+    cm_cli_host_into sel "$hname"
     args=(worktree list --json --limit "${CM_FLEET_LIMIT:-500}")
     [ -z "$repo" ] || args+=(--repo "name:$repo")
     wl="$out/wl-$i.json"; rc=0

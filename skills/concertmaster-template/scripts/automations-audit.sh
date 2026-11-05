@@ -29,7 +29,7 @@ case "${1:-}" in
   *) cm_warn "unknown arg: $1"; exit 2 ;;
 esac
 command -v jq >/dev/null 2>&1 || { cm_warn "automations-audit.sh: jq missing"; exit 0; }
-ORCA="$(cm_orca)"
+ORCA="$(cm_cli)" || exit 2
 NAMES="$(jq -cn --arg p "$(cm_cfg .project.name)" --argjson l "$(cm_cfg_json '[.lanes[]?.name]' '[]')" --argjson x "$(cm_cfg_json '.automations.names' '[]')" \
   '([$p] + $l + $x) | map(select(type == "string" and length > 0 and (contains("<") | not)))')"
 [ "$NAMES" != '[]' ] || { cm_warn "automations-audit.sh: no project or lane names in config"; exit 2; }
@@ -41,8 +41,8 @@ for e in $("$ORCA" host list --json 2>/dev/null </dev/null | jq -r '.result.host
   hosts="$hosts $e"
 done
 for h in $hosts; do
-  args=(); [ "$h" = local ] || args=(--environment "$h")
-  cm_timeout 30 "$ORCA" automations list ${args[@]+"${args[@]}"} --json 2>/dev/null </dev/null \
+  hsel=(); cm_cli_host_into hsel "$h"
+  cm_timeout 30 "$ORCA" automations list ${hsel[@]+"${hsel[@]}"} --json 2>/dev/null </dev/null \
     | jq -r --argjson names "$NAMES" --argjson forbid "$FORBID" --argjson expect "$EXPECT" --arg dup "$DUP" --arg h "$h" '
         def lc: ascii_downcase;
         (.result // .) as $r | ($r.automations // $r) | if type == "array" then .[] else empty end

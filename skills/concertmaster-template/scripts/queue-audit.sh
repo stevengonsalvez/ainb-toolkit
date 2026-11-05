@@ -31,7 +31,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/fleet-read.sh"
 [ -n "$CM_ORG" ] && [ -n "$CM_REPO" ] || { cm_warn "queue-audit.sh: set github.org and github.main_repo in config"; exit 2; }
 [ -n "$CM_PATH_MATCH" ] || { cm_warn "queue-audit.sh: set worktrees.path_match in config (or CM_PATH_MATCH)"; exit 2; }
-ORCA="$(cm_orca)"
+ORCA="$(cm_cli)" || exit 2
 SAN="$HERE/jsanitize"
 L="$CM_HOME/ledger.json"
 [ -r "$L" ] || { cm_warn "queue-audit.sh: no ledger at $L"; exit 2; }
@@ -59,14 +59,13 @@ for e in $("$ORCA" host list --json 2>/dev/null </dev/null | jq -r '.result.host
 done
 unread=""
 for h in $hosts; do
-  largs=()
-  [ "$h" = local ] || largs=(--environment "$h")
+  cm_cli_host_into largs "$h"
   [ -n "$ORCA_REPO" ] && largs+=(--repo "name:$ORCA_REPO")
   rc=0
   raw=$(cm_timeout 30 "$ORCA" worktree list ${largs[@]+"${largs[@]}"} --limit 500 --json 2>/dev/null </dev/null | "$SAN") || rc=$?
   # repo_not_found on a scoped list: no worktrees of this project there, if provable (fleet-read.sh, cm_fleet_repo_absent)
   if [ -n "$ORCA_REPO" ] && cm_fleet_is_repo_not_found "$rc" "$raw"; then
-    sel=(); [ "$h" = local ] || sel=(--environment "$h")
+    cm_cli_host_into sel "$h"
     if CM_FLEET_REPO="$ORCA_REPO" cm_fleet_repo_absent 30 "$ORCA" "$SAN" ${sel[@]+"${sel[@]}"}; then
       continue
     fi

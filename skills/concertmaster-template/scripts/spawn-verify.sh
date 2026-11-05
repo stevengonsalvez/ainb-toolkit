@@ -11,7 +11,7 @@
 #       stub (fix: npm install -g @anthropic-ai/claude-code@<current version>, then re-run).
 #       --ssh runs the same lookup on that host (ssh BatchMode, bash -s); local otherwise.
 #
-#   scripts/spawn-verify.sh check (--terminal <handle> [--environment <host>] [--wait <s>]
+#   scripts/spawn-verify.sh check (--terminal <handle> [--environment <host> | --host local] [--wait <s>]
 #                                  | --file <screen.txt>) [--model <m>] [--effort <e>]
 #       Read the pane and exit 0 ONLY when the Claude UI shows the expected model: a banner
 #       line like "<Model> <ver> with <effort> effort" or a status line like
@@ -124,10 +124,11 @@ case "$cmd" in
     model="$(cm_cfg .spawn.expected_model)"; effort="$(cm_cfg .spawn.expected_effort)"
     while [ $# -gt 0 ]; do
       case "$1" in
-        --terminal|--environment|--file|--wait|--model|--effort)
+        --terminal|--environment|--host|--file|--wait|--model|--effort)
           [ $# -ge 2 ] || { usage >&2; exit 2; }
           case "$1" in
-            --terminal) term="$2" ;; --environment) envsel="$2" ;; --file) file="$2" ;;
+            --terminal) term="$2" ;; --environment) envsel="$2" ;;
+            --host) [ "$2" = local ] || { usage >&2; exit 2; }; envsel="" ;; --file) file="$2" ;;
             --wait) wait_s="$2" ;; --model) model="$2" ;; --effort) effort="$2" ;;
           esac
           shift 2 ;;
@@ -147,13 +148,13 @@ case "$cmd" in
     TMPD="$(mktemp -d "${TMPDIR:-/tmp}/cm-spawn-verify.XXXXXX")" || exit 2
     trap 'rm -rf -- "${TMPD:?}"' EXIT
     SCREEN="$TMPD/screen.txt"
-    ORCA="$(cm_orca)"
+    ORCA="$(cm_cli)" || exit 2
     deadline=$(( $(date +%s) + wait_s ))
     while :; do
       if [ -n "$file" ]; then
         cp "$file" "$SCREEN"
       else
-        envargs=(); [ -z "$envsel" ] || envargs=(--environment "$envsel")
+        if [ -z "$envsel" ]; then cm_cli_host_into envargs local; else envargs=(--environment "$envsel"); fi
         out="$(cm_timeout 30 "$ORCA" terminal read --terminal "$term" --screen ${envargs[@]+"${envargs[@]}"} --json </dev/null 2>/dev/null)" || out=""
         # The live CLI returns .result.terminal.tail (lines); older shapes carry a text field.
         printf '%s' "$out" | jq -r 'if .ok == true then

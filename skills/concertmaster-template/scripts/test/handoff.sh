@@ -68,7 +68,7 @@ run ok share "$F"
 [ "$RC" = 0 ] && [ "$OUT" = "https://example.test/a/abc123" ] && ok "share prints the link on stdout" || bad "share link" "rc=$RC out=$OUT err=$ERR"
 [ "$(printf '%s\n' "$OUT" | wc -l | tr -d ' ')" = 1 ] && ok "and only the link (one line)" || bad "extra stdout" "$OUT"
 case "$OUT$ERR" in *SECRET-TOKEN*) bad "token printed" "$OUT $ERR" ;; *) ok "the token in the reply is never printed" ;; esac
-grep -qx "artifacts share $F --json" "$STUB_LOG" && ok "it runs: artifacts share <file> --json (through the ORCA_CLI_COMMAND stub = cm_orca)" || bad "argv" "$(cat "$STUB_LOG")"
+grep -qx "artifacts share $F --json" "$STUB_LOG" && ok "it runs: artifacts share <file> --json (through the ORCA_CLI_COMMAND stub = cm_cli)" || bad "argv" "$(cat "$STUB_LOG")"
 
 run ok share "$H"
 [ "$RC" = 0 ] && ok "an .html file is accepted" || bad "html" "rc=$RC $ERR"
@@ -224,7 +224,7 @@ printf 'state_dir: .\n' > "$ROOT/short.yaml"
 OUT="$(CM_CONFIG="$ROOT/short.yaml" bash "$HF" check "$ROOT/short.md" 2>&1)"; RC=$?
 [ "$RC" = 0 ] && ok "a too short state_dir (.) does not flag every line" || bad "short state_dir" "rc=$RC $OUT"
 OUT="$(bash "$HF" check --help 2>&1)"
-case "$OUT" in *"--target local"*"--allow <ERE>"*"Every Orca call goes through cm_orca"*) ok "--help prints the whole header" ;; *) bad "usage cut off" "$OUT" ;; esac
+case "$OUT" in *"--target local"*"--allow <ERE>"*"Every CLI call goes through cm_cli"*) ok "--help prints the whole header" ;; *) bad "usage cut off" "$OUT" ;; esac
 
 mkdir -p "$ROOT/adir"
 run_check "$ROOT/adir"
