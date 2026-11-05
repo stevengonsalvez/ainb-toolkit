@@ -225,6 +225,50 @@ The lane set above is the default; `cfg.lanes` is the list in use.
     spec) follows it too. With `scripts/doc-credential-scan.sh` (`references/credentials.md`)
     it is one of two layers that keep a login out of a tracked doc.
 
+26. **Deploy migration check: values, shape and exit codes.** The migrations a deploy delta
+    ADDS (last production tag to the pinned deploy sha; older files are never re-flagged) go
+    through `skills/concertmaster-template/scripts/deploy-migration-check.sh <from-ref> <to-ref>
+    [--pr-body-file <file> --only <path>]...` before the rails verdict (§ Deploy windows step 2).
+    It reads the VALUES, not just that a guard exists, runs from anywhere in the repo, and always
+    prints `<n> migration files examined`.
+    - **Values.** `SET LOCAL lock_timeout` must be `3s` and `SET LOCAL statement_timeout` `30s`
+      (equal forms `3000ms`/`3000` and `30000ms`/`30000`; units are case-sensitive, spaces inside
+      or around the value are accepted). Another value, or either one missing, is an ASK for the
+      owner (exit 2). So is a plain `SET`/`RESET` of either, any statement other than a `SET`
+      between `BEGIN` and the two `SET LOCAL` lines (`guard=late`), a `set_config` call naming
+      either, an UPDATE of `pg_settings` or a `U&` escaped name (`set-timeout-call`), a
+      `set_config` whose first argument is not a plain quoted literal (`set-config-dynamic`),
+      and either name inside a dollar-quoted string (`timeout-in-body`, or `timeout-in-function`
+      for a function or procedure body).
+    - **Exception.** An ask is cleared only by a line starting `timeout-exception:` followed by
+      a reason of 3 or more words in the body of the PR that added that file (outside fenced code
+      and HTML comments). One body covers every file a run examines, so `--pr-body-file`
+      REQUIRES `--only <path>` for each file that PR added; for files from several PRs run the
+      check once per PR.
+    - **Shape: a STOP (exit 3, outranks 2, no exception covers it).** Exactly one `BEGIN` then a
+      `COMMIT`, nothing but `SET`/`RESET` outside them (a `NOTIFY` after the `COMMIT` is
+      allowed), no `ROLLBACK`, `ABORT`, `PREPARE TRANSACTION` or `COMMIT`/`END AND CHAIN`.
+      No `BEGIN;` and `COMMIT;` at all is a STOP, not an ask: the `SET LOCAL` guard never runs
+      and a bare push still ships the file.
+    - **Already applied.** If a stopped file is already applied on the target environment, the
+      ONLY fix is connection-level timeouts on the push step (for example `PGOPTIONS='-c
+      lock_timeout=3s -c statement_timeout=30s'`, or the connection URL's `options=` form), never
+      an edit of the migration file: the migration runner tracks applied files by name and
+      silently skips an edited one. The migration CLI may ignore `PGOPTIONS`, so prove the
+      option reaches the session with a `SHOW lock_timeout` in the same session first.
+    - **Exit codes.** 0 all ok (or excepted, or no added migration), 2 any ask, 3 any stop, 1
+      anything else (unreadable input, a bad or swapped range, `--pr-body-file` without
+      `--only`, an `--only` that matches no added file, a listing that disagrees with the full
+      diff). **Any exit other than 0 blocks the window**, 127 (script not found) included.
+    - **Not covered.** A timeout set another way (`ALTER ROLE`/`ALTER DATABASE`, a
+      function-level `SET` clause, dynamic SQL built from strings); a non-literal `set_config`
+      inside a `DO` body; anything after the first 4096 characters of one statement; a session
+      with `standard_conforming_strings` off; a SQL-standard function body (read as a stop); a
+      guard added in the workflow step; whether connection-level options reach the session.
+      The directory read is the `supabase/migrations/` layout.
+    (A presence-only check passed a file with 5s and 120s values, and a file with no guard at
+    all still ships through a bare push.)
+
 <!-- project-local: hard-rules -->
 
 ## Start: `/concertmaster`
@@ -930,7 +974,12 @@ window due ─▶ delta since last tag? ─ no ─▶ skipped
    `git diff --name-only <tag>..<pinned sha>`), so the delta and the deploy
    worker's `main_sha` cannot differ. Empty: `skipped`. If `freeze.sha` is missing at the window (the freeze step was missed), pin at window start with the same fetch and `git rev-parse origin/main` and note it in the tick table; after a stop because main moved, re-pin by re-running the freeze step.
 2. Rails: every `cfg.deploy.rails` entry, by changed path and, where given,
-   by content pattern in the changed files. Any hit: ASK, window waits.
+   by content pattern in the changed files. Any hit: ASK, window waits. The
+   delta's added migrations go through
+   `skills/concertmaster-template/scripts/deploy-migration-check.sh <tag> <pinned sha>`
+   (per PR with `--pr-body-file` and `--only` for an approved exception) before the
+   rails verdict (hard rule 26). Any exit other than 0 blocks the window: 3 is a
+   STOP, 2 is an owner ASK, and 1 or 127 means the check did not run.
 3. Clear: spawn the deploy worker (`references/lanes.md` § deploy worker),
    which follows `cfg.deploy.ship_verb`. **Order is fixed: merge, staging
    deploy, staging validate, only then prod. Never run staging validation in
@@ -1352,6 +1401,8 @@ shellcheck clean.
 | `scripts/cred-check.sh [--dry-run] [--publish [FILE]]` | weekly validity probe of the credentials in a names-only index (`references/credentials.md`) |
 | `scripts/doc-credential-scan.sh --staged\|--range <base>..<head>\|--all` | repo-level guard, copied into the project (not a tick step): refuses an added line of a tracked doc (`*.md *.mdx *.txt *.yaml *.yml *.json`) that holds an email AND a password-looking value; prints path, line and rule only (never the value); exit 0 clean, 1 hit, 2 could not look; `--all` reports counts per file and never fails on hits; a `credential-ok: <3+ word reason>` marker on the line allows it. The commit skill plus this guard are the two layers; a CI step is a red job a human reads unless it is a required check, and the pre-commit hook is the only layer that stops a commit (`references/credentials.md`) |
 | `scripts/test/doc-credential-scan.sh` | throwaway fixture repos, credentials built at run time from split strings: the login-line shapes refused in `--staged` and `--range`, placeholders, example addresses, ids, dates and out-of-scope files pass, the marker, removed and context lines, renames, exit 2 cases (bad range, no mode, not a repo, failing awk), output never carrying the address or value; under gawk, mawk and busybox awk |
+| `skills/concertmaster-template/scripts/deploy-migration-check.sh <from-ref> <to-ref> [--pr-body-file <file> --only <path>]...` | deploy pre-check over the migrations ADDED in the range (hard rule 26), run from anywhere in the repo (`:(top)` pathspec, cross-checked against the full diff): reads one statement at a time, prints one line per file (`ok`, `ask`, `exception`, `stop`) with the found values only, never SQL, then `<n> migration files examined`; ask = a lock_timeout other than 3s or statement_timeout other than 30s (units case-sensitive, ms forms accepted), a missing one, a plain `SET`/`RESET` of either, a non-`SET` statement before both `SET LOCAL` lines (`guard=late`), a `set_config` naming either, an UPDATE of `pg_settings`, a `U&` escape or a `set_config` with an `E'..'` string (`set-timeout-call`), a `set_config` whose first argument is not a plain quoted literal (`set-config-dynamic`), either named in a dollar-quoted string (`timeout-in-body`, `timeout-in-function`); a `timeout-exception:` PR body line (3+ words, not inside a fence or HTML comment) turns an ask into `exception`, and `--pr-body-file` REQUIRES `--only` per file; stop = not exactly one `BEGIN` then `COMMIT` with only `SET`/`RESET` (and a `NOTIFY` after the `COMMIT`) outside, or any `ROLLBACK`/`ABORT`/`PREPARE TRANSACTION`/`COMMIT AND CHAIN`, no exception covers it; exit 0 all ok, 2 any ask, 3 any stop (outranks 2), 1 anything else; ANY exit other than 0 blocks the window; pure bash plus git, no network |
+| `scripts/test/deploy-migration-check.sh` | a throwaway fixture git repo per case, built at run time (about 290 assertions): values, ms forms, case and space in units, missing timeouts, exceptions (3 words, CRLF, fences, HTML comments, quoted lines, placeholders, `--only` required and scoped), every shape violation and every accepted transaction form, plain `SET`/`RESET`, `guard=late`, `set_config` forms (quoted, qualified, dynamic, inside literals and quoted identifiers), timeouts in dollar bodies (also across the scan-window edge), a run from the root and from two subdirectories giving the same output, `0 migration files examined`, swapped range, quoted path, tokens straddling the 2048-character window, a 1 MB and a 900 KB single-line file under each awk the host has, no SQL body in the output; `CM_DMC_SCRIPT` runs it against a mutated copy |
 | `scripts/test/brief-commit-rule.sh` | text lint: the commit rule (commit ONLY through the commit skill, never a raw `git commit` or `git add -A`/`.`) is in the lanes.md common footer, the single-task worker and release-tester briefs, the spawn recipe, the lessons loop, hard rule 25 and the dev-flow companion, word for word |
 | `scripts/scan-secrets.sh [--strict] [--since-days n] [PATH...]` | counts secret-shaped strings per class and per transcript file (default dirs: config `credentials.transcript_dirs`, else `~/.claude/projects`); counts only, never the matched text; exit 1 on a strict class hit (`--strict`: advisory `password_assign` and `password_word` too; `password_word` is a pure-letter password of 8+ letters after the name password, passwd, pwd or passphrase), 2 when anything could not be read or nothing existed to scan, else 0 (`references/credentials.md`) |
 | `scripts/ask-timeout.sh [--ledger <path>] [--all] [--stamp] [--claim <ask-id>] [--record <ask-id> <comment-url>]` | away timeout (rule 16): lists open asks past `timeoutAt` that are own-scope and safe for an independent verdict, claims and records it; fails closed; the write modes need `cm_ledger_write` in `lib.sh` (`references/away-timeout.md`) |
@@ -1369,7 +1420,7 @@ shellcheck clean.
 | `scripts/hooks/mc-worker-hook.sh` | Claude Code hook for workers, in-scope repos only (optional) |
 | `scripts/digest.sh [--full] [--since-hours n]` | digest text, stdout only, `- ` bullets, no Needs, Open follow-ups, Stuck or Fleet section (`--full` adds them for the terminal report): Merged (merged since `digests.lastSentAt`, else 12h) from `gh pr list`, Deployed from `gh run list` and `gh run view` (config `digest.deploy_workflow` and `digest.deploy_job`, merged by tag with the ledger `deployWindows[]` rows), and in `--full` the open PR count (a failed gh prints "unknown (gh failed)", never 0), every other section from the ledger; read-only; `--full` also lists `ledger.violations` and an incomplete `ledger.violationCheck`, and `ledger.supabaseStacks` orphans or an incomplete check |
 | `scripts/intake.sh <cmd>` | the deterministic half of `intake` (rules in `scripts/intake.jq`) |
-| `scripts/test/*.sh` | `classify-standing`, `classify-violations`, `teardown-gates`, `teardown-supabase`, `teardown-codex-procs`, `census-supabase`, `resume-flow`, `intake`, `mc-emit`, `boot-sweep`, `runtime-check`, `ci-queue-alert`, `cred-check`, `backup-offhost`, `backup-stale`, `scan-secrets`, `rm-guard-hook`, `digest-gh`, `orca-json-helpers`, `waiting-autocompact`, `spawn-verify`, `classify-ownership`, `ask-timeout`, `queue`, `queue-audit`, `salv3`, `salv3-followups`, `markers`, `unlinked-prs`, `tick-emit`, `config-check`, `handoff`, `no-bare-orca`, `cli-argv`, `cli-parity`, `automations-audit`, `followups`, `followups-escalate`, `lane-journal`, `asks`, `teardown-owner`, `lanes-relay`, `fleet-state`, `lessons-recon`, `pane-stalls`, `skill-sync`, `tick-contract`, `keep-tmp`: hermetic tests against `scripts/test/fixtures/config.test.yaml`; run the matching one after any script change |
+| `scripts/test/*.sh` | `classify-standing`, `classify-violations`, `teardown-gates`, `teardown-supabase`, `teardown-codex-procs`, `census-supabase`, `resume-flow`, `intake`, `mc-emit`, `boot-sweep`, `runtime-check`, `ci-queue-alert`, `cred-check`, `backup-offhost`, `backup-stale`, `scan-secrets`, `deploy-migration-check`, `rm-guard-hook`, `digest-gh`, `orca-json-helpers`, `waiting-autocompact`, `spawn-verify`, `classify-ownership`, `ask-timeout`, `queue`, `queue-audit`, `salv3`, `salv3-followups`, `markers`, `unlinked-prs`, `tick-emit`, `config-check`, `handoff`, `no-bare-orca`, `cli-argv`, `cli-parity`, `automations-audit`, `followups`, `followups-escalate`, `lane-journal`, `asks`, `teardown-owner`, `lanes-relay`, `fleet-state`, `lessons-recon`, `pane-stalls`, `skill-sync`, `tick-contract`, `keep-tmp`: hermetic tests against `scripts/test/fixtures/config.test.yaml`; run the matching one after any script change |
 
 <!-- project-local: scripts -->
 
