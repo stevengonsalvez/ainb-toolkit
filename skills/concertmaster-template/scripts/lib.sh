@@ -644,7 +644,7 @@ CM_JQ_STATE_DEFS='def cm_state_dead: type == "string" and IN("gone", "repurposed
 # Refreshes workers.<id>.terminal (and terminalRefreshedAt) when the live agent process shows the
 # ledger handle is stale (scripts/live-agent.sh, run by scripts/lane-handles.sh). The second
 # form finds the worker by host and normalised path INSIDE the ledger lock: exactly one worker must
-# match. Guarded like cm_worker_set_state: refuses (ledger untouched, reason on stderr) a handle that
+# match. Refuses (ledger untouched, reason on stderr) a handle that
 # is not a plain token and a worker id the ledger does not hold. Also refuses a handle another worker
 # already holds (an agent started from someone else's terminal inherits THAT terminal's handle).
 # It changes nothing else, state included. Returns 0 written, 1 refused, 2 bad usage, 4 handle held by

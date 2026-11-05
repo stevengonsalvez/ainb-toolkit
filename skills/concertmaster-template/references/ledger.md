@@ -296,6 +296,7 @@ may have leaked should run `scripts/ledger-guard.sh` before it.
 | `workers.<id>.relayedReviews` | array of review comment ids (the number after `issuecomment-`) this lead already relayed to a worker (`references/lanes.md` § Relaying review verdicts), so a pass never relays one twice. Written with `cm_ledger_write '.workers[$w].relayedReviews = ((.workers[$w].relayedReviews // []) + [$id] \| unique)' --arg w <lead id> --arg id <comment id>`; kept across passes, unlike the lead's worktree comment |
 | `workers.<id>.beadsEpic` | beads epic id (string) the worker owns, e.g. `acme-epic1`, or null; set at spawn, adoption, or when a lane takes an epic. Any other type refuses teardown. Not done, and `teardown.sh` refuses, while any child bead (dotted `<epic>.N` or `parent-child` linked, recursively) is not closed or tombstoned |
 | `workers.<id>.state` `gone` / `repurposed` | dead records: ignored when matching a worktree, so an old record on a reused path never decides standing or beads |
+| `workers.<id>.state` `torn-down` | the old spelling of `gone`; the handle scripts (`lane-handles.sh`, `cm_worker_set_handle`, `cm_lane_for_path`) also treat it as dead; `followups.sh` and `programme-rollup.sh` count only `gone` and `repurposed` |
 | `prs.<repo>#<n>.driver` | worker id currently pushing to the PR; at most one |
 | `prs.<repo>#<n>.gate` | last merge-gate reading, each part bound to `headSha` |
 | `prs.<repo>#<n>.authorNotifiedAt` | last PR comment to a collaborator (`cfg.messaging.collaborators`) |
