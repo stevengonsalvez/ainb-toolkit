@@ -100,6 +100,16 @@ esac
 O
 cat > "$ROOT/bin/bd-stub" <<'B'
 #!/usr/bin/env bash
+# A call against the COPY teardown makes of an unreadable store ("-C <CM_HOME>/tmp/beads-copy.XXXXXX"):
+# migrate and list succeed unless STUB_COPY_MIGRATE_FAIL=1; STUB_COPY_LIST is the list JSON (default: []).
+case "$*" in *"/tmp/beads-copy."*)
+  case " $* " in
+    *" dolt commit"*) exit 0 ;;
+    *" where "*) a="$*"; d="${a#*-C }"; d="${d%% *}"; printf '{"path":"%s/.beads","database_path":"%s/.beads/embeddeddolt"}\n' "$d" "$d"; exit 0 ;;
+    *" migrate schema"*) [ "${STUB_COPY_MIGRATE_FAIL:-0}" = 1 ] && { echo 'Error: migrate failed on the copy' >&2; exit 1; }; exit 0 ;;
+    *" list "*) printf '%s\n' "${STUB_COPY_LIST-[]}"; exit 0 ;;
+  esac ;;
+esac
 case " $* " in *" where "*) exit 1 ;; esac
 if [ -n "${STUB_BD_ERR:-}" ]; then printf 'Warning: noise\n%s\n' "$STUB_BD_ERR" >&2; exit 1; fi
 [ "${STUB_BD_FAIL:-0}" = 1 ] && exit 1
@@ -453,6 +463,9 @@ N1="$(mkwt fresh-1)"; N2="$(mkwt fresh-2)"; N3="$(mkwt fresh-3)"; N4="$(mkwt fre
 lists $'cm:running\ncm:child fresh-1\ncm:child fresh-2\ncm:child fresh-3\ncm:child fresh-4\ncm:child fresh-5'
 run "fresh worktree, unreadable store: excused, plan ok"      0 'excused, no tracked .beads change' "$N1" --owner lane-a
 run "excuse needs no flag and no --salvage"                   0 'dry-run: nothing changed' "$N1" --owner lane-a
+# the excusal also reads the store on a migrated COPY: an open bead there, or a failed step, refuses
+STUB_COPY_LIST='[{"id":"t-o","status":"open"}]' run "copy of the store lists an open bead: refused" 3 'lists 1 open or in-progress bead(s)' "$N1" --owner lane-a
+STUB_COPY_MIGRATE_FAIL=1 run "copy migrate fails: refused"       3 'migrated copy failed' "$N1" --owner lane-a
 printf '{"id":"t-new","status":"open","updated_at":"2026-10-20T00:00:00Z"}\n' >> "$N2/.beads/issues.jsonl"
 git -C "$N2" add .beads/issues.jsonl; git -C "$N2" commit -qm bead --no-gpg-sign; git -C "$N2" push -q origin HEAD >/dev/null 2>&1
 run "tracked .beads change: still refused, hint names the flag" 3 'beads-unreadable-ok' "$N2" --owner lane-a
