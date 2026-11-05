@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # cm-test: rm-cleanup (its EXIT trap rm -rf-s its own mktemp dir; CM_TEST_KEEP_TMP=1 keeps it)
-# Guard: no non-test script under scripts/ may run `orca` / `orca-ide` / `orca-dev` directly. Every Orca call goes
-# through cm_orca (scripts/lib.sh), so a later switch of CLI is a config change only (and bare `orca` on Linux is the
+# Guard: no non-test script under scripts/ may run `orca` / `orca-ide` / `orca-dev` / `plugly` / `plugly-dev` / `plugly-ide` directly. Every CLI call
+# goes through cm_cli (scripts/lib.sh), so a switch of CLI is the config key `cli` only (and bare `orca` on Linux is the
 # screen reader). The scan reads code, not prose: comments, quoted text (an echo, printf, fail or die message), here-
-# document bodies, case labels and the cm_orca definition in lib.sh are ignored. It flags a command word that is orca
-# (also behind env, timeout, cm_timeout, command, exec, sudo, nohup, a VAR=x prefix, `$(`, a backtick or a pipe), and a
-# plain `ORCA=orca` assignment, and orca as the payload of `sh -c '...'` / `bash -lc "..."`. Not seen: a call on another
-# host through ssh (it runs there, with that host's PATH) and an indirect name such as `$(command -v orca) ...`. Proof it bites: a temp copy of scripts/ gets seeded violations and each one must be found.
+# document bodies, case labels and the cm_cli definition in lib.sh are ignored. It flags a command word that is orca or
+# plugly (also behind env, timeout, cm_timeout, command, exec, sudo, nohup, a VAR=x prefix, `$(`, a backtick or a pipe),
+# a plain `ORCA=orca` / `ORCA=plugly` assignment, and either as the payload of `sh -c '...'` / `bash -lc "..."`. Not seen:
+# a call on another host through ssh (it runs there, with that host's PATH) and an indirect name such as
+# `$(command -v orca) ...`. Proof it bites: a temp copy of scripts/ gets seeded violations and each one must be found.
 # Touches nothing outside a mktemp dir. No network.
 #
 #   scripts/test/no-bare-orca.sh         # exit 0 when the tree is clean and the seeded copy is caught
@@ -25,14 +26,14 @@ SCAN="$ROOT/scan.py"
 cat > "$SCAN" <<'PY'
 import os, re, sys
 
-ORCA_WORDS = {"orca", "orca-ide", "orca-dev"}
+ORCA_WORDS = {"orca", "orca-ide", "orca-dev", "plugly", "plugly-dev", "plugly-ide"}
 WRAPPERS = {"env", "command", "exec", "sudo", "nohup", "time", "builtin", "xargs", "nice", "ionice", "stdbuf", "!", "then", "do", "else", "elif", "if", "while", "until", "{"}
 TIMEOUTS = {"timeout", "gtimeout", "cm_timeout"}
 FLAG_VALUE = {"-u", "-g", "-n", "-s", "-k", "-C"}   # option letters that take a separate value
 ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
-SHC_RAW = re.compile(r"""\b(?:ba|z)?sh\s+-[A-Za-z]*c\s+(?:['"])\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*(?:timeout\s+\S+\s+|cm_timeout\s+\S+\s+)?(orca-ide|orca-dev|orca)\b""")
-DEFAULT_RAW = re.compile(r"\$\{[A-Za-z_][A-Za-z0-9_]*:?-(orca-ide|orca-dev|orca)\}")
-ASSIGN_RAW = re.compile(r"^\s*(?:export\s+)?ORCA=[\"']?(orca|orca-ide|orca-dev)[\"']?\s*(?:#.*)?$")
+SHC_RAW = re.compile(r"""\b(?:ba|z)?sh\s+-[A-Za-z]*c\s+(?:['"])\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*(?:timeout\s+\S+\s+|cm_timeout\s+\S+\s+)?(orca-ide|orca-dev|orca|plugly-ide|plugly-dev|plugly)\b""")
+DEFAULT_RAW = re.compile(r"\$\{[A-Za-z_][A-Za-z0-9_]*:?-(orca-ide|orca-dev|orca|plugly-ide|plugly-dev|plugly)\}")
+ASSIGN_RAW = re.compile(r"^\s*(?:export\s+)?ORCA=[\"']?(orca|orca-ide|orca-dev|plugly-ide|plugly-dev|plugly)[\"']?\s*(?:#.*)?$")
 HEREDOC = re.compile(r"(?<!<)<<(?!<)-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
 
 
@@ -177,7 +178,7 @@ def scan_file(path, rel):
                 heredoc = None
             continue
         if rel == "lib.sh":
-            if raw.startswith("cm_orca() {"):
+            if raw.startswith("cm_cli() {"):
                 in_def = True
             if in_def:
                 if raw.startswith("}"):
@@ -243,7 +244,7 @@ fail "orca terminal close failed"
 case "$via" in
   orca) via=orca ;;
 esac
-ORCA="$(cm_orca)"
+ORCA="$(cm_cli)"
 cm_timeout 30 "$ORCA" worktree list --json
 command -v orca-ide >/dev/null
 cat <<'DOC'
@@ -279,6 +280,23 @@ orca documented across a quoted line'
 die "usage:
   orca worktree list"
 orca worktree set --comment after-multiline
+plugly worktree list --json
+echo "run plugly host list by hand"
+command -v plugly >/dev/null
+# comment: plugly terminal list is fine here
+timeout 30 plugly terminal list
+x="$(plugly host list --json)"
+ORCA="plugly"
+ORCA=plugly
+bash -lc "plugly host list"
+ORCA="${PLUGLY_CLI_COMMAND:-plugly}"
+cm_timeout 20 plugly --host local worktree ps
+plugly-dev worktree list --json
+timeout 5 plugly-dev host list
+ORCA="plugly-dev"
+plugly-ide worktree list --json
+y="${CLI:-plugly-ide}"
+ORCA="plugly-ide"
 E
 printf 'orca worktree list\n' > "$SEED/hooks/noshebang.sh"
 mkdir -p "$SEED/hooks/test"; printf '#!/usr/bin/env bash\norca host list\n' > "$SEED/hooks/test/deep.sh"
@@ -302,6 +320,20 @@ expected=(
   "seeded.sh:38: bare orca"
   "seeded.sh:39: bare orca"
   "seeded.sh:44: bare orca"
+  "seeded.sh:45: bare plugly"
+  "seeded.sh:49: bare plugly"
+  "seeded.sh:50: bare plugly"
+  "seeded.sh:51: bare ORCA=plugly"
+  "seeded.sh:52: bare ORCA=plugly"
+  "seeded.sh:53: bare plugly"
+  "seeded.sh:54: bare plugly"
+  "seeded.sh:55: bare plugly"
+  "seeded.sh:56: bare plugly-dev"
+  "seeded.sh:57: bare plugly-dev"
+  "seeded.sh:58: bare ORCA=plugly-dev"
+  "seeded.sh:59: bare plugly-ide"
+  "seeded.sh:60: bare plugly-ide"
+  "seeded.sh:61: bare ORCA=plugly-ide"
   "hooks/noshebang.sh:1: bare orca"
   "hooks/test/deep.sh:2: bare orca"
 )
@@ -320,6 +352,11 @@ printf '\norca worktree list --json\n' >> "$COPY/spawn-verify.sh"
 out="$(python3 -I "$SCAN" "$COPY" 2>&1)"; rc=$?
 [ "$rc" = 1 ] && case "$out" in *"spawn-verify.sh:"*"bare orca"*) true ;; *) false ;; esac \
   && ok "a bare call appended to a copy of spawn-verify.sh is flagged" || bad "copy not flagged" "rc=$rc $out"
+cp "$SCRIPTS/spawn-verify.sh" "$COPY/spawn-verify.sh"
+printf '\nplugly worktree list --json\n' >> "$COPY/spawn-verify.sh"
+out="$(python3 -I "$SCAN" "$COPY" 2>&1)"; rc=$?
+[ "$rc" = 1 ] && case "$out" in *"spawn-verify.sh:"*"bare plugly"*) true ;; *) false ;; esac \
+  && ok "a bare plugly call appended to a copy of spawn-verify.sh is flagged" || bad "copy not flagged (plugly)" "rc=$rc $out"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]
