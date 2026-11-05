@@ -551,5 +551,11 @@ check "set_config( inside a quoted identifier is not a call: exit 0" "$RC" 0
 shape "$(gx "'3s'" "'30s'" "$(printf 'SELECT "x set_config"(y);')")"
 check "a quoted function name that only ends in set_config is not set_config: exit 0" "$RC" 0
 
+# 38. a window holding only one of the two SET LOCAL lines and nothing else: only the missing-value rule can flag it
+newrepo; addmig 88000000000002_a.sql "$(printf '%s\n%s %s = %s;\n%s\n' "$BG" "$SL" "$ST" "'30s'" "$CM")"; run
+check "only statement_timeout in the window: exit 2" "$RC" 2; has "only statement_timeout: lock_timeout shown as missing" "$OUT" "lock_timeout=missing statement_timeout=30s"
+newrepo; addmig 88000000000002_a.sql "$(printf '%s\n%s %s = %s;\n%s\n' "$BG" "$SL" "$LK" "'3s'" "$CM")"; run
+check "only lock_timeout in the window: exit 2" "$RC" 2; has "only lock_timeout: statement_timeout shown as missing" "$OUT" "lock_timeout=3s statement_timeout=missing"
+
 printf '\npassed=%s failed=%s\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
