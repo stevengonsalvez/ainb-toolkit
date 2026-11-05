@@ -66,7 +66,7 @@ done
 [ -n "$CM_ORG" ] && [ -n "$CM_REPO" ] || {
   cm_warn "set github.org and github.main_repo in config.yaml (or CM_ORG, CM_REPO)"; exit 1; }
 
-ORCA="$(cm_orca)"
+ORCA="$(cm_cli)" || exit 2
 HOST_TIMEOUT="${CM_HOST_TIMEOUT:-25}"
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/cm-discover.XXXXXX")" || { cm_warn "discover: cannot create a temp dir"; exit 1; }
 trap 'rm -rf -- "${TMP:?}"' EXIT
@@ -100,36 +100,38 @@ sq() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
 # host. The terminal is always closed by its exact handle. Sets RGIT_ERR on failure.
 rgit_orca() {
   local h="$1" i="$2" roots="$3" outf="$4" cmd path wid sel resp handle t deadline got=0 msg title stray
+  local -a hsel
+  cm_cli_host_into hsel "$h"
   title="cm-git-census-$$-$i"   # unique per run and host, so a sweep never closes anyone else's terminal
   cmd="sh -c $(sq "$REMOTE_GIT_SH") sh"
   while IFS="$(printf '\t')" read -r path wid; do cmd="$cmd $(sq "$path")"; done < "$roots"
   IFS="$(printf '\t')" read -r path wid < "$roots"
   if [ -n "$wid" ]; then sel="id:$wid"; else sel="path:$path"; fi
-  resp="$(cm_timeout 20 "$ORCA" terminal create --environment "$h" --worktree "$sel" --title "$title" --command "$cmd" --json </dev/null 2>"$TMP/rgit-$i.err" | "$HERE/jsanitize")"
+  resp="$(cm_timeout 20 "$ORCA" terminal create ${hsel[@]+"${hsel[@]}"} --worktree "$sel" --title "$title" --command "$cmd" --json </dev/null 2>"$TMP/rgit-$i.err" | "$HERE/jsanitize")"
   handle="$(printf '%s' "$resp" | jq -r '.result.terminal.handle // .result.handle // .result.startupTerminal.handle // empty' 2>/dev/null)"
   if [ -z "$handle" ]; then
     msg="$(printf '%s' "$resp" | jq -r '.error.message? // empty' 2>/dev/null)"
     RGIT_ERR="terminal create failed: ${msg:-$(head -c 160 "$TMP/rgit-$i.err" | tr '\n' ' ')}"
     # A create that timed out may still have made the terminal: close any carrying this run's unique title.
-    for stray in $(cm_timeout 15 "$ORCA" terminal list --environment "$h" --json </dev/null 2>/dev/null | "$HERE/jsanitize" \
+    for stray in $(cm_timeout 15 "$ORCA" terminal list ${hsel[@]+"${hsel[@]}"} --json </dev/null 2>/dev/null | "$HERE/jsanitize" \
         | jq -r --arg t "$title" '.result.terminals[]? | select((.title // "") == $t) | .handle // empty' 2>/dev/null); do
-      cm_timeout 15 "$ORCA" terminal close --terminal "$stray" --environment "$h" --json </dev/null >/dev/null 2>&1 \
-        || err "git census $h" "could not close terminal $stray; close it by hand (orca terminal close --terminal $stray --environment $h)"
+      cm_timeout 15 "$ORCA" terminal close --terminal "$stray" ${hsel[@]+"${hsel[@]}"} --json </dev/null >/dev/null 2>&1 \
+        || err "git census $h" "could not close terminal $stray; close it by hand ($ORCA terminal close --terminal $stray ${hsel[*]-})"
     done
     return 1
   fi
   deadline=$((SECONDS + GIT_TIMEOUT))
   : > "$outf"
   while :; do
-    t="$(cm_timeout 15 "$ORCA" terminal read --terminal "$handle" --environment "$h" --limit 5000 --json </dev/null 2>/dev/null | "$HERE/jsanitize" \
+    t="$(cm_timeout 15 "$ORCA" terminal read --terminal "$handle" ${hsel[@]+"${hsel[@]}"} --limit 5000 --json </dev/null 2>/dev/null | "$HERE/jsanitize" \
         | jq -r '(.result.terminal.tail // .result.tail // .result.text // .result.output // .result.screen // "") | if type == "array" then join("\n") else tostring end' 2>/dev/null)" || t=""
     printf '%s\n' "$t" | tr -d '\r' | sed -n 's/^[^@]*@@CMG@@ //p' > "$outf"
     if grep -qx 'END' "$outf"; then got=1; break; fi
     [ "$SECONDS" -lt "$deadline" ] || break
     sleep 1
   done
-  if ! cm_timeout 15 "$ORCA" terminal close --terminal "$handle" --environment "$h" --json </dev/null >/dev/null 2>&1; then
-    err "git census $h" "could not close terminal $handle; close it by hand (orca terminal close --terminal $handle --environment $h)"
+  if ! cm_timeout 15 "$ORCA" terminal close --terminal "$handle" ${hsel[@]+"${hsel[@]}"} --json </dev/null >/dev/null 2>&1; then
+    err "git census $h" "could not close terminal $handle; close it by hand ($ORCA terminal close --terminal $handle ${hsel[*]-})"
   fi
   if [ "$got" -ne 1 ]; then
     RGIT_ERR="timed out after ${GIT_TIMEOUT}s waiting for git output"
@@ -271,13 +273,9 @@ RGIT_PIDS=""; RGIT_IDX=""
 SB_PIDS=""; SB_IDX=""
 while IFS="$(printf '\t')" read -r kind name; do
   i=$((i + 1))
-  if [ "$kind" = "local" ]; then
-    hname="local"
-    set -- "$ORCA" worktree ps --limit 500 --json
-  else
-    hname="$name"
-    set -- "$ORCA" worktree ps --environment "$name" --limit 500 --json
-  fi
+  if [ "$kind" = "local" ]; then hname="local"; else hname="$name"; fi
+  cm_cli_host_into hsel "$hname"
+  set -- "$ORCA" worktree ps ${hsel[@]+"${hsel[@]}"} --limit 500 --json
   ps="$TMP/ps-$i.json"
   rc=0
   cm_timeout "$HOST_TIMEOUT" "$@" > "$ps" 2>"$TMP/ps-$i.err" || rc=$?
@@ -290,7 +288,7 @@ while IFS="$(printf '\t')" read -r kind name; do
     else msg="rc=$rc $(jq -r '.error.message? // empty' "$ps" 2>/dev/null) $(head -c 200 "$TMP/ps-$i.err")"; fi
   fi
   jq -cn --arg name "$hname" --arg kind "$kind" --argjson reachable "$reachable" --arg error "$msg" \
-    --arg selector "$([ "$kind" = local ] && printf '' || printf -- '--environment %s' "$name")" \
+    --arg selector "${hsel[*]-}" \
     --argjson total "$( [ "$reachable" = true ] && jq '.result.totalCount // (.result.worktrees|length)' "$ps" || echo null)" \
     --argjson truncated "$( [ "$reachable" = true ] && jq '.result.truncated // false' "$ps" || echo null)" \
     '{name:$name, kind:$kind, selector:$selector, reachable:$reachable,
@@ -303,8 +301,7 @@ while IFS="$(printf '\t')" read -r kind name; do
     if [ -z "$CM_PATH_MATCH" ]; then
       jq -cn --arg host "$hname" '{host:$host, ok:false, error:"worktrees.path_match unset"}' >> "$TMP/termhosts.ndjson"
     else
-      if [ "$kind" = "local" ]; then set -- "$ORCA" terminal list --limit 500 --json
-      else set -- "$ORCA" terminal list --environment "$name" --limit 500 --json; fi
+      set -- "$ORCA" terminal list ${hsel[@]+"${hsel[@]}"} --limit 500 --json
       tl="$TMP/term-$i.json"
       trc=0
       cm_timeout "$HOST_TIMEOUT" "$@" </dev/null 2>"$TMP/term-$i.err" | "$HERE/jsanitize" > "$tl" || trc=$?

@@ -53,6 +53,7 @@ hhmm='(type == "array" and all(.[]; type == "string" and test("^([01][0-9]|2[0-3
 
 printf 'config: %s\n' "$CFG"
 req "schema is concertmaster.config/v1"        '.schema == "concertmaster.config/v1"'
+req "cli is orca or plugly (or unset)"          '(.cli // "orca") | (. == "orca" or . == "plugly")'
 req "project.name"                              ".project.name | $nonempty_str"
 req "project.owner.name"                        ".project.owner.name | $nonempty_str"
 req "project.owner.id"                          ".project.owner.id | $nonempty_str"

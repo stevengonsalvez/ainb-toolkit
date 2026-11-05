@@ -288,7 +288,7 @@ TERMS_CLOSED="${CM_TD_TERMINALS_CLOSED:-0}"
 [ "$MODE" = apply ] || TERMS_CLOSED=0
 [ "$TERMS_CLOSED" != 1 ] || CLOSE_HANDLES=" "
 
-ORCA="$(cm_orca)"
+ORCA="$(cm_cli)" || exit 2
 SSH_TARGET="${CM_SSH_TARGET:-$HOST}"
 case "$SSH_TARGET" in
   -*|*[[:space:]]*|'') cm_warn "invalid ssh target: '$SSH_TARGET'"; exit 2 ;;
@@ -378,11 +378,12 @@ cm_safe_name() {
   case "$n" in ''|.|..|...) n="_$n" ;; esac
   printf '%s' "$n"
 }
-env_flag() { [ "$HOST" = local ] || printf -- '--environment\n%s\n' "$HOST"; }
+env_flag() { cm_cli_host "$HOST"; }
 orca_cmd() {
-  # orca_cmd <args...>: runs Orca against the right host.
-  if [ "$HOST" = local ]; then cm_timeout 30 "$ORCA" "$@"
-  else cm_timeout 30 "$ORCA" "$@" --environment "$HOST"; fi
+  # orca_cmd <args...>: runs the CLI against the right host.
+  local -a hsel
+  cm_cli_host_into hsel "$HOST" || return 2
+  cm_timeout 30 "$ORCA" "$@" ${hsel[@]+"${hsel[@]}"}
 }
 
 # Git-ignored file names the project regenerates (config
@@ -889,8 +890,9 @@ fi
 # --owner: the lead's own comment is the proof, read now with `orca worktree list` on the
 # lead's host. No ledger. The child must be listed (cm:child <name> or WORKERS I OWN: ...).
 owner_orca() {
-  if [ "$OWNER_HOST" = local ]; then cm_timeout 30 "$ORCA" "$@"
-  else cm_timeout 30 "$ORCA" "$@" --environment "$OWNER_HOST"; fi
+  local -a hsel
+  cm_cli_host_into hsel "$OWNER_HOST" || return 2
+  cm_timeout 30 "$ORCA" "$@" ${hsel[@]+"${hsel[@]}"}
 }
 # A listing names the child as <name> (a child on the lead's own host) or <name>@<host> (any other host);
 # it only proves ownership of the child on THAT host, so two same-named worktrees on different hosts are

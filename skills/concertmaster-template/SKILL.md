@@ -13,6 +13,15 @@ prod, keeps hosts clean, and reports. **It never writes code.**
 
 Config notation: `cfg.<path>` is a key in `config.yaml` next to this file
 (schema and comments in `config.example.yaml`). Scripts read the same file through `scripts/lib.sh`.
+`cfg.cli` (`orca` by default, or `plugly`; the env var `CM_CLI_KIND` beats the file) picks the fleet CLI, and
+`scripts/lib.sh` `cm_cli` is the only place that names it: orca resolves `$ORCA_CLI_COMMAND`, else `orca-ide` on
+Linux outside an Orca terminal, else `orca`; plugly resolves `$PLUGLY_CLI_COMMAND`, else `plugly`; any other value
+stops every script (message on stderr, status 2, no call made). `cm_orca` stays as an alias of `cm_cli` for one
+release. A host selector goes through `cm_cli_host <host>` (`cm_cli_host_into <array> <host>` for an array),
+never a typed `--environment`: nothing for the local host and `--environment <name>` for the rest, under both
+CLIs (plugly's `host list` advertises `--host local`, but plugly 1.0.0 rejects that flag on the commands the
+scripts use). `scripts/handoff.sh` is the one exception: `artifacts share` takes `--environment` on both CLIs and
+has no `--host`. Below, `orca ...` and `ORCA ...` mean the configured CLI.
 `<owner>` below means `cfg.project.owner.name`; `$CM_HOME` means
 `cfg.state_dir` (default `~/.concertmaster`).
 
@@ -205,7 +214,7 @@ The lane set above is the default; `cfg.lanes` is the list in use.
     put one in a brief, a nudge or a comment. For a remote target share each file the brief
     points at with `scripts/handoff.sh share` and pass the printed link, put durable content
     in a GitHub issue or Discussion, and run `scripts/handoff.sh check <brief>` before
-    sending. Every script calls Orca through `cm_orca` (`scripts/test/no-bare-orca.sh`).
+    sending. Every script calls the CLI through `cm_cli` (`scripts/test/no-bare-orca.sh`).
 
 <!-- project-local: hard-rules -->
 
@@ -214,8 +223,8 @@ The lane set above is the default; `cfg.lanes` is the list in use.
 Run from an Orca terminal on `cfg.hosts.home`, in the `cfg.worktrees.self_name`
 worktree.
 
-1. Resolve `ORCA` per the orca-cli skill (`scripts/lib.sh` `cm_orca`): bare
-   `orca` inside an Orca terminal on Linux, `orca-ide` outside one.
+1. Resolve `ORCA` per the orca-cli skill (`scripts/lib.sh` `cm_cli`): with `cfg.cli` `orca`, bare
+   `orca` inside an Orca terminal on Linux, `orca-ide` outside one; with `plugly`, `plugly`.
 2. `ORCA skills get orca-cli` once, so flags match the installed build.
 3. Check `config.yaml` exists and `scripts/lib.sh` reads it (`cfg.github.org`
    and `cfg.github.main_repo` set): run `scripts/config-check.sh`, which fails on
@@ -661,10 +670,10 @@ deterministic parts are `scripts/intake.sh`.
 ## Spawn recipe
 
 ```bash
-. scripts/lib.sh                            # defines cm_orca
-ORCA="$(cm_orca)"                           # never a bare orca
+. scripts/lib.sh                            # defines cm_cli (cm_orca is an alias)
+ORCA="$(cm_cli)" || exit 2                  # never a bare orca or plugly
 H=build-host                                # host chosen from capacity
-ENV="--environment $H"                      # empty for local
+ENV="$(cm_cli_host "$H")"                   # --environment <H> for a remote host; local: empty
 ID=w-dev-101                                # worker id, also the brief name
 cat > $CM_HOME/briefs/$ID.md                # filled brief from references/lanes.md
 # Remote host ($ENV set): files the brief points at go as links, never as paths on this host:
@@ -1320,14 +1329,14 @@ shellcheck clean.
 | `scripts/unlinked-prs.sh [--json\|--message\|--mark-sent <n>...]` | open PRs with no linked issue (`closingIssuesReferences` or a `Closes`/`Fixes`/`Resolves`/`Part of`/`Refs` link in the body) created at or after `unlinked_prs.since`: ONE `gh pr list --limit 100` per run (retry at `--limit 30` only on failure, backoff after 2 failures, `truncated` set then); drafts and bots skipped; state in `$CM_HOME/unlinked-prs.json`, a failed call keeps the last list marked stale (`FAILING` from the 3rd run); `--message` text for the pr-sweeper, each PR sent once; exit 0 |
 | `scripts/automations-audit.sh` | tick step: Orca automations on every host whose name matches `project.name`, a lane or `automations.names`, flagged `FORBIDDEN` (enabled, runs an agent in `automations.forbidden_agents`) or `DUPLICATE` (enabled lane-recovery timer, not listed in `automations.expected`); TSV, read-only, exit 2 when the config names nothing to match |
 | `scripts/hooks/rm-guard-hook.sh` | PreToolUse hook: denies an unguarded variable path under a recursive `rm` at once, and a raw `orca worktree rm` / `remove` typed in a Bash command, pointing at `scripts/teardown.sh` (`references/prompt-stalls.md`) |
-| `scripts/handoff.sh` | cross-host handoff: `share <file.md\|file.html> [--environment <sel>] [--allow <ERE>] [--no-check] [--no-secret-scan]` first lints the file (`check` plus `scan-secrets.sh`), then runs `artifacts share --json` through `cm_orca` and prints the link (exit 1 and a clear stderr line when the file is missing or not .md/.html, the CLI fails or refuses, or the reply has no link; the reply body and any token are never printed); `check <file\|-> [--target remote\|local] [--allow <ERE>]` lints a brief for `~/.concertmaster`, `$CM_HOME`, the configured `state_dir`, `/home/<user>/`, `/Users/<user>/` (exit 1 lists each hit with its line number; `--target local` skips) |
+| `scripts/handoff.sh` | cross-host handoff: `share <file.md\|file.html> [--environment <sel>] [--allow <ERE>] [--no-check] [--no-secret-scan]` first lints the file (`check` plus `scan-secrets.sh`), then runs `artifacts share --json` through `cm_cli` and prints the link (exit 1 and a clear stderr line when the file is missing or not .md/.html, the CLI fails or refuses, or the reply has no link; the reply body and any token are never printed); `check <file\|-> [--target remote\|local] [--allow <ERE>]` lints a brief for `~/.concertmaster`, `$CM_HOME`, the configured `state_dir`, `/home/<user>/`, `/Users/<user>/` (exit 1 lists each hit with its line number; `--target local` skips) |
 | `scripts/spawn-verify.sh` | guards for a claude session started in a terminal: `resolve [--ssh <target>]` prints an absolute, non-stub claude path (exit 1 with the npm fix otherwise); `check (--terminal <h> [--environment <host>] [--wait <s>] \| --file <screen>) [--model <m>] [--effort <e>]` exits 0 only when the bottom of the pane shows the expected model (`cfg.spawn.expected_model` / `expected_effort`) on a Claude footer, else `verify: FAIL <reason>` (send no brief) |
 | `scripts/sync-from-toolkit.sh <project-skill-dir>` | copies this engine into a project's skill directory without touching its `config.yaml` or `references/project-local.md` (README, "Update a project") |
 | `scripts/config-check.sh [--config <file>]` | the config doctor: required keys, shape of the optional blocks, no secret-looking text, no em-dash; exit 1 on any failure, 2 on bad usage; read-only; `--config config.example.yaml` checks the template itself |
 | `scripts/hooks/mc-worker-hook.sh` | Claude Code hook for workers, in-scope repos only (optional) |
 | `scripts/digest.sh [--full] [--since-hours n]` | digest text, stdout only, `- ` bullets, no Needs, Open follow-ups, Stuck or Fleet section (`--full` adds them for the terminal report): Merged (merged since `digests.lastSentAt`, else 12h) from `gh pr list`, Deployed from `gh run list` and `gh run view` (config `digest.deploy_workflow` and `digest.deploy_job`, merged by tag with the ledger `deployWindows[]` rows), and in `--full` the open PR count (a failed gh prints "unknown (gh failed)", never 0), every other section from the ledger; read-only; `--full` also lists `ledger.violations` and an incomplete `ledger.violationCheck`, and `ledger.supabaseStacks` orphans or an incomplete check |
 | `scripts/intake.sh <cmd>` | the deterministic half of `intake` (rules in `scripts/intake.jq`) |
-| `scripts/test/*.sh` | `classify-standing`, `classify-violations`, `teardown-gates`, `teardown-supabase`, `teardown-codex-procs`, `census-supabase`, `resume-flow`, `intake`, `mc-emit`, `boot-sweep`, `runtime-check`, `ci-queue-alert`, `cred-check`, `backup-offhost`, `backup-stale`, `scan-secrets`, `rm-guard-hook`, `digest-gh`, `orca-json-helpers`, `waiting-autocompact`, `spawn-verify`, `classify-ownership`, `ask-timeout`, `queue`, `queue-audit`, `salv3`, `salv3-followups`, `markers`, `unlinked-prs`, `tick-emit`, `config-check`, `handoff`, `no-bare-orca`, `automations-audit`, `followups`, `followups-escalate`, `lane-journal`, `asks`, `teardown-owner`, `lanes-relay`, `fleet-state`, `lessons-recon`, `pane-stalls`, `skill-sync`, `tick-contract`, `keep-tmp`: hermetic tests against `scripts/test/fixtures/config.test.yaml`; run the matching one after any script change |
+| `scripts/test/*.sh` | `classify-standing`, `classify-violations`, `teardown-gates`, `teardown-supabase`, `teardown-codex-procs`, `census-supabase`, `resume-flow`, `intake`, `mc-emit`, `boot-sweep`, `runtime-check`, `ci-queue-alert`, `cred-check`, `backup-offhost`, `backup-stale`, `scan-secrets`, `rm-guard-hook`, `digest-gh`, `orca-json-helpers`, `waiting-autocompact`, `spawn-verify`, `classify-ownership`, `ask-timeout`, `queue`, `queue-audit`, `salv3`, `salv3-followups`, `markers`, `unlinked-prs`, `tick-emit`, `config-check`, `handoff`, `no-bare-orca`, `cli-argv`, `cli-parity`, `automations-audit`, `followups`, `followups-escalate`, `lane-journal`, `asks`, `teardown-owner`, `lanes-relay`, `fleet-state`, `lessons-recon`, `pane-stalls`, `skill-sync`, `tick-contract`, `keep-tmp`: hermetic tests against `scripts/test/fixtures/config.test.yaml`; run the matching one after any script change |
 
 <!-- project-local: scripts -->
 

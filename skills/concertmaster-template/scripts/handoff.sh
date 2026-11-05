@@ -25,8 +25,8 @@
 #
 # The inbox and $CM_HOME stay local to the concertmaster's host by design: never tell a lane to
 # read them. Durable content (plans, specs, evidence kept after the task) goes to a GitHub issue
-# or Discussion instead of a shared file. Every Orca call goes through cm_orca, under cm_timeout.
-# Env: CM_HOME, CM_CONFIG, ORCA_CLI_COMMAND, CM_HANDOFF_TIMEOUT (seconds for the CLI, default 60).
+# or Discussion instead of a shared file. Every CLI call goes through cm_cli, under cm_timeout.
+# Env: CM_HOME, CM_CONFIG, ORCA_CLI_COMMAND, PLUGLY_CLI_COMMAND, CM_CLI_KIND, CM_HANDOFF_TIMEOUT (seconds for the CLI, default 60).
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=SCRIPTDIR/lib.sh
@@ -79,8 +79,10 @@ cmd_share() {
       *) die "share: the secret scan could not run on $file (exit $src_rc${scan_err:+: $(printf '%s' "$scan_err" | head -c 200 | tr '\n' ' ')}); fix that, do not bypass it" ;;
     esac
   fi
-  orca="$(cm_orca)"
+  orca="$(cm_cli)" || exit 2
   local -a args=(artifacts share "$(case "$file" in -*) printf './%s' "$file" ;; *) printf '%s' "$file" ;; esac)" --json)
+  # The caller names a saved server verbatim, and `artifacts share` takes --environment on both CLIs
+  # (it has no --host: a share goes through the account, not a host), so no cm_cli_host here.
   [ -z "$env_sel" ] || args+=(--environment "$env_sel")
   # stdout only, no temp file: stderr is dropped (it could carry a token, and a warning there could
   # break the parse). The JSON object is cut out of stdout from its first line that starts with `{`.

@@ -42,6 +42,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=SCRIPTDIR/lib.sh
 . "$HERE/lib.sh"
+cm_cli >/dev/null || exit 2
 # shellcheck source=SCRIPTDIR/fleet-read.sh
 . "$HERE/fleet-read.sh"
 # shellcheck source=SCRIPTDIR/secret-shape.sh

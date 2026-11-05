@@ -48,7 +48,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=SCRIPTDIR/fleet-read.sh
 . "$HERE/fleet-read.sh"
 
-ORCA="$(cm_orca)"
+ORCA="$(cm_cli)" || exit 2
 NOW="${CM_NOW:-$(date -u +%FT%TZ)}"
 # Stale limit: 2 ticks of the SLOWEST tick delay (schedule.tick_delays_s, quiet 1800 s = 60 min), never under 30 min.
 # A fixed 30 min is one quiet tick, so a healthy line would go stale just before the next refresh.
@@ -89,7 +89,7 @@ own_comment() { # <selector> -> prints the comment text; dies when unreadable
   out="$(cm_timeout "${CM_HOST_TIMEOUT:-30}" "$ORCA" worktree show --worktree "$wsel" --json </dev/null 2>"$TMP/show.err")" \
     || die "orca worktree show $wsel failed: $(head -c 160 "$TMP/show.err")"
   printf '%s' "$out" | jq -er 'if .ok == true and (.result.worktree | type == "object") then (.result.worktree.comment // "" | if type == "string" then . else "" end) else error("not a worktree") end' 2>/dev/null \
-    || die "orca worktree show $wsel: not a worktree reply"
+    || die "orca worktree show $wsel: not a worktree response"
 }
 own_name() { # <selector>
   cm_timeout "${CM_HOST_TIMEOUT:-30}" "$ORCA" worktree show --worktree "$1" --json </dev/null 2>/dev/null | jq -r '.result.worktree.displayName // empty'
@@ -191,7 +191,7 @@ push_freeze() {
     while IFS="$(printf '\t')" read -r name path; do
       [ -n "$path" ] || continue
       n=$((n + 1))
-      if [ "$h" = local ]; then env=(); else env=(--environment "$h"); fi
+      cm_cli_host_into env "$h"
       handles="$(cm_timeout 30 "$ORCA" terminal list --worktree "path:$path" ${env[@]+"${env[@]}"} --json </dev/null 2>/dev/null | jq -r '[.result.terminals[]? | select((.agentIdentity // "") == "claude") | .handle] | join(" ")')"
       if [ -z "$handles" ]; then skipped=$((skipped + 1)); echo "push: $name@$h no Claude terminal, skipped"; continue; fi
       # exactly one: a worktree with two agents is undecidable, so this send follows the same rule

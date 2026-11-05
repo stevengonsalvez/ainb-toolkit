@@ -176,6 +176,21 @@ want deny "watch -n 5 orca worktree rm --worktree id:abc"
 want deny '$(command -v orca) worktree rm --worktree id:abc'
 want deny '${CLI:-orca} worktree rm --worktree id:abc'
 want deny 'cm_orca worktree rm --worktree id:abc'
+want deny 'cm_cli worktree rm --worktree id:abc'
+want deny 'plugly worktree rm --worktree id:abc'
+want deny 'plugly-dev worktree rm --worktree id:abc'
+want deny 'plugly-ide worktree rm --worktree id:abc'
+want deny 'plugly-ide --environment host-a worktree remove --worktree id:abc'
+want allow 'plugly-ide worktree list --json'
+want deny 'plugly-dev --environment host-a worktree delete --worktree id:abc'
+want allow 'plugly-dev worktree list --json'
+want deny 'plugly worktree delete --worktree id:abc'
+want deny 'echo $(echo $(echo $(echo $(plugly worktree delete --worktree id:abc))))'
+want deny 'echo $(echo $(echo $(echo $(orca worktree remove --worktree id:abc))))'
+want deny 'orca worktree delete --worktree id:abc'
+want deny 'orca-ide --environment host-a worktree delete --worktree id:abc'
+want deny 'plugly --environment host-a worktree remove --worktree id:abc'
+want deny 'timeout 30 plugly --host local worktree rm --worktree id:abc'
 want deny "/usr/bin/rm$(printf '\t')-rf \"\$DIR\""
 want deny "/bin/rm$(printf '\t')-rf \$DIR"
 want deny "bash -c \$'orca worktree rm --worktree id:abc'"
@@ -338,10 +353,13 @@ want deny 'orca-ide --environment host-a --json worktree remove --worktree id:ab
 want deny "ssh host-a 'orca --environment local worktree rm --worktree id:abc'"
 want deny 'orca --json worktree rm --worktree id:abc'
 want allow 'orca --environment host-a worktree list --json'
+want allow 'plugly --host local worktree list --json'
+want allow 'plugly worktree set --worktree active --comment "rm later"'
 want allow 'orca --environment host-a worktree set --worktree active --comment "rm later"'
 want deny "ssh host-a \"bash -c 'orca worktree rm --worktree id:abc'\""
 [ -n "$(env -u ORCA_CLI_COMMAND bash -c 'jq -n --arg c "rm -rf \$S/x" --arg w "$1" "{tool_name:\"Bash\",cwd:\$w,tool_input:{command:\$c}}" | "$2"' _ "$CWD" "$HOOK")" ] && echo "ok   unset ORCA_CLI_COMMAND does not crash the hook" || { echo "FAIL unset ORCA_CLI_COMMAND crashes the hook"; fail=1; }
 [ -n "$(ORCA_CLI_COMMAND=/opt/x/orca-custom run 'orca-custom worktree rm --worktree id:abc')" ] && echo "ok   ORCA_CLI_COMMAND basename denied" || { echo "FAIL ORCA_CLI_COMMAND basename"; fail=1; }
+[ -n "$(PLUGLY_CLI_COMMAND=/opt/x/plugly-custom run 'plugly-custom worktree rm --worktree id:abc')" ] && echo "ok   PLUGLY_CLI_COMMAND basename denied" || { echo "FAIL PLUGLY_CLI_COMMAND basename"; fail=1; }
 # allow: teardown.sh itself, other orca worktree commands, prose
 want allow 'scripts/teardown.sh local /home/user/orca/workspaces/acme-app/x'
 want allow 'skills/concertmaster-template/scripts/teardown.sh host-a /home/u/orca/workspaces/acme-app/x --apply --salvage'

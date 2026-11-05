@@ -7,6 +7,11 @@
 # $CM_HOME/config.yaml. An env var (CM_ORG, CM_REPO, ...) beats the file.
 schema: concertmaster.config/v1
 
+# Which CLI the scripts drive: orca (default) or plugly. [script] scripts/lib.sh cm_cli. Any other value
+# makes every script stop with status 2. orca resolves $ORCA_CLI_COMMAND, else orca-ide on Linux outside an
+# Orca terminal, else orca; plugly resolves $PLUGLY_CLI_COMMAND, else plugly. Env CM_CLI_KIND beats this key.
+cli: orca
+
 project:
   name: Acme                       # [script] digest title, report headers
   id: acme                         # [script] this project's id: stamped on the ledger as `project`; a ledger

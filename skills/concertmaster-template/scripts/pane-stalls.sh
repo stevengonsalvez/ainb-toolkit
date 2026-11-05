@@ -41,7 +41,7 @@ while [ $# -gt 0 ]; do
 done
 
 [ -n "${CM_PATH_MATCH:-}" ] || { cm_warn "pane-stalls.sh: set worktrees.path_match in config (or CM_PATH_MATCH)"; exit 2; }
-ORCA="$(cm_orca)"
+ORCA="$(cm_cli)" || exit 2
 SAN="$HERE/jsanitize"
 NEVER="${CM_NEVER_TOUCH:-$(cm_cfg .worktrees.never_touch)}"
 RE="${CM_STALL_REGEX:-$(cm_cfg .stalls.regex "Do you want to proceed")}"
@@ -72,7 +72,7 @@ row() { # <kind> <lane> <host> <handle> <line>
 while IFS= read -r hrow; do
   [ -n "$hrow" ] || continue
   host="$(jq -r '.host' <<<"$hrow")"; wlf="$(jq -r '.file' <<<"$hrow")"
-  envargs=(); [ "$host" = local ] || envargs=(--environment "$host")
+  envargs=(); cm_cli_host_into envargs "$host"
   tl="$TMP/terminals-$host.json"
   if ! cm_timeout "$TOUT" "$ORCA" terminal list --json ${envargs[@]+"${envargs[@]}"} </dev/null 2>/dev/null | "$SAN" > "$tl" \
      || ! jq -e '.ok == true and (.result.terminals | type == "array")' "$tl" >/dev/null 2>&1; then
