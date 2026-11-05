@@ -249,7 +249,7 @@ newrepo; addmig 88000000000002_a.sql "$(printf '%s\n%s %s = %s;\n%s %s = %s;\nCR
 check "a COMMIT inside a dollar-quoted body is not the file's COMMIT: exit 3" "$RC" 3; has "dollar-quoted COMMIT: stop names COMMIT" "$OUT" "stop $F1 reason=no COMMIT;"
 
 # 23. E'..' escape strings, identifier-adjacent $, odd whitespace, a final COMMIT with no semicolon, a very large statement
-newrepo; addmig 88000000000002_a.sql "$(printf '%s\n%s %s = %s;\n%s %s = %s;\nCOMMENT ON TABLE t IS E%s;\nSET %s = 0; -- do%st remove\nSELECT 1;\n%s' "$BG" "$SL" "$LK" "'3s'" "$SL" "$ST" "'30s'" "'Athlete\\'s table'" "$ST" "'" "$CM")"; run
+newrepo; addmig 88000000000002_a.sql "$(printf '%s\n%s %s = %s;\n%s %s = %s;\nCOMMENT ON TABLE t IS E%s;\nSET %s = 0; -- do%st remove\nSELECT 1;\n%s' "$BG" "$SL" "$LK" "'3s'" "$SL" "$ST" "'30s'" "'Customer\\'s table'" "$ST" "'" "$CM")"; run
 check "an E'..' string with an escaped quote does not hide a later SET: exit 2" "$RC" 2; has "E string: the override is seen" "$OUT" "override"
 newrepo; addmig 88000000000002_a.sql "$(gx "'3s'" "'30s'" "$(printf 'SELECT %s;\nSET %s = 0;\nSELECT %s;\n' "'C:\\'" "$ST" "'x'")")"; run
 check "a standard string ending in a backslash closes at the quote: exit 2" "$RC" 2

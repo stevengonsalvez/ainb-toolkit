@@ -912,7 +912,7 @@ freeze time; delta from {{from_tag}}). Before your first action (your own merge 
 trigger production. Never run staging validation in parallel with the
 production trigger. Staging red: STOP, set "cm:failed staging red: <job +
 reason>", do not trigger production.
-Migration guard: re-run `skills/concertmaster-template/scripts/deploy-migration-check.sh {{from_tag}} {{main_sha}}`
+Migration guard: re-run `scripts/deploy-migration-check.sh {{from_tag}} {{main_sha}}`
 on the pinned sha before staging (for a file the owner approved, with that PR's `--pr-body-file` and
 `--only <path>`). Any exit other than 0 blocks the window: exit 3 is a STOP (set "cm:failed migration
 guard stop: <file>", never trigger production), exit 2 is an ask for the owner (set "cm:blocked migration

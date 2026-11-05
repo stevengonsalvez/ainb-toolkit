@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # deploy-migration-check.sh: the deploy pre-check for the migrations a delta ADDS.
 #
-#   skills/concertmaster-template/scripts/deploy-migration-check.sh <from-ref> <to-ref> [--pr-body-file <file> --only <path>]...
+#   scripts/deploy-migration-check.sh <from-ref> <to-ref> [--pr-body-file <file> --only <path>]...
 #
 # Run it from anywhere inside the repo (the pathspec is anchored at the repo top, so a subdirectory gives the same
 # result as the root). <from-ref> is the last production tag, <to-ref> the pinned deploy sha (or origin/main). It lists
