@@ -15,6 +15,8 @@
 # echoes content, so only the real-scanner block proves the scanner's own output is clean): a planted fake
 # secret (built from split strings at runtime) blocks every copy and never shows in any output; a
 # missing scanner or a scanner error blocks too; an unset backup.host exits 2.
+# It must pass on a host with and without yq: the no-yq cases run against a PATH built without yq, wherever the
+# host keeps it.
 #
 #   scripts/test/backup-offhost.sh      # exit 0 when every case passes
 set -uo pipefail
@@ -241,9 +243,15 @@ check "--check with no host configured exits 2" 2 "$rc"
 out="$("$BK" --check --dest "$ROOT/peer-chk" 2>&1)"; rc=$?
 check "--check in local-path mode has no ssh to test (exit 0)" 0 "$rc"
 # cron's environment: nothing but the PATH of the crontab line. Without yq the config cannot be read.
-# (run only when yq is really missing from that PATH: with yq present this would reach the real ssh)
-if ! PATH=/usr/bin:/bin command -v yq >/dev/null 2>&1; then
-  out="$(env -i HOME="$HOME" PATH=/usr/bin:/bin CM_CONFIG="$CM_CONFIG" "$BK" --check --host peerx --remote-dir bk 2>&1)"; rc=$?
+# Hermetic: NOYQ holds every tool of /usr/bin and /bin except yq, so the case runs (and means the same) on a host
+# that keeps yq in /usr/bin or /bin, and on one that does not have it at all.
+mkdir -p "$ROOT/noyq"
+for d in /usr/bin /bin; do
+  for f in "$d"/*; do b="${f##*/}"; [ "$b" = yq ] || [ -e "$ROOT/noyq/$b" ] || [ -L "$ROOT/noyq/$b" ] || ln -s "$f" "$ROOT/noyq/$b"; done
+done
+NOYQ="$ROOT/noyq"
+if ! PATH="$NOYQ" command -v yq >/dev/null 2>&1; then
+  out="$(env -i HOME="$HOME" PATH="$NOYQ" CM_CONFIG="$CM_CONFIG" "$BK" --check --host peerx --remote-dir bk 2>&1)"; rc=$?
   check "--check under env -i with no yq on PATH exits 2" 2 "$rc"
   case "$out" in *"yq is not on PATH"*) pass "and says that yq is the problem" ;; *) fail "cron env" "$out" ;; esac
 fi
@@ -341,11 +349,11 @@ check "no generation is kept after a forbidden file" 0 "$(gens "$D" | wc -l | tr
 # --- review findings ------------------------------------------------------------------------------
 # cron's PATH has no yq: the config cannot be read, and the message says why (exit 2).
 seed
-out="$(env -i HOME="$HOME" CM_HOME="$CM_HOME" CM_CONFIG="$CFG" CM_BACKUP_SSH=/bin/false PATH=/usr/bin:/bin /bin/bash "$BK" 2>&1)"; rc=$?
-if command -v yq >/dev/null 2>&1 && ! PATH=/usr/bin:/bin command -v yq >/dev/null 2>&1; then
+out="$(env -i HOME="$HOME" CM_HOME="$CM_HOME" CM_CONFIG="$CFG" CM_BACKUP_SSH=/bin/false PATH="$NOYQ" /bin/bash "$BK" 2>&1)"; rc=$?
+if ! PATH="$NOYQ" command -v yq >/dev/null 2>&1; then
   check "no yq on PATH: exit 2" 2 "$rc"
   case "$out" in *"yq is not on PATH"*) pass "the message names yq and PATH" ;; *) fail "yq message" "$out" ;; esac
-  out="$(env -i HOME="$HOME" CM_HOME="$CM_HOME" CM_CONFIG="$CFG" CM_BACKUP_SSH=/bin/false PATH=/usr/bin:/bin /bin/bash "$BK" --remote-dir bk 2>&1)"; rc=$?
+  out="$(env -i HOME="$HOME" CM_HOME="$CM_HOME" CM_CONFIG="$CFG" CM_BACKUP_SSH=/bin/false PATH="$NOYQ" /bin/bash "$BK" --remote-dir bk 2>&1)"; rc=$?
   check "no yq on PATH with --remote-dir given: still exit 2, not a misleading host message" 2 "$rc"
   case "$out" in *"yq is not on PATH"*) pass "the yq message wins when the config cannot be read" ;; *) fail "yq with remote-dir" "$out" ;; esac
 fi
