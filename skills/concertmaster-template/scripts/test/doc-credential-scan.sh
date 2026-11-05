@@ -58,8 +58,8 @@ both() {
   scan --range HEAD~1..HEAD; want_rc "$1 (range)" "$2"
 }
 
-# ---- the shape behind the incident: an email, then a password-looking value, on one Markdown line ----------------
-both "the incident shape (login line, email / value) is refused" 1 docs/login.md "- prod login: \`${E}\` / \`${V}\`"
+# ---- the headline shape: an email, then a password-looking value, on one Markdown line ----------------
+both "the login-line shape (email / value) is refused" 1 docs/login.md "- prod login: \`${E}\` / \`${V}\`"
 both "a table row with the value in the next cell is refused" 1 docs/users.md "| ${E} | ${V} |"
 both "email: x, password: y is refused" 1 docs/creds.md "email: ${E}, password: ${V}"
 both "a backticked value after password is is refused" 1 docs/creds.md "The password is \`${V}\` for ${E}."
@@ -197,14 +197,14 @@ scan --staged --all; want_rc "two modes at once is exit 2" 2
 NOREPO="$T/not-a-repo"; mkdir -p "$NOREPO"; cd "$NOREPO" || exit 2
 GIT_CEILING_DIRECTORIES="$T" scan --staged; want_rc "outside a git work tree exits 2 (never clean)" 2
 
-# ---- a failing detector is exit 2, never clean; a busybox awk host still catches the incident shape -----------------------
+# ---- a failing detector is exit 2, never clean; a busybox awk host still catches the login-line shape -----------------------
 newrepo awkfail; mkdir docs; printf '%s\n' "${E} / ${V}" > docs/x.md; git add -A
 AWKBIN="$T/awk-fail-bin"; mkdir -p "$AWKBIN"; printf '#!/bin/sh\nexit 1\n' > "$AWKBIN/awk"; chmod +x "$AWKBIN/awk"
 PATH="$AWKBIN:$PATH" scan --staged; want_rc "a failing awk is exit 2 (a scan that could not look is never clean)" 2
 if command -v busybox >/dev/null 2>&1 && busybox awk 'BEGIN { exit 0 }' >/dev/null 2>&1; then
   BBBIN="$T/bb-bin"; mkdir -p "$BBBIN"; ln -s "$(command -v busybox)" "$BBBIN/awk"
   newrepo bbawk; mkdir docs; printf '%s\n' "- prod login: \`${E}\` / \`${V}\`" "${E} password is \`${V}\`" > docs/x.md; git add -A
-  PATH="$BBBIN:$PATH" scan --staged; want_rc "busybox awk: the incident shape is refused" 1
+  PATH="$BBBIN:$PATH" scan --staged; want_rc "busybox awk: the login-line shape is refused" 1
 else
   printf 'SKIP busybox awk not available on this host\n'
 fi

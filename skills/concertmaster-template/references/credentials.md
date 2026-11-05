@@ -68,10 +68,11 @@ and when a lane reports a pasted secret.
 
 ## Keep a login out of a tracked doc (doc credential scan)
 
-Secret scanners know key shapes; none of them has a rule for a login written out in prose, such as a
+Key-shape secret scanners look for token shapes, not for a login written out in prose, such as a
 Markdown line giving an address and a password side by side. `scripts/doc-credential-scan.sh` is that
-check. It is a repo-level guard: copy it into the project repository (for example under `scripts/ci/`),
-not a concertmaster tick step. The commit skill (`SKILL.md` hard rule 25) and this guard are the two layers.
+check. It is a repo-level guard: copy it into the project repository (for example under `scripts/ci/`) and
+its test into a `test/` folder next to it (the test finds the scanner at `../doc-credential-scan.sh`, so
+`scripts/ci/test/doc-credential-scan.sh`). It is not a concertmaster tick step. The commit skill (`SKILL.md` hard rule 25) and this guard are the two layers.
 
 - **What it refuses:** an ADDED line of a tracked `*.md`, `*.mdx`, `*.txt`, `*.yaml`, `*.yml` or `*.json`
   file (lockfiles and `node_modules` excluded) that holds an email address AND a password-looking value:
@@ -115,9 +116,9 @@ not a concertmaster tick step. The commit skill (`SKILL.md` hard rule 25) and th
       bash "$RUNNER_TEMP/doc-credential-scan.sh" --range "$BASE..$HEAD_SHA"
   ```
 
-  Run its test (`scripts/test/doc-credential-scan.sh`) as a separate required step so a change that breaks
+  Run its test (`scripts/ci/test/doc-credential-scan.sh`) as a separate required step so a change that breaks
   the detector goes red. The step must not use a path filter, or a docs-only change would skip the check.
-- Tests: `scripts/test/doc-credential-scan.sh` (fixture credentials are built at run time from split strings)
+- Tests in this template: `scripts/test/doc-credential-scan.sh` (fixture credentials are built at run time from split strings)
   and `scripts/test/brief-commit-rule.sh` (the commit rule is in every brief template).
 
 ## Install on the concertmaster host (Linux with systemd; macOS is out of scope)

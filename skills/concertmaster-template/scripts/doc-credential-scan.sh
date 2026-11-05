@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # doc-credential-scan.sh: refuse an email address AND a password-looking value on ONE added line of a
-# tracked doc. gitleaks has no rule for "a login written out in prose", so a prod login pasted into a
-# Markdown file as `user@host.tld / Value` sailed through; this is the check for exactly that shape.
+# tracked doc. A login written as `user@host.tld / Value` is not caught by key-shape scanners; this is the
+# check for exactly that shape.
 #
 #   scripts/doc-credential-scan.sh --staged              # lines added to the index (pre-commit hook)
 #   scripts/doc-credential-scan.sh --range <base>..<head> # lines added by a range (CI; <base>...<head> also works)
@@ -51,9 +51,10 @@
 # email beside it; fullwidth characters, a `;` or `-` or arrow before a value, html wrappers, values with spaces, a
 # letter-only value after `login:`, and .rst .csv .toml .html .mdc .ipynb files. A row added under an UNCHANGED
 # password header has no header line in the diff, so only its own password word or an added header triggers the row rule. A line added and removed inside one range is not seen
-# (net diff; PRs merge with --merge, so such a first commit stays in history). A lowercase-plus-digits value is caught
-# after password, passwd, pwd, passphrase or passcode with a real separator, not after pass, pw or login. main has no required
-# status checks: "blocking" means a red job a human reads; the pre-commit hook is the only layer that stops a commit.
+# (net diff; where a PR lands as merge commits, such a first commit stays in history). A lowercase-plus-digits value is
+# caught after password, passwd, pwd, passphrase or passcode with a real separator, not after pass, pw or login. Unless the
+# project makes the CI step a required status check, a red job is only a signal a human reads; the pre-commit hook is the
+# only layer that stops a commit.
 set -uo pipefail
 export LC_ALL=C
 
