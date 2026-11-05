@@ -457,6 +457,100 @@ OUT="$(STUB_LOG="$LOG4" STUB_GH=none STUB_COMMENT="$GOOD" STUB_ORCA_RM_MAIN="$M"
 if [ "$rc" = 0 ] && [ ! -d "$NP13" ] && grep -q 'worktree rm' "$LOG4"; then ok "apply retires the no-PR child through Orca"; else bad "no-PR apply failed" "rc=$rc $OUT"; fi
 if [ ! -e "$CM_HOME/ledger.json" ]; then ok "no-PR retirement wrote no ledger"; else bad "ledger created" "$(ls -A "$CM_HOME")"; fi
 
+echo "== lead mode: detached HEAD (a review worktree) is accepted only on the full fail-closed rule"
+# A review worktree is created detached on purpose. mkdet <name> [rev]: detached at rev (default: main, which origin holds).
+mkdet() {
+  git -C "$M" worktree add -q --detach "$ROOT/wt/$1" "${2:-main}" >/dev/null 2>&1
+  (cd "$ROOT/wt/$1" && pwd -P)
+}
+for _i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16; do eval "DT$_i=\"\$(mkdet dt-$_i)\""; done
+DTB="$(mkwt dt-branch)"
+lists $'cm:running\ncm:child dt-1\ncm:child dt-2\ncm:child dt-3\ncm:child dt-4\ncm:child dt-5\ncm:child dt-6\ncm:child dt-7\ncm:child dt-8\ncm:child dt-9\ncm:child dt-10\ncm:child dt-11\ncm:child dt-12\ncm:child dt-13\ncm:child dt-14\ncm:child dt-15\ncm:child dt-16\ncm:child dt-branch\ncm:child dt-stale\ncm:child dt-late'
+DGOOD='cm:retire review done'
+# accepted: every rule holds
+STUB_COMMENT="$DGOOD" run "detached, all rules hold: plan ok"                      0 'dry-run: nothing changed' "$DT1" --owner lane-a
+STUB_COMMENT="$DGOOD" run "accepted: the request is reported on its own line"      0 'detach-retire .*cm:retire request: review done' "$DT1" --owner lane-a
+STUB_COMMENT="$DGOOD" run "accepted: clean tree reported on its own line"          0 'detach-clean .*no tracked change, no untracked file' "$DT1" --owner lane-a
+STUB_COMMENT="$DGOOD" run "accepted: ignored files reported on their own line"     0 'detach-ignored .*no precious ignored path' "$DT1" --owner lane-a
+STUB_COMMENT="$DGOOD" run "accepted: stash reported on its own line"               0 'detach-stash .*none in the repo' "$DT1" --owner lane-a
+STUB_COMMENT="$DGOOD" run "accepted: the remote ref is named on the check line"    0 'detach-remote .*is on origin/main' "$DT1" --owner lane-a
+STUB_COMMENT="$DGOOD" run "accepted: the plan line names the remote ref"           0 'contained in remote ref origin/main' "$DT1" --owner lane-a
+STUB_COMMENT="$DGOOD" run "accepted: no operation in progress, own line"           0 'detach-inprog .*none' "$DT1" --owner lane-a
+STUB_COMMENT="$DGOOD" run "accepted: reported as no PR (detached) on the nopr line" 0 'nopr .*no PR (detached)' "$DT1" --owner lane-a
+STUB_COMMENT="$DGOOD" run "accepted: reported as no PR (detached) in the plan"     0 'no PR (detached): not a merged-PR proof' "$DT1" --owner lane-a
+STUB_COMMENT="$DGOOD" STUB_GH=open run "an OPEN PR for the sha is never consulted (no branch to look up)" 0 'dry-run: nothing changed' "$DT1" --owner lane-a
+OUT="$(STUB_PATH="$DT1" STUB_NAME=dt-1 STUB_COMMENT="$DGOOD" "$TD" local "$DT1" --owner lane-a 2>&1)"
+if ! printf '%s' "$OUT" | grep -q 'MERGED'; then ok "a merged-PR lookup never counts as the proof for a detached HEAD"; else bad "detached HEAD reported a merged PR" "$OUT"; fi
+# one refusal per rule, each on its own
+STUB_COMMENT=$'cm:done review finished' run "no cm:retire: refused"                  3 'detach-retire .*NO cm:retire request' "$DT2" --owner lane-a
+STUB_COMMENT=$'cm:done review finished' run "no cm:retire: the refusal says why"      3 "detached HEAD: needs the child's comment to start with 'cm:retire" "$DT2" --owner lane-a
+run "no comment at all: refused"                                                     3 'detach-retire .*NO cm:retire request' "$DT2" --owner lane-a
+STUB_COMMENT='cm:retire     ' run "cm:retire with a blank reason: refused"           3 'detach-retire .*NO cm:retire request' "$DT2" --owner lane-a
+STUB_COMMENT=$'cm:running\ncm:retire later' run "cm:retire not on the first line: refused" 3 'detach-retire .*NO cm:retire request' "$DT2" --owner lane-a
+printf 'changed\n' >> "$DT3/.beads/.gitignore"
+STUB_COMMENT="$DGOOD" run "dirty tracked file: refused"                              3 'detach-clean .*NO (1 changed or untracked paths)' "$DT3" --owner lane-a
+STUB_COMMENT="$DGOOD" run "dirty tracked file: the refusal says the tree is not clean" 3 'detached HEAD: the tree is not clean' "$DT3" --owner lane-a
+printf 'scratch\n' > "$DT4/notes.txt"
+STUB_COMMENT="$DGOOD" run "untracked file: refused"                                  3 'detach-clean .*NO (1 changed or untracked paths)' "$DT4" --owner lane-a
+# an ignored file that is not regenerable noise (info/exclude is shared by every worktree of the repo)
+printf 'review-notes.txt\n' >> "$M/.git/info/exclude"
+printf 'secret\n' > "$DT5/review-notes.txt"
+STUB_COMMENT="$DGOOD" run "ignored (precious) file, no --salvage: refused"           3 'detach-ignored .*1 precious path(s) and no --salvage' "$DT5" --owner lane-a
+STUB_COMMENT="$DGOOD" run "ignored file: the refusal names the detached rule"        3 'detached HEAD: ignored files would be deleted' "$DT5" --owner lane-a
+STUB_COMMENT="$DGOOD" run "ignored file with --salvage: accepted, the salvage copies it" 0 'accepted only because --salvage copies and verifies them' "$DT5" --owner lane-a --salvage
+STUB_COMMENT="$DGOOD" run "ignored file with --salvage: the plan carries the salvage" 0 'salvage 1 ignored path(s)' "$DT5" --owner lane-a --salvage
+git -C "$DT6" commit -q --allow-empty -m local-only --no-gpg-sign
+STUB_COMMENT="$DGOOD" run "HEAD only local (on no remote ref): refused"              3 'HEAD is not on any remote ref' "$DT6" --owner lane-a
+STUB_COMMENT="$DGOOD" run "HEAD only local: reported on its own line"                3 'detach-remote .*is on no live remote-tracking ref of origin' "$DT6" --owner lane-a
+mv -- "$BARE" "$BARE.off"
+STUB_COMMENT="$DGOOD" run "fetch of origin fails: refused, not read as contained"    3 'detach-remote .*UNKNOWN (git fetch or ls-remote of origin failed or timed out)' "$DT7" --owner lane-a
+STUB_COMMENT="$DGOOD" run "fetch failure: the refusal names the fetch"               3 'the fetch of origin failed or timed out' "$DT7" --owner lane-a
+mv -- "$BARE.off" "$BARE"
+mkdir -- "$(git -C "$DT8" rev-parse --absolute-git-dir)/rebase-merge"
+STUB_COMMENT="$DGOOD" run "rebase in progress: refused"                              3 'detach-inprog .*YES: rebase-merge' "$DT8" --owner lane-a
+STUB_COMMENT="$DGOOD" run "rebase in progress: the refusal names the operation"      3 'git operation in progress (rebase-merge' "$DT8" --owner lane-a
+# a stash entry is repo-wide (refs/stash is shared by every worktree), so it refuses a clean, pushed, requested HEAD
+printf 'wip\n' >> "$DT9/.beads/.gitignore"; git -C "$DT9" stash push -q -m wip
+STUB_COMMENT="$DGOOD" run "a stash entry in the repo: refused"                       3 'detach-stash .*1 entr(y/ies) in the repo' "$DT10" --owner lane-a
+STUB_COMMENT="$DGOOD" run "a stash entry: the refusal says stashes are shared per repo" 3 'stashes are shared per repo, not per worktree' "$DT10" --owner lane-a
+git -C "$DT9" stash drop -q
+STUB_COMMENT="$DGOOD" run "stash dropped: the same worktree is accepted again"       0 'detach-stash .*none in the repo' "$DT10" --owner lane-a
+# a review worktree made from a PR head sha: the commit is on origin's branch but this checkout has no tracking ref yet,
+# so it is on no known remote ref until the fresh fetch (a push to the URL, not the remote name, updates no tracking ref)
+git -C "$M" worktree add -q --detach "$ROOT/wt/dt-late" main >/dev/null 2>&1
+DTL="$(cd "$ROOT/wt/dt-late" && pwd -P)"
+git -C "$DTL" commit -q --allow-empty -m pr-head --no-gpg-sign && git -C "$DTL" push -q "$BARE" HEAD:refs/heads/b-late >/dev/null 2>&1
+
+STUB_COMMENT="$DGOOD" run "PR head not yet fetched: first run defers the unpushed check, accepted" 0 'unpushed .*judged again after the fresh fetch' "$DTL" --owner lane-a
+STUB_COMMENT="$DGOOD" run "PR head not yet fetched: once fetched, its remote ref is named" 0 'detach-remote .*is on origin/b-late' "$DTL" --owner lane-a
+STUB_COMMENT=$'cm:done review finished' run "an earlier detached refusal skips the fetch" 3 'detach-remote .*not checked' "$DT2" --owner lane-a
+# a branch deleted on origin must not keep "holding" the commit through a stale remote-tracking ref (fetch --prune)
+git -C "$M" worktree add -q -b b-stale "$ROOT/wt/dt-stale" main >/dev/null 2>&1
+DTS="$(cd "$ROOT/wt/dt-stale" && pwd -P)"
+git -C "$DTS" commit -q --allow-empty -m only-on-the-branch --no-gpg-sign && git -C "$DTS" push -q origin b-stale >/dev/null 2>&1
+git -C "$DTS" checkout -q --detach && git -C "$DTS" branch -q -D b-stale
+
+STUB_COMMENT="$DGOOD" run "branch still on origin: HEAD is on its remote ref, accepted" 0 'detach-remote .*is on origin/b-stale' "$DTS" --owner lane-a
+git --git-dir="$BARE" update-ref -d refs/heads/b-stale
+STUB_COMMENT="$DGOOD" run "branch deleted on origin (stale tracking ref kept): refused" 3 'HEAD is not on any remote ref' "$DTS" --owner lane-a
+if git -C "$DTS" show-ref --verify -q refs/remotes/origin/b-stale; then ok "a dry run prunes nothing: the stale tracking ref is still there"; else bad "the dry run pruned a tracking ref"; fi
+# the other gates still run for a detached HEAD
+lists $'cm:running\ncm:child dt-11 epic=t-ep1'
+STUB_COMMENT="$DGOOD" run "detached: the epic beads gate still refuses"          3 'open bead(s) under epic t-ep1' "$DT11" --owner lane-a
+lists $'cm:running\ncm:child dt-1\ncm:child dt-2\ncm:child dt-3\ncm:child dt-4\ncm:child dt-5\ncm:child dt-6\ncm:child dt-7\ncm:child dt-8\ncm:child dt-9\ncm:child dt-10\ncm:child dt-11\ncm:child dt-12\ncm:child dt-13\ncm:child dt-14\ncm:child dt-15\ncm:child dt-16\ncm:child dt-branch\ncm:child dt-stale\ncm:child dt-late'
+STUB_COMMENT=$'cm:retire done\ncm:followup keep-me owner=owner-a keep this' run "detached: an open follow-up still refuses" 3 'open follow-up' "$DT11" --owner lane-a
+# a branch worktree is unchanged: no detach-* lines, no cm:retire needed
+OUT="$(STUB_PATH="$DTB" STUB_NAME=dt-branch STUB_COMMENT='cm:done x' "$TD" local "$DTB" --owner lane-a 2>&1)"; rc=$?
+if [ "$rc" = 0 ] && ! printf '%s' "$OUT" | grep -q 'detach-'; then ok "a branch worktree is unchanged: merged PR, no cm:retire needed, no detach-* lines"; else bad "branch worktree changed" "rc=$rc $OUT"; fi
+# apply
+LOG5="$ROOT/log-detached-refused"
+OUT="$(STUB_LOG="$LOG5" STUB_COMMENT='cm:done x' STUB_ORCA_RM_MAIN="$M" STUB_PATH="$DT12" STUB_NAME=dt-12 "$TD" local "$DT12" --owner lane-a --apply 2>&1)"; rc=$?
+if [ "$rc" = 3 ] && [ -d "$DT12" ] && ! grep -q 'worktree rm\|terminal close' "$LOG5" 2>/dev/null; then ok "apply with no cm:retire: nothing removed, no destructive call"; else bad "destructive call after a detached refusal" "rc=$rc $OUT"; fi
+LOG6="$ROOT/log-detached-apply"
+OUT="$(STUB_LOG="$LOG6" STUB_COMMENT="$DGOOD" STUB_ORCA_RM_MAIN="$M" STUB_PATH="$DT13" STUB_NAME=dt-13 "$TD" local "$DT13" --owner lane-a --apply 2>&1)"; rc=$?
+if [ "$rc" = 0 ] && [ ! -d "$DT13" ] && grep -q 'worktree rm' "$LOG6"; then ok "apply removes an accepted detached worktree through Orca"; else bad "detached apply failed" "rc=$rc $OUT"; fi
+if [ ! -e "$CM_HOME/ledger.json" ]; then ok "detached retirement wrote no ledger"; else bad "ledger created" "$(ls -A "$CM_HOME")"; fi
+
 echo "== beads store at an old schema (bd cannot read it)"
 export CM_BD_CMD="$ROOT/bin/bd-stub" STUB_BD_ERR='Error: pending schema migrations: store at schema v53, bd expects v66'
 N1="$(mkwt fresh-1)"; N2="$(mkwt fresh-2)"; N3="$(mkwt fresh-3)"; N4="$(mkwt fresh-4)"; N5="$(mkwt fresh-5)"
