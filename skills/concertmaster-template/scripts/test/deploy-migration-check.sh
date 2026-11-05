@@ -30,7 +30,7 @@ hasnt() { case "$2" in *"$3"*) bad "$1" "found '$3' in: $2" ;; *) ok "$1" ;; esa
 
 # fixture text, built from pieces
 SL="SET ""LOCAL"; LK="lock_""timeout"; ST="statement_""timeout"; BG="BEG""IN;"; CM="COM""MIT;"
-MARK="secret_marker_""table"                  # a word the output must never echo
+MARK="probe_marker_""table"                  # a word the output must never echo
 guard() { printf '%s\n%s %s = %s;\n%s %s = %s;\nSELECT 1 FROM %s;\n%s\n' "$BG" "$SL" "$LK" "$1" "$SL" "$ST" "$2" "$MARK" "$CM"; }
 
 # gx <lock> <stmt> <extra>: a guarded window with <extra> text inside it, before the COMMIT
