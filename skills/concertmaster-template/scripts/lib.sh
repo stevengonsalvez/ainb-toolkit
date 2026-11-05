@@ -715,6 +715,214 @@ cm_lane_for_path() {
   printf '%s\n' "$out"
 }
 
+# ---- per-lane handle file ---------------------------------------------------------------------
+# $CM_HOME/lanes/<lane>/handle: ONE line, tab separated: terminal handle, host, agent, pid, written-at
+# (UTC, ISO 8601). Written by scripts/lane-handles.sh from the LIVE agent process
+# (scripts/live-agent.sh reads ORCA_TERMINAL_HANDLE from /proc/<pid>/environ), never from the ledger.
+# A handle of "-" means "no usable live agent as of written-at" (none found, two agents, or an
+# inherited handle another lane holds): a send must not happen. The file is not secret and never holds
+# a token. Why it exists: a ledger terminal handle goes stale after a restart or a moved terminal, and a
+# send that trusted it reached the wrong terminal or started a second agent in a live lane.
+#
+# <lane> in these names is the ledger WORKER ID (the key in workers, e.g. w-lane-a), a plain token. Not the
+# worker's `lane` field: a lane is a group (the standing sweeper plus its spawned children, epic:* rows),
+# a worker id is one agent, so it is the thing a handle belongs to.
+CM_LANE_HANDLES_SH="$_cm_lib_dir/lane-handles.sh"
+if [ -n "${CM_LANE_HANDLES:-}" ]; then
+  if [ "${CM_TEST:-}" = 1 ]; then CM_LANE_HANDLES_SH="$CM_LANE_HANDLES"; else cm_warn "CM_LANE_HANDLES ignored (it needs CM_TEST=1)"; fi
+fi
+
+# cm_lane_dir <lane>: the lane's directory; refuses anything that is not a plain token.
+cm_lane_dir() {
+  case "${1:-}" in ''|.*|*[!A-Za-z0-9._-]*) cm_warn "lane handle: \"${1:-}\" is not a lane name"; return 1 ;; esac
+  # a symlinked lane directory would send the handle file (and its temp files) wherever the link points
+  if [ -L "$CM_HOME/lanes" ] || [ -L "$CM_HOME/lanes/$1" ]; then cm_warn "lane handle: $CM_HOME/lanes/$1 is reached through a symlink: refused"; return 1; fi
+  printf '%s/lanes/%s\n' "$CM_HOME" "$1"
+}
+
+# cm_lane_handle_max_age: seconds a handle file may be old and still be trusted for a send
+# (handles.max_age_s, default 900: a few tick windows).
+cm_lane_handle_max_age() {
+  local v
+  v="$(cm_cfg .handles.max_age_s 900)"
+  case "$v" in ''|*[!0-9]*) v=900 ;; *) v=$((10#$v)) ;; esac
+  [ "$v" -gt 0 ] || v=900
+  printf '%s\n' "$v"
+}
+
+# cm_lane_handle_write <lane> <handle|-> <host> <agent> <pid|-> [observed-at]: atomic (temp file in the lane
+# dir, then mv). Concurrent writers each write a whole line from their own temp file, so the file is never
+# torn. observed-at (UTC ISO 8601, default now) is when the agent was OBSERVED, not when the file was
+# written: a slow multi-host run must not make a file look fresher than the look it holds. A file already
+# newer than observed-at is left alone (a concurrent run saw the agent later): return 3, NOT a failure,
+# and the caller must not act on the older observation (no ledger update).
+# A FAILED write fails closed: the old file is removed, and when that is not possible (an unwritable lane
+# dir) a marker lanes/.failed/<lane> makes the reader distrust the old file until a write succeeds. The
+# previous handle is known to be out of date, so it is never served for up to handles.max_age_s.
+cm_lane_handle_write() {
+  local lane="${1:-}" dir rc
+  dir="$(cm_lane_dir "$lane")" || return 1
+  _cm_lane_handle_write "$@"; rc=$?
+  if [ "$rc" = 0 ]; then
+    if [ ! -L "$CM_HOME/lanes/.failed" ]; then rm -f -- "${CM_HOME:?}/lanes/.failed/$lane" 2>/dev/null; fi
+    return 0
+  fi
+  [ "$rc" = 3 ] && return 3   # superseded: the file is a newer observation, nothing failed
+  [ "$rc" = 4 ] && return 4   # lock busy: another writer is mid-write, so the file is theirs to land: not touched
+  rm -f -- "${dir:?}/handle" 2>/dev/null
+  if ! { [ ! -L "$CM_HOME/lanes/.failed" ] && [ ! -L "$CM_HOME/lanes/.failed/$lane" ] && (umask 077; mkdir -p "$CM_HOME/lanes/.failed" && : > "$CM_HOME/lanes/.failed/$lane") 2>/dev/null; } && [ -e "$dir/handle" ]; then
+    cm_warn "lane handle: $lane write failed and the old file could be neither removed nor marked: it may be served until it ages out"
+  fi
+  return 1
+}
+
+_cm_lane_handle_write() {
+  local lane="${1:-}" h="${2:-}" host="${3:-}" agent="${4:-}" pid="${5:--}" at="${6:-}" dir
+  dir="$(cm_lane_dir "$lane")" || return 1
+  # "-" alone is the dead mark; any other handle is a plain token that does not start with "-" (it would be read as an option by `--terminal "$h"` users)
+  case "$h" in -) ;; ''|-*|*[!A-Za-z0-9._:-]*) cm_warn "lane handle: refused: \"$h\" is not a terminal handle"; return 1 ;; esac
+  case "$pid" in -|*[!0-9]*) [ "$pid" = - ] || pid=- ;; esac
+  case "$at" in '') at="$(date -u +%Y-%m-%dT%H:%M:%SZ)" ;; [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z) ;; *) cm_warn "lane handle: refused: \"$at\" is not a UTC time"; return 1 ;; esac
+  host="$(printf '%s' "${host:-local}" | tr -c 'A-Za-z0-9._-' '_')"
+  agent="$(printf '%s' "${agent:--}" | tr -c 'A-Za-z0-9._-' '_')"; [ -n "$agent" ] || agent=-
+  (umask 077; mkdir -p "$dir") 2>/dev/null || { cm_warn "lane handle: cannot create $dir"; return 1; }
+  # The newer-observation check and the mv are one step under a per-lane lock (mkdir is atomic): without it two
+  # writers can both read the old file and the older observation's mv can land last. A lock older than a
+  # minute is a dead writer's and is taken over by an atomic rename (one waiter wins; a claim that turns out
+  # fresh is put back). Every pass that sees the lock counts as a try, so a lock that cannot be moved never
+  # spins; passes that miss it (released mid-check) are bounded separately, 2 in a row. Not obtained in about 3 s
+  # of contention (60 tries; up to 9 s if every try is also preceded by two misses): exit 4, nothing written and
+  # the existing file left as it is (the holder is about to replace it).
+  local lk="$dir/.lock" tries=0 misses=0 rc=0
+  until mkdir "$lk" 2>/dev/null; do
+    # mkdir failing with no lock there is not contention (a directory that cannot be written): a real failure.
+    # But a holder can release between the failed mkdir and this test, and another writer can take the lock
+    # again before the retry: one more mkdir decides each time, and only 3 misses in a row with the lock still
+    # absent are a failure. Without the retry the loser of a race returns 1, and the fail-closed path then
+    # removes the winner's file.
+    if [ ! -e "$lk" ] && [ ! -L "$lk" ]; then
+      if mkdir "$lk" 2>/dev/null; then break; fi
+      misses=$((misses + 1))
+      if [ "$misses" -ge 3 ]; then cm_warn "lane handle: cannot lock $dir"; return 1; fi
+      sleep 0.05; continue
+    fi
+    misses=0
+    if [ -n "$(find "$lk" -maxdepth 0 -mmin +1 2>/dev/null)" ] && mv -- "$lk" "$lk.old.$$" 2>/dev/null; then
+      if [ -n "$(find "${lk:?}.old.$$" -maxdepth 0 -mmin +1 2>/dev/null)" ]; then rm -rf -- "${lk:?}.old.$$"
+      elif [ ! -e "$lk" ] && [ ! -L "$lk" ] && mv -- "${lk:?}.old.$$" "$lk" 2>/dev/null; then :   # put back, never nested inside a newer lock
+      else rm -rf -- "${lk:?}.old.$$"; fi
+    fi
+    tries=$((tries + 1)); if [ "$tries" -ge 60 ]; then cm_warn "lane handle: $lane is locked by another writer: not written"; return 4; fi
+    sleep 0.05
+  done
+  _cm_lane_handle_commit "$lane" "$dir" "$h" "$host" "$agent" "$pid" "$at" || rc=$?
+  rmdir "$lk" 2>/dev/null
+  return "$rc"
+}
+
+# _cm_lane_handle_commit <lane> <dir> <handle> <host> <agent> <pid> <at>: the part of the write that runs under the lock
+_cm_lane_handle_commit() {
+  local lane="$1" dir="$2" h="$3" host="$4" agent="$5" pid="$6" at="$7" tmp old oldat oldts
+  if [ -s "$dir/handle" ]; then
+    IFS=$'\t' read -r old _ _ _ oldat < "$dir/handle" || true
+    # only a well-formed time that is not a clock-skewed future one decides; ISO 8601 UTC strings of one shape sort as time
+    oldts="$(jq -rn --arg t "$oldat" '$t | fromdateiso8601' 2>/dev/null)"
+    case "$oldts" in ''|*[!0-9]*) ;; *) if [ "$oldts" -le "$(( $(date +%s) + 60 ))" ] && [[ "$oldat" > "$at" ]]; then return 3; fi ;; esac
+  fi
+  tmp="$(umask 077; mktemp "$dir/.handle.XXXXXX")" || { cm_warn "lane handle: cannot write in $dir"; return 1; }
+  if ! { printf '%s\t%s\t%s\t%s\t%s\n' "$h" "$host" "$agent" "$pid" "$at" > "$tmp" && chmod 600 "$tmp" && mv -f "$tmp" "$dir/handle"; }; then
+    rm -f -- "${tmp:?}"; cm_warn "lane handle: write failed for $lane"; return 1
+  fi
+}
+
+# _cm_lane_agent_alive <pid> <handle>: the agent the file was written from is still the process holding that
+# terminal: /proc/<pid> exists and its environ ORCA_TERMINAL_HANDLE is <handle>. No /proc on this host
+# (macOS): cannot tell, 0 (lane-handles.sh's own live check exits 3 there too). A process entry that
+# cannot be read fails closed. Returns 0 alive, 1 the pid is gone, 2 it carries another terminal, 3 its
+# environ is unreadable (another uid, hidepid). What it proves: the process EXISTS and was STARTED with
+# that terminal in its environment, not that Orca has not moved it since. CM_PROC_ROOT is honoured with
+# CM_TEST=1 only, as in live-agent.sh. Files with a pid only come from live-agent.sh output, which needs
+# /proc, so a host without it never holds a pid to check.
+_cm_lane_agent_alive() {
+  local root=/proc kv
+  if [ "${CM_TEST:-}" = 1 ] && [ -n "${CM_PROC_ROOT:-}" ]; then root="$CM_PROC_ROOT"; fi
+  [ -d "$root" ] || return 0
+  [ -d "$root/$1" ] || return 1
+  [ -r "$root/$1/environ" ] || return 3
+  while IFS= read -r -d '' kv || [ -n "$kv" ]; do
+    case "$kv" in ORCA_TERMINAL_HANDLE=*) if [ "${kv#ORCA_TERMINAL_HANDLE=}" = "$2" ]; then return 0; fi; return 2 ;; esac
+  done < "$root/$1/environ"
+  return 2
+}
+
+# _cm_lane_handle_read <lane>: sets LH_STATE (fresh | stale | bad | missing), LH_HANDLE, LH_AT, LH_AGE.
+_cm_lane_handle_read() {
+  local f h host agent pid at ts now max
+  LH_STATE=missing; LH_HANDLE=""; LH_AT=""; LH_AGE=""; LH_WHY=""
+  f="$(cm_lane_dir "$1")/handle" || { LH_STATE=bad; return; }
+  # a failed write marked this lane: whatever file is still there is known to be out of date
+  if [ -L "$CM_HOME/lanes/.failed" ]; then LH_STATE=bad; LH_WHY="lanes/.failed is a symlink: refused"; return; fi
+  if [ -e "$CM_HOME/lanes/.failed/$1" ]; then LH_STATE=bad; return; fi
+  [ -e "$f" ] || return 0
+  [ -s "$f" ] || { LH_STATE=bad; return; }   # an empty file is not "never checked"
+  IFS=$'\t' read -r h host agent pid at < "$f" || true
+  case "$h" in -) ;; ''|-*|*[!A-Za-z0-9._:-]*) LH_STATE=bad; return ;; esac
+  ts="$(jq -rn --arg t "$at" '$t | fromdateiso8601' 2>/dev/null)"
+  case "$ts" in ''|*[!0-9]*) LH_STATE=bad; return ;; esac
+  now="$(date +%s)"; max="$(cm_lane_handle_max_age)"
+  LH_HANDLE="$h"; LH_AT="$at"; LH_AGE=$((now - ts))
+  # a file dated in the future (clock skew) is not trusted either
+  if [ "$LH_AGE" -ge -60 ] && [ "$LH_AGE" -le "$max" ]; then LH_STATE=fresh; else LH_STATE=stale; fi
+  # A fresh file for a LOCAL agent whose process is gone, or no longer holds that terminal, is stale: the
+  # agent exited or moved inside the window, and a send would land in the shell left in the terminal.
+  if [ "$LH_STATE" = fresh ] && [ "$h" != - ] && [ "${host:-local}" = local ]; then
+    case "$pid" in ''|-|*[!0-9]*) ;; *)
+      _cm_lane_agent_alive "$pid" "$h"; case "$?" in
+        0) ;;
+        1) LH_STATE=stale; LH_WHY="agent pid $pid is gone" ;;
+        2) LH_STATE=stale; LH_WHY="agent pid $pid does not carry terminal $h" ;;
+        *) LH_STATE=stale; LH_WHY="agent pid $pid cannot be inspected (environ unreadable)" ;;
+      esac ;;
+    esac
+  fi
+}
+
+# cm_lane_handle <lane>: prints the terminal handle to send to. A terminal send to a lane that has a lane file
+# should read this, never the ledger. A caller that cannot (fleet-state.sh push_freeze messages the -sweeper
+# lanes, which have no lane file) reads a live `terminal list` and sends only when the worktree has exactly
+# one Claude terminal (the same two-agents rule).
+#   file fresh, handle set      print it, 0. "Fresh" for a local agent also means its pid still exists and
+#                               still holds that terminal (/proc/<pid>/environ); otherwise it is stale.
+#   file fresh, handle "-"      no live agent (or not one agent): nothing printed, 1
+#   file stale, bad (unparsable, empty, a failed write on record) or MISSING
+#                               the live check is re-run for this lane first (lane-handles.sh --worker);
+#                               still not fresh after that (nothing written: the check could not run, the
+#                               lane is not in the ledger): nothing printed, 3. Never a handle from the
+#                               ledger, never a stale or unverified one.
+#   bad usage                   2
+cm_lane_handle() {
+  local lane="${1:-}" n
+  [ -n "$lane" ] || { cm_warn "cm_lane_handle: usage: cm_lane_handle <lane>"; return 2; }
+  case "$lane" in .*|*[!A-Za-z0-9._-]*) cm_warn "lane handle: \"$lane\" is not a lane name"; return 2 ;; esac
+  cm_lane_dir "$lane" >/dev/null || return 3   # a symlinked lanes/ or lanes/<id>: not verifiable, no send
+  _cm_lane_handle_read "$lane"
+  if [ "$LH_STATE" != fresh ]; then
+    cm_warn "lane handle: $lane file is $LH_STATE${LH_AGE:+ ($LH_AGE s old)}${LH_WHY:+, $LH_WHY}: re-checking the live agent"
+    if [ ! -x "$CM_LANE_HANDLES_SH" ]; then cm_warn "lane handle: $CM_LANE_HANDLES_SH is missing or not executable: no re-check possible"; fi
+    "$CM_LANE_HANDLES_SH" --worker "$lane" --quiet </dev/null >/dev/null 2>&1 || true
+    _cm_lane_handle_read "$lane"
+    if [ "$LH_STATE" != fresh ]; then
+      cm_warn "lane handle: $lane has no fresh handle after the re-check ($LH_STATE): no send"; return 3
+    fi
+  fi
+  case "$LH_STATE" in
+    fresh)
+      if [ "$LH_HANDLE" = - ]; then cm_warn "lane handle: $lane has no usable live agent as of $LH_AT: no send"; return 1; fi
+      printf '%s\n' "$LH_HANDLE"; return 0 ;;
+  esac
+  n="${LH_STATE:-?}"; cm_warn "lane handle: $lane: unexpected state $n"; return 3
+}
+
 # A healthy Claude pane ends with one of these footers (boot-sweep.sh tick mode): the status line, the
 # permissions line, the shortcuts hint, or a subagent/task row. A shell prompt (any style) or an error never does.
 # shellcheck disable=SC2034  # read by boot-sweep.sh
