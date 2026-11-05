@@ -254,8 +254,9 @@ host. A lead may run on any agent and may move hosts; the protocol must not chan
    the epic gate runs): `scripts/teardown.sh <host> <child-path> --owner <your-worktree>
    [--owner-host <your-host>] [--salvage]` (plan), then the same with `--apply`. Lead mode reads
    your own comment with `orca worktree list` to prove the child is listed in your `cm:child` /
-   `WORKERS I OWN` lines (unlisted: refused; a bare name means a child on your own host, a child
-   on another host is listed as `<name>@<host>`), runs every safety gate through the child's own
+   `WORKERS I OWN` lines (unlisted: refused; a bare name only matches a child on your own host, so a child
+   on another host MUST be listed as `<name>@<host>`, in `cm:child <name>@<host>` or
+   `WORKERS I OWN: <name>@<host>, ...`, or it is refused as "not listed"), runs every safety gate through the child's own
    git and Orca `--environment <host>`, and never reads or writes the ledger (the concertmaster
    reconciles it from comments). A standing lane and your own worktree are refused. Post
    `cm:retire <reason>` on the child's comment only as a fallback when you cannot reach its host.
@@ -268,7 +269,8 @@ host. A lead may run on any agent and may move hosts; the protocol must not chan
    `origin/<default>`, and nothing else refuses (open beads, follow-ups, a standing name). Close its
    terminals and post the `cm:retire` line first; then plan, then `--apply`.
 5a. Children and retirements: post `cm:child <worktree-name>` in your comment for EVERY worker you
-   spawn (the concertmaster tick adopts each one into the ledger as a non-standing worker, so it
+   spawn (`cm:child <worktree-name>@<host>` for one on another host than yours; a bare name there is
+   refused as "not listed" by lead-mode teardown; the concertmaster tick adopts each one into the ledger as a non-standing worker, so it
    can be torn down), and `cm:retire` on each one whose PR is merged or closed. Never ask the
    concertmaster for anything in prose (a terminal message, a chat line): ask only through
    `cm:blocked <one question>` or `cm:ask <one question>` lines in your own comment, which

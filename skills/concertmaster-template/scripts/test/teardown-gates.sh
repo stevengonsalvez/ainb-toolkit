@@ -497,6 +497,68 @@ else
   skip "partial bd runtime delete"
 fi
 
+echo "== salvage verify: symlinks compare by target text, not by what they point at"
+# diff -rq follows links, so a tree holding a dangling link used to fail the verify with a false
+# "content mismatch" although cp copied the link correctly. A dangling link and a good link inside an
+# ignored dir are salvaged and verified; a link whose target text, presence or count differs in the copy
+# fails closed. The cp stub runs the real cp, then edits the copy as STUB_CP_TAMPER says.
+# Each apply is spaced one second apart: the salvage dir is stamped to the second and a re-used one nests the copy.
+cat > "$ROOT/bin/cp" <<'C'
+#!/usr/bin/env bash
+/bin/cp "$@" || exit
+[ -n "${STUB_CP_TAMPER:-}" ] || exit 0
+for dst; do :; done
+case "$STUB_CP_TAMPER" in
+  retarget:*) ln -sfn changed-target.md "$dst/${STUB_CP_TAMPER#retarget:}" ;;
+  drop:*)     /bin/rm -f "$dst/${STUB_CP_TAMPER#drop:}" ;;
+  add:*)      ln -s anywhere "$dst/${STUB_CP_TAMPER#add:}" ;;
+esac
+exit 0
+C
+chmod +x "$ROOT/bin/cp"
+printf 'scratch-clone/\n' >> "$M/.git/info/exclude"
+W31="$(mkwt salv-links)"
+mkdir -p "$W31/scratch-clone/tool-b" "$W31/scratch-clone/docs"
+printf 'real\n' > "$W31/scratch-clone/docs/real.md"
+ln -s ../tool-a/NOTES.md "$W31/scratch-clone/tool-b/note.md"   # dangling: tool-a/ is absent from the clone
+ln -s docs/real.md "$W31/scratch-clone/good.md"
+mkdir -p "$ROOT/links-copy" && cp -Rp "$W31/scratch-clone" "$ROOT/links-copy/"
+if diff -rq "$W31/scratch-clone" "$ROOT/links-copy/scratch-clone" >/dev/null 2>&1; then
+  FAIL=$((FAIL + 1)); echo "FAIL premise: diff -rq passed a tree holding a dangling link"
+else
+  PASS=$((PASS + 1)); echo "PASS premise: diff -rq fails a tree holding a dangling link"
+fi
+one "$W31" '"standing":false'
+STUB_CP_TAMPER="retarget:tool-b/note.md" STUB_ORCA_NONE=1 \
+  run "link target text differs in the copy: fails closed" 4 'content mismatch on scratch-clone' "$W31" --apply --salvage
+exists "retargeted link: worktree kept" "$W31/scratch-clone/docs/real.md" yes
+sleep 1
+STUB_CP_TAMPER="drop:good.md" STUB_ORCA_NONE=1 \
+  run "link missing from the copy: fails closed" 4 'content mismatch on scratch-clone' "$W31" --apply --salvage
+exists "missing link: worktree kept" "$W31/scratch-clone/docs/real.md" yes
+sleep 1
+STUB_CP_TAMPER="add:extra.md" STUB_ORCA_NONE=1 \
+  run "extra link in the copy: fails closed" 4 'content mismatch on scratch-clone' "$W31" --apply --salvage
+exists "extra link: worktree kept" "$W31/scratch-clone/docs/real.md" yes
+sleep 1
+OUT31="$(STUB_PATH="$W31" STUB_ORCA_NONE=1 "$TD" local "$W31" --apply --salvage 2>&1)"; RC31=$?
+if [ "$RC31" = 0 ] && grep -q '^salvaged to ' <<<"$OUT31"; then
+  PASS=$((PASS + 1)); echo "PASS dangling and good link: salvaged and verified"
+else
+  FAIL=$((FAIL + 1)); echo "FAIL dangling and good link: salvaged and verified rc=$RC31"; echo "$OUT31"
+fi
+exists "links case: worktree gone" "$W31" no
+SALVDIR31="$(sed -n 's/^salvaged to \(.*\) on local$/\1/p' <<<"$OUT31" | tail -n 1)"
+SALVDIR31="${SALVDIR31/#\~/$HOME}"   # the script prints the dir with a literal ~
+SALV31="$SALVDIR31/scratch-clone/tool-b/note.md"; SALV31G="$SALVDIR31/scratch-clone/good.md"
+[ -L "$SALV31" ] && [ "$(readlink "$SALV31")" = "../tool-a/NOTES.md" ] \
+  && { PASS=$((PASS + 1)); echo "PASS links case: dangling link copied as a link, target text kept"; } \
+  || { FAIL=$((FAIL + 1)); echo "FAIL links case: dangling link: ${SALV31:-none}"; }
+[ -L "$SALV31G" ] && [ "$(readlink "$SALV31G")" = "docs/real.md" ] \
+  && { PASS=$((PASS + 1)); echo "PASS links case: good link copied as a link"; } \
+  || { FAIL=$((FAIL + 1)); echo "FAIL links case: good link: ${SALV31G:-none}"; }
+rm -f "$ROOT/bin/cp"; hash -r   # the premise cp above may have hashed the stub
+
 echo "== beads store unreadable by bd (store schema older than the installed bd)"
 # Reproduction of the incident: bd 66 will not open a v53 store with --readonly and
 # says so in an Error line; the gate used to refuse with no way forward. The stub prints
