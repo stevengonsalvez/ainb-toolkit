@@ -30,7 +30,10 @@
 #     `orca worktree list` on --owner-host (default local, the host the lead runs on). The child
 #     must be listed in that lead's comment (a `cm:child <name>` line or its `WORKERS I OWN:`
 #     list); an unlisted child is refused, and when another worktree's comment lists it the
-#     refusal names that one. Every safety gate still runs (PR merged or closed, clean tree,
+#     refusal names that one. A child on ANOTHER host than the lead's must be listed as
+#     `<name>@<host>` (`cm:child <name>@<host>`, or `WORKERS I OWN: <name>@<host>, ...`): a bare
+#     name only matches a child on the lead's own host, so a remote child listed bare is refused
+#     as "not listed". Every safety gate still runs (PR merged or closed, clean tree,
 #     nothing unpushed, no live agent, no open bead, no open follow-up in its comment, salvage);
 #     they go through the child's own git (ssh) and Orca with --environment <host>. A child that
 #     owns a beads epic is declared on its line as `cm:child <name> epic=<bead-id>` (or with

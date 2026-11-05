@@ -388,7 +388,8 @@ BEFORE asking.
      Standing lanes are never torn down. Items `declined` or `report-only` on
      the kill list are never touched. A lead tears down its OWN children itself, from any
      host, with `scripts/teardown.sh <host> <path> --owner <lead-worktree>` (lead mode, §
-     Retire and teardown, no ledger read or written); this tick only reconciles the ledger
+     Retire and teardown, the child listed as `<name>@<host>` when it runs on another host than
+     the lead, no ledger read or written); this tick only reconciles the ledger
      from the comments afterwards (step 3 adoption; a gone child drops out). A `cm:retire
      <reason>` posted on a child's comment is only the FALLBACK request from a lead that
      cannot reach the child's host: run `teardown.sh` from here for it, once the ledger
@@ -988,8 +989,9 @@ Lead mode (`--owner`): a lead on ANY host tears down its own children itself. Th
 listed in the lead's `cm:child` or `WORKERS I OWN` lines (read with `orca worktree list` on
 `--owner-host`, default the host the lead runs on); an unlisted child is refused and, when another
 lead lists it, the refusal names that lead. A listing proves ownership of the child on one host: a
-bare `<name>` means the lead's own host, a child on another host is listed as `<name>@<host>`, and
-the same name on two hosts is never confused (two same-named worktrees on the lead's host refuse as
+bare `<name>` only matches a child on the lead's own host, so a child on ANOTHER host must be listed as
+`<name>@<host>` (`cm:child <name>@<host>`, or `WORKERS I OWN: <name>@<host>, ...`) or it is refused as
+"not listed"; the same name on two hosts is never confused (two same-named worktrees on the lead's host refuse as
 ambiguous). Every safety gate still runs (PR merged or closed, clean tree, nothing unpushed, no live
 agent, no open bead, no open follow-up in the child's comment, salvage) through the child's own git
 and Orca `--environment <host>`. A child that owns a beads epic is declared on its line,
