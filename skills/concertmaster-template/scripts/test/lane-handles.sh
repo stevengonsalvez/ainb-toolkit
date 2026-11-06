@@ -583,6 +583,122 @@ cm_lane_handle w-one 2>"$ROOT/err" >"$ROOT/out"; RC=$?
 check "lanes/.failed a symlink: the reader refuses (exit 3, nothing printed)" '[ "$RC" = 3 ] && [ ! -s "$ROOT/out" ]'
 rm -rf -- "${CM_HOME:?}/lanes"
 
+echo "--- phase 4 and held_by: a ledger that cannot be read is never read as \"the worker is gone\""
+# live_record has three answers: live, not live (a readable ledger says so), unknown (jq failed, the ledger is unreadable). Only "not live"
+# removes a file. The ledger is made unreadable AFTER the start-up check by a live-agent stub (the ledger is rewritten mid-run), or jq is
+# replaced by a shim that fails only for live_record's own filter (a PATH shim: every other jq call runs the real one).
+REAL_JQ="$(command -v jq)"
+mkdir -p "$ROOT/shim"
+cat > "$ROOT/shim/jq" <<SHIM
+#!/usr/bin/env bash
+# fails only for live_record's filter; JQ_SHIM: exit1 (answers "false"), exit2 (an error), empty0 (exits 0 with no answer)
+case "\$*" in
+  *'(.workers // {})[\$id]'*)
+    case "\${JQ_SHIM:-}" in exit1) exit 1 ;; exit2) exit 2 ;; empty0) exit 0 ;; esac ;;
+esac
+exec "$REAL_JQ" "\$@"
+SHIM
+chmod +x "$ROOT/shim/jq"
+# a live-agent stub: no agent anywhere (exit 1), and the ledger is damaged on the first call, the way a rewrite or a failing disk would
+mklacorrupt() { # <how: malformed|missing|chmod>
+  printf '#!/bin/sh\nL="%s/ledger.json"\ncase "%s" in malformed) printf "{ not json" > "$L" ;; missing) rm -f "$L" ;; chmod) chmod 000 "$L" ;; esac\nexit 1\n' "$CM_HOME" "$1" > "$ROOT/la-corrupt"
+  chmod +x "$ROOT/la-corrupt"
+}
+# four lane files: a live record without a path (so phase 1 does not look at it), dead records, an id the ledger never held
+p4_setup() {
+  mkledger; reset_proc; rm -rf -- "${CM_HOME:?}/lanes"
+  mkdir -p "$CM_HOME/lanes/w-live" "$CM_HOME/lanes/w-gone" "$CM_HOME/lanes/w-rep" "$CM_HOME/lanes/w-absent"
+  now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  for w in w-live w-gone w-rep w-absent; do printf 'term_%s\tlocal\tclaude\t1\t%s\n' "$w" "$now" > "$CM_HOME/lanes/$w/handle"; done
+  jq '.workers["w-live"] = {host: "local", state: "running"} | .workers["w-gone"] = {host: "local", state: "gone"} | .workers["w-rep"] = {host: "local", state: "repurposed"}' \
+    "$CM_HOME/ledger.json" > "$ROOT/l.json" && mv "$ROOT/l.json" "$CM_HOME/ledger.json"
+}
+kept4() { for w in w-live w-gone w-rep w-absent; do [ -e "$CM_HOME/lanes/$w/handle" ] || return 1; done; }
+gone4() { for w in w-gone w-rep w-absent; do [ ! -e "$CM_HOME/lanes/$w/handle" ] || return 1; done; }
+
+p4_setup
+OUT="$(lh 2>"$ROOT/err")"; RC=$?
+check "readable ledger: a live worker's file is kept, a gone and a repurposed worker's and an unknown id's are removed, exit 0" \
+  '[ "$RC" = 0 ] && [ -e "$CM_HOME/lanes/w-live/handle" ] && gone4 && printf "%s\n" "$OUT" | grep -Eq "^w-gone	-	gone" && ! printf "%s\n" "$OUT" | grep -q "^w-live	"'
+p4_setup
+OUT="$(lh --dry-run 2>"$ROOT/err")"; RC=$?
+check "readable ledger, --dry-run: the same rows, nothing removed, exit 0" '[ "$RC" = 0 ] && kept4 && printf "%s\n" "$OUT" | grep -Eq "^w-absent	-	gone"'
+
+CAN_000=1; : > "$ROOT/m000"; chmod 000 "$ROOT/m000"; [ -r "$ROOT/m000" ] && CAN_000=0; chmod 600 "$ROOT/m000"
+for HOW in malformed missing chmod; do
+  if [ "$HOW" = chmod ] && [ "$CAN_000" = 0 ]; then echo "SKIP unreadable-ledger case (chmod 000): this user reads a mode 000 file (root)"; continue; fi
+  p4_setup; mklacorrupt "$HOW"
+  chmod 600 "$CM_HOME/ledger.json" 2>/dev/null
+  OUT="$(CM_LIVE_AGENT="$ROOT/la-corrupt" lh 2>"$ROOT/err")"; RC=$?
+  chmod 600 "$CM_HOME/ledger.json" 2>/dev/null
+  check "ledger $HOW part way through the run: every worker file is KEPT (live, gone and unknown alike), nothing is guessed gone, the run exits 1" \
+    '[ "$RC" = 1 ] && kept4 && ! printf "%s\n" "$OUT" | grep -Eq "	gone	"' "rc=$RC $(cat "$ROOT/err")"
+  check "...one \"kept\" row per file, and stderr says the ledger could not be read (even with --quiet)" \
+    '[ "$(printf "%s\n" "$OUT" | grep -c "	kept	")" = 4 ] && printf "%s\n" "$OUT" | grep -q "ledger unreadable: the file is left as it is" && grep -q "could not be read part way through the run: 4 worker(s) could not be judged" "$ROOT/err"'
+done
+p4_setup; mklacorrupt malformed
+CM_LIVE_AGENT="$ROOT/la-corrupt" lh --quiet 2>"$ROOT/err" >"$ROOT/out"; RC=$?
+check "--quiet: no rows, but the files are kept, the exit is 1 and stderr still says why" '[ "$RC" = 1 ] && [ ! -s "$ROOT/out" ] && kept4 && grep -q "could not be read part way" "$ROOT/err"'
+p4_setup; mklacorrupt malformed
+OUT="$(CM_LIVE_AGENT="$ROOT/la-corrupt" lh --dry-run 2>"$ROOT/err")"; RC=$?
+check "--dry-run with an unreadable ledger reports kept too (nothing would be removed), exit 1" '[ "$RC" = 1 ] && kept4 && printf "%s\n" "$OUT" | grep -q "	kept	"'
+
+# the failure markers of phase 4: kept when the ledger cannot be read, removed when a readable ledger says the worker is not live
+p4_setup; mkdir -p "$CM_HOME/lanes/.failed"; : > "$CM_HOME/lanes/.failed/w-absent"; : > "$CM_HOME/lanes/.failed/w-live"
+rm -f -- "$CM_HOME/lanes/w-absent/handle" "$CM_HOME/lanes/w-live/handle" "$CM_HOME/lanes/w-gone/handle" "$CM_HOME/lanes/w-rep/handle"
+OUT="$(lh 2>"$ROOT/err")"; RC=$?
+check "failure markers, readable ledger: the marker of an unknown id is removed, the marker of a live worker kept, exit 0" '[ "$RC" = 0 ] && [ ! -e "$CM_HOME/lanes/.failed/w-absent" ] && [ -e "$CM_HOME/lanes/.failed/w-live" ]'
+p4_setup; mkdir -p "$CM_HOME/lanes/.failed"; : > "$CM_HOME/lanes/.failed/w-absent"
+rm -f -- "$CM_HOME/lanes/w-absent/handle" "$CM_HOME/lanes/w-live/handle" "$CM_HOME/lanes/w-gone/handle" "$CM_HOME/lanes/w-rep/handle"
+OUT="$(JQ_SHIM=exit2 PATH="$ROOT/shim:$PATH" lh 2>"$ROOT/err")"; RC=$?
+check "failure markers, jq failing for live_record: the marker is KEPT and reported, exit 1" '[ "$RC" = 1 ] && [ -e "$CM_HOME/lanes/.failed/w-absent" ] && printf "%s\n" "$OUT" | grep -q "w-absent	-	kept	ledger unreadable: the failure marker is left as it is"'
+
+# jq stubs (the ledger itself is fine)
+p4_setup
+OUT="$(JQ_SHIM=exit2 PATH="$ROOT/shim:$PATH" lh 2>"$ROOT/err")"; RC=$?
+check "a jq that fails (exit 2) for the liveness question: every worker file is KEPT, the run exits 1, the rows say kept" \
+  '[ "$RC" = 1 ] && kept4 && printf "%s\n" "$OUT" | grep -Eq "^w-absent	-	kept	ledger unreadable" && ! printf "%s\n" "$OUT" | grep -q "	gone	"' "rc=$RC"
+p4_setup
+OUT="$(JQ_SHIM=empty0 PATH="$ROOT/shim:$PATH" lh 2>"$ROOT/err")"; RC=$?
+check "a jq that exits 0 with no answer at all is unknown too (files kept, exit 1)" '[ "$RC" = 1 ] && kept4'
+p4_setup
+OUT="$(JQ_SHIM=exit1 PATH="$ROOT/shim:$PATH" lh 2>"$ROOT/err")"; RC=$?
+check "a jq that answers \"false\" (exit 1) is NOT live, as before: the files are removed, exit 0" '[ "$RC" = 0 ] && [ ! -e "$CM_HOME/lanes/w-live/handle" ] && gone4'
+
+# held_by: another lane's fresh file with the very handle a live worker found. Readable ledger and a live record: held (as before).
+# Unreadable ledger: unknown, so nothing is claimed about that file (the worker is NOT marked held on a guess), the file is kept, the run exits 1.
+mklalive() { # the agent is found in $WT only; <corrupt: yes|no> damages the ledger on that call
+  printf '#!/bin/sh\ncase "$1" in "%s") printf "301\\tterm_h\\tclaude\\n" ;; *) exit 1 ;; esac\n[ "%s" = yes ] && printf "{ not json" > "%s/ledger.json"\nexit 0\n' "$WT" "$1" "$CM_HOME" > "$ROOT/la-live"
+  chmod +x "$ROOT/la-live"
+}
+held_setup() {
+  mkledger; reset_proc; rm -rf -- "${CM_HOME:?}/lanes"
+  jq '.workers["w-other"] = {host: "local", state: "running"}' "$CM_HOME/ledger.json" > "$ROOT/l.json" && mv "$ROOT/l.json" "$CM_HOME/ledger.json"
+  mkdir -p "$CM_HOME/lanes/w-other"; printf 'term_h\tlocal\tclaude\t-\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$CM_HOME/lanes/w-other/handle"
+}
+held_setup; mklalive no
+OUT="$(CM_LIVE_AGENT="$ROOT/la-live" lh 2>"$ROOT/err")"; RC=$?
+check "held_by, readable ledger: a live worker whose handle another live worker's fresh file holds is marked held (as before)" '[ "$RC" = 0 ] && printf "%s\n" "$OUT" | grep -Eq "^w-one	-	held"'
+held_setup; mklalive yes
+OUT="$(CM_LIVE_AGENT="$ROOT/la-live" lh --worker w-one 2>"$ROOT/err")"; RC=$?   # --worker: no phase 4, so the exit 1 can only come from held_by
+check "held_by, ledger unreadable: unknown claims nothing (the worker is not marked held on a guess), the other lane's file is left, the run exits 1" \
+  '[ "$RC" = 1 ] && ! printf "%s\n" "$OUT" | grep -Eq "^w-one	-	held" && [ -e "$CM_HOME/lanes/w-other/handle" ] && grep -q "could not be read part way through the run" "$ROOT/err"' "rc=$RC $(cat "$ROOT/err")"
+held_setup; mklalive no
+OUT="$(JQ_SHIM=exit2 PATH="$ROOT/shim:$PATH" CM_LIVE_AGENT="$ROOT/la-live" lh --worker w-one 2>"$ROOT/err")"; RC=$?
+check "held_by, jq failing for live_record: the same (not held on a guess, file left, exit 1)" '[ "$RC" = 1 ] && ! printf "%s\n" "$OUT" | grep -Eq "^w-one	-	held" && [ -e "$CM_HOME/lanes/w-other/handle" ]'
+# the ledger-terminal holder (no lane file at all): a jq that fails on the first held_by question is unknown too, not "nobody holds it"
+held_setup; rm -f -- "$CM_HOME/lanes/w-other/handle"
+jq '.workers["w-other"].terminal = "term_h"' "$CM_HOME/ledger.json" > "$ROOT/l.json" && mv "$ROOT/l.json" "$CM_HOME/ledger.json"
+mklalive no
+OUT="$(CM_LIVE_AGENT="$ROOT/la-live" lh 2>"$ROOT/err")"; RC=$?
+check "held_by, readable ledger: the holder is found by the ledger terminal alone (held, as before)" '[ "$RC" = 0 ] && printf "%s\n" "$OUT" | grep -Eq "^w-one	-	held.*ledger terminal"'
+held_setup; rm -f -- "$CM_HOME/lanes/w-other/handle"
+jq '.workers["w-other"].terminal = "term_h"' "$CM_HOME/ledger.json" > "$ROOT/l.json" && mv "$ROOT/l.json" "$CM_HOME/ledger.json"
+mklalive yes
+OUT="$(CM_LIVE_AGENT="$ROOT/la-live" lh 2>"$ROOT/err")"; RC=$?
+check "held_by, ledger unreadable at the ledger-terminal question: not read as \"nobody holds it\" (the run exits 1, stderr says why)" '[ "$RC" = 1 ] && grep -q "could not be read part way through the run" "$ROOT/err"' "rc=$RC $(cat "$ROOT/err")"
+mkledger; rm -rf -- "${CM_HOME:?}/lanes"
+
 echo
 printf 'passed=%s failed=%s\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]

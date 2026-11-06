@@ -37,8 +37,10 @@
 #   id not a plain token, or  invalid: no file (a newline in a ledger key would split its row and could
 #   a control character in    hand one worker another's handle)
 #   host, path or terminal
-#   worker no longer a live   gone: its file is removed (full runs only)
-#   ledger record
+#   worker no longer a live   gone: its file is removed (full runs only), but only when the ledger
+#   ledger record             could be READ and says so
+#   ledger cannot be read     kept: the file is left as it is, one line each, and the run exits 1
+#   while the run goes on     (a jq error is not an answer: "not a live record" is never guessed)
 #   write did not land        failed: the old file is removed or marked, never served
 # The file's written-at is when the agent was seen (phase 1), not when phase 3 wrote it.
 #   newer observation on file superseded: not overwritten, and the ledger terminal is not touched
@@ -48,7 +50,8 @@
 # starting with "-" are refused everywhere; lane directories are 0700 and a symlinked one is refused.
 #
 # Output (TSV): id  handle  result  detail. Exit 0, 2 on usage (including an empty id), 1 when the ledger is
-# unreadable, jq or live-agent.sh is missing, or no temp dir can be made (stderr says which, even with --quiet), 3 when
+# unreadable (at the start, or part way through the run: then the files it would have judged are kept), jq or live-agent.sh is
+# missing, or no temp dir can be made (stderr says which, even with --quiet), 3 when
 # --worker names a worker whose lane directory is reached through a symlink (not verifiable).
 # --get exits as cm_lane_handle does: 0 handle printed, 1 no live agent, 2 usage, 3 not verifiable.
 # CM_HOME, CM_LEDGER, CM_LIVE_AGENT (tests: needs CM_TEST=1), CM_PROC_ROOT (tests, via live-agent.sh).
@@ -159,14 +162,29 @@ done 3< "$TMP/rows.tsv"
 # held when (a) another worker's ledger row has it as its terminal, (b) another worker in this run found it
 # live, or (c) another worker's FRESH handle file (a worker not looked at in this run) holds it. Every worker that
 # claims a held handle is marked dead.
-# live_record <id>: the ledger holds a non-dead worker with that id
-live_record() { jq -e --arg id "$1" "$CM_JQ_STATE_DEFS"'(.workers // {})[$id] | type == "object" and ((.state // "running") | cm_state_dead | not)' "$LEDGER" >/dev/null 2>&1; }
+# live_record <id>: is there a non-dead worker with that id in the ledger? THREE answers, never two:
+#   0 live      jq ran and said true
+#   1 not live  jq ran and said false (a dead record), or the worker is absent from a readable ledger
+#   2 unknown   the ledger could not be read, or jq failed (any exit status but 0 or 1, or no answer): jq -e exits 2 or more for an error,
+#               and an error is NOT "the worker is gone". Callers that delete or claim on "not live" must not do it on 2.
+live_record() {
+  local out rc
+  out="$(jq -e --arg id "$1" "$CM_JQ_STATE_DEFS"'(.workers // {})[$id] | type == "object" and ((.state // "running") | cm_state_dead | not)' "$LEDGER" 2>/dev/null)"; rc=$?
+  case "$rc" in
+    0) [ "$out" = true ] && return 0; return 2 ;;
+    1) return 1 ;;
+    *) return 2 ;;
+  esac
+}
+# an unknown answer is counted in a file (held_by runs in a command substitution, where a variable would be lost) and ends the run with exit 1
+note_unknown() { printf '%s\n' "$1" >> "$TMP/unknown.txt"; }
 held_by() { # <id> <handle>: the other worker that holds the handle, else nothing
-  local l="$1" h="$2" o f ln max now fhost fpid fr ts
+  local l="$1" h="$2" o f ln max now fhost fpid fr ts lr rc
   # a finished record (gone, repurposed, torn-down) no longer owns its terminal handle: only a non-dead worker holds one
   o="$(jq -r --arg l "$l" --arg h "$h" "$CM_JQ_STATE_DEFS"'[ (.workers // {}) | to_entries[] | select(.value | type == "object")
       | select((.value.state // "running") | cm_state_dead | not)
-      | select(.key != $l and .value.terminal == $h) | .key ] | .[0] // empty' "$LEDGER" 2>/dev/null)"
+      | select(.key != $l and .value.terminal == $h) | .key ] | .[0] // empty' "$LEDGER" 2>/dev/null)"; rc=$?
+  [ "$rc" = 0 ] || note_unknown "$l"   # jq failed: that is not "nobody holds it". Claim nothing here, and the run exits 1
   [ -z "$o" ] || { printf '%s (ledger terminal)' "$o"; return; }
   o="$(awk -F"$US" -v l="$l" -v h="$h" '$6 == "live" && $7 == h && $1 != l { print $1; exit }' "$TMP/dec.tsv")"
   [ -z "$o" ] || { printf '%s (live in this run)' "$o"; return; }
@@ -178,7 +196,9 @@ held_by() { # <id> <handle>: the other worker that holds the handle, else nothin
     [ ! -L "${f%/handle}" ] || continue   # a symlinked lane directory is never read through
     [ ! -e "$CM_HOME/lanes/.failed/$ln" ] || continue   # a failed write on record: that file is not trusted
     [ "$(cut -f1 "$f")" = "$h" ] || continue   # cheap test first: only a file with this very handle can hold it
-    live_record "$ln" || continue   # a gone, torn-down or unknown worker holds nothing (its file is removed by phase 4 of a full run)
+    live_record "$ln"; lr=$?
+    if [ "$lr" = 2 ]; then note_unknown "$ln"; continue; fi   # cannot tell: claim nothing about this file (not held, not gone), and the run exits 1
+    [ "$lr" = 0 ] || continue   # a gone or torn-down worker holds nothing (its file is removed by phase 4 of a full run)
     # a local agent that has exited (or whose pid now carries another terminal) holds nothing either: the same
     # test the reader applies, so a reused terminal is not "held" by the dead agent that used to have it
     IFS=$'\t' read -r _ fhost _ fpid _ < "$f" || true
@@ -223,7 +243,9 @@ if [ -z "$ONLY" ] && [ "$LANES_OK" = 1 ]; then
     ln="${f%/handle}"; ln="${ln##*/}"
     awk -F"$US" -v w="$ln" '$1 == w { f = 1 } END { exit !f }' "$TMP/dec.tsv" && continue
     [ ! -L "${f%/handle}" ] || continue   # never delete through a symlinked lane directory
-    if live_record "$ln"; then continue; fi
+    live_record "$ln"; lr=$?
+    if [ "$lr" = 0 ]; then continue; fi
+    if [ "$lr" = 2 ]; then note_unknown "$ln"; emit "$ln" - kept "ledger unreadable: the file is left as it is"; continue; fi   # an error is not "gone"
     if [ "$DRY" = 1 ]; then emit "$ln" - gone "worker is not a live ledger record: its file would be removed"; continue; fi
     rm -f -- "${CM_HOME:?}/lanes/.failed/$ln" 2>/dev/null   # a failure marker dies with the worker's file
     if rm -f -- "$f"; then emit "$ln" - gone "worker is not a live ledger record: file removed"; else emit "$ln" - failed "could not remove the file of a finished worker"; fi
@@ -238,8 +260,15 @@ if [ -z "$ONLY" ] && [ "$LANES_OK" = 1 ]; then
     for m in "$CM_HOME"/lanes/.failed/*; do
       [ -e "$m" ] && [ ! -L "$m" ] || continue
       ln="${m##*/}"
-      live_record "$ln" || rm -f -- "$m"
+      live_record "$ln"; lr=$?
+      if [ "$lr" = 2 ]; then note_unknown "$ln"; emit "$ln" - kept "ledger unreadable: the failure marker is left as it is"; continue; fi
+      [ "$lr" = 0 ] || rm -f -- "$m"
     done
   fi
+fi
+# "could not look" ends the run the way an unreadable ledger at the start does: exit 1, with stderr saying so (even with --quiet)
+if [ -s "$TMP/unknown.txt" ]; then
+  cm_warn "lane-handles.sh: the ledger could not be read part way through the run: $(sort -u "$TMP/unknown.txt" | wc -l | tr -d ' ') worker(s) could not be judged, a file that was to be judged is left as it is (exit 1)"
+  exit 1
 fi
 exit 0
