@@ -345,7 +345,7 @@ longer a live ledger record (`gone`), along with temp files of an interrupted wr
 and failure markers of finished workers. The check-and-replace of one lane file runs under a short per-lane
 lock (`lanes/<worker-id>/.lock`, a mkdir lock, taken over after a minute, a write that cannot get it in about
 3 s fails closed). A symlinked `lanes/.failed` makes the reader distrust every file. `lane-handles.sh` exits 1
-when `live-agent.sh` is missing beside it, and also when the ledger cannot be read part way through the run (then a file whose own liveness check failed is kept, a `kept` row in a full run, and a handle check that failed finds no holder; the files the ledger could still be read for are judged as usual), and exits 2 for an empty `--get` or `--worker` id. An id or field with a control character (a newline would forge a
+when `live-agent.sh` is missing beside it, and also when the ledger cannot be read part way through the run (then a file whose own liveness check failed is kept, a `kept` row in a full run, and a worker whose handle check could not run is an `unknown` row and its file is left as it is; the files the ledger could still be read for are judged as usual), and exits 2 for an empty `--get` or `--worker` id. An id or field with a control character (a newline would forge a
 second row) is `invalid` and gets no file. A handle must be a plain token that does not start with `-`
 (it would read as an option after `--terminal`); the dead mark, a lone `-`, is the only exception. Lane
 directories are created mode 700 and a symlinked `lanes/<worker-id>` is refused. The ledger `terminal` is brought in line with a live handle when they differ

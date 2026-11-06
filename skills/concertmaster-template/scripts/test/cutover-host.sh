@@ -699,7 +699,7 @@ CM_HOLD_CLAIM_WAIT_S=30 bash "$HOLD" start --hours 6 > "$C/second.out" 2>&1 & SC
 sleep 1
 mkdir "$CM_HOME/resume.lock"; ( exec -a resume-fake sleep 60 ) & RSPID=$!; echo "$RSPID" > "$CM_HOME/resume.lock/pid"
 kill "$CHPID" 2>/dev/null; wait "$CHPID" 2>/dev/null
-wait "$SCPID"; HRC=$?
+wait "$SCPID"; HRC=$?; cat "$CM_HOME/cutover-hold.pid" >> "$ROOT/hold-pids" 2>/dev/null   # a stand-in a broken check let through is still killed on exit
 check "resume.sh started while a start waited for the claim: the start refuses (exit 1) with the second check's message, makes no lock, no stand-in" \
   '[ "$HRC" = 1 ] && grep -q "resume.sh started while this start waited" "$C/second.out" && [ ! -e "$CM_HOME/cutover-host.lock" ] && [ "$(standins 21600)" = 0 ]' "rc=$HRC $(cat "$C/second.out")"
 kill "$RSPID" 2>/dev/null; wait "$RSPID" 2>/dev/null
@@ -743,10 +743,21 @@ check "a start interrupted by TERM while waiting for the claim exits 130 at once
 kill "$CHPID" 2>/dev/null; wait "$CHPID" 2>/dev/null
 # an interrupt before the script's own setup is also 130 (the trap is set before lib.sh is sourced)
 newcase
-bash "$HOLD" status > /dev/null 2>&1 & ISPID=$!
-sleep 0.15    # past bash's own startup, inside the slow part (sourcing lib.sh): the trap set before it must already catch the signal
+# A copy of the script beside a lib.sh that stops inside the setup (it marks the spot and waits), so the signal lands there every time,
+# not by a sleep: the answer is exactly 130, never 143, and never a finished status.
+mkdir "$C/setupcopy"; cp "$HOLD" "$C/setupcopy/cutover-hold.sh"
+printf ': > "%s/in-setup"\nwhile :; do sleep 0.05; done\n' "$C" > "$C/setupcopy/lib.sh"
+bash "$C/setupcopy/cutover-hold.sh" status > /dev/null 2>&1 & ISPID=$!
+for _i in $(seq 1 100); do [ -e "$C/in-setup" ] && break; sleep 0.05; done
 kill -TERM "$ISPID" 2>/dev/null; wait "$ISPID"; HRC=$?
-check "a TERM that arrives while the script is still setting up (before the claim code) exits 130, not 143 (or the status already finished: 0 or 1)" '[ "$HRC" = 130 ] || [ "$HRC" = 0 ] || [ "$HRC" = 1 ]' "rc=$HRC"
+check "a TERM that arrives while the script is still setting up (before the claim code) exits exactly 130, not 143" '[ -e "$C/in-setup" ] && [ "$HRC" = 130 ]' "rc=$HRC"
+# a release cut off between removing the lock's pid file and removing the lock directory: the rerun cannot finish it (the doc says so)
+newcase
+mkdir "$CM_HOME/cutover-host.lock"; echo 999999 > "$CM_HOME/cutover-hold.pid"
+HOUT="$(bash "$HOLD" release 2>&1)"; HRC=$?
+check "a release rerun over a lock with no pid file refuses (exit 1, names pid none) and leaves the lock: not re-runnable" '[ "$HRC" = 1 ] && printf "%s\n" "$HOUT" | grep -q "names pid none" && [ -d "$CM_HOME/cutover-host.lock" ]' "rc=$HRC $HOUT"
+check "references/cutover.md says so and gives the by-hand step" 'grep -q "names pid none" "$SCRIPTS/../references/cutover.md" && grep -q "remove that lock by hand" "$SCRIPTS/../references/cutover.md"'
+rmdir "$CM_HOME/cutover-host.lock" 2>/dev/null; rm -f "$CM_HOME/cutover-hold.pid"
 newcase
 HOUT="$(CM_HOLD_CLAIM_WAIT_S=99999 bash "$HOLD" start 2>&1)"; HRC=$?
 check "CM_HOLD_CLAIM_WAIT_S above 9999 is a usage error (exit 2), nothing made" '[ "$HRC" = 2 ] && [ ! -e "$CM_HOME/cutover-host.lock" ]' "$HOUT"
