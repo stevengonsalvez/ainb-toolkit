@@ -143,7 +143,8 @@ hosts:
     # Set it for every remote host: teardown.sh runs `hostname -s` over ssh and refuses ("ssh target is not
     # host <h>") when the answer differs from this key; with no key the host's own name (the Orca
     # environment name) is expected, which a host whose real name differs never matches. An ssh alias that
-    # differs from the host name is given per run in CM_SSH_TARGET.
+    # differs from the host name is given per run in CM_SSH_TARGET, or kept in the ledger as hosts.<h>.sshTarget
+    # (a dotless hostname is never used as an ssh target: it is the identity above, not an address).
 
 # Agent types the project does not allow. Each census (discover.sh, classify.sh) lists every
 # terminal under worktrees.path_match whose Orca agentIdentity is one of these as a

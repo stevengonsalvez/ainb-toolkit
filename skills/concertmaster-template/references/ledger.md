@@ -274,7 +274,8 @@ may have leaked should run `scripts/ledger-guard.sh` before it.
 | `firstBoot.completedAt` | set after the kill list is answered and acted on; autonomous teardown of merged work starts after it |
 | `killList[]` | one entry per first-boot candidate, `id` = `<host>:<path>`; `decision` is `approved` (retire + teardown), `declined` (never touched, never re-asked) or `report-only` (reported, never acted on); honoured on every later tick |
 | `hosts.<name>.reachable` | from the last discover; `offlineSince` set on the first unreachable tick |
-| `hosts.<name>.hostname` | `hostname -s` the host answers over ssh; teardown.sh refuses a remote host that answers otherwise (seeded from `cfg.hosts.per_host.<name>.hostname`) |
+| `hosts.<name>.hostname` | `hostname -s` the host answers over ssh; teardown.sh refuses a remote host that answers otherwise (seeded from `cfg.hosts.per_host.<name>.hostname`). Used as an ssh target only when it is an address (holds a dot or colon) |
+| `hosts.<name>.sshTarget` | optional: the ssh alias or address of the host, for one whose ssh name is neither its Orca name nor an address hostname. First after `CM_SSH_TARGET` in `lib.sh` `cm_ssh_target` |
 | `hosts.<name>.role` | `general`, `native` (native builds), `overflow`; seeded from `cfg.hosts` |
 | `hosts.<name>.maxWorkers` | live-worker cap for that host; seeded from `cfg.hosts`, read every tick |
 | `lanes.<lane>.state` | `absent`, `spawning`, `running`, `idle` (queue empty, lead kept: lanes are standing and never torn down), `draining` (legacy: treat as `idle`), `gone` |

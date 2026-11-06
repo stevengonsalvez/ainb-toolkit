@@ -208,6 +208,29 @@ cm_cli_host_into() {
   if [ "$_cm_h" = local ]; then eval "$1=()"; else eval "$1=(--environment \"\$_cm_h\")"; fi
 }
 
+# cm_ssh_target <host>: what to give `ssh` to reach a non-local host. ONE rule for every script that opens an ssh session
+# to a fleet host (cutover-host.sh, live-agent.sh, discover.sh). In order:
+#   1. $CM_SSH_TARGET (one host's alias, given per run);
+#   2. the ledger's hosts.<host>.sshTarget, an explicit ssh alias or address for a host whose ssh name differs from both its
+#      Orca name and its hostname;
+#   3. the ledger's hosts.<host>.hostname, but ONLY when it is an address (holds a dot or a colon: an FQDN, an IPv4 or
+#      IPv6 address). A dotless word is what `hostname -s` prints: the host's identity (the thing teardown.sh and
+#      live-agent.sh compare the remote `hostname -s` with), not something DNS or ssh_config has to know, and on a real
+#      fleet it did not resolve ("Could not resolve hostname <word>");
+#   4. the host name itself, as an ssh alias (an Orca environment name that ssh_config knows).
+# The caller refuses a result that starts with a dash or holds whitespace (never an ssh option or a word list).
+cm_ssh_target() {
+  local h="${1-}" t="" L
+  if [ -n "${CM_SSH_TARGET:-}" ]; then printf '%s\n' "$CM_SSH_TARGET"; return 0; fi
+  L="$(cm_ledger_path)"
+  if [ -n "$h" ] && [ -s "$L" ] && cm_ledger_guard "$L" 2>/dev/null; then
+    t="$(jq -r --arg h "$h" '.hosts[$h].sshTarget // empty | tostring' "$L" 2>/dev/null)"
+    if [ -n "$t" ]; then printf '%s\n' "$t"; return 0; fi
+    t="$(jq -r --arg h "$h" '.hosts[$h].hostname // empty | tostring' "$L" 2>/dev/null)"
+  fi
+  case "$t" in *[.:]*) printf '%s\n' "$t" ;; *) printf '%s\n' "$h" ;; esac
+}
+
 # cm_timeout <seconds> <cmd...>: timeout(1), gtimeout(1), or a perl alarm.
 cm_timeout() {
   local secs="$1"; shift

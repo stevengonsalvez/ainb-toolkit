@@ -144,9 +144,7 @@ rgit_orca() {
 rgit_ssh() {
   local h="$1" roots="$2" outf="$3" target args="" path wid rc raw errf
   errf="$TMP/rgit-ssh-$(printf '%s' "$h" | tr -c 'A-Za-z0-9._-' _).err"   # per host: hosts run in parallel
-  target=""
-  if [ -s "$CM_HOME/ledger.json" ] && cm_ledger_guard "$CM_HOME/ledger.json" 2>/dev/null; then target="$(jq -r --arg h "$h" '.hosts[$h].hostname // empty' "$CM_HOME/ledger.json" 2>/dev/null)"; fi
-  target="${CM_SSH_TARGET:-${target:-$h}}"
+  target="$(cm_ssh_target "$h")"
   case "$target" in -*|*[[:space:]]*|'') RGIT_ERR="invalid ssh target '$target'"; return 1 ;; esac
   while IFS="$(printf '\t')" read -r path wid; do args="$args $(sq "$path")"; done < "$roots"
   rc=0
@@ -381,8 +379,7 @@ while IFS="$(printf '\t')" read -r kind name; do
   while IFS= read -r _sp; do [ -z "$_sp" ] || SB_P+=("$_sp"); done < <(jq -r '.result.worktrees[]? | .path // empty' "$ps" 2>/dev/null)
   _sbt=""
   if [ "$kind" != "local" ]; then
-    if [ -s "$CM_HOME/ledger.json" ] && cm_ledger_guard "$CM_HOME/ledger.json" 2>/dev/null; then _sbt="$(jq -r --arg h "$hname" '.hosts[$h].hostname // empty' "$CM_HOME/ledger.json" 2>/dev/null)"; fi
-    _sbt="${CM_SSH_TARGET:-${_sbt:-$hname}}"
+    _sbt="$(cm_ssh_target "$hname")"
   fi
   # In the background, like the git census: hosts answer in parallel and each writes its own file.
   cm_sb_collect "$hname" "$kind" "$_sbt" "$(jq -r '((.result.truncated // false) or ((.result.totalCount // 0) > ((.result.worktrees // []) | length)))' "$ps" 2>/dev/null || echo false)" ${SB_P[@]+"${SB_P[@]}"} > "$TMP/sbscope-$i.ndjson" &
