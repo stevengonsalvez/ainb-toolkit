@@ -231,6 +231,19 @@ cm_ssh_target() {
   case "$t" in *[.:]*) printf '%s\n' "$t" ;; *) printf '%s\n' "$h" ;; esac
 }
 
+# cm_resume_lock_held: resume.sh holds $CM_HOME/resume.lock right now (a live process that looks like a resume run, or a lock
+# younger than a minute that has no pid yet). Used by cutover-host.sh and cutover-hold.sh: neither may start while a resume.sh
+# run could still create an agent.
+cm_resume_lock_held() {
+  local rl="$CM_HOME/resume.lock" rp
+  [ -d "$rl" ] || return 1
+  rp="$(cat "$rl/pid" 2>/dev/null || true)"
+  if [ -z "$rp" ]; then [ -n "$(find "$rl" -maxdepth 0 -mmin -1 2>/dev/null)" ]; return; fi
+  kill -0 "$rp" 2>/dev/null || return 1
+  if ps -p "$rp" -o args= >/dev/null 2>&1; then ps -p "$rp" -o args= 2>/dev/null | grep -q resume; return; fi
+  return 0   # ps cannot answer: assume held
+}
+
 # cm_timeout <seconds> <cmd...>: timeout(1), gtimeout(1), or a perl alarm.
 cm_timeout() {
   local secs="$1"; shift
