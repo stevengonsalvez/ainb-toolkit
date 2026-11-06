@@ -383,6 +383,14 @@ CM_MENU_RE='enter to select|enter to confirm|esc to cancel|arrow keys|tab/arrow'
 # shellcheck disable=SC2034  # read by boot-sweep.sh
 CM_CLAUDE_RE='claude code|\? for shortcuts|esc to interrupt|shift\+tab|bypass permissions|accept edits|auto-accept'
 
+# The nudge that tells a restarted lane to re-arm the /loop its old terminal took with it. ONE definition:
+# boot-sweep.sh (host restart, and its tick mode for an Orca runtime restart) and cutover-host.sh (a lane moved
+# to a new terminal) send these words; CM_BOOT_NUDGE and CM_TICK_NUDGE still override them in boot-sweep.sh.
+# shellcheck disable=SC2034  # read by boot-sweep.sh and cutover-host.sh
+CM_NUDGE_BOOT='The VM restarted. Any /loop or ScheduleWakeup timer you had died with it. Check git status and your worktree comment, re-arm your standing /loop now with the same prompt as before (your brief under ~/.concertmaster/briefs lists it if you lost it), and carry on.'
+# shellcheck disable=SC2034
+CM_NUDGE_TICK='Orca restarted. Any /loop or ScheduleWakeup timer you had died with it. Check git status and your worktree comment, re-arm your standing /loop now with the same prompt as before (your brief under ~/.concertmaster/briefs lists it if you lost it), and carry on.'
+
 # ---- ledger project guard ---------------------------------------------------------------------
 # Two projects can share a host, each with its own state dir (~/.concertmaster, ~/.concertmaster-<other>).
 # A CM_HOME or CM_LEDGER leaked from the other project's session made a lead here read the other
