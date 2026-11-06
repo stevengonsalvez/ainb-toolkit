@@ -167,6 +167,8 @@ does not list is `standing-dead` in classify but `missing` here: respawn it by
 hand. A live-but-silent session is not resume's business: the tick's stuck rule
 and abrupt-session nudge cover it.
 
+Moving a host's lanes from Orca terminals to Plugly terminals is a separate kit: `references/cutover.md`.
+
 ## Safety
 
 - A `claude` started outside Orca on a remote host is invisible to resume (there is
