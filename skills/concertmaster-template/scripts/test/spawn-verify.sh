@@ -198,6 +198,98 @@ reset; : > "$STUB_DIR/read-fail"
 check "unreadable pane: exit 2, never ok" test "$(rc "$SV" check --terminal term_x)" = 2
 reset
 
+# ---- read: what the LIVE pane says it runs (the cutover derives model and effort from here) ----
+cat > "$P/live-status.txt" <<'E'
+❯
+  sonnet-5.5 · eff high · 🟢 16/50 · ctx [█░░░░░] 23% · $0.00
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · PR #7
+E
+cat > "$P/live-opus-max.txt" <<'E'
+│   Opus 5.5 with max effort · Claude Max
+ ? for shortcuts
+E
+cat > "$P/live-fable.txt" <<'E'
+  fable-5.1 · eff xhigh · 🟢 0/50 · ctx [█░░░░░] 31%
+  ⏵⏵ bypass permissions on (shift+tab to cycle)
+E
+cat > "$P/live-nominor.txt" <<'E'
+│   Opus 4 with high effort · Claude Max
+ ? for shortcuts
+E
+cat > "$P/live-badeffort.txt" <<'E'
+  sonnet-5.5 · eff turbo · 🟢 0/50 · ctx [█░░░░░] 31%
+  ⏵⏵ bypass permissions on (shift+tab to cycle)
+E
+cat > "$P/live-quoted.txt" <<'E'
+  the transcript quoted:   opus-5.5 · eff max · 🟢 0/50 · ctx [█░░░░░] 31%
+  sonnet-5.5 · eff medium · 🟢 0/50 · ctx [█░░░░░] 31%
+  ⏵⏵ bypass permissions on (shift+tab to cycle)
+E
+cat > "$P/live-quote-bottom.txt" <<'E'
+  sonnet-5.5 · eff medium · 🟢 0/50 · ctx [█░░░░░] 31%
+  the doc says: Opus 5.5 with max effort is the default
+  ⏵⏵ bypass permissions on (shift+tab to cycle)
+E
+printf '\n\n' > "$P/live-blank.txt"
+cat > "$P/live-bullet.txt" <<'E'
+  Sonnet 5.5 with high effort · Claude Max
+  - Opus 4.1 with low effort
+  ⏵⏵ bypass permissions on (shift+tab to cycle)
+E
+cat > "$P/live-logo.txt" <<'E'
+ ▐▛███▜▌   Claude Code v2.1.310
+▝▜█████▛▘  Sonnet 5.5 with high effort · Claude Max
+  ⏵⏵ bypass permissions on (shift+tab to cycle)
+E
+cat > "$P/live-twospace.txt" <<'E'
+  sonnet-5.5 · eff  high · 🟢 0/50 · ctx [█░░░░░] 31%
+  ⏵⏵ bypass permissions on (shift+tab to cycle)
+E
+cat > "$P/live-marker.txt" <<'E'
+● Sonnet 4.1 with low effort is what the doc says
+  ⏵⏵ accept edits on (shift+tab to cycle)
+E
+cat > "$P/live-quoted-str.txt" <<'E'
+"Opus 4.1 with low effort"
+  ⏵⏵ accept edits on (shift+tab to cycle)
+E
+cat > "$P/live-shapeless.txt" <<'E'
+  Sonnet 5.5 with high effort · Claude Max
+  ~/repo main  Opus 4.7 · eff high
+  ⏵⏵ bypass permissions on (shift+tab to cycle)
+E
+readf() { "$SV" read --file "$P/$1"; }
+check "read: a status line gives 'live: sonnet-5.5 high' (the real status line, extra fields after the effort)" test "$(readf live-status.txt 2>&1)" = "live: sonnet-5.5 high"
+check "read: a banner gives the family, version and effort (Opus 5.5 / max)" test "$(readf live-opus-max.txt 2>&1)" = "live: opus-5.5 max"
+check "read: the plain banner fixture reads sonnet-5.5 high" test "$(readf banner.txt 2>&1)" = "live: sonnet-5.5 high"
+check "read: fable and xhigh are known forms" test "$(readf live-fable.txt 2>&1)" = "live: fable-5.1 xhigh"
+check "read: the BOTTOM-most model line wins over a quoted older one" test "$(readf live-quoted.txt 2>&1)" = "live: sonnet-5.5 medium"
+check "read: a model with no minor version is not a known form (exit 1, unknown-model)" test "$(readf live-nominor.txt 2>&1; echo $?)" = "$(printf 'read: FAIL unknown-model\n1')"
+check "read: an effort outside low..max is not a known form (exit 1, unknown-effort)" test "$(readf live-badeffort.txt 2>&1; echo $?)" = "$(printf 'read: FAIL unknown-effort\n1')"
+check "read: a banner left above a shell prompt is claude-not-running (exit 1)" test "$(readf crashed-banner.txt 2>&1; echo $?)" = "$(printf 'read: FAIL claude-not-running\n1')"
+check "read: a line that only QUOTES a model and effort, below the real status line, is never read (fail safe: no-model-line, exit 1)" test "$(readf live-quote-bottom.txt 2>&1; echo $?)" = "$(printf 'read: FAIL no-model-line\n1')"
+check "read: an assistant marker or a quote mark in front of a model is text, not the banner (exit 1, no-model-line)" test "$(readf live-marker.txt 2>&1; echo $?; readf live-quoted-str.txt 2>&1; echo $?)" = "$(printf 'read: FAIL no-model-line\n1\nread: FAIL no-model-line\n1')"
+check "read: the real banner (logo blocks before the model) is read" test "$(readf live-logo.txt 2>&1)" = "live: sonnet-5.5 high"
+check "read: two spaces before the effort word are read (check accepts them too)" test "$(readf live-twospace.txt 2>&1)" = "live: sonnet-5.5 high" -a "$("$SV" check --file "$P/live-twospace.txt" >/dev/null 2>&1; echo $?)" = 0
+check "read: a bullet that quotes a model is never the live line (it is the bottom-most model line, not anchored: no-model-line, exit 1)" test "$(readf live-bullet.txt 2>&1; echo $?)" = "$(printf 'read: FAIL no-model-line\n1')"
+check "read: never answers from an OLDER line when the bottom-most model line is another shape (fail safe, not the stale banner)" test "$(readf live-shapeless.txt 2>&1; echo $?)" = "$(printf 'read: FAIL no-model-line\n1')"
+check "read: a screen with no text at all (a failed or empty read) is pane unreadable, exit 2, not no-model-line" test "$(readf live-blank.txt 2>&1; echo $?)" = "$(printf 'read: FAIL pane unreadable\n2')"
+check "read: a pane with no model line (loading) is no-model-line (exit 1)" test "$(readf loading.txt 2>&1; echo $?)" = "$(printf 'read: FAIL no-model-line\n1')"
+check "read: a plain shell prompt is no-model-line (exit 1)" test "$(rc "$SV" read --file "$P/shell-echo.txt")" = 1
+check "read: an empty pane is unreadable (exit 2)" test "$(rc "$SV" read --file "$P/empty.txt")" = 2
+check "read: no --terminal or --file is usage (exit 2)" test "$(rc "$SV" read)" = 2
+check "read: agrees with check on the same pane (read says sonnet-5.5 high, check passes for it)" \
+  bash -c '[ "$("$1" read --file "$2")" = "live: sonnet-5.5 high" ] && "$1" check --file "$2" --model sonnet-5.5 --effort high' _ "$SV" "$P/live-status.txt"
+# a stub orca: --terminal gets the screen from a fixture, a sibling reads the live shape (.result.terminal.tail)
+mkdir -p "$ROOT/readbin"
+cat > "$ROOT/readbin/orca-stub" <<'E'
+#!/usr/bin/env bash
+jq -Rs '{ok:true,result:{terminal:{tail:(split("\n"))}}}' < "$READ_PANE"
+E
+chmod +x "$ROOT/readbin/orca-stub"
+check "read --file and check --file need no CLI (a box with no orca can judge a saved screen)" test "$(CM_CLI_KIND=bogus readf live-status.txt 2>&1)" = "live: sonnet-5.5 high" -a "$(CM_CLI_KIND=bogus "$SV" check --file "$P/live-status.txt" >/dev/null 2>&1; echo $?)" = 0
+check "read --terminal reads the live shape through the CLI" test "$(READ_PANE="$P/live-status.txt" ORCA_CLI_COMMAND="$ROOT/readbin/orca-stub" "$SV" read --terminal term_x 2>&1)" = "live: sonnet-5.5 high"
+
 # resolve: fake HOME, no claude on the login PATH.
 H="$ROOT/h"; mkdir -p "$H/.local/bin" "$H/.npm-global/bin"
 run_resolve() { HOME="$H" PATH="/usr/bin:/bin" "$SV" resolve; }
