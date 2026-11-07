@@ -212,7 +212,7 @@ check "an unreadable ledger more than 2 hours before the window is fine: upcomin
 rm -f "$CM_HOME/ledger.json"
 run utc.yaml "not a time"
 check "a clock it cannot read: the state is unknown, WAITING row only, exit 0" '[ "$RC" = 0 ] && [ "$(val state)" = unknown ] && [ "$(val picker)" = WAITING-row-only ]' "$OUT"
-check "--help prints the header and exits 0" '[ "$(bash "$CC" --help | head -n 1)" = "clock-check.sh: the clock and the deploy state, for the two rules of references/standing-rules.md section 3" ]'
+check "--help prints the header and exits 0" '[ "$(bash "$CC" --help | head -n 1)" = "clock-check.sh: the clock and the deploy state, for the two deploy-window ask rules of SKILL.md (The tick: No owner question before a deploy is spawned; Deploy windows)" ]'
 ledger "$(jq -cn --argjson r "$(printf "$W_ROW" "staging" w-deploy-a)" '{workers: {"w-deploy-a": {state: "running"}}, deployWindows: [$r]}')"
 before="$(cd "$CM_HOME" && find . -type f -exec sha256sum {} + | sort | sha256sum; ls -A "$CM_HOME" | tr '\n' ' ')"
 run utc.yaml 2000-01-01T09:30:00Z

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# clock-check.sh: the clock and the deploy state, for the two rules of references/standing-rules.md section 3
+# clock-check.sh: the clock and the deploy state, for the two deploy-window ask rules of SKILL.md (The tick: No owner question before a deploy is spawned; Deploy windows)
 # (no owner picker inside 2 hours of a deploy window until its deploy is pinned, checked and its worker spawned; check the
 # clock right before any message that names a deploy time or a release). Read-only. Exit 0 always: a line it cannot fill
 # says why, and every doubt answers "WAITING-row-only" (never "allowed").
