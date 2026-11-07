@@ -1,47 +1,52 @@
 #!/usr/bin/env bash
 # clock-check.sh: the clock and the deploy state, for the two deploy-window ask rules of SKILL.md (The tick: No owner question before a deploy is spawned; Deploy windows)
-# (no owner picker inside 2 hours of a deploy window until its deploy is pinned, checked and its worker spawned; check the
-# clock right before any message that names a deploy time or a release). Read-only. Exit 0 always: a line it cannot fill
-# says why, and every doubt answers "WAITING-row-only" (never "allowed").
+# (no blocking owner picker unless every window that is past-and-unfinished and the first window still ahead is pinned and
+# has its own live deploy worker; check the clock right before any message that names a deploy time or a release).
+# Read-only. Exit 0 always: a line it cannot fill says why, and every doubt answers "WAITING-row-only" (never "allowed").
 #
 #   scripts/clock-check.sh                       # key: value lines
 #   CM_TEST=1 CM_NOW=2000-01-01T10:30:00Z scripts/clock-check.sh   # a stubbed clock (tests only: CM_NOW needs CM_TEST=1)
 #
 #   now:           UTC now (names CM_NOW when the clock is stubbed)
-#   window:        the first window that matters: the ledger deployWindows[].id (local date T HH:MM), then its UTC
-#                  time; the next window when none is past-and-unfinished or inside 2 hours; or none
+#   window:        the first window that was checked: the ledger deployWindows[].id (local date T HH:MM), then its UTC
+#                  time; or none
 #   minutes:       minutes from now to it (negative: it has passed)
 #   row:           that window row's state, tag and prod run id, or none (what a message may say about the release)
 #   deploy-worker: that row's worker and its state in the ledger workers, none, or unknown (ledger unreadable or missing)
-#   state:         upcoming (more than 2h away), inside-2h, in-flight (a live deploy worker is on it), worker-dead
-#                  (the row names a worker the ledger does not list live), missed (it has passed and no deploy worker
-#                  or outcome is on record), none (no window configured), unknown (see the other lines; also a past
-#                  window while the ledger cannot be read: whether it shipped is not known)
-#   window-check:  one line per window that matters: <id> <state> worker <id or none> live|not live
-#   picker:        allowed, or WAITING-row-only. Allowed only when EVERY window that is past-and-unfinished or within 2h
-#                  has ITS OWN live deploy worker (the worker its own row names; one worker never covers another
-#                  window). A wake still has to be armed before any picker.
+#   state:         upcoming (still ahead), in-flight (a live deploy worker is on it), worker-dead (the row names a
+#                  worker the ledger does not list live), missed (it has passed and no deploy worker or outcome is on
+#                  record), none (no window configured), unknown (see the other lines; also a past window while the
+#                  ledger cannot be read: whether it shipped is not known)
+#   next-window:   the first unfinished window still ahead (the one to cite for "the next release"), with its UTC time
+#                  and the minutes to it, or none; the `window:` line can be an older missed window
+#   window-check:  one line per checked window: <id> <state> worker <id or none> live|not live pinned|not pinned
+#   picker:        allowed only when EVERY checked window is pinned AND has ITS OWN live deploy worker (the worker its
+#                  own row names; one worker never covers another window), or when no window is unfinished. Otherwise
+#                  WAITING-row-only. A wake still has to be armed before any picker.
 #
 # Windows come from cfg.schedule.deploy_windows in the zone CM_TZ (lib.sh: else cfg.schedule.timezone, else UTC),
-# for yesterday, today and tomorrow, plus every unfinished deployWindows[] row of the ledger (its at is read as UTC). A window matters when it has no finished outcome (done, skipped, stopped) and is
-# either inside 2 hours or already past (missed, in flight, or its worker died). A past window with no live worker
-# stops mattering after 12 hours; one with a live worker matters however old. A worker is live while the ledger lists it
-# spawning, running or blocked-on-owner (stuck does not count: it needs the loop, and a picker stops the loop; a row
-# with no state does not count), and only while a single unfinished window row names it: a worker named by two unfinished
-# rows covers neither. Answers unknown, with WAITING-row-only, when: the config file is missing, empty or
-# unparseable or has no deploy_windows key (an empty list is "none"); no deploy_windows entry is usable; a window time
-# does not exist on its day (clocks going forward; known limit: it looks at yesterday, today and tomorrow, so the answer is
-# unknown for all of those days, safe but wider than the one day with the gap); the zone is not on the host (checked against /usr/share/zoneinfo
-# when that exists); the clock cannot be read. An entry that is not H:MM or HH:MM, or is out of range, is reported and
-# skipped. It reads the ledger only: a release shipped by a tag push that left no deployWindows[] row reads as missed,
-# which is the safe side (WAITING row). Needs GNU date (date -d), like the other Linux-only parts of the kit.
+# for yesterday, today and tomorrow, plus every unfinished deployWindows[] row of the ledger (its at is read as UTC). The
+# checked windows are every one, in time order, that has no finished outcome (done, skipped, stopped) and is past and still
+# counting (a past window with no live worker stops counting after 12 hours; one with a live worker counts however old),
+# and the FIRST unfinished window still ahead, whatever its distance (later ones ahead are not checked). A window is
+# pinned when its row state is staging, validating or prod, or the row carries a sha (7 to 64 hex digits, the trigger sha); a worker is live
+# while the ledger lists it spawning, running or blocked-on-owner (stuck does not count: it needs the loop, and a
+# picker stops the loop; a row with no state does not count), and only while a single unfinished window row names it: a
+# worker named by two unfinished rows covers neither. Answers unknown, with WAITING-row-only, when: the config file is
+# missing, empty or unparseable or has no deploy_windows key (an empty list is "none"); no deploy_windows entry is
+# usable; a window time does not exist on its day (clocks going forward; known limit: it looks at yesterday, today and
+# tomorrow, so the answer is unknown for all of those days, safe but wider than the one day with the gap); the zone is not
+# on the host (checked against /usr/share/zoneinfo when that exists); the clock cannot be read. An entry that is not H:MM
+# or HH:MM, or is out of range, is reported and skipped. It reads the ledger only: a release shipped by a tag push that
+# left no deployWindows[] row reads as missed, which is the safe side (WAITING row). Needs GNU date (date -d), like the
+# other Linux-only parts of the kit.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=SCRIPTDIR/lib.sh
 . "$HERE/lib.sh"
 case "${1:-}" in -h|--help) awk 'NR > 1 { if (!/^#/) exit; sub(/^# ?/, ""); print }' "$0"; exit 0 ;; esac
 
-unknown() { echo "window: none ($1)"; echo "state: unknown"; echo "picker: WAITING-row-only"; exit 0; }
+unknown() { echo "window: none ($1)"; echo "next-window: unknown"; echo "state: unknown"; echo "picker: WAITING-row-only"; exit 0; }
 
 tz="$CM_TZ"   # lib.sh: CM_TZ, else schedule.timezone, else UTC (the zone every other script uses)
 # CM_NOW stubs the clock only under CM_TEST=1 (as the other test seams do): a leaked CM_NOW must never decide a real send
@@ -50,7 +55,7 @@ if [ -n "${CM_NOW:-}" ]; then
   if [ "${CM_TEST:-}" = 1 ]; then stub=1; else echo "warning: CM_NOW is set but CM_TEST is not 1: the real clock is used"; fi
 fi
 if [ "$stub" = 1 ]; then now="$(date -u -d "$CM_NOW" +%s 2>/dev/null)"; else now="$(date -u +%s)"; fi
-case "$now" in ''|*[!0-9]*) echo "now: unknown (CM_NOW is not a time GNU date reads)"; echo "state: unknown"; echo "picker: WAITING-row-only"; exit 0 ;; esac
+case "$now" in ''|*[!0-9]*) echo "now: unknown (CM_NOW is not a time GNU date reads)"; echo "next-window: unknown"; echo "state: unknown"; echo "picker: WAITING-row-only"; exit 0 ;; esac
 if [ "$stub" = 1 ]; then echo "now: $(date -u -d "@$now" +%FT%TZ) (stubbed by CM_NOW: not the real clock)"; else echo "now: $(date -u -d "@$now" +%FT%TZ)"; fi
 
 # the config must have been read and must carry the key: a missing, empty or unparseable file falls back to {} in lib.sh
@@ -84,19 +89,25 @@ for k in -1 0 1; do
     cands="$cands$at ${d}T$hm"$'\n'
   done < <(printf '%s' "$wins" | jq -r '.[]? | tostring' 2>/dev/null)
 done
-if [ -z "$cands" ]; then
-  if [ "$(printf '%s' "$wins" | jq 'length' 2>/dev/null)" = 0 ]; then echo "window: none"; echo "state: none"; echo "picker: allowed"; exit 0; fi
+if [ -z "$cands" ] && [ "$(printf '%s' "$wins" | jq 'length' 2>/dev/null)" != 0 ]; then
   unknown "schedule.deploy_windows has no usable HH:MM entry"
 fi
 # an unfinished ledger row that no configured window made (an old window, an ad-hoc or moved one) matters too
 if [ "$ledger_ok" = 1 ]; then
   while IFS=$'\t' read -r rid rat; do
-    case "$rid" in ''|*[!A-Za-z0-9:_-]*) continue ;; esac
-    [ -n "$rat" ] || continue
-    printf '%s' "$cands" | awk -v i="$rid" '$2 == i { f = 1 } END { exit !f }' && continue
+    [ -n "$rid" ] && [ -n "$rat" ] || continue
     e="$(date -u -d "$rat" +%s 2>/dev/null)" || continue
-    cands="$cands$e $rid"$'\n'
+    # the same id as a configured window is that window; a row at the instant of a configured window (a moved or
+    # renamed one) takes its place, so one window is never counted twice
+    printf '%s' "$cands" | awk -v i="$rid" '$2 == i { f = 1 } END { exit !f }' && continue
+    cands="$(printf '%s' "$cands" | awk -v e="$e" '$1 != e')"$'\n'"$e $rid"$'\n'
   done < <(jq -r '.deployWindows[]? | select(((.state // "") | IN("done", "skipped", "stopped") | not) and ((.at // "") != "")) | [(.id // ""), .at] | @tsv' "$led" 2>/dev/null)
+  # a FINISHED row at the instant of a configured window (a renamed or moved one that shipped) also takes that window's place
+  while IFS=$'\t' read -r rid rat; do
+    [ -n "$rat" ] || continue
+    e="$(date -u -d "$rat" +%s 2>/dev/null)" || continue
+    cands="$(printf '%s' "$cands" | awk -v e="$e" '$1 != e')"$'\n'
+  done < <(jq -r '.deployWindows[]? | select((.state // "") | IN("done", "skipped", "stopped")) | [(.id // ""), (.at // "")] | @tsv' "$led" 2>/dev/null)
 fi
 cands="$(printf '%s' "$cands" | sort -n)"
 
@@ -110,40 +121,42 @@ worker_live() {
   [ "$ledger_ok" = 1 ] && [ -n "$1" ] && [ "$(worker_rows "$1")" -le 1 ] && jq -e --arg w "$1" '(.workers // {})[$w] | type == "object" and ((.state // "") | IN("spawning", "running", "blocked-on-owner"))' "$led" >/dev/null 2>&1
 }
 
-# the windows that matter, in time order, and the first window after them (shown when none matters)
-nrel=0; allok=1; checks=""; nxt=""
-pw=""; pat=""; pworker=""; pst=""; ptag=""; pprod=""; plive=0; pstate=""   # the first window that matters
+# the windows that are checked, in time order: every window that is unfinished and past and still counting (a past window
+# with no live worker stops counting after 12 hours; one with a live worker counts however old), and the FIRST unfinished
+# window still ahead, whatever its distance (later ones ahead are not checked). The picker is allowed only when EVERY
+# checked window is pinned (its row state is staging, validating or prod, or the row carries a sha) AND has its own live
+# worker. The first checked window is the one printed in full.
+pw=""; pat=""; pworker=""; pst=""; ptag=""; pprod=""; plive=0; pstate=""
+nchk=0; allok=1; checks=""; nxt="none"
 while read -r at id; do
   [ -n "$at" ] || continue
-  worker=""; st=""; tag=""; prod=""
+  worker=""; st=""; tag=""; prod=""; rsha=""
   if [ "$ledger_ok" = 1 ]; then
-    row="$(jq -r --arg id "$id" '[.deployWindows[]? | select(.id == $id)][0] | [(.worker // ""), (.state // ""), (.tag // ""), (.prodRunId // "" | tostring)] | join("|")' "$led" 2>/dev/null)"
-    IFS='|' read -r worker st tag prod <<<"$row"
+    row="$(jq -r --arg id "$id" '[.deployWindows[]? | select(.id == $id)][0] | [(.worker // ""), (.state // ""), (.tag // ""), (.prodRunId // "" | tostring), (if ((.sha // "") | type) == "string" and ((.sha // "") | test("^[0-9a-fA-F]{7,64}$")) then .sha else "" end)] | join("\u001f")' "$led" 2>/dev/null)"
+    IFS=$'\037' read -r worker st tag prod rsha <<<"$row"
   fi
-  live=0; worker_live "$worker" && live=1
   case "$st" in done|skipped|stopped) continue ;; esac
-  if [ "$at" -gt "$now" ] && [ $((at - now)) -gt 7200 ]; then
-    [ -n "$nxt" ] || nxt="$at|$id|$worker|$st|$tag|$prod|$live"
-    continue
-  fi
+  live=0; worker_live "$worker" && live=1
   # a past window with no live worker stops mattering after 12 hours
   if [ "$at" -le "$now" ] && [ "$live" = 0 ] && [ "$at" -lt $((now - 12 * 3600)) ]; then continue; fi
-  nrel=$((nrel + 1))
-  if [ "$at" -gt "$now" ]; then wst="inside-2h"
+  if [ "$at" -gt "$now" ]; then wst="upcoming"
   elif [ "$live" = 1 ]; then wst="in-flight"
   elif [ -n "$worker" ]; then wst="worker-dead"
   elif [ "$ledger_ok" != 1 ]; then wst="unknown"   # the ledger could not be read: "missed" would claim no outcome is on record
   else wst="missed"; fi
+  pin=0
+  case "$st" in staging|validating|prod) pin=1 ;; esac
+  [ -z "$rsha" ] || pin=1
+  nchk=$((nchk + 1))
   if [ "$live" = 1 ]; then lv="live"; else lv="not live"; allok=0; fi
-  checks="$checks$id $wst worker ${worker:-none} $lv"$'\n'
-  if [ "$nrel" = 1 ]; then pw="$id"; pat="$at"; pworker="$worker"; pst="$st"; ptag="$tag"; pprod="$prod"; plive="$live"; pstate="$wst"; fi
+  if [ "$pin" = 1 ]; then pn="pinned"; else pn="not pinned"; allok=0; fi
+  checks="$checks$id $wst worker ${worker:-none} $lv $pn"$'\n'
+  if [ "$nchk" = 1 ]; then pw="$id"; pat="$at"; pworker="$worker"; pst="$st"; ptag="$tag"; pprod="$prod"; plive="$live"; pstate="$wst"; fi
+  if [ "$at" -gt "$now" ]; then nxt="$id at $(date -u -d "@$at" +%FT%TZ), $(( (at - now) / 60 )) minutes"; break; fi   # the first window ahead is the last one checked
 done <<<"$cands"
 
-if [ "$nrel" = 0 ]; then
-  if [ -z "$nxt" ]; then echo "window: none"; echo "state: none"; echo "picker: allowed"; exit 0; fi
-  IFS='|' read -r pat pw pworker pst ptag pprod plive <<<"$nxt"
-  pstate="upcoming"
-fi
+# nothing is unfinished (no window configured, or every candidate is finished or expired): nothing to cover
+if [ -z "$pw" ]; then echo "window: none"; echo "state: none"; echo "picker: allowed"; exit 0; fi
 
 diff=$((pat - now))
 if [ "$diff" -ge 0 ]; then mins=$((diff / 60)); else mins=$((-(( -diff + 59) / 60))); fi   # floor: 30 seconds past is -1, not 0
@@ -165,8 +178,9 @@ else
   echo "deploy-worker: none"
 fi
 echo "state: $pstate"
+echo "next-window: $nxt"
 printf '%s' "$checks" | while IFS= read -r l; do [ -n "$l" ] && echo "window-check: $l"; done
-if [ "$nrel" = 0 ] || [ "$allok" = 1 ]; then echo "picker: allowed"; else echo "picker: WAITING-row-only"; fi
-# the script reads the ledger only: it cannot see a wake, or whether the deploy is pinned and checked
-if [ "$nrel" != 0 ] && [ "$allok" = 1 ]; then echo "note: arm the wake (ScheduleWakeup) and confirm the deploy is pinned and checked (the row state above) before any picker"; fi
+if [ "$allok" = 1 ]; then echo "picker: allowed"; else echo "picker: WAITING-row-only"; fi
+# the script reads the ledger only: it cannot see a wake
+if [ "$allok" = 1 ]; then echo "note: arm the wake (ScheduleWakeup) before any picker; the script cannot see it"; fi
 exit 0
