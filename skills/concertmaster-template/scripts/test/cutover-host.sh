@@ -659,6 +659,12 @@ standins() {
 }
 # claim_holder: a process that holds the claim flock (as another start would) until it is killed; prints its pid
 claim_holder() { ( exec 8>"$CM_HOME/cutover-hold.claim.lock"; flock 8; exec -a claim-holder sleep 60 ) >/dev/null 2>&1 & echo $!; }   # stdout closed, or $(claim_holder) would wait for it
+# waitfor <seconds> <cmd> [args]: poll cmd (a pause of 0.05 s between polls) until it succeeds (status 0) or that many wall-clock seconds are gone (status 1)
+waitfor() { local end=$(($(date +%s) + $1)); shift; while :; do "$@" && return 0; [ "$(date +%s)" -lt "$end" ] || return 1; sleep 0.05; done; }
+# args_start <pid> <word>: the process exists and its command line starts with word (a forked subshell shows its parent's until it exec-s)
+args_start() { ps -p "$1" -o args= 2>/dev/null | grep -q "^$2"; }
+# start_waiting <pid>: that process has a flock child, i.e. it is waiting for the claim (ps -eo ppid=,comm= is the portable form)
+start_waiting() { ps -eo ppid=,comm= 2>/dev/null | awk -v p="$1" '$1 == p && $2 == "flock" { f = 1 } END { exit !f }'; }
 # several starts at once, from an EXPIRED hold and from fresh state: exactly one wins, exactly one stand-in runs, the lock names it, the
 # others exit 1 (no orphans, no pidless lock)
 for VARIANT in expired fresh; do
@@ -692,16 +698,20 @@ echo 999999 > "$CM_HOME/resume.lock/pid"
 HOUT="$(bash "$HOLD" start --hours 6 2>&1)"; HRC=$?; cat "$CM_HOME/cutover-hold.pid" >> "$ROOT/hold-pids" 2>/dev/null
 check "...but a resume.lock left by a dead pid does not block it (exit 0, held)" '[ "$HRC" = 0 ] && bash "$HOLD" status | grep -q "^held"' "$HOUT"
 bash "$HOLD" release >/dev/null 2>&1
-# resume.sh starts while a start waits for the claim: the check made with the claim held catches it (the first check had passed)
+# resume.sh starts while a start waits for the claim: the check made with the claim held catches it (the first check had passed).
+# The order is a handshake, not a sleep (helpers beside claim_holder): resume.sh is started only once the claim holder is observed
+# holding the claim, the start is observed waiting for it (its first resume check is behind it) and the fake resume.sh has
+# exec-ed into its name (the start's second check reads that name). A host under load only makes it slower.
 newcase
-CHPID="$(claim_holder)"; sleep 0.5
+CHPID="$(claim_holder)"; waitfor 20 args_start "$CHPID" claim-holder; HS1=$?
 CM_HOLD_CLAIM_WAIT_S=30 bash "$HOLD" start --hours 6 > "$C/second.out" 2>&1 & SCPID=$!
-sleep 1
+waitfor 20 start_waiting "$SCPID"; HS2=$?
 mkdir "$CM_HOME/resume.lock"; ( exec -a resume-fake sleep 60 ) & RSPID=$!; echo "$RSPID" > "$CM_HOME/resume.lock/pid"
+waitfor 20 args_start "$RSPID" resume-fake; HS3=$?
 kill "$CHPID" 2>/dev/null; wait "$CHPID" 2>/dev/null
 wait "$SCPID"; HRC=$?; cat "$CM_HOME/cutover-hold.pid" >> "$ROOT/hold-pids" 2>/dev/null   # a stand-in a broken check let through is still killed on exit
 check "resume.sh started while a start waited for the claim: the start refuses (exit 1) with the second check's message, makes no lock, no stand-in" \
-  '[ "$HRC" = 1 ] && grep -q "resume.sh started while this start waited" "$C/second.out" && [ ! -e "$CM_HOME/cutover-host.lock" ] && [ "$(standins 21600)" = 0 ]' "rc=$HRC $(cat "$C/second.out")"
+  '[ "$HS1" = 0 ] && [ "$HS2" = 0 ] && [ "$HS3" = 0 ] && [ "$HRC" = 1 ] && grep -q "resume.sh started while this start waited" "$C/second.out" && [ ! -e "$CM_HOME/cutover-host.lock" ] && [ "$(standins 21600)" = 0 ]' "handshake=$HS1/$HS2/$HS3 rc=$HRC $(cat "$C/second.out")"
 kill "$RSPID" 2>/dev/null; wait "$RSPID" 2>/dev/null
 # a stand-in that never starts (a setsid that does nothing): start fails (exit 1), leaves no lock and no stand-in
 newcase
@@ -711,10 +721,10 @@ check "a start whose stand-in never starts fails (exit 1, says so) and leaves no
   '[ "$HRC" = 1 ] && printf "%s\n" "$HOUT" | grep -q "stand-in process did not start" && [ ! -e "$CM_HOME/cutover-host.lock" ] && [ "$(standins 21600)" = 0 ]' "$HOUT"
 # the claim is a flock: a live holder makes start give up after the bounded wait, a killed holder frees it at once
 newcase
-CHPID="$(claim_holder)"; sleep 0.5
+CHPID="$(claim_holder)"; waitfor 20 args_start "$CHPID" claim-holder; HS1=$?
 HOUT="$(CM_HOLD_CLAIM_WAIT_S=2 bash "$HOLD" start --hours 6 2>&1)"; HRC=$?
 check "a live claim (another start or release in progress) makes start give up after the bounded wait: exit 1, nothing made" \
-  '[ "$HRC" = 1 ] && printf "%s\n" "$HOUT" | grep -q "another start or release holds" && [ ! -e "$CM_HOME/cutover-host.lock" ]' "$HOUT"
+  '[ "$HS1" = 0 ] && [ "$HRC" = 1 ] && printf "%s\n" "$HOUT" | grep -q "another start or release holds" && [ ! -e "$CM_HOME/cutover-host.lock" ]' "$HOUT"
 kill "$CHPID" 2>/dev/null; wait "$CHPID" 2>/dev/null
 HOUT="$(CM_HOLD_CLAIM_WAIT_S=2 bash "$HOLD" start --hours 6 2>&1)"; HRC=$?; cat "$CM_HOME/cutover-hold.pid" >> "$ROOT/hold-pids" 2>/dev/null
 check "...and the claim of a killed owner is free at once (no reaping, no minute to wait): exit 0, held" '[ "$HRC" = 0 ] && bash "$HOLD" status | grep -q "^held"' "$HOUT"
@@ -734,12 +744,12 @@ check "...and so does release (exit 1)" '[ "$HRC" = 1 ] && printf "%s\n" "$HOUT"
 # a start interrupted while it waits for the claim exits 130 (a retry loop must not read it as contention), makes nothing, and leaves
 # the other owner's claim alone
 newcase
-CHPID="$(claim_holder)"; sleep 0.5
+CHPID="$(claim_holder)"; waitfor 20 args_start "$CHPID" claim-holder; HS1=$?
 CM_HOLD_CLAIM_WAIT_S=30 bash "$HOLD" start --hours 6 > "$C/sig-hold.out" 2>&1 & SHPID=$!
-sleep 1
+waitfor 20 start_waiting "$SHPID"; HS2=$?   # the start is observed waiting for the claim, so the TERM lands in the wait
 kill -TERM "$SHPID" 2>/dev/null; wait "$SHPID"; HRC=$?
 check "a start interrupted by TERM while waiting for the claim exits 130 at once, makes no lock and no stand-in, and leaves the other owner's claim alone" \
-  '[ "$HRC" = 130 ] && [ ! -e "$CM_HOME/cutover-host.lock" ] && ! ( exec 7>"$CM_HOME/cutover-hold.claim.lock"; flock -n 7 ) && [ "$(standins 21600)" = 0 ]' "rc=$HRC $(cat "$C/sig-hold.out")"
+  '[ "$HS1" = 0 ] && [ "$HS2" = 0 ] && [ "$HRC" = 130 ] && [ ! -e "$CM_HOME/cutover-host.lock" ] && ! ( exec 7>"$CM_HOME/cutover-hold.claim.lock"; flock -n 7 ) && [ "$(standins 21600)" = 0 ]' "handshake=$HS1/$HS2 rc=$HRC $(cat "$C/sig-hold.out")"
 kill "$CHPID" 2>/dev/null; wait "$CHPID" 2>/dev/null
 # an interrupt before the script's own setup is also 130 (the trap is set before lib.sh is sourced)
 newcase
