@@ -233,6 +233,93 @@ check "a finished row under another id at the instant of the configured 11:00 ta
 run "nonexist.yaml" 2000-01-01T10:00:00Z
 check "an unknown answer also prints next-window: unknown" '[ "$(val next-window)" = unknown ] && [ "$(val picker)" = WAITING-row-only ]' "$OUT"
 
+echo "--- fail-open edge cases: finished rows, rows at one instant, unreadable ledger, rows that cannot be placed"
+printf 'schedule:\n  timezone: UTC\n  deploy_windows: ["11:00", "12:00"]\n' > "$ROOT/b2.yaml"
+ledger "$(jq -cn '{workers: {"w2": {state: "gone"}, "w3": {state: "running"}}, deployWindows: [{id: "2000-01-01T11:00", at: "2000-01-01T11:00:00Z", state: "staging", worker: "w2"}, {id: "2000-01-01T11:00-retry", at: "2000-01-01T11:00:00Z", state: "stopped"}, {id: "2000-01-01T12:00", at: "2000-01-01T12:00:00Z", state: "staging", worker: "w3"}]}')"
+run b2.yaml 2000-01-01T11:30:00Z
+check "1. a stopped row at the instant of the 11:00 does not remove the unfinished staging row of a dead worker: WAITING row only" '[ "$(val picker)" = WAITING-row-only ] && printf "%s\n" "$OUT" | grep -q "^window-check: 2000-01-01T11:00 worker-dead worker w2 not live pinned$"' "$OUT"
+ledger "$(jq -cn '{workers: {"w2": {state: "gone"}, "w3": {state: "running"}}, deployWindows: [{id: "2000-01-01T11:00", at: "2000-01-01T11:00:00Z", state: "stopped"}, {id: "2000-01-01T11:00", at: "2000-01-01T11:00:00Z", state: "staging", worker: "w2"}, {id: "2000-01-01T12:00", at: "2000-01-01T12:00:00Z", state: "staging", worker: "w3"}]}')"
+run b2.yaml 2000-01-01T11:30:00Z
+check "1. a stopped row and a staging row sharing one id (a re-run after a stop): the staging row is still checked, WAITING row only" '[ "$(val picker)" = WAITING-row-only ] && printf "%s\n" "$OUT" | grep -q "^window-check: 2000-01-01T11:00 worker-dead worker w2 not live pinned$"' "$OUT"
+ledger "$(jq -cn '{workers: {"wa": {state: "running"}}, deployWindows: [{id: "x1", at: "2000-01-01T10:00:00Z", state: "pending"}, {id: "x2", at: "2000-01-01T10:00:00Z", state: "staging", worker: "wa"}]}')"
+run emptylist.yaml 2000-01-01T09:00:00Z
+check "2. two unfinished rows at one instant: BOTH are checked (x1 pending with no worker), WAITING row only" '[ "$(val picker)" = WAITING-row-only ] && [ "$(printf "%s\n" "$OUT" | grep -c "^window-check:")" = 2 ] && printf "%s\n" "$OUT" | grep -q "^window-check: x1 upcoming worker none not live not pinned$" && printf "%s\n" "$OUT" | grep -q "^window-check: x2 upcoming worker wa live pinned$"' "$OUT"
+ledger "$(jq -cn '{workers: {"wa": {state: "running"}, "wb": {state: "running"}}, deployWindows: [{id: "x1", at: "2000-01-01T10:00:00Z", state: "staging", worker: "wb"}, {id: "x2", at: "2000-01-01T10:00:00Z", state: "staging", worker: "wa"}]}')"
+run emptylist.yaml 2000-01-01T09:00:00Z
+check "2. ...two rows at one instant, each pinned with its own live worker: allowed" '[ "$(val picker)" = allowed ] && [ "$(printf "%s\n" "$OUT" | grep -c "^window-check:")" = 2 ]' "$OUT"
+printf '{ not json' > "$CM_HOME/ledger.json"
+run emptylist.yaml 2000-01-01T09:00:00Z
+check "3. an empty deploy_windows list with an unreadable ledger: unknown and WAITING row only (not allowed)" '[ "$(val state)" = unknown ] && [ "$(val picker)" = WAITING-row-only ]' "$OUT"
+mv "$CM_HOME/ledger.json" "$ROOT/ledger.moved3"
+run emptylist.yaml 2000-01-01T09:00:00Z
+check "3. ...and with a missing ledger" '[ "$(val state)" = unknown ] && [ "$(val picker)" = WAITING-row-only ]' "$OUT"
+ledger '{"workers":{},"deployWindows":[]}'
+run emptylist.yaml 2000-01-01T09:00:00Z
+check "3. ...a readable ledger with no unfinished rows and an empty list stays allowed" '[ "$(val picker)" = allowed ]' "$OUT"
+ledger "$(jq -cn '{workers: {}, deployWindows: [{id: "adhoc 2!", at: "bad", state: "pending"}]}')"
+run emptylist.yaml 2000-01-01T09:00:00Z
+check "4. an unfinished ad-hoc row with an unparseable at: unknown, WAITING row only, a warning names the row id" '[ "$(val state)" = unknown ] && [ "$(val picker)" = WAITING-row-only ] && printf "%s\n" "$OUT" | grep -q "^warning: the unfinished window row .adhoc 2!. has no usable time"' "$OUT"
+ledger "$(jq -cn '{workers: {}, deployWindows: [{id: "adhoc-3", state: "pending"}]}')"
+run emptylist.yaml 2000-01-01T09:00:00Z
+check "4. ...an unfinished row with no at and no configured window of that id cannot be placed either" '[ "$(val state)" = unknown ] && [ "$(val picker)" = WAITING-row-only ]' "$OUT"
+ledger "$(jq -cn '{workers: {}, deployWindows: [{id: "adhoc 2!", at: "bad", state: "done"}]}')"
+run emptylist.yaml 2000-01-01T09:00:00Z
+check "4. ...a FINISHED row with a bad time is ignored: allowed" '[ "$(val picker)" = allowed ]' "$OUT"
+ledger "$(jq -cn '{workers: {"w1": {state: 7}}, deployWindows: [{id: "2000-01-01T11:00", at: "2000-01-01T11:00:00Z", state: "staging", worker: "w1"}]}')"
+run one.yaml 2000-01-01T08:00:00Z
+check "6. a non-string worker state is printed as a string, not raw" '[ "$(val deploy-worker)" = "w1 (7, not a live worker)" ]' "$OUT"
+
+ledger '{"workers":{},"deployWindows":"oops"}'
+run emptylist.yaml 2000-01-01T10:00:00Z
+check "a deployWindows that is a string: unknown and WAITING row only (not read as empty)" '[ "$(val state)" = unknown ] && [ "$(val picker)" = WAITING-row-only ]' "$OUT"
+ledger '{"workers":{},"deployWindows":["junk",null,5]}'
+run emptylist.yaml 2000-01-01T10:00:00Z
+check "...a deployWindows holding junk elements: unknown and WAITING row only" '[ "$(val state)" = unknown ] && [ "$(val picker)" = WAITING-row-only ]' "$OUT"
+ledger "$(jq -cn '{workers: {}, deployWindows: [{id: "adhoc-9", at: "yesterday", state: "pending"}]}')"
+run emptylist.yaml 2000-01-01T10:00:00Z
+check "an unfinished row whose at is a relative word (yesterday) is not placed against the real clock: unknown" '[ "$(val state)" = unknown ] && [ "$(val picker)" = WAITING-row-only ]' "$OUT"
+ledger "$(jq -cn '{workers: {}, deployWindows: [{id: "adhoc-9", at: "11:00", state: "pending"}]}')"
+run emptylist.yaml 2000-01-01T10:00:00Z
+check "...nor a bare HH:MM" '[ "$(val state)" = unknown ] && [ "$(val picker)" = WAITING-row-only ]' "$OUT"
+ledger "$(jq -cn '{workers: {"a\nb": {state: "running"}}, deployWindows: [{id: "2000-01-01T11:00", at: "2000-01-01T11:00:00Z", state: "staging", worker: "a\nb"}]}')"
+run one.yaml 2000-01-01T08:00:00Z
+check "a newline inside a worker name does not split the row into two records (one window-check line)" '[ "$(printf "%s\n" "$OUT" | grep -c "^window-check:")" = 1 ] && [ "$(val state)" != unknown ]' "$OUT"
+ledger "$(jq -cn '{workers: {"w1": {state: "running"}}, deployWindows: [{id: "2000-01-01T11:00", at: "2000-01-01T11:00:00Z", state: "pending", worker: "w1", sha: "abcdef1\n"}]}')"
+run one.yaml 2000-01-01T08:00:00Z
+check "a sha with a trailing newline does not pin" '[ "$(val picker)" = WAITING-row-only ] && printf "%s\n" "$OUT" | grep -q "worker w1 live not pinned$"' "$OUT"
+
+ledger "$(jq -cn '{workers: {"7": {state: "running"}}, deployWindows: [{id: "2000-11-06T11:00", at: "2000-11-06T11:00:00Z", state: "staging", worker: 7}, {id: "2000-11-06T12:00", at: "2000-11-06T12:00:00Z", state: "staging", worker: 7}]}')"
+run b2.yaml 2000-11-06T11:30:00Z
+check "a numeric worker id named by two unfinished rows covers neither: WAITING row only (the count normalises like the row read)" '[ "$(val picker)" = WAITING-row-only ] && printf "%s\n" "$OUT" | grep -q "^window-check: 2000-11-06T11:00 .* worker 7 not live pinned$"' "$OUT"
+ledger "$(jq -cn '{workers: {"7": {state: "running"}}, deployWindows: [{id: "2000-11-06T11:00", at: "2000-11-06T11:00:00Z", state: "staging", worker: "7"}, {id: "2000-11-06T12:00", at: "2000-11-06T12:00:00Z", state: "staging", worker: 7}]}')"
+run b2.yaml 2000-11-06T11:30:00Z
+check "...the same with \"7\" in one row and 7 in the other" '[ "$(val picker)" = WAITING-row-only ]' "$OUT"
+ledger "$(jq -cn '{workers: {"7": {state: "running"}}, deployWindows: [{id: "2000-11-06T11:00", at: "2000-11-06T11:00:00Z", state: "staging", worker: 7}, {id: "2000-11-06T12:00", at: "2000-11-06T12:00:00Z", state: "staging", worker: 8}]}')"
+run b2.yaml 2000-11-06T11:30:00Z
+check "...one numeric worker per row (7 and 8) is not a shared worker" '! printf "%s\n" "$OUT" | grep -q "worker 7 not live"' "$OUT"
+ledger "$(jq -cn '{workers: {}, deployWindows: [{sha: "abc1234"}]}')"
+run emptylist.yaml 2000-01-01T09:00:00Z
+check "an empty list and a ledger row {sha only}: it cannot be placed, unknown and WAITING row only, with a warning" '[ "$(val state)" = unknown ] && [ "$(val picker)" = WAITING-row-only ] && printf "%s\n" "$OUT" | grep -q "^warning: the unfinished window row .(no id). has no usable time"' "$OUT"
+ledger '{"workers":{},"deployWindows":[{}]}'
+run emptylist.yaml 2000-01-01T09:00:00Z
+check "...an empty object row" '[ "$(val state)" = unknown ] && [ "$(val picker)" = WAITING-row-only ]' "$OUT"
+ledger '{"workers":{},"deployWindows":[{"id":null,"at":null,"state":null,"worker":null}]}'
+run emptylist.yaml 2000-01-01T09:00:00Z
+check "...a row with every field null" '[ "$(val state)" = unknown ] && [ "$(val picker)" = WAITING-row-only ]' "$OUT"
+ledger "$(jq -cn '{workers: {"w": {state: 5}}, deployWindows: [{id: "2000-01-01T11:00", at: "2000-01-01T11:00:00Z", state: "staging", worker: "w"}]}')"
+run one.yaml 2000-01-01T08:00:00Z
+check "a numeric worker state is printed as text on the deploy-worker line" '[ "$(val deploy-worker)" = "w (5, not a live worker)" ]' "$OUT"
+
+ledger "$(jq -cn '{workers: {"w": {state: "running"}}, deployWindows: [{id: "2000-01-01T11:00", at: "2000-01-01T11:00:00Z", state: "staging", worker: "w"}, {id: "2000-01-01T12:00", at: "2000-01-01T12:00:00Z", state: "staging", worker: "w"}]}')"
+run close.yaml 2000-01-01T11:30:00Z
+check "a live worker named by two rows reads shared-worker, not worker-dead (it is alive; it covers neither)" '[ "$(val state)" = shared-worker ] && [ "$(val picker)" = WAITING-row-only ] && ! printf "%s\n" "$OUT" | grep -q "worker-dead"' "$OUT"
+ledger '{"workers":{},"deployWindows":[]}'
+run emptylist.yaml 2000-01-01T09:00:00Z
+check "nothing unfinished: next-window: none is printed" '[ "$(val next-window)" = none ] && [ "$(val picker)" = allowed ]' "$OUT"
+ledger "$(jq -cn '{workers: {"w": {state: "running"}}, deployWindows: [{id: "2000-01-01T11:00", at: "2000-01-01T11:00:00Z", state: "pending", sha: "abc1234"}, {id: "2000-01-01T11:00", at: "2000-01-01T11:00:00Z", state: "staging", worker: "w"}]}')"
+run one.yaml 2000-01-01T08:00:00Z
+check "a pending row with the sha and a second staging row with the worker for one window: both are checked, and the picker is WAITING row only (why the run is recorded on the one row)" '[ "$(val picker)" = WAITING-row-only ] && [ "$(printf "%s\n" "$OUT" | grep -c "^window-check:")" = 2 ]' "$OUT"
+
 echo "--- time zone, no window, bad ledger, bad clock"
 ledger '{"workers":{},"deployWindows":[]}'
 HAVE_ZI=0; [ -d /usr/share/zoneinfo/Europe ] && HAVE_ZI=1

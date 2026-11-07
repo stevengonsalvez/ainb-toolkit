@@ -64,7 +64,10 @@ PINS=(
   "the ask is a \`WAITING: <owner>, <question>, <age>\` row in the tick table"
   "the test is coverage, not distance"
   "A picker that is already open when the window arrives is the one exposure left."
-  "With no windows configured and no unfinished ledger row a picker is allowed."
+  "With no windows configured a picker is allowed when the ledger is readable and every unfinished row on it is covered."
+  "Before any blocking owner picker, at any distance from a window, and before a message that names a time or a release, run \`scripts/clock-check.sh\`"
+  "and in the window${Q}s \`deployWindows[].sha\`"
+  "never a second row for the same window"
   "A rails hit (Deploy windows step 2) or a migration-guard ask comes before the worker exists and is a WAITING row too"
   "stays checked until its outcome is recorded"
   "never a clock time written in a message"
@@ -75,7 +78,6 @@ PINS=(
   "never \"ships tonight at <time>\" without the deploy worker${Q}s state"
   "The message text is written AFTER a picker returns, not before"
   "A blocking picker also waits until every past-and-unfinished window and the first window ahead is pinned and has its own live deploy worker and a wake is armed"
-  "Before an owner question or a message that names a time or a release near a window, run \`scripts/clock-check.sh\`"
   "check any time or release it names against \`scripts/clock-check.sh\` in the same turn"
 )
 for ph in "${PINS[@]}"; do
