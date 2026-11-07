@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
+# cm-test: rm-cleanup (its EXIT trap rm -rf-s its own mktemp dir)
 # shellcheck disable=SC2015  # pass() always succeeds, so A && pass || fail is if-then-else here
 # tick-contract.sh (test): SKILL.md carries the "no light ticks" contract in BOTH places that govern a tick
 # (§ The tick and § Reporting) in the same words, and no sentence still lets a tick skip the table.
-# A text lint, so the two sections cannot drift apart. Reads SKILL.md only.
+# A text lint, so the two sections cannot drift apart. Reads SKILL.md only. It also pins the deploy-window ask rules
+# (the phrases listed below), and proves each pin can fail.
 #
 #   scripts/test/tick-contract.sh     # exit 0 when every case passes
 set -uo pipefail
@@ -38,6 +40,74 @@ bk="$(grep -F 'Backup check.' <<<"$tick")"
 # shellcheck disable=SC2016  # the pattern holds literal backticks
 case "$bk" in *'**Backup check.** Run `scripts/backup-stale.sh` every tick;'*) pass "§ The tick has a Backup check instruction that runs backup-stale.sh every tick" ;; *) fail "backup check" "$(printf '%s' "$bk" | head -c 200)" ;; esac
 [ -x "$HERE/../backup-stale.sh" ] && pass "and the script it names exists and is executable" || fail "backup-stale.sh" "not executable"
+
+# The deploy-window ask rules (§ The tick, "No owner question before a deploy is spawned"; § Deploy windows) and their pointers.
+# What is pinned is the list of phrases below, each an exact substring of the (unwrapped) SKILL.md: the picker rule's
+# headline and conditions (deploy pinned and checked, a live worker per window, not stuck, a wake armed, a WAITING row
+# otherwise, the rails ask, a missed window, the config key, one worker per window), the clock rule's headline and its
+# parts, and the pointers in the no-blocking-ask paragraph, the Deploy windows intro and the digest. Rewording one of them
+# fails this test on purpose; the other words of the rules are not pinned. Each pin is proved able to fail below: a scratch
+# copy of the skill loses that one phrase and this test must fail on the copy.
+flat() { tr '\n' ' ' | tr -s ' '; }   # the rule text is wrapped: compare it as one line
+has() { grep -qF -- "$1" <<<"$2"; }
+skflat="$(flat < "$SK")"
+Q="'"
+PINS=(
+  "No owner question before a deploy is spawned."
+  "until that window${Q}s deploy is pinned, checked and its worker spawned"
+  "needs ITS OWN live deploy worker"
+  "spawning, running or blocked-on-owner; not \`stuck\`"
+  "one worker never covers another window"
+  "and a wake must be armed (\`ScheduleWakeup\` pending)"
+  "the ask is a \`WAITING: <owner>, <question>, <age>\` row in the tick table"
+  "A rails hit (Deploy windows step 2) or a migration-guard ask comes before the worker exists and is a WAITING row too"
+  "counts as inside the window until its outcome is recorded"
+  "never a clock time written in a message"
+  "This limits the concertmaster${Q}s own picker only"
+  "Check the clock and the deploy state before any message that names a time or a release."
+  "in the SAME turn, run \`scripts/clock-check.sh\` and rewrite a time that has passed"
+  "Never send a time already in the past"
+  "never \"ships tonight at <time>\" without the deploy worker${Q}s state"
+  "The message text is written AFTER a picker returns, not before"
+  "Inside 2 hours of a deploy window the picker also waits until that window${Q}s deploy is pinned, checked and its worker spawned and a wake is armed"
+  "Before an owner question or a message that names a time or a release near a window, run \`scripts/clock-check.sh\`"
+  "check any time or release it names against \`scripts/clock-check.sh\` in the same turn"
+)
+for ph in "${PINS[@]}"; do
+  has "$ph" "$skflat" && pass "carries: ${ph:0:70}" || fail "pinned phrase" "missing: $ph"
+done
+[ -x "$HERE/../clock-check.sh" ] && pass "clock-check.sh exists and is executable" || fail "clock-check.sh" "missing or not executable"
+
+# break on purpose: for each pin, a scratch copy of the skill without that one phrase must make this test fail
+if [ -z "${TICK_CONTRACT_NESTED:-}" ]; then
+  if command -v python3 >/dev/null 2>&1; then
+    BR="$(mktemp -d "${TMPDIR:-/tmp}/cm-tick-contract.XXXXXX")" || BR=""
+    if [ -n "$BR" ]; then
+      trap 'rm -rf -- "${BR:?}"' EXIT
+      cp -R "$HERE/../.." "$BR/skill"
+      brk=0; brn=0
+      for ph in "${PINS[@]}"; do
+        cp "$HERE/../../SKILL.md" "$BR/skill/SKILL.md"
+        python3 - "$BR/skill/SKILL.md" "$ph" <<'PY'
+import re, sys
+p, ph = sys.argv[1:3]
+s = open(p).read()
+pat = r"\s+".join(re.escape(w) for w in ph.split())
+s2, n = re.subn(pat, "", s, count=1)
+if n != 1:
+    sys.exit(3)
+open(p, "w").write(s2)
+PY
+        [ "$?" = 0 ] || { fail "break on purpose" "could not find the phrase in SKILL.md to remove it: $ph"; continue; }
+        brn=$((brn + 1))
+        if TICK_CONTRACT_NESTED=1 bash "$BR/skill/scripts/test/tick-contract.sh" >/dev/null 2>&1; then
+          fail "break on purpose" "the test still passes without: $ph"
+        else brk=$((brk + 1)); fi
+      done
+      [ "$brk" = "$brn" ] && [ "$brn" -gt 0 ] && pass "break on purpose: each of the $brn pinned phrases, removed from a scratch copy of the skill, makes this test fail" || fail "break on purpose" "$brk of $brn pins failed the copy"
+    else fail "break on purpose" "no scratch dir"; fi
+  else echo "SKIP break on purpose: no python3"; fi
+fi
 
 printf '\npassed=%s failed=%s\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
