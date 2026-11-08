@@ -762,7 +762,7 @@ cm_lane_for_path() {
 # ---- per-lane handle file ---------------------------------------------------------------------
 # $CM_HOME/lanes/<lane>/handle: ONE line, tab separated: terminal handle, host, agent, pid, written-at
 # (UTC, ISO 8601). Written by scripts/lane-handles.sh from the LIVE agent process
-# (scripts/live-agent.sh reads ORCA_TERMINAL_HANDLE from /proc/<pid>/environ), never from the ledger.
+# (scripts/live-agent.sh reads PLUGLY_TERMINAL_HANDLE first, else ORCA_TERMINAL_HANDLE, from /proc/<pid>/environ), never from the ledger.
 # A handle of "-" means "no usable live agent as of written-at" (none found, two agents, or an
 # inherited handle another lane holds): a send must not happen. The file is not secret and never holds
 # a token. Why it exists: a ledger terminal handle goes stale after a restart or a moved terminal, and a

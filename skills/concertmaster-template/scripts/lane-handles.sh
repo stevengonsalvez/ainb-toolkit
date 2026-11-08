@@ -10,7 +10,7 @@
 # A ledger terminal handle goes stale after a restart or a moved terminal, and a send that trusted one
 # reached the wrong terminal or started a second agent in a live lane. This writes
 # $CM_HOME/lanes/<worker-id>/handle (lib.sh, "per-lane handle file") from scripts/live-agent.sh, which
-# reads ORCA_TERMINAL_HANDLE out of the agent's own /proc environment. A terminal send to a lane
+# reads PLUGLY_TERMINAL_HANDLE first, else ORCA_TERMINAL_HANDLE, out of the agent's own /proc environment. A terminal send to a lane
 # reads it through cm_lane_handle (lib.sh) or `--get`; a missing, empty, stale or unparsable file is re-checked
 # (`--worker <id>`) and refused (exit 3) when that still gives no verified live agent: the ledger handle
 # is never a fallback. Run it before a send that must reach a lane's current terminal, or once per tick.
@@ -159,7 +159,7 @@ while IFS=$US read -r lane host path term dup id <&3; do   # unit separator: an 
 done 3< "$TMP/rows.tsv"
 
 # ---- phase 2: one handle may belong to one worker ----------------------------------------------------
-# An agent started from someone else's terminal inherits THAT terminal's ORCA_TERMINAL_HANDLE. A handle is
+# An agent started from someone else's terminal inherits THAT terminal's PLUGLY_TERMINAL_HANDLE or ORCA_TERMINAL_HANDLE. A handle is
 # held when (a) another worker's ledger row has it as its terminal, (b) another worker in this run found it
 # live, or (c) another worker's FRESH handle file (a worker not looked at in this run) holds it. Every worker that
 # claims a held handle is marked dead.
