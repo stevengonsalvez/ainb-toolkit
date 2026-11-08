@@ -9,6 +9,8 @@
 # send and never trusted, and the ledger handle is never a fallback; a failed write never leaves the old
 # handle to be served; ids and fields that would forge a row are refused; the file holds the observation
 # time; an installed copy carries the helper scripts; concurrent refreshes leave one whole line.
+# The handle is read from PLUGLY_TERMINAL_HANDLE first, else ORCA_TERMINAL_HANDLE, in the pid check too: both
+# orders, empty, hostile and repeated names.
 # Fake /proc via CM_PROC_ROOT, as in test/live-agent.sh. Touches nothing outside a mktemp dir.
 #
 #   scripts/test/lane-handles.sh       # exit 0 when every case passes
@@ -707,6 +709,60 @@ echo "--- the checks themselves"
 # write dies of SIGPIPE, and under pipefail the check fails on a correct output (seen on a loaded host). A here-string has no writer.
 PIPE_GREP_Q='printf [^|]*[|] *grep -[A-Za-z]*q'
 check "no check pipes printf into grep -q (SIGPIPE under pipefail fails a correct output when the host is loaded): here-strings only" '! grep -nE "$PIPE_GREP_Q" "$HERE/lane-handles.sh"'
+
+echo "--- the Plugly terminal handle: _cm_lane_agent_alive and lane-handles.sh read PLUGLY_TERMINAL_HANDLE first, else ORCA_TERMINAL_HANDLE"
+# shellcheck disable=SC2059  # the format carries the NUL separators on purpose
+penv() { local pid="$1" fmt="$2"; shift 2; printf "$fmt" "$@" > "$P/$pid/environ"; }
+alive() { _cm_lane_agent_alive "$@" 2>/dev/null; echo $?; }
+reset_proc; mkproc 401 "$WT" "" claude
+penv 401 'HOME=/h\0PLUGLY_TERMINAL_HANDLE=term_plug\0'
+check "plugly (a): only PLUGLY set: the file handle equal to it is alive (0)" '[ "$(alive 401 term_plug)" = 0 ]'
+penv 401 'HOME=/h\0ORCA_TERMINAL_HANDLE=term_orca\0'
+check "plugly (b): only ORCA set: alive (0) for it, 2 for another handle (unchanged)" '[ "$(alive 401 term_orca)" = 0 ] && [ "$(alive 401 term_other)" = 2 ]'
+penv 401 'ORCA_TERMINAL_HANDLE=term_orca\0PLUGLY_TERMINAL_HANDLE=term_plug\0'
+check "plugly (c1): both set and different, ORCA first: PLUGLY is 0, the ORCA handle is 2" '[ "$(alive 401 term_plug)" = 0 ] && [ "$(alive 401 term_orca)" = 2 ]'
+penv 401 'PLUGLY_TERMINAL_HANDLE=term_plug\0ORCA_TERMINAL_HANDLE=term_orca\0'
+check "plugly (c2): both set and different, PLUGLY first: PLUGLY is 0, the ORCA handle is 2" '[ "$(alive 401 term_plug)" = 0 ] && [ "$(alive 401 term_orca)" = 2 ]'
+penv 401 'ORCA_TERMINAL_HANDLE=term_orca\0PLUGLY_TERMINAL_HANDLE=term_plug'
+check "plugly (c3): PLUGLY last with no closing NUL: still wins" '[ "$(alive 401 term_plug)" = 0 ] && [ "$(alive 401 term_orca)" = 2 ]'
+penv 401 'PLUGLY_TERMINAL_HANDLE=term_same\0ORCA_TERMINAL_HANDLE=term_same\0'
+check "plugly (d): both set and equal: alive (0)" '[ "$(alive 401 term_same)" = 0 ]'
+penv 401 'PLUGLY_TERMINAL_HANDLE=\0ORCA_TERMINAL_HANDLE=term_orca\0'
+check "plugly (e1): PLUGLY set but empty, ORCA first or last, ORCA set: ORCA is the handle" '[ "$(alive 401 term_orca)" = 0 ] && [ "$(alive 401 term_plug)" = 2 ]'
+penv 401 'ORCA_TERMINAL_HANDLE=term_orca\0PLUGLY_TERMINAL_HANDLE=\0'
+check "plugly (e2): ORCA first, PLUGLY empty after it: ORCA is the handle" '[ "$(alive 401 term_orca)" = 0 ]'
+penv 401 'PLUGLY_TERMINAL_HANDLE=\0HOME=/h\0'
+check "plugly (e3): PLUGLY empty and no ORCA: 2 (an empty PLUGLY is not a terminal)" '[ "$(alive 401 term_orca)" = 2 ]'
+penv 401 'PLUGLY_TERMINAL_HANDLE=bad;rm -rf\0ORCA_TERMINAL_HANDLE=term_orca\0'
+check "plugly (f1): hostile PLUGLY never falls back to ORCA: the ORCA handle is 2" '[ "$(alive 401 term_orca)" = 2 ]'
+penv 401 'ORCA_TERMINAL_HANDLE=term_orca\0PLUGLY_TERMINAL_HANDLE=-x\0'
+check "plugly (f2): a hostile PLUGLY after ORCA still wins: the ORCA handle is 2" '[ "$(alive 401 term_orca)" = 2 ]'
+penv 401 'PLUGLY_TERMINAL_HANDLE=term_first\0HOME=/h\0PLUGLY_TERMINAL_HANDLE=term_last\0'
+check "plugly (dup): PLUGLY twice with different values: the FIRST counts (0 for it, 2 for the last)" '[ "$(alive 401 term_first)" = 0 ] && [ "$(alive 401 term_last)" = 2 ]'
+penv 401 'ORCA_TERMINAL_HANDLE=term_first\0ORCA_TERMINAL_HANDLE=term_last\0'
+check "plugly (dup): ORCA twice with different values and no PLUGLY: the FIRST counts" '[ "$(alive 401 term_first)" = 0 ] && [ "$(alive 401 term_last)" = 2 ]'
+penv 401 'PLUGLY_TERMINAL_HANDLE=\0PLUGLY_TERMINAL_HANDLE=term_late\0ORCA_TERMINAL_HANDLE=term_orca\0'
+check "plugly (dup): an empty first PLUGLY counts, a later non-empty one is ignored: ORCA is the handle" '[ "$(alive 401 term_orca)" = 0 ] && [ "$(alive 401 term_late)" = 2 ]'
+penv 401 'HOME=/h\0'
+check "plugly: neither set: 2 (carries no terminal), as before" '[ "$(alive 401 term_orca)" = 2 ]'
+check "plugly: a gone pid is still 1" '[ "$(alive 99991 term_plug)" = 1 ]'
+penv 401 'PLUGLY_TERMINAL_HANDLE=term_plug\0'; chmod 000 "$P/401/environ"
+if [ -r "$P/401/environ" ]; then echo "SKIP unreadable-environ case: this user reads a mode 000 file (root)"; else
+  check "plugly: an unreadable environ is still 3 (fail closed)" '[ "$(alive 401 term_plug)" = 3 ]'
+fi
+chmod 644 "$P/401/environ"
+# end to end through lane-handles.sh: a lane already on Plugly (ORCA unset) is found and its file written
+mkledger; rm -rf -- "${CM_HOME:?}/lanes"; reset_proc; mkproc 410 "$WT" "" claude
+penv 410 'HOME=/h\0PLUGLY_TERMINAL_HANDLE=term_on_plugly\0'
+lh --quiet
+check "plugly: lane-handles.sh finds a lane that only has PLUGLY_TERMINAL_HANDLE and records its handle" '[ "$(field w-one 1)" = term_on_plugly ] && [ "$(field w-one 4)" = 410 ]'
+cm_lane_handle w-one >"$ROOT/out" 2>/dev/null; RC=$?
+check "plugly: ...and the reader serves it (the pid check agrees)" '[ "$RC" = 0 ] && [ "$(cat "$ROOT/out")" = term_on_plugly ]'
+mkledger; rm -rf -- "${CM_HOME:?}/lanes"; reset_proc; mkproc 411 "$WT" "" claude
+penv 411 'ORCA_TERMINAL_HANDLE=term_inherited\0PLUGLY_TERMINAL_HANDLE=term_real_plugly\0'
+lh --quiet
+check "plugly: an agent started from an Orca shell (both set, different): the file holds the PLUGLY handle, not the inherited ORCA one" '[ "$(field w-one 1)" = term_real_plugly ]'
+rm -rf -- "${CM_HOME:?}/lanes"
 
 echo
 printf 'passed=%s failed=%s\n' "$PASS" "$FAIL"

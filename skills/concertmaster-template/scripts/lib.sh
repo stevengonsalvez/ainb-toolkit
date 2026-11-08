@@ -880,7 +880,7 @@ _cm_lane_handle_commit() {
 }
 
 # _cm_lane_agent_alive <pid> <handle>: the agent the file was written from is still the process holding that
-# terminal: /proc/<pid> exists and its environ ORCA_TERMINAL_HANDLE is <handle>. No /proc on this host
+# terminal: /proc/<pid> exists and its environ PLUGLY_TERMINAL_HANDLE (first, when non-empty) else ORCA_TERMINAL_HANDLE is <handle>. No /proc on this host
 # (macOS): cannot tell, 0 (lane-handles.sh's own live check exits 3 there too). A process entry that
 # cannot be read fails closed. Returns 0 alive, 1 the pid is gone, 2 it carries another terminal, 3 its
 # environ is unreadable (another uid, hidepid). What it proves: the process EXISTS and was STARTED with
@@ -893,9 +893,17 @@ _cm_lane_agent_alive() {
   [ -d "$root" ] || return 0
   [ -d "$root/$1" ] || return 1
   [ -r "$root/$1/environ" ] || return 3
+  # The whole environ is read before choosing (the names come in either order): PLUGLY_TERMINAL_HANDLE when
+  # present and non-empty, else ORCA_TERMINAL_HANDLE, as in live-agent.sh. The first occurrence of a name counts.
+  local hp="" ho="" sp=0 so=0
   while IFS= read -r -d '' kv || [ -n "$kv" ]; do
-    case "$kv" in ORCA_TERMINAL_HANDLE=*) if [ "${kv#ORCA_TERMINAL_HANDLE=}" = "$2" ]; then return 0; fi; return 2 ;; esac
+    case "$kv" in
+      PLUGLY_TERMINAL_HANDLE=*) if [ "$sp" = 0 ]; then sp=1; hp="${kv#PLUGLY_TERMINAL_HANDLE=}"; fi ;;
+      ORCA_TERMINAL_HANDLE=*)   if [ "$so" = 0 ]; then so=1; ho="${kv#ORCA_TERMINAL_HANDLE=}"; fi ;;
+    esac
   done < "$root/$1/environ"
+  if [ -n "$hp" ]; then kv="$hp"; elif [ "$so" = 1 ]; then kv="$ho"; else return 2; fi
+  if [ "$kv" = "$2" ]; then return 0; fi
   return 2
 }
 
