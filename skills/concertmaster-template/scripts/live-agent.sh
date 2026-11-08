@@ -10,9 +10,10 @@
 #
 # Per match one line on stdout, tab separated: pid, handle, agent.
 #   pid     the process id on the host that was scanned
-#   handle  ORCA_TERMINAL_HANDLE from the process environment (the REAL terminal handle),
-#           empty when the process was not started by an Orca terminal or its environ is
-#           unreadable
+#   handle  PLUGLY_TERMINAL_HANDLE from the process environment when present and non-empty,
+#           else ORCA_TERMINAL_HANDLE (the REAL terminal handle; PLUGLY wins when both are set),
+#           empty when the process was not started by a Plugly or Orca terminal or its environ
+#           is unreadable
 #   agent   the configured agent name the command line matched (claude, codex, agy, ...)
 #
 # A match is a process of this user that is not a zombie, runs on a terminal (an Orca agent
@@ -180,9 +181,17 @@ for d in "$PROC"/[0-9]*; do
   fi
   handle=""
   if [ -r "$d/environ" ]; then
+    # Read the WHOLE environ before choosing: the two names come in either order. PLUGLY_TERMINAL_HANDLE is
+    # the handle when present and non-empty (a Plugly daemon started from an Orca shell inherits that
+    # shell's ORCA_TERMINAL_HANDLE, and PLUGLY wins); otherwise ORCA_TERMINAL_HANDLE. The first occurrence of a name counts.
+    h_plugly=""; h_orca=""; seen_plugly=0; seen_orca=0
     while IFS= read -r -d '' kv || [ -n "$kv" ]; do
-      case "$kv" in ORCA_TERMINAL_HANDLE=*) handle="${kv#ORCA_TERMINAL_HANDLE=}"; break ;; esac
+      case "$kv" in
+        PLUGLY_TERMINAL_HANDLE=*) if [ "$seen_plugly" = 0 ]; then seen_plugly=1; h_plugly="${kv#PLUGLY_TERMINAL_HANDLE=}"; fi ;;
+        ORCA_TERMINAL_HANDLE=*)   if [ "$seen_orca" = 0 ]; then seen_orca=1; h_orca="${kv#ORCA_TERMINAL_HANDLE=}"; fi ;;
+      esac
     done < "$d/environ"
+    if [ -n "$h_plugly" ]; then handle="$h_plugly"; else handle="$h_orca"; fi
   fi
   # The handle is written to the ledger and into commands later: a plain token only.
   case "$handle" in -*|*[!A-Za-z0-9._:-]*) handle="" ;; esac   # a leading "-" would read as an option wherever the handle is used
