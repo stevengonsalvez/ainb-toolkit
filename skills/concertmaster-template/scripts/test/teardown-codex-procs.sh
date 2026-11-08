@@ -201,6 +201,40 @@ if [ "$rc" = 3 ] && has "non-shell processes run in the worktree" && alive "$IP"
 td "$I" STUB_TERMS="$ROOT/terms.json" -- --close-handle term_live_1
 if [ "$rc" = 0 ] && has "stop leftover codex processes"; then ok "named by --close-handle it is planned for the pid stop (dry run)"; else bad "close-handle exempts it" "$OUT"; fi
 
+echo "== the terminal is read from PLUGLY_TERMINAL_HANDLE first (a Plugly lane, or a Plugly daemon started from an Orca shell)"
+J="$(mkwt cx-j)"
+lists $'cm:running\ncm:child cx-j'
+(cd "$J" && exec env -u ORCA_TERMINAL_HANDLE PLUGLY_TERMINAL_HANDLE=term_live_1 "$ROOT/stub-term/codex" app-server) >/dev/null 2>&1 &
+JP=$!; echo "$JP" >> "$STARTED"; sleep 0.5; JC="$(child_of "$JP")"
+td "$J" STUB_TERMS="$ROOT/terms.json" -- --apply
+if [ "$rc" = 3 ] && has "non-shell processes run in the worktree" && alive "$JP" && alive "$JC"; then ok "plugly: only PLUGLY_TERMINAL_HANDLE set: the live terminal still refuses"; else bad "plugly only" "$OUT"; fi
+td "$J" STUB_TERMS="$ROOT/terms.json" -- --close-handle term_live_1
+if [ "$rc" = 0 ] && has "stop leftover codex processes"; then ok "plugly: named by --close-handle it is planned for the pid stop"; else bad "plugly close-handle" "$OUT"; fi
+K="$(mkwt cx-k)"
+lists $'cm:running\ncm:child cx-k'
+(cd "$K" && exec env ORCA_TERMINAL_HANDLE=term_inherited PLUGLY_TERMINAL_HANDLE=term_live_1 "$ROOT/stub-term/codex" app-server) >/dev/null 2>&1 &
+KP=$!; echo "$KP" >> "$STARTED"; sleep 0.5; KC="$(child_of "$KP")"
+td "$K" STUB_TERMS="$ROOT/terms.json" -- --apply
+if [ "$rc" = 3 ] && has "non-shell processes run in the worktree" && alive "$KP" && alive "$KC"; then ok "plugly: both set and different: PLUGLY wins (the live terminal), the inherited ORCA handle is ignored: refuses"; else bad "plugly wins over inherited orca" "$OUT"; fi
+
+# a real process whose environ holds PLUGLY_TERMINAL_HANDLE twice (env(1) cannot make a duplicate, so execve is called through ctypes)
+if command -v python3 >/dev/null 2>&1; then
+  M="$(mkwt cx-m)"
+  lists $'cm:running\ncm:child cx-m'
+  (cd "$M" && exec python3 -c 'import ctypes,sys
+l=ctypes.CDLL(None); p=sys.argv[1].encode()
+a=(ctypes.c_char_p*3)(p,b"app-server",None)
+e=(ctypes.c_char_p*4)(b"PLUGLY_TERMINAL_HANDLE=term_live_1",b"PATH=/usr/bin:/bin",b"PLUGLY_TERMINAL_HANDLE=term_other",None)
+l.execve(p,a,e)' "$ROOT/stub-term/codex") >/dev/null 2>&1 &
+  MP=$!; echo "$MP" >> "$STARTED"; sleep 0.5; MC="$(child_of "$MP")"
+  td "$M" STUB_TERMS="$ROOT/terms.json" -- --apply
+  if [ "$rc" = 3 ] && has "non-shell processes run in the worktree" && alive "$MP" && alive "$MC"; then ok "plugly (dup): PLUGLY twice, the FIRST (a live terminal) counts: refuses"; else bad "plugly dup first" "$OUT"; fi
+  td "$M" STUB_TERMS="$ROOT/terms.json" -- --close-handle term_live_1
+  if [ "$rc" = 0 ] && has "stop leftover codex processes"; then ok "plugly (dup): --close-handle of the FIRST value exempts it"; else bad "plugly dup close-handle" "$OUT"; fi
+else
+  echo "SKIP plugly (dup): no python3"
+fi
+
 echo "== no codex process: nothing to stop"
 E="$(mkwt cx-e)"
 lists $'cm:running\ncm:child cx-e'

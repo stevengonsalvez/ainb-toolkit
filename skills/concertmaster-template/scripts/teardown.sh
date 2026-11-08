@@ -845,10 +845,10 @@ fi
 
 # ---- processes with cwd in the worktree --------------------------------------
 # Scan cwds on the host (lsof, else /proc) and map each process to its Orca
-# terminal through the ORCA_TERMINAL_HANDLE in its environment (/proc environ
-# on Linux, ps eww on macOS). A non-shell process is exempt ONLY when its
-# handle was named with --close-handle; with no handle (started outside an
-# Orca terminal, or the mapping failed) it always refuses.
+# terminal through the PLUGLY_TERMINAL_HANDLE (first, when non-empty) else the ORCA_TERMINAL_HANDLE in its
+# environment (/proc environ on Linux, ps eww on macOS). A non-shell process is exempt ONLY when its
+# handle was named with --close-handle; with no handle (started outside a
+# Plugly or Orca terminal, or the mapping failed) it always refuses.
 # Leftover codex processes. A codex app-server (and the node or shell children it spawned) outlives its
 # terminal and keeps burning CPU after the worktree is gone. They are found by cwd and by tree, never by
 # name alone, and stopped by EXACT pid on --apply, before the worktree is removed:
@@ -938,10 +938,12 @@ if [ -n "$WT" ]; then
   SCAN='wt=$1
 handle_of() {
   if [ -r "/proc/$1/environ" ]; then
-    tr "\000" "\n" < "/proc/$1/environ" 2>/dev/null | sed -n "s/^ORCA_TERMINAL_HANDLE=//p" | head -n 1
+    e=$(tr "\000" "\n" < "/proc/$1/environ" 2>/dev/null)
   else
-    ps eww -o command= -p "$1" 2>/dev/null | tr " " "\n" | sed -n "s/^ORCA_TERMINAL_HANDLE=//p" | head -n 1
+    e=$(ps eww -o command= -p "$1" 2>/dev/null | tr " " "\n")
   fi
+  p=$(printf "%s\n" "$e" | sed -n "s/^PLUGLY_TERMINAL_HANDLE=//p" | head -n 1)
+  if [ -n "$p" ]; then printf "%s\n" "$p"; else printf "%s\n" "$e" | sed -n "s/^ORCA_TERMINAL_HANDLE=//p" | head -n 1; fi
 }
 list() {
   if command -v lsof >/dev/null 2>&1; then
