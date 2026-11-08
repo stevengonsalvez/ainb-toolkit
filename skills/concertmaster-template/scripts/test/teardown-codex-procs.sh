@@ -235,6 +235,56 @@ else
   echo "SKIP plugly (dup): no python3"
 fi
 
+# a hostile PLUGLY_TERMINAL_HANDLE value (a newline at its start or end, or a forged ORCA_TERMINAL_HANDLE= line inside it) never falls
+# back to ORCA and never yields a handle: the process counts as having no terminal, so a leftover codex is planned for the pid stop
+# (a live-terminal handle would refuse). Each case runs with a real ORCA_TERMINAL_HANDLE naming the live terminal and without one.
+# env(1) cannot hold a newline-bearing name=value reliably across shells, so execve is called through ctypes with the exact entries.
+PYEXEC='import ctypes,sys
+l=ctypes.CDLL(None); p=sys.argv[1].encode()
+a=(ctypes.c_char_p*3)(p,b"app-server",None)
+ents=[x.encode() for x in sys.argv[2:]]+[b"PATH=/usr/bin:/bin"]
+e=(ctypes.c_char_p*(len(ents)+1))(*ents,None)
+l.execve(p,a,e)'
+hostile_case() {   # hostile_case <label> <dir-name> <PLUGLY value> [ORCA entry]
+  local label="$1" name="$2" val="$3" W HP HC
+  local -a ents=("PLUGLY_TERMINAL_HANDLE=$val")
+  [ -z "${4:-}" ] || ents+=("$4")
+  W="$(mkwt "$name")"
+  lists $'cm:running\ncm:child '"$name"
+  (cd "$W" && exec python3 -c "$PYEXEC" "$ROOT/stub-term/codex" "${ents[@]}") >/dev/null 2>&1 &
+  HP=$!; echo "$HP" >> "$STARTED"; sleep 0.5; HC="$(child_of "$HP")"
+  td "$W" STUB_TERMS="$ROOT/terms.json"
+  if [ "$rc" = 0 ] && has "stop leftover codex processes" && ! has "non-shell processes run in the worktree"; then ok "$label: no handle, not taken for the live terminal"; else bad "$label" "$OUT"; fi
+  if alive "$HP" && alive "$HC"; then ok "$label: and a dry run did not touch it"; else bad "$label: touched"; fi
+}
+live_case() {   # live_case <label> <dir-name> <env entry>...: the process is taken for the live terminal, so a dry run refuses
+  local label="$1" name="$2" W HP HC; shift 2
+  W="$(mkwt "$name")"
+  lists $'cm:running\ncm:child '"$name"
+  (cd "$W" && exec python3 -c "$PYEXEC" "$ROOT/stub-term/codex" "$@") >/dev/null 2>&1 &
+  HP=$!; echo "$HP" >> "$STARTED"; sleep 0.5; HC="$(child_of "$HP")"
+  td "$W" STUB_TERMS="$ROOT/terms.json"
+  if [ "$rc" = 3 ] && has "non-shell processes run in the worktree"; then ok "$label: taken for the live terminal, refuses"; else bad "$label" "$OUT"; fi
+  if alive "$HP" && alive "$HC"; then ok "$label: and not touched"; else bad "$label: touched"; fi
+}
+if command -v python3 >/dev/null 2>&1; then
+  hostile_case "plugly hostile (leading newline), real ORCA" cx-n1 $'\nx' ORCA_TERMINAL_HANDLE=term_live_1
+  hostile_case "plugly hostile (leading newline), no ORCA" cx-n2 $'\nx'
+  hostile_case "plugly hostile (trailing newline), real ORCA" cx-n3 $'term_live_1\n' ORCA_TERMINAL_HANDLE=term_live_1
+  hostile_case "plugly hostile (trailing newline), no ORCA" cx-n4 $'term_live_1\n'
+  hostile_case "plugly hostile (forged ORCA line inside), real ORCA" cx-n5 $'\nORCA_TERMINAL_HANDLE=term_live_1' ORCA_TERMINAL_HANDLE=term_live_1
+  hostile_case "plugly hostile (forged ORCA line inside), no ORCA" cx-n6 $'\nORCA_TERMINAL_HANDLE=term_live_1'
+  hostile_case "plugly hostile (leading dash), real ORCA" cx-n7 '-term_live_1' ORCA_TERMINAL_HANDLE=term_live_1
+  # a ":" is a legal handle character, so the scan line must not let it move the fields (it is parsed from a TAB separated line)
+  hostile_case "plugly value x:term_live_1 (a colon)" cx-n8 'x:term_live_1'
+  # the positive paths still work after the rewrite
+  live_case "plugly empty, real ORCA after it" cx-p1 PLUGLY_TERMINAL_HANDLE= ORCA_TERMINAL_HANDLE=term_live_1
+  live_case "ORCA first, plugly empty after it" cx-p2 ORCA_TERMINAL_HANDLE=term_live_1 PLUGLY_TERMINAL_HANDLE=
+  live_case "ORCA before PLUGLY, both term_live_1" cx-p3 ORCA_TERMINAL_HANDLE=term_live_1 PLUGLY_TERMINAL_HANDLE=term_live_1
+else
+  echo "SKIP plugly hostile: no python3"
+fi
+
 echo "== no codex process: nothing to stop"
 E="$(mkwt cx-e)"
 lists $'cm:running\ncm:child cx-e'

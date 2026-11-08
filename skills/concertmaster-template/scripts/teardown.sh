@@ -849,6 +849,11 @@ fi
 # environment (/proc environ on Linux, ps eww on macOS). A non-shell process is exempt ONLY when its
 # handle was named with --close-handle; with no handle (started outside a
 # Plugly or Orca terminal, or the mapping failed) it always refuses.
+# handle_of reads the whole environ NUL-safe (a value may hold a newline), takes the FIRST value of each
+# name, chooses PLUGLY when it is non-empty, else ORCA, then keeps a plain token only (no leading "-",
+# nothing outside [A-Za-z0-9._:-], so no newline): a hostile PLUGLY value gives an empty handle and never
+# falls back to ORCA, as in live-agent.sh and _cm_lane_agent_alive. The macOS ps eww branch (no /proc) is
+# split on spaces, so a value that holds a space is cut at it; that is best effort and cannot be made exact.
 # Leftover codex processes. A codex app-server (and the node or shell children it spawned) outlives its
 # terminal and keeps burning CPU after the worktree is gone. They are found by cwd and by tree, never by
 # name alone, and stopped by EXACT pid on --apply, before the worktree is removed:
@@ -936,14 +941,23 @@ NONSHELL=""
 if [ -n "$WT" ]; then
   # shellcheck disable=SC2016
   SCAN='wt=$1
+pick() {
+  case "$1" in
+    PLUGLY_TERMINAL_HANDLE=*) if [ "$sp" = 0 ]; then sp=1; hp="${1#PLUGLY_TERMINAL_HANDLE=}"; fi ;;
+    ORCA_TERMINAL_HANDLE=*)   if [ "$so" = 0 ]; then so=1; ho="${1#ORCA_TERMINAL_HANDLE=}"; fi ;;
+  esac
+}
 handle_of() {
+  local hp="" ho="" sp=0 so=0 kv e h
   if [ -r "/proc/$1/environ" ]; then
-    e=$(tr "\000" "\n" < "/proc/$1/environ" 2>/dev/null)
+    while IFS= read -r -d "" kv || [ -n "$kv" ]; do pick "$kv"; done < "/proc/$1/environ"
   else
-    e=$(ps eww -o command= -p "$1" 2>/dev/null | tr " " "\n")
+    e=$(ps eww -o command= -p "$1" 2>/dev/null)
+    while IFS= read -r -d "" kv || [ -n "$kv" ]; do pick "$kv"; done < <(printf "%s" "$e" | tr " " "\000")
   fi
-  p=$(printf "%s\n" "$e" | sed -n "s/^PLUGLY_TERMINAL_HANDLE=//p" | head -n 1)
-  if [ -n "$p" ]; then printf "%s\n" "$p"; else printf "%s\n" "$e" | sed -n "s/^ORCA_TERMINAL_HANDLE=//p" | head -n 1; fi
+  if [ -n "$hp" ]; then h="$hp"; else h="$ho"; fi
+  case "$h" in -*|*[!A-Za-z0-9._:-]*) h="" ;; esac
+  printf "%s\n" "$h"
 }
 list() {
   if command -v lsof >/dev/null 2>&1; then
@@ -956,25 +970,28 @@ list() {
     echo "0 scan-unavailable"
   fi
 }
-list | while read -r pid comm; do printf "%s:%s:%s\n" "$pid" "$comm" "$(handle_of "$pid")"; done'
+list | while read -r pid comm; do printf "%s\t%s\t%s\n" "$pid" "$comm" "$(handle_of "$pid")"; done'
   EXEMPT=""
+  TAB=$'\t'
   if PROCS="$(rrun "$SCAN" "$WT" 2>/dev/null)"; then
     NONSHELL=""
     while IFS= read -r pl; do
       [ -n "$pl" ] || continue
-      ph="${pl##*:}"; pc="${pl%:*}"; pc="${pc#*:}"
+      # one line per process, TAB separated: pid, comm, handle. A handle is a plain token that cannot hold a TAB, and the
+      # pid comes first, so a ":" in the handle (or in comm) cannot move the fields.
+      pp="${pl%%"$TAB"*}"; ph="${pl##*"$TAB"}"; pc="${pl#*"$TAB"}"; pc="${pc%"$TAB"*}"
       case "$pc" in bash|zsh|sh|dash|fish|login|tmux|-bash|-zsh|-sh) continue ;; esac
       # a leftover codex process (or its child) is stopped by pid on --apply, so it does not block
       # unless it still belongs to a LIVE terminal of this worktree that --close-handle does not name: that is
       # a running session, not a leftover, and it refuses like any other process.
-      case " $CODEX_PIDS " in *" ${pl%%:*} "*)
+      case " $CODEX_PIDS " in *" $pp "*)
         if [ -z "$ph" ] || ! printf '%s\n' "${HANDLES:-}" | grep -qxF -- "$ph"; then continue; fi
         case "$CLOSE_HANDLES" in *" $ph "*) continue ;; esac ;;
       esac
       if [ -n "$ph" ]; then
-        case "$CLOSE_HANDLES" in *" $ph "*) EXEMPT="$EXEMPT ${pl%%:*}:$pc@$ph"; continue ;; esac
+        case "$CLOSE_HANDLES" in *" $ph "*) EXEMPT="$EXEMPT $pp:$pc@$ph"; continue ;; esac
       fi
-      NONSHELL="$NONSHELL ${pl%%:*}:$pc@${ph:-no-terminal}"
+      NONSHELL="$NONSHELL $pp:$pc@${ph:-no-terminal}"
     done <<EOF_PROCS
 $PROCS
 EOF_PROCS
