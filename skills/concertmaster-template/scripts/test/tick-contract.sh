@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# cm-test: rm-cleanup (its EXIT trap rm -rf-s its own mktemp dir)
+# cm-test: rm-cleanup (its EXIT trap rm -rf-s its own mktemp dir; CM_TEST_KEEP_TMP=1 keeps it)
 # shellcheck disable=SC2015  # pass() always succeeds, so A && pass || fail is if-then-else here
 # tick-contract.sh (test): SKILL.md carries the "no light ticks" contract in BOTH places that govern a tick
 # (§ The tick and § Reporting) in the same words, and no sentence still lets a tick skip the table.
@@ -83,7 +83,7 @@ if [ -z "${TICK_CONTRACT_NESTED:-}" ]; then
   if command -v python3 >/dev/null 2>&1; then
     BR="$(mktemp -d "${TMPDIR:-/tmp}/cm-tick-contract.XXXXXX")" || BR=""
     if [ -n "$BR" ]; then
-      trap 'rm -rf -- "${BR:?}"' EXIT
+      trap '[ "${CM_TEST_KEEP_TMP:-}" = 1 ] && echo "cm-test: CM_TEST_KEEP_TMP set, kept $BR" >&2 || rm -rf -- "${BR:?}"' EXIT
       cp -R "$HERE/../.." "$BR/skill"
       brk=0; brn=0
       for ph in "${PINS[@]}"; do
