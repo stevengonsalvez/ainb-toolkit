@@ -6,7 +6,8 @@
 # a shell, an editor and sleep in the worktree; a subdirectory cwd; an interpreter wrapper (node, bun)
 # with options; a configured agent list; no /proc; an unreadable own-uid entry; a tty-less broker and a
 # zombie; a remote host over a stubbed ssh (wrong machine, FQDN, down); cm_worker_set_handle guards
-# (unknown worker, bad handle, a handle another live worker holds, --by-path with none or two matches).
+# (unknown worker, bad handle, a handle another live worker holds, --by-path with none or two matches), and
+# the terminal handle read from PLUGLY_TERMINAL_HANDLE first, else ORCA_TERMINAL_HANDLE.
 # Touches nothing outside a mktemp dir. No real orca, no network. The scans use a fake /proc under that
 # dir; one case (CM_PROC_ROOT without CM_TEST=1) lets live-agent.sh read the real /proc, read-only.
 #
@@ -268,6 +269,57 @@ cm_worker_set_handle --by-path local "$WT" term_y 2>/dev/null
 # shellcheck disable=SC2034  # RC is read inside the eval-ed check below
 RC=$?
 check "--by-path with two workers at that path: exit 5, nothing guessed" '[ "$RC" = 5 ] && cmp -s "$ROOT/before.json" "$CM_HOME/ledger.json"'
+
+echo "--- live-agent.sh: the Plugly terminal handle (PLUGLY_TERMINAL_HANDLE first, else ORCA_TERMINAL_HANDLE)"
+# penv <pid> <printf-format> [args]: replace one fake pid's environ; the format carries its own \0 separators, so either order is testable
+# shellcheck disable=SC2059  # the format carries the NUL separators on purpose
+penv() { local pid="$1" fmt="$2"; shift 2; printf "$fmt" "$@" > "$P/$pid/environ"; }
+handle_row() { CM_PROC_ROOT="$P" "$LA" "$WT" 2>/dev/null | cut -f2; }
+reset_proc; mkproc 301 "$WT" "" claude
+penv 301 'HOME=/h\0PLUGLY_TERMINAL_HANDLE=term_plug\0PATH=/p\0'
+check "plugly (a): only PLUGLY_TERMINAL_HANDLE set: that is the handle" '[ "$(handle_row)" = term_plug ]'
+penv 301 'HOME=/h\0ORCA_TERMINAL_HANDLE=term_orca\0PATH=/p\0'
+check "plugly (b): only ORCA_TERMINAL_HANDLE set: that is the handle (unchanged)" '[ "$(handle_row)" = term_orca ]'
+# both set, non-empty and different is AMBIGUOUS (an agent in an Orca terminal can carry a Plugly handle it inherited, or the
+# reverse): no handle, whichever comes first, and the process is still a row (so lane-handles.sh sees an agent with no handle)
+penv 301 'ORCA_TERMINAL_HANDLE=term_orca\0PLUGLY_TERMINAL_HANDLE=term_plug\0'
+check "plugly (c1): both set and different, ORCA first in the environ: ambiguous, empty handle, still one row" '[ -z "$(handle_row)" ] && [ "$(CM_PROC_ROOT="$P" "$LA" "$WT" | wc -l)" = 1 ]'
+penv 301 'PLUGLY_TERMINAL_HANDLE=term_plug\0ORCA_TERMINAL_HANDLE=term_orca\0'
+check "plugly (c2): both set and different, PLUGLY first in the environ: ambiguous, empty handle" '[ -z "$(handle_row)" ]'
+penv 301 'ORCA_TERMINAL_HANDLE=term_orca\0HOME=/h\0PLUGLY_TERMINAL_HANDLE=term_plug'
+check "plugly (c3): PLUGLY is the last variable with no closing NUL, ORCA before it: still read, ambiguous, empty handle" '[ -z "$(handle_row)" ]'
+penv 301 'ORCA_TERMINAL_HANDLE=term_live_orca\0PLUGLY_TERMINAL_HANDLE=term_inherited_plugly\0'
+check "plugly (c4): an agent in an Orca terminal with an inherited PLUGLY handle: neither handle is reported" '[ -z "$(handle_row)" ]'
+check "plugly (c5): the row keeps its format (pid, empty handle, agent)" '[ "$(CM_PROC_ROOT="$P" "$LA" "$WT" 2>/dev/null)" = "301		claude" ]'
+penv 301 'PLUGLY_TERMINAL_HANDLE=term_same\0ORCA_TERMINAL_HANDLE=term_same\0'
+check "plugly (d): both set and equal: that handle" '[ "$(handle_row)" = term_same ]'
+penv 301 'ORCA_TERMINAL_HANDLE=term_same\0HOME=/h\0PLUGLY_TERMINAL_HANDLE=term_same\0'
+check "plugly (d2): both set and equal, ORCA first: that handle" '[ "$(handle_row)" = term_same ]'
+penv 301 'PLUGLY_TERMINAL_HANDLE=\0ORCA_TERMINAL_HANDLE=term_orca\0'
+check "plugly (e1): PLUGLY set but empty (first), ORCA set: ORCA" '[ "$(handle_row)" = term_orca ]'
+penv 301 'ORCA_TERMINAL_HANDLE=term_orca\0PLUGLY_TERMINAL_HANDLE=\0'
+check "plugly (e2): PLUGLY set but empty (last), ORCA set: ORCA" '[ "$(handle_row)" = term_orca ]'
+penv 301 'PLUGLY_TERMINAL_HANDLE=\0'
+check "plugly (e3): PLUGLY set but empty and no ORCA: empty handle" '[ -z "$(handle_row)" ]'
+for hostile in '-x' 'a b' 'a;b' '-'; do
+  penv 301 'PLUGLY_TERMINAL_HANDLE=%s\0' "$hostile"
+  check "plugly (f): hostile PLUGLY value '$hostile': empty handle, the process is still a row" '[ -z "$(handle_row)" ] && [ "$(CM_PROC_ROOT="$P" "$LA" "$WT" | wc -l)" = 1 ]'
+  penv 301 'ORCA_TERMINAL_HANDLE=term_orca\0PLUGLY_TERMINAL_HANDLE=%s\0' "$hostile"
+  check "plugly (f): hostile PLUGLY value '$hostile' beside a clean ORCA one: still empty, never falls back to the ORCA handle" '[ -z "$(handle_row)" ]'
+done
+penv 301 'PLUGLY_TERMINAL_HANDLE=bad\nterm_orca\0'
+check "plugly (f): a newline inside the PLUGLY value: empty handle, one row" '[ -z "$(handle_row)" ] && [ "$(CM_PROC_ROOT="$P" "$LA" "$WT" | wc -l)" = 1 ]'
+penv 301 'PLUGLY_TERMINAL_HANDLE=-x\0ORCA_TERMINAL_HANDLE=-y\0'
+check "plugly (f): hostile ORCA value with no PLUGLY: empty handle, as before" '[ -z "$(handle_row)" ]'
+penv 301 'PLUGLY_TERMINAL_HANDLE=term_first\0HOME=/h\0PLUGLY_TERMINAL_HANDLE=term_last\0'
+check "plugly (dup): PLUGLY_TERMINAL_HANDLE twice with different values: the FIRST one counts" '[ "$(handle_row)" = term_first ]'
+penv 301 'ORCA_TERMINAL_HANDLE=term_first\0ORCA_TERMINAL_HANDLE=term_last\0'
+check "plugly (dup): ORCA_TERMINAL_HANDLE twice with different values and no PLUGLY: the FIRST one counts" '[ "$(handle_row)" = term_first ]'
+penv 301 'PLUGLY_TERMINAL_HANDLE=term_x\0ORCA_TERMINAL_HANDLE=term_x\0PLUGLY_TERMINAL_HANDLE=term_y\0'
+check "plugly (dup): a later different PLUGLY value does not make an equal pair ambiguous (the FIRST counts)" '[ "$(handle_row)" = term_x ]'
+# the rule lives in lib.sh cm_environ_handle; live-agent.sh carries a byte for byte copy (it is streamed to a remote bash with no lib.sh)
+fn_text() { awk '/^cm_environ_handle\(\) \{$/ { f = 1 } f { print } f && /^\}$/ { exit }' "$1"; }
+check "cm_environ_handle: the live-agent.sh copy is byte for byte the lib.sh one" '[ -n "$(fn_text "$SCRIPTS/lib.sh")" ] && [ "$(fn_text "$SCRIPTS/lib.sh")" = "$(fn_text "$LA")" ]'
 
 echo
 printf 'passed=%s failed=%s\n' "$PASS" "$FAIL"

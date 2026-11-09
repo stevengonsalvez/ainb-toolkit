@@ -325,13 +325,14 @@ and lane names also hold `:`, which is not a path token. One line, tab
 separated: `handle  host  agent  pid  written-at` (UTC, ISO 8601), mode 600, never a token.
 `scripts/lane-handles.sh` writes it, atomically (temp file in
 the lane directory, then `mv`), from `scripts/live-agent.sh`: the handle is the
-`ORCA_TERMINAL_HANDLE` in the live agent process's own environment, not the ledger's `terminal`. Why: a
+`PLUGLY_TERMINAL_HANDLE` (first, when non-empty), else `ORCA_TERMINAL_HANDLE`, in the live agent process's own environment, not the ledger's `terminal`
+(both set, non-empty and different is ambiguous: no handle, the lane is `no-handle`; `lib.sh` `cm_environ_handle`). Why: a
 ledger terminal handle goes stale after a restart or a moved terminal, and a send that trusted one typed
 into the wrong terminal or started a second agent in a live lane.
 
 | file says | meaning | `cm_lane_handle` (lib.sh) / `lane-handles.sh --get` |
 |---|---|---|
-| a handle, fresh | the one live agent, checked within `handles.max_age_s` (default 900 s); for a local agent its pid must also still exist and still carry that terminal (`/proc/<pid>/environ` `ORCA_TERMINAL_HANDLE`: proof it was started there, not that Orca has not moved it since), else the file counts as stale | prints it, exit 0 |
+| a handle, fresh | the one live agent, checked within `handles.max_age_s` (default 900 s); for a local agent its pid must also still exist and still carry that terminal (`/proc/<pid>/environ` `PLUGLY_TERMINAL_HANDLE` first, else `ORCA_TERMINAL_HANDLE`: proof it was started there, not that Orca has not moved it since), else the file counts as stale | prints it, exit 0 |
 | `-` (dead mark), fresh | no agent, two agents, a hand-started one beside an Orca one, or a handle another lane's ledger row holds | nothing printed, exit 1: no send |
 | older than `handles.max_age_s`, unparsable, empty, dated in the future, or a failed write on record | not trusted | the live check is re-run for this lane first; fresh after that: as above; otherwise exit 3, no send |
 | missing | never checked | the same re-check as a stale file; the ledger `terminal` is NEVER used as a fallback. Fresh after it: as above; otherwise exit 3, no send |

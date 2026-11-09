@@ -110,11 +110,17 @@ The self-skip and the live-agent check depend on which variable a terminal expor
 | runtime | variable | status |
 |---|---|---|
 | Orca terminal | `ORCA_TERMINAL_HANDLE` (also `ORCA_TAB_ID`, `ORCA_WORKTREE_ID`, `ORCA_WORKSPACE_ID`) | observed in a live Orca terminal; the dry run's own terminal read `skip: self` |
-| Plugly terminal | `PLUGLY_TERMINAL_HANDLE` (also `PLUGLY_TAB_ID`, `PLUGLY_WORKTREE_ID`) | read from Plugly's app source; NOT observed in a live Plugly terminal. No `PLUGLY_*` variable is set in an Orca terminal |
+| Plugly terminal | `PLUGLY_TERMINAL_HANDLE` (also `PLUGLY_TAB_ID`, `PLUGLY_WORKTREE_ID`) | observed in a live Plugly terminal: own=<listed handle>, orca=UNSET. No `PLUGLY_*` variable is set in an Orca terminal |
 
 `cutover-host.sh` treats a lane whose terminal is `$ORCA_TERMINAL_HANDLE` or `$PLUGLY_TERMINAL_HANDLE` as `skip: self`.
-`live-agent.sh` reads `ORCA_TERMINAL_HANDLE` from the agent process, so a lane that is already on Plugly is found only if
-Plugly exports that name too (or `live-agent.sh` is taught the Plugly one).
+`live-agent.sh` (and `_cm_lane_agent_alive` in `lib.sh`, and the `teardown.sh` process scan) read the handle from the agent process's
+environment: `PLUGLY_TERMINAL_HANDLE` when present and non-empty, else `ORCA_TERMINAL_HANDLE`. The whole environ is read first, so the
+order of the two names does not matter. A lane that is already on Plugly is therefore found. When BOTH are set, non-empty and
+DIFFERENT, the handle is AMBIGUOUS: an agent in an Orca terminal can carry a Plugly handle it inherited (the Orca daemon was started
+from a Plugly shell), or the reverse, and the environ cannot say which terminal it runs in. Then `live-agent.sh` gives no handle
+(`lane-handles.sh` reports `no-handle` and writes no terminal), `_cm_lane_agent_alive` answers 3 (cannot tell, fail closed), and the
+`teardown.sh` scan refuses the teardown, naming both candidates (`ambiguous(plugly=...,orca=...)`): such a process is never a leftover
+and never exempt. The rule is `cm_environ_handle` in `lib.sh`.
 
 **Check the Plugly names BEFORE the canary's `--apply`, on a throwaway terminal.** Create a Plugly terminal in a scratch
 worktree that is not a lane, read the variables in it, close it by its exact handle:
@@ -134,13 +140,13 @@ Expected, and what each result means:
 
 - `own=` equal to `listed=`: the Plugly name is right. The script's own self-skip then works (it compares both
   `$ORCA_TERMINAL_HANDLE` and `$PLUGLY_TERMINAL_HANDLE`, `cutover-host.sh` "SELF_H").
-- `orca=` ALSO equal to `listed=`: `live-agent.sh` can find a lane that is already on Plugly. Go on to the canary.
-- `orca=UNSET` (only the Plugly name): the self-skip works, but `live-agent.sh` (it reads only `ORCA_TERMINAL_HANDLE`, its
-  `environ` scan) finds no handle for a Plugly agent, so the canary would fail at step f and roll back (safe, but a wasted lane).
-  Teach `live-agent.sh` the Plugly name FIRST, then canary.
-- `orca=` set to a DIFFERENT handle than `listed=` (inherited from the shell that started the Plugly daemon): STOP. `live-agent.sh`
-  would read that wrong handle for every Plugly agent, and the remote catch-up (`lane-handles.sh`) could write it into the ledger. Teach
-  `live-agent.sh` to prefer `PLUGLY_TERMINAL_HANDLE`, or start the daemon from a shell with no `ORCA_*` handle, then re-check.
+- `orca=` ALSO equal to `listed=`: `live-agent.sh` finds a lane that is already on Plugly. Go on to the canary.
+- `orca=UNSET` (only the Plugly name): this is the result observed in a live Plugly terminal, and it is fine. `live-agent.sh`
+  reads the Plugly name first, so it finds the Plugly agent's handle. The canary goes ahead.
+- `orca=` set to a DIFFERENT handle than `listed=` (inherited from the shell that started the Plugly daemon): STOP. Both names set
+  and different is AMBIGUOUS, so every Plugly agent started by that daemon would read as having no handle: `live-agent.sh` finds no
+  handle, `lane-handles.sh` marks the lane `no-handle` (no send), and `teardown.sh` refuses for its processes. Start the Plugly daemon
+  from a shell with no `ORCA_*` variables (`env | grep '^ORCA_'` prints nothing), then re-run this check.
 - `PLUGLY_TERMINAL_HANDLE` unset: stop. The self-skip is unproven there; run the cutover only from a shell outside every lane.
 
 ## What the dry run caught while the kit was built
@@ -305,9 +311,9 @@ lists; it does not run `discover.sh` (that needs GitHub) or add a second census.
 ## Limits
 
 - `claude --continue` takes the most recent conversation for the worktree (see `references/resume.md` § Safety).
-- The live-agent check reads the terminal handle from the agent's environment (`ORCA_TERMINAL_HANDLE`). If a Plugly
-  terminal exports it under another name, step f fails on the canary and the lane is rolled back: that is the signal
-  to teach `live-agent.sh` the name before cutting over more lanes. See "Handle environment names".
+- The live-agent check reads the terminal handle from the agent's environment (`PLUGLY_TERMINAL_HANDLE` first, else
+  `ORCA_TERMINAL_HANDLE`; both set and different gives no handle). If a Plugly terminal exports it under yet another name, step f fails on the canary and the lane is
+  rolled back: that is the signal to teach `live-agent.sh` the name before cutting over more lanes. See "Handle environment names".
 - The ledger row needs no `model` or `effort`: the lane's pane is the source. If it carries them, they must agree with the
   pane (a bare alias or an empty value is ignored; an effort that is neither empty nor a level is a skip, so a bad key is fixed, not hidden). The new terminal is started with exactly the pane's model and effort and the banner is
   checked against them. No `--dangerously-skip-permissions` is passed: if a lane normally runs in bypass mode, check on

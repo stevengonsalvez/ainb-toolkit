@@ -201,6 +201,118 @@ if [ "$rc" = 3 ] && has "non-shell processes run in the worktree" && alive "$IP"
 td "$I" STUB_TERMS="$ROOT/terms.json" -- --close-handle term_live_1
 if [ "$rc" = 0 ] && has "stop leftover codex processes"; then ok "named by --close-handle it is planned for the pid stop (dry run)"; else bad "close-handle exempts it" "$OUT"; fi
 
+echo "== the terminal is read from PLUGLY_TERMINAL_HANDLE first (a Plugly lane, or a Plugly daemon started from an Orca shell)"
+J="$(mkwt cx-j)"
+lists $'cm:running\ncm:child cx-j'
+(cd "$J" && exec env -u ORCA_TERMINAL_HANDLE PLUGLY_TERMINAL_HANDLE=term_live_1 "$ROOT/stub-term/codex" app-server) >/dev/null 2>&1 &
+JP=$!; echo "$JP" >> "$STARTED"; sleep 0.5; JC="$(child_of "$JP")"
+td "$J" STUB_TERMS="$ROOT/terms.json" -- --apply
+if [ "$rc" = 3 ] && has "non-shell processes run in the worktree" && alive "$JP" && alive "$JC"; then ok "plugly: only PLUGLY_TERMINAL_HANDLE set: the live terminal still refuses"; else bad "plugly only" "$OUT"; fi
+td "$J" STUB_TERMS="$ROOT/terms.json" -- --close-handle term_live_1
+if [ "$rc" = 0 ] && has "stop leftover codex processes"; then ok "plugly: named by --close-handle it is planned for the pid stop"; else bad "plugly close-handle" "$OUT"; fi
+K="$(mkwt cx-k)"
+lists $'cm:running\ncm:child cx-k'
+(cd "$K" && exec env ORCA_TERMINAL_HANDLE=term_inherited PLUGLY_TERMINAL_HANDLE=term_live_1 "$ROOT/stub-term/codex" app-server) >/dev/null 2>&1 &
+KP=$!; echo "$KP" >> "$STARTED"; sleep 0.5; KC="$(child_of "$KP")"
+td "$K" STUB_TERMS="$ROOT/terms.json" -- --apply
+if [ "$rc" = 3 ] && has "non-shell processes run in the worktree" && has "ambiguous(plugly=term_live_1,orca=term_inherited)" && alive "$KP" && alive "$KC"; then ok "plugly: both set and different (PLUGLY the live terminal): ambiguous, refuses, names both, not touched"; else bad "plugly and inherited orca: ambiguous" "$OUT"; fi
+td "$K" STUB_TERMS="$ROOT/terms.json" -- --close-handle term_live_1
+if [ "$rc" = 3 ] && has "non-shell processes run in the worktree" && has "two different terminal handles" && alive "$KP" && alive "$KC"; then ok "plugly: an ambiguous handle is never exempt, even when --close-handle names one of the two"; else bad "ambiguous exempt by close-handle" "$OUT"; fi
+
+echo "== the mirror: a codex in a LIVE listed Orca terminal that inherited a different PLUGLY_TERMINAL_HANDLE"
+# the Orca daemon was started from a Plugly shell, so every agent in its terminals carries that shell's PLUGLY handle. The process
+# is in a live terminal: it must not be taken for a leftover (closed and signalled), the teardown refuses.
+L="$(mkwt cx-l)"
+lists $'cm:running\ncm:child cx-l'
+(cd "$L" && exec env ORCA_TERMINAL_HANDLE=term_live_1 PLUGLY_TERMINAL_HANDLE=term_inherited_plugly "$ROOT/stub-term/codex" app-server) >/dev/null 2>&1 &
+LP=$!; echo "$LP" >> "$STARTED"; sleep 0.5; LC="$(child_of "$LP")"
+td "$L" STUB_TERMS="$ROOT/terms.json"
+if [ "$rc" = 3 ] && has "non-shell processes run in the worktree" && has "$LP:codex@ambiguous(plugly=term_inherited_plugly,orca=term_live_1)"; then ok "mirror: the dry run refuses and names both candidate handles"; else bad "mirror dry run" "$OUT"; fi
+if alive "$LP" && alive "$LC"; then ok "mirror: parent and child still alive after the dry run"; else bad "mirror: touched by the dry run"; fi
+td "$L" STUB_TERMS="$ROOT/terms.json" -- --apply
+if [ "$rc" = 3 ] && has "non-shell processes run in the worktree" && ! has "stopped codex processes" && alive "$LP" && alive "$LC"; then ok "mirror: --apply refuses too, nothing stopped, parent and child alive"; else bad "mirror apply" "$OUT"; fi
+td "$L" STUB_TERMS="$ROOT/terms.json" -- --close-handle term_live_1
+if [ "$rc" = 3 ] && has "ambiguous(plugly=term_inherited_plugly,orca=term_live_1)" && alive "$LP" && alive "$LC"; then ok "mirror: --close-handle of the ORCA terminal does not exempt it"; else bad "mirror close-handle" "$OUT"; fi
+
+# a real process whose environ holds PLUGLY_TERMINAL_HANDLE twice (env(1) cannot make a duplicate, so execve is called through ctypes)
+if command -v python3 >/dev/null 2>&1; then
+  M="$(mkwt cx-m)"
+  lists $'cm:running\ncm:child cx-m'
+  (cd "$M" && exec python3 -c 'import ctypes,sys
+l=ctypes.CDLL(None); p=sys.argv[1].encode()
+a=(ctypes.c_char_p*3)(p,b"app-server",None)
+e=(ctypes.c_char_p*4)(b"PLUGLY_TERMINAL_HANDLE=term_live_1",b"PATH=/usr/bin:/bin",b"PLUGLY_TERMINAL_HANDLE=term_other",None)
+l.execve(p,a,e)' "$ROOT/stub-term/codex") >/dev/null 2>&1 &
+  MP=$!; echo "$MP" >> "$STARTED"; sleep 0.5; MC="$(child_of "$MP")"
+  td "$M" STUB_TERMS="$ROOT/terms.json" -- --apply
+  if [ "$rc" = 3 ] && has "non-shell processes run in the worktree" && alive "$MP" && alive "$MC"; then ok "plugly (dup): PLUGLY twice, the FIRST (a live terminal) counts: refuses"; else bad "plugly dup first" "$OUT"; fi
+  td "$M" STUB_TERMS="$ROOT/terms.json" -- --close-handle term_live_1
+  if [ "$rc" = 0 ] && has "stop leftover codex processes"; then ok "plugly (dup): --close-handle of the FIRST value exempts it"; else bad "plugly dup close-handle" "$OUT"; fi
+else
+  echo "SKIP plugly (dup): no python3"
+fi
+
+# a hostile PLUGLY_TERMINAL_HANDLE value (a newline at its start or end, or a forged ORCA_TERMINAL_HANDLE= line inside it) never falls
+# back to ORCA and never yields a handle. Alone it counts as no terminal, so a leftover codex is planned for the pid stop. Beside a
+# real ORCA_TERMINAL_HANDLE naming the live terminal the two differ, so it is AMBIGUOUS: the teardown refuses (it is not taken for a
+# leftover of no terminal) and the refusal shows the hostile value as <invalid>.
+# env(1) cannot hold a newline-bearing name=value reliably across shells, so execve is called through ctypes with the exact entries.
+PYEXEC='import ctypes,sys
+l=ctypes.CDLL(None); p=sys.argv[1].encode()
+a=(ctypes.c_char_p*3)(p,b"app-server",None)
+ents=[x.encode() for x in sys.argv[2:]]+[b"PATH=/usr/bin:/bin"]
+e=(ctypes.c_char_p*(len(ents)+1))(*ents,None)
+l.execve(p,a,e)'
+hostile_case() {   # hostile_case <label> <dir-name> <PLUGLY value> [ORCA entry]
+  local label="$1" name="$2" val="$3" W HP HC
+  local -a ents=("PLUGLY_TERMINAL_HANDLE=$val")
+  [ -z "${4:-}" ] || ents+=("$4")
+  W="$(mkwt "$name")"
+  lists $'cm:running\ncm:child '"$name"
+  (cd "$W" && exec python3 -c "$PYEXEC" "$ROOT/stub-term/codex" "${ents[@]}") >/dev/null 2>&1 &
+  HP=$!; echo "$HP" >> "$STARTED"; sleep 0.5; HC="$(child_of "$HP")"
+  td "$W" STUB_TERMS="$ROOT/terms.json"
+  if [ "$rc" = 0 ] && has "stop leftover codex processes" && ! has "non-shell processes run in the worktree"; then ok "$label: no handle, not taken for the live terminal"; else bad "$label" "$OUT"; fi
+  if alive "$HP" && alive "$HC"; then ok "$label: and a dry run did not touch it"; else bad "$label: touched"; fi
+}
+ambig_case() {   # ambig_case <label> <dir-name> <PLUGLY value> <ORCA entry>: both differ, so a dry run refuses and touches nothing
+  local label="$1" name="$2" val="$3" W HP HC
+  W="$(mkwt "$name")"
+  lists $'cm:running\ncm:child '"$name"
+  (cd "$W" && exec python3 -c "$PYEXEC" "$ROOT/stub-term/codex" "PLUGLY_TERMINAL_HANDLE=$val" "$4") >/dev/null 2>&1 &
+  HP=$!; echo "$HP" >> "$STARTED"; sleep 0.5; HC="$(child_of "$HP")"
+  td "$W" STUB_TERMS="$ROOT/terms.json"
+  if [ "$rc" = 3 ] && has "non-shell processes run in the worktree" && has "$HP:codex@ambiguous(plugly=<invalid>,orca=term_live_1)"; then ok "$label: ambiguous, refuses, the hostile value shown as <invalid>"; else bad "$label" "$OUT"; fi
+  if alive "$HP" && alive "$HC"; then ok "$label: and a dry run did not touch it"; else bad "$label: touched"; fi
+}
+live_case() {   # live_case <label> <dir-name> <env entry>...: the process is taken for the live terminal, so a dry run refuses
+  local label="$1" name="$2" W HP HC; shift 2
+  W="$(mkwt "$name")"
+  lists $'cm:running\ncm:child '"$name"
+  (cd "$W" && exec python3 -c "$PYEXEC" "$ROOT/stub-term/codex" "$@") >/dev/null 2>&1 &
+  HP=$!; echo "$HP" >> "$STARTED"; sleep 0.5; HC="$(child_of "$HP")"
+  td "$W" STUB_TERMS="$ROOT/terms.json"
+  if [ "$rc" = 3 ] && has "non-shell processes run in the worktree"; then ok "$label: taken for the live terminal, refuses"; else bad "$label" "$OUT"; fi
+  if alive "$HP" && alive "$HC"; then ok "$label: and not touched"; else bad "$label: touched"; fi
+}
+if command -v python3 >/dev/null 2>&1; then
+  ambig_case "plugly hostile (leading newline), real ORCA" cx-n1 $'\nx' ORCA_TERMINAL_HANDLE=term_live_1
+  hostile_case "plugly hostile (leading newline), no ORCA" cx-n2 $'\nx'
+  ambig_case "plugly hostile (trailing newline), real ORCA" cx-n3 $'term_live_1\n' ORCA_TERMINAL_HANDLE=term_live_1
+  hostile_case "plugly hostile (trailing newline), no ORCA" cx-n4 $'term_live_1\n'
+  ambig_case "plugly hostile (forged ORCA line inside), real ORCA" cx-n5 $'\nORCA_TERMINAL_HANDLE=term_live_1' ORCA_TERMINAL_HANDLE=term_live_1
+  hostile_case "plugly hostile (forged ORCA line inside), no ORCA" cx-n6 $'\nORCA_TERMINAL_HANDLE=term_live_1'
+  ambig_case "plugly hostile (leading dash), real ORCA" cx-n7 '-term_live_1' ORCA_TERMINAL_HANDLE=term_live_1
+  # a ":" is a legal handle character, so the scan line must not let it move the fields (it is parsed from a TAB separated line)
+  hostile_case "plugly value x:term_live_1 (a colon)" cx-n8 'x:term_live_1'
+  # the positive paths still work after the rewrite
+  live_case "plugly empty, real ORCA after it" cx-p1 PLUGLY_TERMINAL_HANDLE= ORCA_TERMINAL_HANDLE=term_live_1
+  live_case "ORCA first, plugly empty after it" cx-p2 ORCA_TERMINAL_HANDLE=term_live_1 PLUGLY_TERMINAL_HANDLE=
+  live_case "ORCA before PLUGLY, both term_live_1" cx-p3 ORCA_TERMINAL_HANDLE=term_live_1 PLUGLY_TERMINAL_HANDLE=term_live_1
+else
+  echo "SKIP plugly hostile: no python3"
+fi
+
 echo "== no codex process: nothing to stop"
 E="$(mkwt cx-e)"
 lists $'cm:running\ncm:child cx-e'
