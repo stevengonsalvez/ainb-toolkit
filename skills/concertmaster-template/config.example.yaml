@@ -158,7 +158,7 @@ agents:
 schedule:
   timezone: Europe/London          # [script] digest times and deploy windows use this zone
   timezone_label: UK               # [script] printed after times in the digest
-  deploy_windows: ["11:00", "16:00"]
+  deploy_windows: ["11:00", "16:00"]   # [script] quote each HH:MM (an unquoted 11:00 may be read as a number by some parsers); clock-check.sh reads this
   digest_times: ["08:00", "18:00"]
   tick_delays_s: { busy: 600, running: 1200, quiet: 1800 }
   stuck_minutes: 45                # CM_STUCK_MIN
