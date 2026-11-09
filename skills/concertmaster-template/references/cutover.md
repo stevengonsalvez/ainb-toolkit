@@ -181,12 +181,27 @@ Rules that hold for every row:
   from `live-agent.sh` over ssh and rewrites the handle file and the ledger terminal. The journal entries stay in the copy: append
   one on the concertmaster host (`scripts/lane-journal.sh append <lane> "cm:handover cutover to plugly <UTC time>"`) if the lane's
   next session should read it. Throw the ledger copy away after the run; nothing reads it back.
+- **Remote shell mechanics (learned on a canary run).** Non-interactive `ssh` on a remote host lacks `orca` and `plugly` on
+  `PATH`: export it first inside single quotes, `ssh <host> 'export PATH=$HOME/.local/bin:$PATH; <command>'`, so the remote shell
+  expands `$HOME` and `$PATH` and a compound command keeps it (only the docker and supabase scans, `CM_REMOTE_PATH_FIX` in `lib.sh`,
+  repair `PATH` themselves; a command you type does not). Put the skill in a NEW empty directory made for the run:
+  `D=$(ssh <host> mktemp -d)`, then `git archive origin/main skills/concertmaster-template | ssh <host> "tar -x -C $D"` (the skill lands in
+  `$D/skills/concertmaster-template`; if `config.yaml` is tracked in your fork it comes along, else copy it). Never extract into an
+  existing checkout: `tar -x` would overwrite its tracked skill files and the cleanup would then delete them. After a clean run
+  (orphan check 0) remove `$D` and the remote ledger copy only, never a pre-existing path: leave nothing behind.
 
 **Covered by the suite:** the dry run for `local` against stub runtimes (including `skip: self` for the shell's own terminal), the model
-gate reading panes, the ssh target rule (argv recorded) and `--except`. **Verify on first use:** a dry run from the concertmaster host for
-each remote host (the host-name alias resolves, `claude-binary` passes); `orca terminal create --environment <host>` for the
-operator terminal; the skill checkout and ledger copy on each remote kind; that `lane-handles.sh` on the concertmaster host picks up a
-remote worker's new Plugly handle (needs the Plugly environment names above); the Plugly handle variables; a real `--apply`.
+gate reading panes, the ssh target rule (argv recorded) and `--except`.
+
+**Canary result, for ONE host kind only: a Linux box reached by plain ssh.** Over plain `ssh <host>` as the operator shell, a real
+`--apply` on a throwaway plain worker moved it to a Plugly terminal (`verify ok`, orphan check 0); the skill checkout and the ledger
+copy on that host; `lane-handles.sh` on the concertmaster host picking up the worker's new Plugly handle over ssh (it read
+`PLUGLY_TERMINAL_HANDLE`); the hold released afterwards.
+
+**Verify on first use (not exercised by the canary):** a dry run from the concertmaster host for each remote host (the host-name alias
+resolves, `claude-binary` passes); a real `--apply` on the concertmaster's own host (with `--except`, last of all); a real `--apply`
+through an Orca environment terminal (`orca terminal create --environment <host>`); the skill checkout and ledger copy on an Orca
+environment host.
 
 ### Hold the concertmaster's resume (every remote `--apply`)
 
@@ -277,7 +292,7 @@ plans no rows, quietly). Only `schema`, `project`, `hosts` and `workers` travel 
       no agent until that is done; `scripts/resume.sh` does the same recreate when the lane is a ledger row.
    4. `CM_CLI_KIND=plugly scripts/spawn-verify.sh check --terminal <new handle> --model <family>-<n>.<m> --effort <effort>` (the values `read`
       printed; `CM_CLI_KIND=plugly` makes it read through the Plugly CLI, without it the new handle is looked up in Orca and the pane is
-      "unreadable"); then `scripts/lane-handles.sh --worker <id>` and nudge it with the `/loop` text (`CM_NUDGE_TICK` in `lib.sh`).
+      "unreadable"); then `scripts/lane-handles.sh --worker <id>` and nudge it with the `/loop` text (`CM_NUDGE_TICK` in `lib.sh`). Pick the CLI by the handle, never assume `orca`: a handle belongs to the app that issued it (`orca terminal send|read|close` for an Orca handle, `plugly terminal send|read|close` for a Plugly handle). Most scripts take the CLI from `CM_CLI_KIND`, so set it per handle; `cutover-host.sh` ignores it and drives both CLIs by name.
    5. `scripts/cutover-host.sh local` (dry run) must show every lane `already on plugly` and no orphan.
 
 ## The orphan rule
