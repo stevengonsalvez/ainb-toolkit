@@ -15,8 +15,9 @@
 #   deploy-worker: that row's worker and its state in the ledger workers, none, or unknown (ledger unreadable or missing)
 #   state:         upcoming (still ahead), in-flight (a live deploy worker is on it), worker-dead (the row names a
 #                  worker the ledger does not list live), shared-worker (the worker is named by two unfinished rows
-#                  and covers neither), missed (it has passed and no deploy worker or outcome is on
-#                  record), none (no window configured), unknown (see the other lines; also a past window while the
+#                  and covers neither), row-<state> (it has passed with no worker named, but its row is at
+#                  rails-check, waiting on the owner, or at staging, validating or prod: not missed), missed (it has
+#                  passed and no deploy worker or outcome is on record), none (no window configured), unknown (see the other lines; also a past window while the
 #                  ledger cannot be read: whether it shipped is not known)
 #   next-window:   the first unfinished window still ahead (the one to cite for "the next release"), with its UTC time
 #                  and the minutes to it, or none; the `window:` line can be an older missed window
@@ -193,7 +194,12 @@ while read -r at i; do
   elif [ -n "$worker" ] && [ "$(worker_rows "$worker")" -gt 1 ]; then wst="shared-worker"   # alive, but named by two unfinished rows: it covers neither
   elif [ -n "$worker" ]; then wst="worker-dead"
   elif [ "$ledger_ok" != 1 ]; then wst="unknown"   # the ledger could not be read: "missed" would claim no outcome is on record
-  else wst="missed"; fi
+  else
+    case "$st" in   # a row past pending with no worker is not missed: rails-check waits on the owner, the others are under way
+      rails-check|staging|validating|prod) wst="row-$st" ;;
+      *) wst="missed" ;;
+    esac
+  fi
   pin=0
   case "$st" in staging|validating|prod) pin=1 ;; esac
   [ -z "$rsha" ] || pin=1
