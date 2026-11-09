@@ -986,8 +986,8 @@ window due ─▶ delta since last tag? ─ no ─▶ skipped
    STOP, 2 is an owner ASK, and 1 or 127 means the check did not run.
    Set the window row's state to `rails-check` before the rails run; a rail
    hit or a migration-guard ask leaves it there (a WAITING row), and a clear
-   verdict goes on to step 3. Exit 3, or a rail the owner declines: set the
-   row to `stopped` with the reason. Exit 1 or 127: the row stays at
+   verdict goes on to step 3. Exit 3, or a rail or migration-guard ask the owner
+   declines: set the row to `stopped` with the reason in `blockedReason`. Exit 1 or 127: the row stays at
    `rails-check` and the tick table says the check did not run.
 3. Clear: spawn the deploy worker (`references/lanes.md` § deploy worker),
    which follows `cfg.deploy.ship_verb`. **Order is fixed: merge, staging
