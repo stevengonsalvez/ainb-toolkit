@@ -47,6 +47,15 @@ run utc.yaml 2000-01-01T08:59:00Z
 check "121 minutes out is the same: WAITING row only" '[ "$(val state)" = upcoming ] && [ "$(val minutes)" = 121 ] && [ "$(val picker)" = WAITING-row-only ]' "$OUT"
 run utc.yaml 2000-01-01T12:00:00Z
 check "the window passed with no deploy worker and no outcome: missed (-60), still in force, WAITING row only" '[ "$(val state)" = missed ] && [ "$(val minutes)" = -60 ] && [ "$(val picker)" = WAITING-row-only ] && [ "$(val window)" = "2000-01-01T11:00 at 2000-01-01T11:00:00Z" ]' "$OUT"
+ledger '{"workers":{},"deployWindows":[{"id":"2000-01-01T11:00","at":"2000-01-01T11:00:00Z","state":"rails-check"}]}'
+run utc.yaml 2000-01-01T11:30:00Z
+check "a past window whose row is at rails-check with no worker (an owner ask on a rail) is not missed: row-rails-check, WAITING row only" '[ "$(val state)" = row-rails-check ] && [ "$(val picker)" = WAITING-row-only ] && [ "$(val row)" = "state rails-check, tag none, prod run none" ]' "$OUT"
+ledger '{"workers":{},"deployWindows":[{"id":"2000-01-01T11:00","at":"2000-01-01T11:00:00Z","state":"prod","tag":"v1.2.3"}]}'
+run utc.yaml 2000-01-01T11:30:00Z
+check "...and a past row at prod with a tag and no worker reads row-prod, not missed" '[ "$(val state)" = row-prod ] && [ "$(val picker)" = WAITING-row-only ] && ! printf "%s\n" "$OUT" | grep -q missed' "$OUT"
+ledger '{"workers":{},"deployWindows":[{"id":"2000-01-01T11:00","at":"2000-01-01T11:00:00Z","state":"pending"}]}'
+run utc.yaml 2000-01-01T11:30:00Z
+check "...but a past row still pending with no worker is missed" '[ "$(val state)" = missed ] && [ "$(val picker)" = WAITING-row-only ]' "$OUT"
 ledger '{"workers":{},"deployWindows":[]}'
 run utc.yaml 2000-01-01T14:30:00Z
 check "a missed 11:00 and the first window ahead (16:00) are both checked at 14:30: neither has a worker, WAITING row only, two window-check lines, the missed one printed first" '[ "$(val window)" = "2000-01-01T11:00 at 2000-01-01T11:00:00Z" ] && [ "$(val state)" = missed ] && [ "$(val picker)" = WAITING-row-only ] && [ "$(printf "%s\n" "$OUT" | grep -c "^window-check:")" = 2 ]' "$OUT"
