@@ -176,8 +176,8 @@ check "name maps epic:Widget-Two to epic-widget-two" '[ "$("$J" name "epic:Widge
 check "name refuses a label that does not fit" '[ "$RC" = 2 ] && [ "$RC2" = 2 ]'
 
 echo "--- nothing is sent to a group"
-others="$(cd "$SCRIPTS" && grep -lE 'journal\.md|lane-journal' ./*.sh ./*.py ./hooks/* 2>/dev/null | grep -vE '^\./(lane-journal|resume|lessons-recon|fleet-state|skill-sync)\.sh$' || true)"
-check "no script but lane-journal.sh, resume.sh, lessons-recon.sh, fleet-state.sh and skill-sync.sh reads a journal (digest, mc-emit, intake, tick-emit and the rest do not)" '[ -z "$others" ]'
+others="$(cd "$SCRIPTS" && grep -lE 'journal\.md|lane-journal' ./*.sh ./*.py ./hooks/* 2>/dev/null | grep -vE '^\./(lane-journal|resume|lessons-recon|fleet-state|skill-sync|cutover-host)\.sh$' || true)"
+check "no script but lane-journal.sh, resume.sh, lessons-recon.sh, fleet-state.sh, skill-sync.sh and cutover-host.sh (which only appends) touches a journal (digest, mc-emit, intake, tick-emit and the rest do not)" '[ -z "$others" ]'
 check "the digest and message senders never name the lanes directory" '! grep -nE "lanes/" "$SCRIPTS/digest.sh" "$SCRIPTS/mc-emit.sh" "$SCRIPTS/tick-emit.sh" "$SCRIPTS/intake.sh"'
 
 echo

@@ -208,6 +208,42 @@ cm_cli_host_into() {
   if [ "$_cm_h" = local ]; then eval "$1=()"; else eval "$1=(--environment \"\$_cm_h\")"; fi
 }
 
+# cm_ssh_target <host>: what to give `ssh` to reach a non-local host. ONE rule for every script that opens an ssh session
+# to a fleet host (cutover-host.sh, live-agent.sh, discover.sh). In order:
+#   1. $CM_SSH_TARGET (one host's alias, given per run);
+#   2. the ledger's hosts.<host>.sshTarget, an explicit ssh alias or address for a host whose ssh name differs from both its
+#      Orca name and its hostname;
+#   3. the ledger's hosts.<host>.hostname, but ONLY when it is an address (holds a dot or a colon: an FQDN, an IPv4 or
+#      IPv6 address). A dotless word is what `hostname -s` prints: the host's identity (the thing teardown.sh and
+#      live-agent.sh compare the remote `hostname -s` with), not something DNS or ssh_config has to know, and on a real
+#      fleet it did not resolve ("Could not resolve hostname <word>");
+#   4. the host name itself, as an ssh alias (an Orca environment name that ssh_config knows).
+# The caller refuses a result that starts with a dash or holds whitespace (never an ssh option or a word list).
+cm_ssh_target() {
+  local h="${1-}" t="" L
+  if [ -n "${CM_SSH_TARGET:-}" ]; then printf '%s\n' "$CM_SSH_TARGET"; return 0; fi
+  L="$(cm_ledger_path)"
+  if [ -n "$h" ] && [ -s "$L" ] && cm_ledger_guard "$L" 2>/dev/null; then
+    t="$(jq -r --arg h "$h" '.hosts[$h].sshTarget // empty | tostring' "$L" 2>/dev/null)"
+    if [ -n "$t" ]; then printf '%s\n' "$t"; return 0; fi
+    t="$(jq -r --arg h "$h" '.hosts[$h].hostname // empty | tostring' "$L" 2>/dev/null)"
+  fi
+  case "$t" in *[.:]*) printf '%s\n' "$t" ;; *) printf '%s\n' "$h" ;; esac
+}
+
+# cm_resume_lock_held: resume.sh holds $CM_HOME/resume.lock right now (a live process that looks like a resume run, or a lock
+# younger than a minute that has no pid yet). Used by cutover-host.sh and cutover-hold.sh: neither may start while a resume.sh
+# run could still create an agent.
+cm_resume_lock_held() {
+  local rl="$CM_HOME/resume.lock" rp
+  [ -d "$rl" ] || return 1
+  rp="$(cat "$rl/pid" 2>/dev/null || true)"
+  if [ -z "$rp" ]; then [ -n "$(find "$rl" -maxdepth 0 -mmin -1 2>/dev/null)" ]; return; fi
+  kill -0 "$rp" 2>/dev/null || return 1
+  if ps -p "$rp" -o args= >/dev/null 2>&1; then ps -p "$rp" -o args= 2>/dev/null | grep -q resume; return; fi
+  return 0   # ps cannot answer: assume held
+}
+
 # cm_timeout <seconds> <cmd...>: timeout(1), gtimeout(1), or a perl alarm.
 cm_timeout() {
   local secs="$1"; shift
@@ -359,6 +395,14 @@ cm_transcript_mtime() {
 CM_MENU_RE='enter to select|enter to confirm|esc to cancel|arrow keys|tab/arrow'
 # shellcheck disable=SC2034  # read by boot-sweep.sh
 CM_CLAUDE_RE='claude code|\? for shortcuts|esc to interrupt|shift\+tab|bypass permissions|accept edits|auto-accept'
+
+# The nudge that tells a restarted lane to re-arm the /loop its old terminal took with it. ONE definition:
+# boot-sweep.sh (host restart, and its tick mode for an Orca runtime restart) and cutover-host.sh (a lane moved
+# to a new terminal) send these words; CM_BOOT_NUDGE and CM_TICK_NUDGE still override them in boot-sweep.sh.
+# shellcheck disable=SC2034  # read by boot-sweep.sh and cutover-host.sh
+CM_NUDGE_BOOT='The VM restarted. Any /loop or ScheduleWakeup timer you had died with it. Check git status and your worktree comment, re-arm your standing /loop now with the same prompt as before (your brief under ~/.concertmaster/briefs lists it if you lost it), and carry on.'
+# shellcheck disable=SC2034
+CM_NUDGE_TICK='Orca restarted. Any /loop or ScheduleWakeup timer you had died with it. Check git status and your worktree comment, re-arm your standing /loop now with the same prompt as before (your brief under ~/.concertmaster/briefs lists it if you lost it), and carry on.'
 
 # ---- ledger project guard ---------------------------------------------------------------------
 # Two projects can share a host, each with its own state dir (~/.concertmaster, ~/.concertmaster-<other>).

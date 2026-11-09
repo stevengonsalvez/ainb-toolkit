@@ -64,7 +64,7 @@ ORCA="$(cm_cli)" || exit 2
 SETTLE="${CM_BOOT_SETTLE_S:-45}"
 WAIT_MAX="${CM_BOOT_ORCA_WAIT_S:-300}"
 CONFIRM_S="${CM_BOOT_CONFIRM_S:-60}"
-NUDGE="${CM_BOOT_NUDGE:-The VM restarted. Any /loop or ScheduleWakeup timer you had died with it. Check git status and your worktree comment, re-arm your standing /loop now with the same prompt as before (your brief under ~/.concertmaster/briefs lists it if you lost it), and carry on.}"
+NUDGE="${CM_BOOT_NUDGE:-$CM_NUDGE_BOOT}"
 NUDGE_CM="/loop /concertmaster tick"   # the concertmaster re-arms by running its own loop, not by being told to
 # the concertmaster's own worktree: a path ending /<worktrees.self_name> (ERE metacharacters escaped)
 CM_PATH_RE="${CM_SELF_PATH_RE:-/$(printf '%s' "$CM_SELF_WORKTREE" | sed 's#[][\\.^$*+?(){}|]#\\&#g')/*\$}"
@@ -73,7 +73,7 @@ TICK=0
 if [ -n "$SINCE" ]; then
   # tick mode (runtime restart): "boot" is the lane's expected wake time, the attempts file is its own
   TICK=1; WAIT=0; boot="$SINCE"
-  NUDGE="${CM_TICK_NUDGE:-Orca restarted. Any /loop or ScheduleWakeup timer you had died with it. Check git status and your worktree comment, re-arm your standing /loop now with the same prompt as before (your brief under ~/.concertmaster/briefs lists it if you lost it), and carry on.}"
+  NUDGE="${CM_TICK_NUDGE:-$CM_NUDGE_TICK}"
   STATE="$STATE_DIR/runtime-sweep.tsv"   # handle<TAB>attempts<TAB>transcript mtime of that episode
   HIST="$STATE_DIR/runtime-sweep-history.tsv"   # handle<TAB>epoch of each accepted nudge (3 in 6 h = gave-up)
 else

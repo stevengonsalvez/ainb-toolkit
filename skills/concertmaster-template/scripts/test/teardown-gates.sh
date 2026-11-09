@@ -917,6 +917,28 @@ CM_BD_CMD=bd-stub STUB_BD_FAIL=1 \
 # The live store is never migrated or written: only calls aimed at a copy under $CM_HOME/tmp/beads-copy.* may.
 if ! grep -v '/tmp/beads-copy\.' "$STUB_BD_LOG" | grep -qE ' (migrate|init|create|update|close|sync|import|export|dolt)( |$)'; then echo "PASS bd was never asked to migrate or write the live store"; PASS=$((PASS + 1)); else FAIL=$((FAIL + 1)); echo "FAIL a bd write/migrate command ran on the live store"; fi
 
+# the ssh TARGET (lib.sh cm_ssh_target): a stub ssh records it. CM_SSH_TARGET, else the ledger's hosts.<h>.sshTarget, else a
+# ledger hostname that is an address, else the host name; a dotless hostname is the identity (hostname -s), not a target
+cat > "$ROOT/bin/ssh" <<'S'
+#!/usr/bin/env bash
+while [ $# -gt 0 ]; do case "$1" in -o) shift 2 ;; --) shift; break ;; *) break ;; esac; done
+printf '%s\n' "$1" >> "$SSH_TARGET_LOG"
+exit 255
+S
+chmod +x "$ROOT/bin/ssh"; export SSH_TARGET_LOG="$ROOT/ssh-target.log"
+for case_ in \
+  '{"hosts":{"remote-1":{"hostname":"examplebox"}}}||remote-1' \
+  '{"hosts":{"remote-1":{"hostname":"box.example.test"}}}||box.example.test' \
+  '{"hosts":{"remote-1":{"hostname":"examplebox","sshTarget":"alias-z"}}}||alias-z' \
+  '{"hosts":{"remote-1":{"hostname":"box.example.test","sshTarget":"alias-z"}}}|alias-y|alias-y'; do
+  led="${case_%%|*}"; rest="${case_#*|}"; envt="${rest%%|*}"; want="${rest#*|}"
+  ledger "$led"; : > "$SSH_TARGET_LOG"
+  if [ -n "$envt" ]; then CM_SSH_TARGET="$envt" "$TD" remote-1 "$W1" >/dev/null 2>&1; else env -u CM_SSH_TARGET "$TD" remote-1 "$W1" >/dev/null 2>&1; fi
+  got="$(sort -u "$SSH_TARGET_LOG" | tr '\n' ' ')"
+  if [ "$got" = "$want " ]; then PASS=$((PASS + 1)); printf 'PASS %-58s\n' "ssh target $want (ledger $led${envt:+, CM_SSH_TARGET=$envt})" | cut -c1-120
+  else FAIL=$((FAIL + 1)); printf 'FAIL ssh target: wanted %s, got "%s" (ledger %s)\n' "$want" "$got" "$led"; fi
+done
+ledger '{"workers":{}}'
 echo "== unreadable store: open beads are read on a migrated COPY, fail closed"
 # The tracked-file diff cannot see open beads: they sit in the git-ignored embedded store, the thing bd could
 # not read. The gate copies .beads under $CM_HOME/tmp, runs bd migrate schema there, lists the beads on the

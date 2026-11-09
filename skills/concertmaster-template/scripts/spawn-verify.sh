@@ -23,6 +23,16 @@
 #       differs from the API id (a dot, not a dash, in the version). Exit 1 = not verified,
 #       with one line `verify: FAIL <reason>` (shell-prompt, command-not-found, wrong-model,
 #       claude-not-running, claude-dialog, no-banner); exit 2 = usage or unreadable pane.
+#   scripts/spawn-verify.sh read (--terminal <handle> [--environment <host> | --host local] [--wait <s>]
+#                                | --file <screen.txt>)
+#       Read the pane and print what the LIVE Claude UI says it runs: `live: <family>-<n>.<m> <effort>`
+#       (sonnet-5.5 high), from the bottom-most banner or status line, the same lines `check` judges.
+#       Exit 0 only for a known form (family sonnet|opus|haiku|fable, n.m, effort low|medium|high|xhigh|max)
+#       on a pane whose last line is a Claude footer. The model line must START with the model (a line that only quotes
+#       one is not read); a text-less screen is `pane unreadable`. Exit 1 = `read: FAIL <reason>` (no-model-line,
+#       unknown-model, unknown-effort, claude-not-running); exit 2 = usage or unreadable pane. A model
+#       alias in a ledger (`sonnet`) is never an answer: only what the pane shows is.
+#
 #       --wait polls every 2s up to that many seconds (the banner takes a few seconds);
 #       without it the pane is read once.
 #
@@ -42,7 +52,7 @@ if [ -z "${CM_FOOTER_RE:-}" ]; then
   CM_FOOTER_RE='⏵⏵|⏸|plan mode on|bypass permissions|accept edits on|auto-accept|\? for shortcuts|esc to interrupt|(·|•)[[:space:]]+eff(ort)?[[:space:]]+[a-z]+|ctx \[|^[[:space:]]*(◯|●|◐|◑|⎿|✻|✢|✳|✶|✽)[[:space:]]'
 fi
 
-usage() { sed -n '2,29p' "$0"; }
+usage() { awk 'NR > 1 { if (!/^#/) exit; print }' "$0"; }
 
 # Body of `resolve`, also shipped over ssh (declare -f), so it must stay self-contained.
 cm_resolve_claude() {
@@ -104,6 +114,50 @@ screen_reason() {
   echo no-banner
 }
 
+# screen_live <file>: print "<family>-<n>.<m> <effort>" of the BOTTOM-most model line (the live one), when the last line is a
+# Claude footer. Status 0 and the two words on success; status 1 with a reason word on stdout otherwise:
+# no-model-line, claude-not-running, unknown-model (no minor version), unknown-effort. The same window and the same
+# CM_ANY_MODEL_RE as screen_ok and takes the same bottom-most line, then only ever answers STRICTER (the line must start with the
+# model), so `read` never names a model from a different line than the one `check` judges.
+screen_live() {
+  local win line last lc fam n m eff
+  local re_banner='(sonnet|opus|haiku|fable)[ -]?([0-9]+)(\.([0-9]+))?[^a-z0-9]+with[ ]+([a-z]+)[ ]+effort'
+  local re_status='(sonnet|opus|haiku|fable)[ -]?([0-9]+)(\.([0-9]+))?[^a-z0-9]{1,6}eff(ort)?[ ]+([a-z]+)'
+  win="$(screen_win "$1")"
+  # The line is the SAME one `check` judges (the bottom-most model line). It must then START with the model, after only spaces
+  # or box drawing (not a bullet, a quote marker or words): text that merely quotes a model and effort is not the status line
+  # or banner, and a relaunch must never follow it. A bottom-most line of another shape reads as no-model-line (fail safe).
+  line="$(printf '%s\n' "$win" | grep -iE "$CM_ANY_MODEL_RE" | tail -n 1)"
+  # ONLY these may stand in front of the model: spaces, box-drawing bars and the logo blocks of the real banner. Anything else
+  # (an assistant marker, a bullet, a quote mark, a word) means the line is text on screen, not the banner or status line.
+  printf '%s\n' "$line" | grep -qiE '^([[:space:]]|│|┃|║|\||▐|▛|▜|▌|▝|▘|█|▞|▚|▖|▗|▙|▟)*(sonnet|opus|haiku|fable)' || { echo no-model-line; return 1; }
+  last="$(printf '%s\n' "$win" | tail -n 1)"
+  printf '%s\n' "$last" | grep -qiE "$CM_FOOTER_RE" || { echo claude-not-running; return 1; }
+  lc="$(printf '%s' "$line" | tr '[:upper:]' '[:lower:]')"
+  if [[ "$lc" =~ $re_banner ]]; then
+    fam="${BASH_REMATCH[1]}"; n="${BASH_REMATCH[2]}"; m="${BASH_REMATCH[4]}"; eff="${BASH_REMATCH[5]}"
+  elif [[ "$lc" =~ $re_status ]]; then
+    fam="${BASH_REMATCH[1]}"; n="${BASH_REMATCH[2]}"; m="${BASH_REMATCH[4]}"; eff="${BASH_REMATCH[6]}"
+  else
+    echo no-model-line; return 1
+  fi
+  [ -n "$m" ] || { echo unknown-model; return 1; }
+  case "$eff" in low|medium|high|xhigh|max) ;; *) echo unknown-effort; return 1 ;; esac
+  printf '%s-%s.%s %s\n' "$fam" "$n" "$m" "$eff"
+}
+
+# fetch_screen <terminal> <environment or ""> <outfile>: the terminal's screen as text; status 1 when nothing came back.
+fetch_screen() {
+  local out envargs=()
+  if [ -z "$2" ]; then cm_cli_host_into envargs local; else envargs=(--environment "$2"); fi
+  out="$(cm_timeout 30 "$ORCA" terminal read --terminal "$1" --screen ${envargs[@]+"${envargs[@]}"} --json </dev/null 2>/dev/null)" || out=""
+  # The live CLI returns .result.terminal.tail (lines); older shapes carry a text field.
+  printf '%s' "$out" | jq -r 'if .ok == true then
+      ((.result.terminal.tail // empty | if type == "array" then join("\n") else tostring end)
+       // .result.screen // .result.text // .result.output // "") else "" end' > "$3" 2>/dev/null || : > "$3"
+  grep -q '[^[:space:]]' "$3"   # jq writes a lone newline for a failed or empty read: that is no screen
+}
+
 cmd="${1:-}"; [ $# -gt 0 ] && shift
 case "$cmd" in
   resolve)
@@ -116,7 +170,7 @@ case "$cmd" in
     done
     if [ -z "$target" ]; then cm_resolve_claude; exit $?; fi
     # shellcheck disable=SC2029
-    ssh -o BatchMode=yes -o ConnectTimeout=15 "$target" "bash -s" < <(declare -f cm_resolve_claude; echo cm_resolve_claude)
+    ssh -o BatchMode=yes -o ConnectTimeout=15 -- "$target" "bash -s" < <(declare -f cm_resolve_claude; echo cm_resolve_claude)
     exit $?
     ;;
   check)
@@ -148,19 +202,14 @@ case "$cmd" in
     TMPD="$(mktemp -d "${TMPDIR:-/tmp}/cm-spawn-verify.XXXXXX")" || exit 2
     trap 'rm -rf -- "${TMPD:?}"' EXIT
     SCREEN="$TMPD/screen.txt"
-    ORCA="$(cm_cli)" || exit 2
+    if [ -z "$file" ]; then ORCA="$(cm_cli)" || exit 2; fi   # --file is a pure text parse: no CLI needed
     deadline=$(( $(date +%s) + wait_s ))
     while :; do
       if [ -n "$file" ]; then
         cp "$file" "$SCREEN"
       else
-        if [ -z "$envsel" ]; then cm_cli_host_into envargs local; else envargs=(--environment "$envsel"); fi
-        out="$(cm_timeout 30 "$ORCA" terminal read --terminal "$term" --screen ${envargs[@]+"${envargs[@]}"} --json </dev/null 2>/dev/null)" || out=""
-        # The live CLI returns .result.terminal.tail (lines); older shapes carry a text field.
-        printf '%s' "$out" | jq -r 'if .ok == true then
-            ((.result.terminal.tail // empty | if type == "array" then join("\n") else tostring end)
-             // .result.screen // .result.text // .result.output // "") else "" end' > "$SCREEN" 2>/dev/null || : > "$SCREEN"
-        if [ ! -s "$SCREEN" ] && [ "$(date +%s)" -ge "$deadline" ]; then
+        fetch_screen "$term" "$envsel" "$SCREEN" || :
+        if ! grep -q '[^[:space:]]' "$SCREEN" && [ "$(date +%s)" -ge "$deadline" ]; then
           echo "verify: FAIL pane unreadable"; exit 2
         fi
       fi
@@ -171,6 +220,45 @@ case "$cmd" in
       sleep 2
     done
     echo "verify: FAIL $(screen_reason "$SCREEN" "$model" "$effort")"
+    exit 1
+    ;;
+  read)
+    term=""; envsel=""; file=""; wait_s=0
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --terminal|--environment|--host|--file|--wait)
+          [ $# -ge 2 ] || { usage >&2; exit 2; }
+          case "$1" in
+            --terminal) term="$2" ;; --environment) envsel="$2" ;;
+            --host) [ "$2" = local ] || { usage >&2; exit 2; }; envsel="" ;; --file) file="$2" ;;
+            --wait) wait_s="$2" ;;
+          esac
+          shift 2 ;;
+        *) usage >&2; exit 2 ;;
+      esac
+    done
+    [[ "$wait_s" =~ ^[0-9]+$ ]] || { cm_warn "spawn-verify: --wait takes seconds"; exit 2; }
+    if [ -n "$file" ]; then
+      [ -r "$file" ] || { cm_warn "spawn-verify: cannot read $file"; exit 2; }
+    elif [ -z "$term" ]; then
+      usage >&2; exit 2
+    fi
+    TMPD="$(mktemp -d "${TMPDIR:-/tmp}/cm-spawn-verify.XXXXXX")" || exit 2
+    trap 'rm -rf -- "${TMPD:?}"' EXIT
+    SCREEN="$TMPD/screen.txt"
+    if [ -z "$file" ]; then ORCA="$(cm_cli)" || exit 2; fi   # --file is a pure text parse: no CLI needed
+    deadline=$(( $(date +%s) + wait_s ))
+    while :; do
+      if [ -n "$file" ]; then cp "$file" "$SCREEN"; else fetch_screen "$term" "$envsel" "$SCREEN" || :; fi
+      if ! grep -q '[^[:space:]]' "$SCREEN"; then
+        if [ "$(date +%s)" -ge "$deadline" ]; then echo "read: FAIL pane unreadable"; exit 2; fi
+      elif live="$(screen_live "$SCREEN")"; then
+        echo "live: $live"; exit 0
+      fi
+      [ "$(date +%s)" -ge "$deadline" ] && break
+      sleep 2
+    done
+    echo "read: FAIL ${live:-no-model-line}"
     exit 1
     ;;
   -h|--help|help|'') usage; [ -n "$cmd" ] || exit 2; exit 0 ;;

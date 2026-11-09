@@ -111,8 +111,22 @@ lock_held() {
   ps -p "$pid" -o args= 2>/dev/null | grep -q resume || { ps -p "$pid" -o args= >/dev/null 2>&1 && return 1; }
   return 0
 }
+# cutover_running: scripts/cutover-host.sh holds its lock. A lock with no pid yet and under a minute old is being made;
+# a pid must still look like the cutover (a reused pid is not).
+cutover_running() {
+  local d="$CM_HOME/cutover-host.lock" p
+  [ -d "$d" ] || return 1
+  p="$(cat "$d/pid" 2>/dev/null || true)"
+  if [ -z "$p" ]; then [ -n "$(find "$d" -maxdepth 0 -mmin -1 2>/dev/null)" ]; return; fi
+  kill -0 "$p" 2>/dev/null || return 1
+  ps -p "$p" -o args= 2>/dev/null | grep -q cutover-host || { ps -p "$p" -o args= >/dev/null 2>&1 && return 1; }
+  return 0
+}
 if [ "$DRY" = 0 ]; then
   mkdir -p "$CM_HOME"
+  # a Plugly cutover (scripts/cutover-host.sh) is moving lanes: a lane between its old and new terminal looks dead,
+  # and a second agent next to the new one is worse than a lane waiting one more tick
+  if cutover_running; then cm_warn "resume: a Plugly cutover is running; nothing done"; exit 4; fi
   if ! mkdir "$LOCK" 2>/dev/null; then
     if lock_held; then cm_warn "resume: already running; nothing done"; exit 4; fi
     judged="$(lock_pid "$LOCK")"
@@ -136,7 +150,7 @@ if [ "$DRY" = 0 ]; then
   HAVE_LOCK=1
 fi
 # owns_lock: still ours? Checked again right before every terminal create.
-owns_lock() { [ "$DRY" = 1 ] || [ "$(lock_pid "$LOCK")" = "$$" ]; }
+owns_lock() { [ "$DRY" = 1 ] || { [ "$(lock_pid "$LOCK")" = "$$" ] && ! cutover_running; }; }
 
 # ---- 1. roster: always rewritten from the ledger when it is readable ---------
 # Cheap and atomic. A stale roster could still list a worker the tick retired a

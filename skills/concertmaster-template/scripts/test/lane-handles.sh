@@ -64,9 +64,9 @@ OUT="$(lh)"; RC=$?
 check "live agent: the file holds its handle (not the ledger's stale one), exit 0" '[ "$RC" = 0 ] && [ "$(field w-one 1)" = term_live_1 ]'
 check "the line is handle, host, agent, pid, written-at UTC (5 tab fields)" '[ "$(awk -F"\t" "{print NF}" "$(file w-one)")" = 5 ] && [ "$(field w-one 2)" = local ] && [ "$(field w-one 3)" = claude ] && [ "$(field w-one 4)" = 101 ] && field w-one 5 | grep -Eq "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z$"'
 check "one line, mode 600, nothing in it but the five fields (no token-shaped text)" '[ "$(wc -l < "$(file w-one)" | tr -d " ")" = 1 ] && [ "$(stat -c %a "$(file w-one)" 2>/dev/null || stat -f %Lp "$(file w-one)")" = 600 ] && ! grep -Eqi "sbp_|sk_|ghp_|eyJ|bearer" "$(file w-one)"'
-check "the table row says refreshed and names the ledger terminal brought into line" 'printf "%s\n" "$OUT" | grep -Eq "^w-one	term_live_1	refreshed	.*ledger terminal term_stale brought to term_live_1"'
+check "the table row says refreshed and names the ledger terminal brought into line" 'grep -Eq "^w-one	term_live_1	refreshed	.*ledger terminal term_stale brought to term_live_1" <<<"$OUT"'
 check "the ledger terminal now matches the live handle" '[ "$(jq -r ".workers[\"w-one\"].terminal" "$CM_HOME/ledger.json")" = term_live_1 ]'
-check "the other lane (no agent) is marked dead, not removed" '[ "$(field w-two 1)" = "-" ] && printf "%s\n" "$OUT" | grep -Eq "^w-two	-	none"'
+check "the other lane (no agent) is marked dead, not removed" '[ "$(field w-two 1)" = "-" ] && grep -Eq "^w-two	-	none" <<<"$OUT"'
 
 echo "--- reader: a stale ledger handle is ignored"
 mkledger
@@ -89,20 +89,20 @@ reset_proc; mkledger
 mkproc 103 "$WT" "ORCA_TERMINAL_HANDLE=term_a" claude
 mkproc 104 "$WT" "ORCA_TERMINAL_HANDLE=term_b" claude
 OUT="$(lh)"
-check "two agents with different handles: marked dead (send to neither)" '[ "$(field w-one 1)" = "-" ] && printf "%s\n" "$OUT" | grep -Eq "^w-one	-	duplicate"'
+check "two agents with different handles: marked dead (send to neither)" '[ "$(field w-one 1)" = "-" ] && grep -Eq "^w-one	-	duplicate" <<<"$OUT"'
 reset_proc; mkledger
 mkproc 105 "$WT" "ORCA_TERMINAL_HANDLE=term_a" claude
 mkproc 106 "$WT" "" claude
 OUT="$(lh)"
-check "an Orca agent plus a hand-started one (no handle): marked dead" '[ "$(field w-one 1)" = "-" ] && printf "%s\n" "$OUT" | grep -Eq "^w-one	-	duplicate"'
+check "an Orca agent plus a hand-started one (no handle): marked dead" '[ "$(field w-one 1)" = "-" ] && grep -Eq "^w-one	-	duplicate" <<<"$OUT"'
 reset_proc; mkledger
 mkproc 107 "$WT" "" claude
 OUT="$(lh)"
-check "a lone hand-started agent has no handle to send to: marked dead (no-handle)" '[ "$(field w-one 1)" = "-" ] && printf "%s\n" "$OUT" | grep -Eq "^w-one	-	no-handle"'
+check "a lone hand-started agent has no handle to send to: marked dead (no-handle)" '[ "$(field w-one 1)" = "-" ] && grep -Eq "^w-one	-	no-handle" <<<"$OUT"'
 reset_proc; mkledger
 mkproc 108 "$WT" "ORCA_TERMINAL_HANDLE=term_dev_old" claude
 OUT="$(lh)"
-check "a live handle that is ANOTHER lane's ledger terminal (an inherited variable): marked dead, ledger untouched" '[ "$(field w-one 1)" = "-" ] && printf "%s\n" "$OUT" | grep -Eq "^w-one	-	held" && [ "$(jq -r ".workers[\"w-one\"].terminal" "$CM_HOME/ledger.json")" = term_stale ]'
+check "a live handle that is ANOTHER lane's ledger terminal (an inherited variable): marked dead, ledger untouched" '[ "$(field w-one 1)" = "-" ] && grep -Eq "^w-one	-	held" <<<"$OUT" && [ "$(jq -r ".workers[\"w-one\"].terminal" "$CM_HOME/ledger.json")" = term_stale ]'
 
 echo "--- an undecidable check leaves the file; a stale file is never trusted"
 reset_proc; mkledger
@@ -110,7 +110,7 @@ mkproc 109 "$WT" "ORCA_TERMINAL_HANDLE=term_keep" claude
 lh --quiet
 before="$(cat "$(file w-one)")"
 OUT="$(CM_PROC_ROOT="$ROOT/no-such-proc" "$LH")"
-check "no /proc (live-agent exit 3): the file is left exactly as it was, row says unknown" '[ "$(cat "$(file w-one)")" = "$before" ] && printf "%s\n" "$OUT" | grep -Eq "^w-one	.*	unknown"'
+check "no /proc (live-agent exit 3): the file is left exactly as it was, row says unknown" '[ "$(cat "$(file w-one)")" = "$before" ] && grep -Eq "^w-one	.*	unknown" <<<"$OUT"'
 age_file w-one
 CM_PROC_ROOT="$ROOT/no-such-proc" cm_lane_handle w-one 2>"$ROOT/err" >"$ROOT/out"; RC=$?
 check "stale file + the live check cannot run: no send (exit 3), nothing printed, NOT the ledger handle" '[ "$RC" = 3 ] && [ ! -s "$ROOT/out" ] && grep -q "no fresh handle" "$ROOT/err"'
@@ -166,9 +166,9 @@ cm_lane_handle_write '../x' term_a local claude 1 2>/dev/null; RC=$?
 check "writer refuses a lane that is not a plain token" '[ "$RC" = 1 ] && [ ! -e "$CM_HOME/lanes/../x" ]'
 rm -rf -- "${CM_HOME:?}/lanes"; reset_proc; mkproc 110 "$WT" "ORCA_TERMINAL_HANDLE=term_dry" claude
 OUT="$(lh --dry-run)"
-check "--dry-run reports the refresh, writes no file and leaves the ledger alone" 'printf "%s\n" "$OUT" | grep -q "refreshed" && [ ! -e "$CM_HOME/lanes" ] && [ "$(jq -r ".workers[\"w-one\"].terminal" "$CM_HOME/ledger.json")" = term_stale ]'
+check "--dry-run reports the refresh, writes no file and leaves the ledger alone" 'grep -q "refreshed" <<<"$OUT" && [ ! -e "$CM_HOME/lanes" ] && [ "$(jq -r ".workers[\"w-one\"].terminal" "$CM_HOME/ledger.json")" = term_stale ]'
 OUT="$(lh --worker w-two)"
-check "--worker limits the run to one worker" '[ "$(printf "%s\n" "$OUT" | wc -l | tr -d " ")" = 1 ] && printf "%s\n" "$OUT" | grep -q "^w-two"'
+check "--worker limits the run to one worker" '[ "$(printf "%s\n" "$OUT" | wc -l | tr -d " ")" = 1 ] && grep -q "^w-two" <<<"$OUT"'
 lh --bogus >/dev/null 2>&1; RC=$?
 check "unknown flag: exit 2" '[ "$RC" = 2 ]'
 rm -rf -- "${CM_HOME:?}/lanes"
@@ -187,7 +187,7 @@ jq --arg a "$WT2" '.workers["w-two"].lane = "epic:project-x" | .workers["w-one"]
 mkproc 130 "$WT" "ORCA_TERMINAL_HANDLE=term_grp_a" claude
 mkproc 131 "$WT2" "ORCA_TERMINAL_HANDLE=term_grp_b" claude
 OUT="$(lh)"
-check "two workers in ONE lane (colon in its name): each has its own file and handle, nothing ambiguous or invalid" '[ "$(field w-one 1)" = term_grp_a ] && [ "$(field w-two 1)" = term_grp_b ] && ! printf "%s\n" "$OUT" | grep -Eq "	(ambiguous|invalid)	"'
+check "two workers in ONE lane (colon in its name): each has its own file and handle, nothing ambiguous or invalid" '[ "$(field w-one 1)" = term_grp_a ] && [ "$(field w-two 1)" = term_grp_b ] && ! grep -Eq "	(ambiguous|invalid)	" <<<"$OUT"'
 check "...and --get takes the worker id, so a child spawned into an occupied lane is reachable" '[ "$(lh --get w-two 2>/dev/null)" = term_grp_b ]'
 
 echo "--- review fixes: dead record, shared handle"
@@ -206,13 +206,13 @@ mkproc 122 "$WT" "ORCA_TERMINAL_HANDLE=term_mine" claude
 jq '.workers["other-lane"] = {host: "local", state: "running"}' "$CM_HOME/ledger.json" > "$ROOT/l.json" && mv "$ROOT/l.json" "$CM_HOME/ledger.json"   # a live record that is not looked at (no path)
 mkdir -p "$CM_HOME/lanes/other-lane"; printf 'term_mine\tlocal\tclaude\t-\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$CM_HOME/lanes/other-lane/handle"
 OUT="$(lh --worker w-one)"
-check "--lane: a handle another lane's FRESH file already holds is held, even though that lane is not in this run" '[ "$(field w-one 1)" = "-" ] && printf "%s\n" "$OUT" | grep -q "fresh handle file"'
+check "--lane: a handle another lane's FRESH file already holds is held, even though that lane is not in this run" '[ "$(field w-one 1)" = "-" ] && grep -q "fresh handle file" <<<"$OUT"'
 reset_proc; mkledger; rm -rf -- "${CM_HOME:?}/lanes"
 # (a second pass of the lane-in-this-run rule: a worker looked at in this run is judged by this run, not by its old file)
 mkproc 132 "$WT" "ORCA_TERMINAL_HANDLE=term_order" claude
 mkdir -p "$CM_HOME/lanes/w-two"; printf 'term_order\tlocal\tclaude\t9\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$CM_HOME/lanes/w-two/handle"
 OUT="$(lh)"
-check "a fresh file of a worker that IS in this run does not decide: w-one refreshed whatever the ledger order" '[ "$(field w-one 1)" = term_order ] && printf "%s\n" "$OUT" | grep -Eq "^w-one	term_order	refreshed"'
+check "a fresh file of a worker that IS in this run does not decide: w-one refreshed whatever the ledger order" '[ "$(field w-one 1)" = term_order ] && grep -Eq "^w-one	term_order	refreshed" <<<"$OUT"'
 echo "--- concurrent refresh"
 mkledger; rm -rf -- "${CM_HOME:?}/lanes"; reset_proc
 mkproc 111 "$WT" "ORCA_TERMINAL_HANDLE=term_race" claude
@@ -236,7 +236,7 @@ mkledger; reset_proc; rm -rf -- "${CM_HOME:?}/lanes"
 jq '.workers["w-old"] = {lane: "lane-a", host: "local", state: "gone", terminal: "term_fin"}' "$CM_HOME/ledger.json" > "$ROOT/l.json" && mv "$ROOT/l.json" "$CM_HOME/ledger.json"
 mkproc 140 "$WT" "ORCA_TERMINAL_HANDLE=term_fin" claude
 OUT="$(lh)"
-check "a finished record of another worker holds no handle: the live worker is refreshed, not held" '[ "$(field w-one 1)" = term_fin ] && printf "%s\n" "$OUT" | grep -Eq "^w-one	term_fin	refreshed"'
+check "a finished record of another worker holds no handle: the live worker is refreshed, not held" '[ "$(field w-one 1)" = term_fin ] && grep -Eq "^w-one	term_fin	refreshed" <<<"$OUT"'
 
 echo "--- a failed write never leaves the old handle to be served"
 mkledger; rm -rf -- "${CM_HOME:?}/lanes"; reset_proc
@@ -249,7 +249,7 @@ if [ -w "$CM_HOME/lanes/w-one" ]; then
   echo "SKIP failed-write cases: this user can write to a mode 555 directory (root)"
 else
   OUT="$(lh)"
-  check "a run that found no agent but could not write: the row says failed" 'printf "%s\n" "$OUT" | grep -Eq "^w-one	-	failed"'
+  check "a run that found no agent but could not write: the row says failed" 'grep -Eq "^w-one	-	failed" <<<"$OUT"'
   CM_PROC_ROOT="$ROOT/no-such-proc" cm_lane_handle w-one 2>"$ROOT/err" >"$ROOT/out"; RC=$?
   check "...and --get does NOT return the old tFirst (exit 3, nothing printed)" '[ "$RC" = 3 ] && [ ! -s "$ROOT/out" ]'
   CM_PROC_ROOT="$P" cm_lane_handle w-one 2>/dev/null >"$ROOT/out"; RC=$?
@@ -274,7 +274,7 @@ jq -n --arg a "$WT" --arg b "$WT2" '{workers: {"x\nw-b": {host: "local", path: $
     "w-b": {host: "local", path: $b, state: "running"}}}' > "$CM_HOME/ledger.json"
 mkproc 170 "$WT" "ORCA_TERMINAL_HANDLE=tEvil" claude
 OUT="$(lh)"
-check "a ledger key with a newline is refused, not split into a row for w-b" 'printf "%s\n" "$OUT" | grep -Eq "^\"x\\\\nw-b\"	-	invalid" && [ "$(field w-b 1)" = "-" ]'
+check "a ledger key with a newline is refused, not split into a row for w-b" 'grep -Eq "^\"x\\\\nw-b\"	-	invalid" <<<"$OUT" && [ "$(field w-b 1)" = "-" ]'
 check "...and w-b never holds the foreign agent's handle" '! grep -rq tEvil "$CM_HOME/lanes"'
 CM_PROC_ROOT="$P" cm_lane_handle w-b 2>/dev/null >"$ROOT/out"; RC=$?
 check "...--get w-b is refused (exit 1)" '[ "$RC" = 1 ] && [ ! -s "$ROOT/out" ]'
@@ -282,11 +282,11 @@ rm -rf -- "${CM_HOME:?}/lanes"
 jq -n --arg a "$WT" --arg b "$WT2" '{workers: {"w-nl": {host: "local", path: ($a + "\nw-b\u001ftEvil"), state: "running"},
     "w-b": {host: "local", path: $b, state: "running"}}}' > "$CM_HOME/ledger.json"
 OUT="$(lh)"
-check "a path with a newline or a unit separator is refused too" 'printf "%s\n" "$OUT" | grep -Eq "^\"w-nl\"	-	invalid" && [ ! -e "$(file w-nl)" ] && [ "$(field w-b 1)" = "-" ]'
+check "a path with a newline or a unit separator is refused too" 'grep -Eq "^\"w-nl\"	-	invalid" <<<"$OUT" && [ ! -e "$(file w-nl)" ] && [ "$(field w-b 1)" = "-" ]'
 rm -rf -- "${CM_HOME:?}/lanes"
 jq -n --arg a "$WT" '{workers: {".dot": {host: "local", path: $a, state: "running"}, "-lead": {host: "local", path: $a, state: "running"}}}' > "$CM_HOME/ledger.json"
 OUT="$(lh)"
-check "a leading dot is refused, a leading dash is a fine id" 'printf "%s\n" "$OUT" | grep -Eq "^\".dot\"	-	invalid" && [ ! -e "$CM_HOME/lanes/.dot" ]'
+check "a leading dot is refused, a leading dash is a fine id" 'grep -Eq "^\".dot\"	-	invalid" <<<"$OUT" && [ ! -e "$CM_HOME/lanes/.dot" ]'
 
 echo "--- the file holds the time the agent was SEEN, and an older look never overwrites a newer one"
 mkledger; rm -rf -- "${CM_HOME:?}/lanes"; reset_proc
@@ -315,9 +315,9 @@ printf 'term_g\tlocal\tclaude\t1\t%s\n' "$now" > "$CM_HOME/lanes/w-gone/handle"
 printf 'term_n\tlocal\tclaude\t1\t%s\n' "$now" > "$CM_HOME/lanes/w-nobody/handle"
 jq '.workers["w-gone"] = {host: "local", path: "/x", state: "gone"}' "$CM_HOME/ledger.json" > "$ROOT/l.json" && mv "$ROOT/l.json" "$CM_HOME/ledger.json"
 OUT="$(lh --dry-run)"
-check "--dry-run names the files of finished workers and removes none" 'printf "%s\n" "$OUT" | grep -Eq "^w-gone	-	gone" && [ -e "$CM_HOME/lanes/w-gone/handle" ]'
+check "--dry-run names the files of finished workers and removes none" 'grep -Eq "^w-gone	-	gone" <<<"$OUT" && [ -e "$CM_HOME/lanes/w-gone/handle" ]'
 OUT="$(lh)"
-check "a full run removes the handle file of a gone worker and of an id the ledger never held" '[ ! -e "$CM_HOME/lanes/w-gone/handle" ] && [ ! -e "$CM_HOME/lanes/w-nobody/handle" ] && printf "%s\n" "$OUT" | grep -Eq "^w-nobody	-	gone"'
+check "a full run removes the handle file of a gone worker and of an id the ledger never held" '[ ! -e "$CM_HOME/lanes/w-gone/handle" ] && [ ! -e "$CM_HOME/lanes/w-nobody/handle" ] && grep -Eq "^w-nobody	-	gone" <<<"$OUT"'
 cm_lane_handle w-gone 2>/dev/null >"$ROOT/out"; RC=$?
 check "...so a send to the finished worker is refused (exit 3)" '[ "$RC" = 3 ] && [ ! -s "$ROOT/out" ]'
 mkledger
@@ -329,14 +329,14 @@ cm_worker_set_handle w-one term_live_other 2>/dev/null; RC=$?
 check "...a LIVE record still does (exit 4)" '[ "$RC" = 4 ]'
 mkledger; reset_proc
 OUT="$(CM_PROC_ROOT="$ROOT/no-such-proc" "$LH")"
-check "an undecidable check shows no handle in the table (the ledger terminal is not a usable handle)" 'printf "%s\n" "$OUT" | grep -Eq "^w-one	-	unknown" && ! printf "%s\n" "$OUT" | grep -q term_stale'
+check "an undecidable check shows no handle in the table (the ledger terminal is not a usable handle)" 'grep -Eq "^w-one	-	unknown" <<<"$OUT" && ! grep -q term_stale <<<"$OUT"'
 
 mkledger; rm -rf -- "${CM_HOME:?}/lanes"; reset_proc
 mkproc 191 "$WT" "ORCA_TERMINAL_HANDLE=term_shared" claude
 mkdir -p "$CM_HOME/lanes/w-old"; printf 'term_shared\tlocal\tclaude\t1\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$CM_HOME/lanes/w-old/handle"
 jq '.workers["w-old"] = {host: "local", path: "/x", state: "gone"}' "$CM_HOME/ledger.json" > "$ROOT/l.json" && mv "$ROOT/l.json" "$CM_HOME/ledger.json"
 OUT="$(lh --worker w-one)"
-check "the fresh file of a GONE worker holds nothing: the live worker is refreshed, not held (also under --worker)" '[ "$(field w-one 1)" = term_shared ] && printf "%s\n" "$OUT" | grep -Eq "^w-one	term_shared	refreshed"'
+check "the fresh file of a GONE worker holds nothing: the live worker is refreshed, not held (also under --worker)" '[ "$(field w-one 1)" = term_shared ] && grep -Eq "^w-one	term_shared	refreshed" <<<"$OUT"'
 mkdir -p "$CM_HOME/lanes/.failed"; : > "$CM_HOME/lanes/.failed/w-old"
 lh --quiet
 check "a full run removes the failure marker of a finished worker with its file" '[ ! -e "$CM_HOME/lanes/.failed/w-old" ] && [ ! -e "$CM_HOME/lanes/w-old/handle" ]'
@@ -374,7 +374,7 @@ cm_lane_handle w-one 2>/dev/null >"$ROOT/out"; RC=$?
 check "the reader never serves a hand-written --json: bad, re-checked, refused" '[ "$(cat "$ROOT/out")" != --json ] && [ "$RC" != 0 ]'
 rm -rf -- "${CM_HOME:?}/lanes"; mkproc 201 "$WT" "ORCA_TERMINAL_HANDLE=-" claude
 OUT="$(lh)"
-check "live-agent.sh: ORCA_TERMINAL_HANDLE=- in an agent's environment is no handle (marked dead, ledger terminal not set to -)" 'printf "%s\n" "$OUT" | grep -Eq "^w-one	-	no-handle" && [ "$(jq -r ".workers[\"w-one\"].terminal" "$CM_HOME/ledger.json")" != "-" ]'
+check "live-agent.sh: ORCA_TERMINAL_HANDLE=- in an agent's environment is no handle (marked dead, ledger terminal not set to -)" 'grep -Eq "^w-one	-	no-handle" <<<"$OUT" && [ "$(jq -r ".workers[\"w-one\"].terminal" "$CM_HOME/ledger.json")" != "-" ]'
 cm_worker_set_handle w-one -x 2>/dev/null; RC=$?
 check "cm_worker_set_handle refuses a dash-led handle" '[ "$RC" = 1 ]'
 
@@ -413,11 +413,11 @@ mkproc 220 "$WT" "ORCA_TERMINAL_HANDLE=term_reused" claude
 mkdir -p "$CM_HOME/lanes/w-old2"; printf 'term_reused\tlocal\tclaude\t99997\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$CM_HOME/lanes/w-old2/handle"
 jq '.workers["w-old2"] = {host: "local", state: "running"}' "$CM_HOME/ledger.json" > "$ROOT/l.json" && mv "$ROOT/l.json" "$CM_HOME/ledger.json"
 OUT="$(lh --worker w-one)"
-check "held_by: a fresh file whose agent pid is gone holds nothing: a reused terminal is not held by its dead former agent" '[ "$(field w-one 1)" = term_reused ] && printf "%s\n" "$OUT" | grep -Eq "^w-one	term_reused	refreshed"'
+check "held_by: a fresh file whose agent pid is gone holds nothing: a reused terminal is not held by its dead former agent" '[ "$(field w-one 1)" = term_reused ] && grep -Eq "^w-one	term_reused	refreshed" <<<"$OUT"'
 reset_proc; mkproc 221 "$WT" "ORCA_TERMINAL_HANDLE=term_reused" claude; mkproc 222 "$WT2" "ORCA_TERMINAL_HANDLE=term_reused" claude
 printf 'term_reused\tlocal\tclaude\t222\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$CM_HOME/lanes/w-old2/handle"
 OUT="$(lh --worker w-one)"
-check "...but the same file with its agent ALIVE and carrying the terminal still holds it" '[ "$(field w-one 1)" = "-" ] && printf "%s\n" "$OUT" | grep -q "fresh handle file"'
+check "...but the same file with its agent ALIVE and carrying the terminal still holds it" '[ "$(field w-one 1)" = "-" ] && grep -q "fresh handle file" <<<"$OUT"'
 
 mkledger; rm -rf -- "${CM_HOME:?}/lanes"; reset_proc
 mkproc 230 "$WT" "ORCA_TERMINAL_HANDLE=term_two" claude; mkproc 229 "$WT" "ORCA_TERMINAL_HANDLE=term_two" claude; mkproc 231 "$WT" "ORCA_TERMINAL_HANDLE=term_two" claude
@@ -582,6 +582,131 @@ mkdir -p "$ROOT/empty-failed"; ln -s "$ROOT/empty-failed" "$CM_HOME/lanes/.faile
 cm_lane_handle w-one 2>"$ROOT/err" >"$ROOT/out"; RC=$?
 check "lanes/.failed a symlink: the reader refuses (exit 3, nothing printed)" '[ "$RC" = 3 ] && [ ! -s "$ROOT/out" ]'
 rm -rf -- "${CM_HOME:?}/lanes"
+
+echo "--- phase 4 and held_by: a ledger that cannot be read is never read as \"the worker is gone\""
+# live_record has three answers: live, not live (a readable ledger says so), unknown (jq failed, the ledger is unreadable). Only "not live"
+# removes a file. The ledger is made unreadable AFTER the start-up check by a live-agent stub (the ledger is rewritten mid-run), or jq is
+# replaced by a shim that fails only for live_record's own filter (a PATH shim: every other jq call runs the real one).
+REAL_JQ="$(command -v jq)"
+mkdir -p "$ROOT/shim"
+cat > "$ROOT/shim/jq" <<SHIM
+#!/usr/bin/env bash
+# fails only for live_record's filter; JQ_SHIM: exit1 (answers "false"), exit2 (an error), empty0 (exits 0 with no answer)
+case "\$*" in
+  *'lh_workers[\$id]'*)
+    case "\${JQ_SHIM:-}" in exit1) exit 1 ;; exit2) exit 2 ;; empty0) exit 0 ;; esac ;;
+esac
+exec "$REAL_JQ" "\$@"
+SHIM
+chmod +x "$ROOT/shim/jq"
+# a live-agent stub: no agent anywhere (exit 1), and the ledger is damaged on the first call, the way a rewrite or a failing disk would
+mklacorrupt() { # <how: malformed|missing|chmod|empty|null|two|workersnull|workersarray>
+  printf '#!/bin/sh\nL="%s/ledger.json"\ncase "%s" in malformed) printf "{ not json" > "$L" ;; missing) rm -f "$L" ;; chmod) chmod 000 "$L" ;; empty) printf "{}" > "$L" ;; null) printf "null" > "$L" ;; two) printf "{\\"workers\\":{}}{\\"workers\\":{}}" > "$L" ;; workersnull) printf "{\\"workers\\":null}" > "$L" ;; workersarray) printf "{\\"workers\\":[]}" > "$L" ;; esac\nexit 1\n' "$CM_HOME" "$1" > "$ROOT/la-corrupt"
+  chmod +x "$ROOT/la-corrupt"
+}
+# four lane files: a live record without a path (so phase 1 does not look at it), dead records, an id the ledger never held
+p4_setup() {
+  mkledger; reset_proc; rm -rf -- "${CM_HOME:?}/lanes"
+  mkdir -p "$CM_HOME/lanes/w-live" "$CM_HOME/lanes/w-gone" "$CM_HOME/lanes/w-rep" "$CM_HOME/lanes/w-absent"
+  now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  for w in w-live w-gone w-rep w-absent; do printf 'term_%s\tlocal\tclaude\t1\t%s\n' "$w" "$now" > "$CM_HOME/lanes/$w/handle"; done
+  jq '.workers["w-live"] = {host: "local", state: "running"} | .workers["w-gone"] = {host: "local", state: "gone"} | .workers["w-rep"] = {host: "local", state: "repurposed"}' \
+    "$CM_HOME/ledger.json" > "$ROOT/l.json" && mv "$ROOT/l.json" "$CM_HOME/ledger.json"
+}
+kept4() { for w in w-live w-gone w-rep w-absent; do [ -e "$CM_HOME/lanes/$w/handle" ] || return 1; done; }
+gone4() { for w in w-gone w-rep w-absent; do [ ! -e "$CM_HOME/lanes/$w/handle" ] || return 1; done; }
+
+p4_setup
+OUT="$(lh 2>"$ROOT/err")"; RC=$?
+check "readable ledger: a live worker's file is kept, a gone and a repurposed worker's and an unknown id's are removed, exit 0" \
+  '[ "$RC" = 0 ] && [ -e "$CM_HOME/lanes/w-live/handle" ] && gone4 && grep -Eq "^w-gone	-	gone" <<<"$OUT" && ! grep -q "^w-live	" <<<"$OUT"'
+p4_setup
+OUT="$(lh --dry-run 2>"$ROOT/err")"; RC=$?
+check "readable ledger, --dry-run: the same rows, nothing removed, exit 0" '[ "$RC" = 0 ] && kept4 && grep -Eq "^w-absent	-	gone" <<<"$OUT"'
+p4_setup; printf '{"workers":{}}' > "$CM_HOME/ledger.json"
+OUT="$(lh 2>"$ROOT/err")"; RC=$?
+check "readable ledger with an EMPTY workers object (a fleet with no workers): every file is gone, exit 0 (not unknown)" '[ "$RC" = 0 ] && [ ! -e "$CM_HOME/lanes/w-live/handle" ] && gone4 && ! grep -q "	kept	" <<<"$OUT"'
+
+CAN_000=1; : > "$ROOT/m000"; chmod 000 "$ROOT/m000"; [ -r "$ROOT/m000" ] && CAN_000=0; chmod 600 "$ROOT/m000"
+for HOW in malformed missing chmod empty null two workersnull workersarray; do
+  if [ "$HOW" = chmod ] && [ "$CAN_000" = 0 ]; then echo "SKIP unreadable-ledger case (chmod 000): this user reads a mode 000 file (root)"; continue; fi
+  p4_setup; mklacorrupt "$HOW"
+  chmod 600 "$CM_HOME/ledger.json" 2>/dev/null
+  OUT="$(CM_LIVE_AGENT="$ROOT/la-corrupt" lh 2>"$ROOT/err")"; RC=$?
+  chmod 600 "$CM_HOME/ledger.json" 2>/dev/null
+  check "ledger $HOW part way through the run: every worker file is KEPT (live, gone and unknown alike), nothing is guessed gone, the run exits 1" \
+    '[ "$RC" = 1 ] && kept4 && ! grep -Eq "	gone	" <<<"$OUT"' "rc=$RC $(cat "$ROOT/err")"
+  check "...one \"kept\" row per file, and stderr says the ledger could not be read (even with --quiet)" \
+    '[ "$(printf "%s\n" "$OUT" | grep -c "	kept	")" = 4 ] && grep -q "ledger unreadable: the file is left as it is" <<<"$OUT" && grep -q "could not be read part way through the run: 4 worker(s) could not be judged" "$ROOT/err"'
+done
+p4_setup; mklacorrupt malformed
+CM_LIVE_AGENT="$ROOT/la-corrupt" lh --quiet 2>"$ROOT/err" >"$ROOT/out"; RC=$?
+check "--quiet: no rows, but the files are kept, the exit is 1 and stderr still says why" '[ "$RC" = 1 ] && [ ! -s "$ROOT/out" ] && kept4 && grep -q "could not be read part way" "$ROOT/err"'
+p4_setup; mklacorrupt malformed
+OUT="$(CM_LIVE_AGENT="$ROOT/la-corrupt" lh --dry-run 2>"$ROOT/err")"; RC=$?
+check "--dry-run with an unreadable ledger reports kept too (nothing would be removed), exit 1" '[ "$RC" = 1 ] && kept4 && grep -q "	kept	" <<<"$OUT"'
+
+# the failure markers of phase 4: kept when the ledger cannot be read, removed when a readable ledger says the worker is not live
+p4_setup; mkdir -p "$CM_HOME/lanes/.failed"; : > "$CM_HOME/lanes/.failed/w-absent"; : > "$CM_HOME/lanes/.failed/w-live"
+rm -f -- "$CM_HOME/lanes/w-absent/handle" "$CM_HOME/lanes/w-live/handle" "$CM_HOME/lanes/w-gone/handle" "$CM_HOME/lanes/w-rep/handle"
+OUT="$(lh 2>"$ROOT/err")"; RC=$?
+check "failure markers, readable ledger: the marker of an unknown id is removed, the marker of a live worker kept, exit 0" '[ "$RC" = 0 ] && [ ! -e "$CM_HOME/lanes/.failed/w-absent" ] && [ -e "$CM_HOME/lanes/.failed/w-live" ]'
+p4_setup; mkdir -p "$CM_HOME/lanes/.failed"; : > "$CM_HOME/lanes/.failed/w-absent"
+rm -f -- "$CM_HOME/lanes/w-absent/handle" "$CM_HOME/lanes/w-live/handle" "$CM_HOME/lanes/w-gone/handle" "$CM_HOME/lanes/w-rep/handle"
+OUT="$(JQ_SHIM=exit2 PATH="$ROOT/shim:$PATH" lh 2>"$ROOT/err")"; RC=$?
+check "failure markers, jq failing for live_record: the marker is KEPT and reported, exit 1" '[ "$RC" = 1 ] && [ -e "$CM_HOME/lanes/.failed/w-absent" ] && grep -q "w-absent	-	kept	ledger unreadable: the failure marker is left as it is" <<<"$OUT"'
+
+# jq stubs (the ledger itself is fine)
+p4_setup
+OUT="$(JQ_SHIM=exit2 PATH="$ROOT/shim:$PATH" lh 2>"$ROOT/err")"; RC=$?
+check "a jq that fails (exit 2) for the liveness question: every worker file is KEPT, the run exits 1, the rows say kept" \
+  '[ "$RC" = 1 ] && kept4 && grep -Eq "^w-absent	-	kept	ledger unreadable" <<<"$OUT" && ! grep -q "	gone	" <<<"$OUT"' "rc=$RC"
+p4_setup
+OUT="$(JQ_SHIM=empty0 PATH="$ROOT/shim:$PATH" lh 2>"$ROOT/err")"; RC=$?
+check "a jq that exits 0 with no answer at all is unknown too (files kept, exit 1)" '[ "$RC" = 1 ] && kept4'
+p4_setup
+OUT="$(JQ_SHIM=exit1 PATH="$ROOT/shim:$PATH" lh 2>"$ROOT/err")"; RC=$?
+check "a jq that answers \"false\" (exit 1) is NOT live, as before: the files are removed, exit 0" '[ "$RC" = 0 ] && [ ! -e "$CM_HOME/lanes/w-live/handle" ] && gone4'
+
+# held_by: another lane's fresh file with the very handle a live worker found. Readable ledger and a live record: held (as before).
+# Unreadable ledger: unknown, so nothing is claimed about that file (the worker is NOT marked held on a guess), the file is kept, the run exits 1.
+mklalive() { # the agent is found in $WT only; <corrupt: yes|no> damages the ledger on that call
+  printf '#!/bin/sh\ncase "$1" in "%s") printf "301\\tterm_h\\tclaude\\n" ;; *) exit 1 ;; esac\n[ "%s" = yes ] && printf "{ not json" > "%s/ledger.json"\nexit 0\n' "$WT" "$1" "$CM_HOME" > "$ROOT/la-live"
+  chmod +x "$ROOT/la-live"
+}
+held_setup() {
+  mkledger; reset_proc; rm -rf -- "${CM_HOME:?}/lanes"
+  jq '.workers["w-other"] = {host: "local", state: "running"}' "$CM_HOME/ledger.json" > "$ROOT/l.json" && mv "$ROOT/l.json" "$CM_HOME/ledger.json"
+  mkdir -p "$CM_HOME/lanes/w-other"; printf 'term_h\tlocal\tclaude\t-\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$CM_HOME/lanes/w-other/handle"
+}
+held_setup; mklalive no
+OUT="$(CM_LIVE_AGENT="$ROOT/la-live" lh 2>"$ROOT/err")"; RC=$?
+check "held_by, readable ledger: a live worker whose handle another live worker's fresh file holds is marked held (as before)" '[ "$RC" = 0 ] && grep -Eq "^w-one	-	held" <<<"$OUT"'
+held_setup; mklalive yes
+OUT="$(CM_LIVE_AGENT="$ROOT/la-live" lh --worker w-one 2>"$ROOT/err")"; RC=$?   # --worker: no phase 4, so the exit 1 can only come from held_by
+check "held_by, ledger unreadable: the worker gets an \"unknown\" row, its file is NOT written with the contested handle, the other lane's file is left, the run exits 1" \
+  '[ "$RC" = 1 ] && grep -Eq "^w-one	-	unknown" <<<"$OUT" && ! grep -Eq "^w-one	.*(refreshed|held)" <<<"$OUT" && ! grep -qs term_h "$CM_HOME/lanes/w-one/handle" && [ -e "$CM_HOME/lanes/w-other/handle" ] && grep -q "could not be read part way through the run" "$ROOT/err"' "rc=$RC $(cat "$ROOT/err")"
+held_setup; mklalive no
+OUT="$(JQ_SHIM=exit2 PATH="$ROOT/shim:$PATH" CM_LIVE_AGENT="$ROOT/la-live" lh --worker w-one 2>"$ROOT/err")"; RC=$?
+check "held_by, jq failing for live_record: the same (an \"unknown\" row, no write, the ledger terminal untouched, exit 1)" '[ "$RC" = 1 ] && grep -Eq "^w-one	-	unknown" <<<"$OUT" && ! grep -Eq "^w-one	.*(refreshed|held)" <<<"$OUT" && ! grep -qs term_h "$CM_HOME/lanes/w-one/handle" && [ "$(jq -r ".workers[\"w-one\"].terminal" "$CM_HOME/ledger.json")" = term_stale ] && [ -e "$CM_HOME/lanes/w-other/handle" ]'
+# the ledger-terminal holder (no lane file at all): a jq that fails on the first held_by question is unknown too, not "nobody holds it"
+held_setup; rm -f -- "$CM_HOME/lanes/w-other/handle"
+jq '.workers["w-other"].terminal = "term_h"' "$CM_HOME/ledger.json" > "$ROOT/l.json" && mv "$ROOT/l.json" "$CM_HOME/ledger.json"
+mklalive no
+OUT="$(CM_LIVE_AGENT="$ROOT/la-live" lh 2>"$ROOT/err")"; RC=$?
+check "held_by, readable ledger: the holder is found by the ledger terminal alone (held, as before)" '[ "$RC" = 0 ] && grep -Eq "^w-one	-	held.*ledger terminal" <<<"$OUT"'
+held_setup; rm -f -- "$CM_HOME/lanes/w-other/handle"
+jq '.workers["w-other"].terminal = "term_h"' "$CM_HOME/ledger.json" > "$ROOT/l.json" && mv "$ROOT/l.json" "$CM_HOME/ledger.json"
+mklalive yes
+OUT="$(CM_LIVE_AGENT="$ROOT/la-live" lh 2>"$ROOT/err")"; RC=$?
+check "held_by, ledger unreadable at the ledger-terminal question: not read as \"nobody holds it\" (an \"unknown\" row, no write of the contested handle, exit 1, stderr says why)" '[ "$RC" = 1 ] && grep -Eq "^w-one	-	unknown" <<<"$OUT" && ! grep -qs term_h "$CM_HOME/lanes/w-one/handle" && grep -q "could not be read part way through the run" "$ROOT/err"' "rc=$RC $(cat "$ROOT/err")"
+mkledger; rm -rf -- "${CM_HOME:?}/lanes"
+
+echo "--- the checks themselves"
+# bash printf writes into a pipe one line per write(): when grep -q matches an early line and exits, the printf that still has lines to
+# write dies of SIGPIPE, and under pipefail the check fails on a correct output (seen on a loaded host). A here-string has no writer.
+PIPE_GREP_Q='printf [^|]*[|] *grep -[A-Za-z]*q'
+check "no check pipes printf into grep -q (SIGPIPE under pipefail fails a correct output when the host is loaded): here-strings only" '! grep -nE "$PIPE_GREP_Q" "$HERE/lane-handles.sh"'
 
 echo
 printf 'passed=%s failed=%s\n' "$PASS" "$FAIL"

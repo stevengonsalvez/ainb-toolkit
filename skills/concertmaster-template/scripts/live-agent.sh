@@ -26,8 +26,9 @@
 # empty list is refused (exit 2). A match is on argv, or on the kernel process name (comm).
 #
 # Linux /proc only. CM_PROC_ROOT replaces /proc (tests only: it needs CM_TEST=1). A remote
-# --host is scanned over ssh the way teardown.sh reaches it: $CM_SSH_TARGET, else the
-# ledger's hosts.<h>.hostname, else the host name; this script is streamed to bash there.
+# --host is scanned over ssh to cm_ssh_target (lib.sh): $CM_SSH_TARGET, else the ledger's
+# hosts.<h>.sshTarget, else hosts.<h>.hostname when it is an address, else the host name;
+# this script is streamed to bash there.
 # The remote `hostname -s` must equal $CM_SSH_EXPECT_HOSTNAME, else the ledger's
 # hosts.<h>.hostname, else the host name (as teardown.sh checks); a mismatch is exit 3, so a
 # CM_SSH_TARGET meant for one host never answers for another.
@@ -68,15 +69,11 @@ if [ "$LOCAL_ONLY" = 0 ] && [ "$HOST" != local ] && [ "$HOST" != "this machine" 
   # shellcheck source=SCRIPTDIR/lib.sh
   . "$HERE/lib.sh"
   AGENTS="${AGENTS:-$(cm_cfg .respawn.live_agents "claude codex agy")}"
-  TARGET="${CM_SSH_TARGET:-}"
-  if [ -z "$TARGET" ] && [ -s "$CM_HOME/ledger.json" ]; then
-    TARGET="$(jq -r --arg h "$HOST" '.hosts[$h].hostname // empty' "$CM_HOME/ledger.json" 2>/dev/null)"
-  fi
-  TARGET="${TARGET:-$HOST}"
+  TARGET="$(cm_ssh_target "$HOST")"   # CM_SSH_TARGET, else a ledger hostname that is an address, else the host name (lib.sh)
   case "$TARGET" in -*|*[[:space:]]*|'') warn "invalid ssh target: '$TARGET'"; exit 3 ;; esac
   EXPECT="${CM_SSH_EXPECT_HOSTNAME:-}"
-  if [ -z "$EXPECT" ] && [ -s "$CM_HOME/ledger.json" ]; then
-    EXPECT="$(jq -r --arg h "$HOST" '.hosts[$h].hostname // empty' "$CM_HOME/ledger.json" 2>/dev/null)"
+  if [ -z "$EXPECT" ] && [ -s "$(cm_ledger_path)" ]; then
+    EXPECT="$(jq -r --arg h "$HOST" '.hosts[$h].hostname // empty' "$(cm_ledger_path)" 2>/dev/null)"
   fi
   EXPECT="${EXPECT:-$HOST}"
   case "$EXPECT" in *[!A-Za-z0-9._-]*|'') warn "invalid expected hostname: '$EXPECT'"; exit 3 ;; esac

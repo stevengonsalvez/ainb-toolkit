@@ -67,7 +67,7 @@
 #     refuses unless the path resolved and a live ledger worker matched
 #
 # <host> is "local" or an Orca environment name (as listed by `orca host list`).
-# Remote git checks run over `ssh $CM_SSH_TARGET` (default: the host name),
+# Remote git checks run over `ssh $(cm_ssh_target <host>)` (lib.sh: $CM_SSH_TARGET, else the ledger's hosts.<host>.sshTarget, else hostname when an address, else the host name),
 # and the remote `hostname -s` must equal $CM_SSH_EXPECT_HOSTNAME (default:
 # the ledger's hosts.<host>.hostname, else the host name). If ssh is
 # unavailable or lands on the wrong machine the teardown is refused.
@@ -302,7 +302,7 @@ TERMS_CLOSED="${CM_TD_TERMINALS_CLOSED:-0}"
 [ "$TERMS_CLOSED" != 1 ] || CLOSE_HANDLES=" "
 
 ORCA="$(cm_cli)" || exit 2
-SSH_TARGET="${CM_SSH_TARGET:-$HOST}"
+SSH_TARGET="$(cm_ssh_target "$HOST")"   # lib.sh: CM_SSH_TARGET, ledger sshTarget, a ledger hostname that is an address, else the host name
 case "$SSH_TARGET" in
   -*|*[[:space:]]*|'') cm_warn "invalid ssh target: '$SSH_TARGET'"; exit 2 ;;
 esac

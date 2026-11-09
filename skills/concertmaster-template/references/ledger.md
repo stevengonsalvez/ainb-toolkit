@@ -274,7 +274,8 @@ may have leaked should run `scripts/ledger-guard.sh` before it.
 | `firstBoot.completedAt` | set after the kill list is answered and acted on; autonomous teardown of merged work starts after it |
 | `killList[]` | one entry per first-boot candidate, `id` = `<host>:<path>`; `decision` is `approved` (retire + teardown), `declined` (never touched, never re-asked) or `report-only` (reported, never acted on); honoured on every later tick |
 | `hosts.<name>.reachable` | from the last discover; `offlineSince` set on the first unreachable tick |
-| `hosts.<name>.hostname` | `hostname -s` the host answers over ssh; teardown.sh refuses a remote host that answers otherwise (seeded from `cfg.hosts.per_host.<name>.hostname`) |
+| `hosts.<name>.hostname` | `hostname -s` the host answers over ssh; teardown.sh refuses a remote host that answers otherwise (seeded from `cfg.hosts.per_host.<name>.hostname`). Used as an ssh target only when it is an address (holds a dot or colon) |
+| `hosts.<name>.sshTarget` | optional: the ssh alias or address of the host, for one whose ssh name is neither its Orca name nor an address hostname. First after `CM_SSH_TARGET` in `lib.sh` `cm_ssh_target` |
 | `hosts.<name>.role` | `general`, `native` (native builds), `overflow`; seeded from `cfg.hosts` |
 | `hosts.<name>.maxWorkers` | live-worker cap for that host; seeded from `cfg.hosts`, read every tick |
 | `lanes.<lane>.state` | `absent`, `spawning`, `running`, `idle` (queue empty, lead kept: lanes are standing and never torn down), `draining` (legacy: treat as `idle`), `gone` |
@@ -344,7 +345,7 @@ longer a live ledger record (`gone`), along with temp files of an interrupted wr
 and failure markers of finished workers. The check-and-replace of one lane file runs under a short per-lane
 lock (`lanes/<worker-id>/.lock`, a mkdir lock, taken over after a minute, a write that cannot get it in about
 3 s fails closed). A symlinked `lanes/.failed` makes the reader distrust every file. `lane-handles.sh` exits 1
-when `live-agent.sh` is missing beside it, and exits 2 for an empty `--get` or `--worker` id. An id or field with a control character (a newline would forge a
+when `live-agent.sh` is missing beside it, and also when the ledger cannot be read part way through the run (then a file whose own liveness check failed is kept, a `kept` row in a full run, and a worker whose handle check could not run is an `unknown` row and its file is left as it is; the files the ledger could still be read for are judged as usual), and exits 2 for an empty `--get` or `--worker` id. An id or field with a control character (a newline would forge a
 second row) is `invalid` and gets no file. A handle must be a plain token that does not start with `-`
 (it would read as an option after `--terminal`); the dead mark, a lone `-`, is the only exception. Lane
 directories are created mode 700 and a symlinked `lanes/<worker-id>` is refused. The ledger `terminal` is brought in line with a live handle when they differ
