@@ -190,8 +190,10 @@ Rules that hold for every row:
   `<repo>/.agents/skills/concertmaster`):
 
   ```bash
-  ssh <host> 'test ! -e "$HOME/.concertmaster-cutover"' || echo "STOP: a ledger copy dir exists already"
+  # creates the ledger copy dir, and fails if it exists already: COPY_OK is what lets the cleanup delete it
+  ssh <host> 'mkdir -- "$HOME/.concertmaster-cutover"' && COPY_OK=1 || echo "STOP: the ledger copy dir exists already, or ssh failed"
   D=$(ssh <host> mktemp -d); echo "$D"     # note it: the remote shell does not know $D
+  [[ "$D" =~ ^/[^[:space:]]+$ ]] || echo "STOP: not one absolute path (login output on the host?): $D"
   git archive origin/main . | ssh <host> "tar -x -C $D"
   ssh <host> "test -x $D/scripts/cutover-host.sh" && echo "skill ok"
   ```
@@ -200,11 +202,12 @@ Rules that hold for every row:
   extract into an existing checkout: `tar -x` would overwrite its tracked skill files and the cleanup would then delete them. A
   one-shot run names the path literally:
   `ssh <host> 'export PATH=$HOME/.local/bin:$PATH CM_HOME=$HOME/.concertmaster-cutover; cd '"$D"' && scripts/cutover-host.sh local'`
-  (add `--apply` for the real run; without `CM_HOME` the script reads the host's default `~/.concertmaster`, not the copy). After a
-  clean run (orphan check 0) and the journal entries appended on the concertmaster host, remove both run directories whole and
-  nothing else: `[ -n "$D" ] && ssh <host> "rm -rf -- $D"; ssh <host> 'rm -rf -- "$HOME/.concertmaster-cutover"'`. The ledger copy
-  is the whole `CM_HOME` (`source.json`, `ledger.json`, `lanes/<id>/handle`, `lanes/<id>/journal.md`). Delete it only if the first
-  check passed: leave nothing behind, and never a directory that existed before the run.
+  (add `--apply` for the real run; without `CM_HOME` the script reads the host's default `~/.concertmaster`, not the copy). After the
+  host's last run (orphan check 0) and the journal entries appended on the concertmaster host, remove both run directories whole and
+  nothing else, from the same shell that set `D` and `COPY_OK`:
+  `[[ "$D" =~ ^/[^[:space:]]+$ ]] && ssh <host> "rm -rf -- $D"; [ "${COPY_OK:-}" = 1 ] && ssh <host> 'rm -rf -- "$HOME/.concertmaster-cutover"'`.
+  The ledger copy is the whole `CM_HOME` (`source.json`, `ledger.json`, `lanes/<id>/handle`, `lanes/<id>/journal.md`); without
+  `COPY_OK=1` it existed before the run and is never deleted. Leave nothing behind, and never a directory that existed before the run.
 
 **Covered by the suite:** the dry run for `local` against stub runtimes (including `skip: self` for the shell's own terminal), the model
 gate reading panes, the ssh target rule (argv recorded) and `--except`.
@@ -259,6 +262,7 @@ Make it from the concertmaster's ledger, never editing the original, in a fresh 
 # on the concertmaster host: where its ledger really is (CM_LEDGER, else $CM_HOME/ledger.json)
 bash -c '. scripts/lib.sh; cm_ledger_path'
 # on the remote host; <host> is the Orca environment name the concertmaster's ledger uses; the copy lands in a fresh CM_HOME
+# (run the Remote shell mechanics block first: it made this directory, and the mkdir -p below only reuses it)
 mkdir -p "$HOME/.concertmaster-cutover"; scp <concertmaster host>:<the path printed above> "$HOME/.concertmaster-cutover/source.json"
 jq --arg h "<host>" '{schema, project, hosts, workers: (.workers | with_entries(select((.value | type) == "object" and .value.host == $h)) | map_values(.host = "local"))}' \
   "$HOME/.concertmaster-cutover/source.json" > "$HOME/.concertmaster-cutover/ledger.json"
