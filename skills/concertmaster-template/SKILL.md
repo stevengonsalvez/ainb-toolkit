@@ -330,7 +330,7 @@ name it in the `next:` line, and keep ticking. Use `AskUserQuestion` only in a t
 owner started (they just wrote to the concertmaster), and even then call `ScheduleWakeup`
 BEFORE asking, and only when the rule below allows it. A blocking picker also waits until every past-and-unfinished window and the first window ahead is pinned and has its own live deploy worker and a wake is armed (otherwise it is a WAITING row), and any message that names a time or a release is checked against the clock (`scripts/clock-check.sh`) right before it is sent (§ The tick, "No owner question before a deploy is spawned").
 
-**No owner question before a deploy is spawned.** A blocking owner picker (`AskUserQuestion`) is allowed only when EVERY window that is past and still unfinished AND the first unfinished window still ahead (whatever its distance; later ones are not checked) is pinned and has its own live deploy worker, and a wake is armed (`ScheduleWakeup` pending). The windows come from `cfg.schedule.deploy_windows` (read the config key, never a clock time written in a message). Pinned means the window's `deployWindows[]` row is at `staging` or later (`staging`, `validating`, `prod`) or carries the trigger sha (`deployWindows[].sha`): the deploy sha was fixed at the freeze. The rails are checked later (Deploy windows step 2) and a deploy worker is spawned only after they clear, so pinned plus its own live worker means the rails cleared. Its own live worker is the `worker` that row names, listed in `workers` as spawning, running or blocked-on-owner; not `stuck`, which needs the loop that a picker stops; one worker never covers another window, and a worker named by two unfinished rows covers neither. A window that is done, skipped or stopped is not unfinished. Otherwise the ask is a `WAITING: <owner>, <question>, <age>` row in the tick table and the turn ends normally with the wake armed; no picker. A worker spawned long before its window does not open the picker by itself: the row must be pinned first. A time window does not do this job: a picker opened just outside any fixed number of hours can still hold the turn through the deploy, so the test is coverage, not distance. With windows configured this is not met in the normal flow: the first window ahead is pinned only at its freeze and gets its worker only after the window time, so no blocking picker opens and every owner ask is a WAITING row. Never pin before the freeze, or spawn a deploy worker before the rails clear, to open a picker: an early pin goes stale (step 0). A picker that is already open when the window arrives is the one exposure left. With no windows configured a picker is allowed when the ledger is readable and every unfinished row on it is covered. A rails hit (Deploy windows step 2) or a migration-guard ask comes before the worker exists and is a WAITING row too: the window waits and the owner answers in a turn they start. A past window with no live worker (missed) stays checked until its outcome is recorded (`skipped` or `stopped`, with the reason) or 12 hours pass; a past window whose worker is still live stays checked until its row is finished. This limits the concertmaster's own picker only: a dedicated interview session's picker does not stop the concertmaster's loop. `scripts/clock-check.sh` prints every checked window with its pin and worker state. Why: a held owner picker stopped the loop, so the deploy was never pinned, checked or spawned and the window was missed.
+**No owner question before a deploy is spawned.** A blocking owner picker (`AskUserQuestion`) is allowed only when EVERY window that is past and still unfinished AND the first unfinished window still ahead (whatever its distance; later ones are not checked) is pinned and has its own live deploy worker, and a wake is armed (`ScheduleWakeup` pending). The windows come from `cfg.schedule.deploy_windows` (read the config key, never a clock time written in a message). Pinned means the window's `deployWindows[]` row is at `staging` or later (`staging`, `validating`, `prod`) or carries the trigger sha (`deployWindows[].sha`): the deploy sha was fixed at the freeze. The rails are checked later (Deploy windows step 2) and a deploy worker is spawned only after they clear, so pinned plus its own live worker means the rails cleared. Its own live worker is the `worker` that row names, listed in `workers` as spawning, running or blocked-on-owner; not `stuck`, which needs the loop that a picker stops; one worker never covers another window, and a worker named by two unfinished rows covers neither. A window that is done, skipped or stopped is not unfinished. Otherwise the ask is a `WAITING: <owner>, <question>, <age>` row in the tick table and the turn ends normally with the wake armed; no picker. A worker spawned long before its window does not open the picker by itself: the row must be pinned first. A time window does not do this job: a picker opened just outside any fixed number of hours can still hold the turn through the deploy, so the test is coverage, not distance. With windows configured this is not met in the normal flow: the first window ahead is pinned only at its freeze and gets its worker only after the window time, so no blocking picker opens and every owner ask is a WAITING row. That covers every picker this skill offers anywhere (each place that names `AskUserQuestion` points back here): each is a WAITING row with the recommended option first, and the owner answers in their next message. Never pin before the freeze, or spawn a deploy worker before the rails clear, to open a picker: an early pin goes stale (step 0). A picker that is already open when the window arrives is the one exposure left. With no windows configured a picker is allowed when the ledger is readable and every unfinished row on it is covered. A rails hit (Deploy windows step 2) or a migration-guard ask comes before the worker exists and is a WAITING row too: the window waits and the owner answers in a turn they start. A past window with no live worker (missed, or `row-<state>` when its row is at `rails-check` or later) stays checked until its outcome is recorded (`skipped` or `stopped`, with the reason) or 12 hours pass; a past window whose worker is still live stays checked until its row is finished. This limits the concertmaster's own picker only: a dedicated interview session's picker does not stop the concertmaster's loop. `scripts/clock-check.sh` prints every checked window with its pin and worker state. Why: a held owner picker stopped the loop, so the deploy was never pinned, checked or spawned and the window was missed.
 
 ```text
 ┌─────────┐  ┌──────────────┐  ┌────────────┐  ┌───────────┐  ┌──────────┐
@@ -706,7 +706,7 @@ The owner says "issues #101, #102 to dev" or "sort today's team chat".
    reads to a subagent.
 2. **Pair-sort.** One AskUserQuestion with the drafted routing as the
    recommended option first (`preview` shows the routing table) and the
-   realistic alternative second. Two options is enough.
+   realistic alternative second. Two options is enough. Only when § The tick, "No owner question before a deploy is spawned" allows a picker; otherwise the same routing goes in a WAITING row.
 3. **Spawn** per the answer, record in the ledger, report.
 
 ## Intake
@@ -984,6 +984,9 @@ window due ─▶ delta since last tag? ─ no ─▶ skipped
    (per PR with `--pr-body-file` and `--only` for an approved exception) before the
    rails verdict (hard rule 26). Any exit other than 0 blocks the window: 3 is a
    STOP, 2 is an owner ASK, and 1 or 127 means the check did not run.
+   Set the window row's state to `rails-check` before the rails run; a rail
+   hit or a migration-guard ask leaves it there (a WAITING row), and a clear
+   verdict goes on to step 3.
 3. Clear: spawn the deploy worker (`references/lanes.md` § deploy worker),
    which follows `cfg.deploy.ship_verb`. **Order is fixed: merge, staging
    deploy, staging validate, only then prod. Never run staging validation in
@@ -1218,7 +1221,7 @@ When there is no ledger:
    list goes in `preview`; options (a) approve every listed item except those
    named in the answer, recommended; (b) report-only for every item; (c)
    decide item by item (follow-up multiSelect questions of up to 4 items:
-   selected = approved, unselected = declined). Record one entry per item in
+   selected = approved, unselected = declined). Only when § The tick, "No owner question before a deploy is spawned" allows a picker; otherwise the list goes in a WAITING row and the owner names the items to decline in the reply. Record one entry per item in
    `killList`: `{id, host, path, class, decision: approved|declined|report-only, at}`.
 5. Act autonomously from then on: retire and tear down `approved` items (with
    `--allow-no-pr` only where that item had no PR), hand open PRs to a freshly
@@ -1286,7 +1289,7 @@ When there is no ledger:
 
 Every tick and every turn ends with the owner's turn-end block, nothing after it.
 A tick turn never ends with an AskUserQuestion (§ The tick, "No blocking ask"); in a
-turn the owner started, an AskUserQuestion may follow the block, after `ScheduleWakeup`:
+turn the owner started, an AskUserQuestion may follow the block, after `ScheduleWakeup`, when § The tick, "No owner question before a deploy is spawned" allows it:
 
 ```text
 | thread              | state                               | next             |
@@ -1344,7 +1347,7 @@ next: trigger prod for the 16:00 window
 - A decision for the owner is a `WAITING: <owner>, <question>, <age>` row with the
   recommended option in the question, and `next:` names it. Outside a tick, in a turn
   the owner started, it may go into AskUserQuestion, recommended option first, after
-  `ScheduleWakeup`.
+  `ScheduleWakeup`, when § The tick, "No owner question before a deploy is spawned" allows it.
 - **Follow-ups:** one row per line of `scripts/followups.sh report` (an open follow-up whose
   owner is a lane or worker that is gone, idle or missing, or one owned by the project owner whose ask is
   no longer open (`owner-answered`: an answered ask does not close the item), and every `orphaned` row: an
