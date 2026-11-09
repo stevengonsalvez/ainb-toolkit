@@ -43,8 +43,8 @@ case "$bk" in *'**Backup check.** Run `scripts/backup-stale.sh` every tick;'*) p
 
 # The deploy-window ask rules (§ The tick, "No owner question before a deploy is spawned"; § Deploy windows) and their pointers.
 # What is pinned is the list of phrases below, each an exact substring of the (unwrapped) SKILL.md: the picker rule's
-# headline and conditions (deploy pinned and checked, a live worker per window, not stuck, a wake armed, a WAITING row
-# otherwise, the rails ask, a missed window, the config key, one worker per window), the clock rule's headline and its
+# headline and conditions (every past-and-unfinished window and the first one ahead pinned and with its own live worker, not
+# stuck, a wake armed, a WAITING row otherwise, the rails ask, a missed window, the config key, one worker per window), the clock rule's headline and its
 # parts, and the pointers in the no-blocking-ask paragraph, the Deploy windows intro and the digest. Rewording one of them
 # fails this test on purpose; the other words of the rules are not pinned. Each pin is proved able to fail below: a scratch
 # copy of the skill loses that one phrase and this test must fail on the copy.
@@ -54,14 +54,22 @@ skflat="$(flat < "$SK")"
 Q="'"
 PINS=(
   "No owner question before a deploy is spawned."
-  "until that window${Q}s deploy is pinned, checked and its worker spawned"
-  "needs ITS OWN live deploy worker"
-  "spawning, running or blocked-on-owner; not \`stuck\`"
+  "is allowed only when EVERY window that is past and still unfinished AND the first unfinished window still ahead"
+  "is pinned and has its own live deploy worker, and a wake is armed (\`ScheduleWakeup\` pending)"
+  "Pinned means the window${Q}s \`deployWindows[]\` row is at \`staging\` or later"
+  "A worker spawned long before its window does not open the picker by itself: the row must be pinned first."
+  "listed in \`workers\` as spawning, running or blocked-on-owner; not \`stuck\`"
   "one worker never covers another window"
-  "and a wake must be armed (\`ScheduleWakeup\` pending)"
+  "A window that is done, skipped or stopped is not unfinished."
   "the ask is a \`WAITING: <owner>, <question>, <age>\` row in the tick table"
+  "the test is coverage, not distance"
+  "A picker that is already open when the window arrives is the one exposure left."
+  "With no windows configured a picker is allowed when the ledger is readable and every unfinished row on it is covered."
+  "Before any blocking owner picker, at any distance from a window, and before a message that names a time or a release, run \`scripts/clock-check.sh\`"
+  "and in the window${Q}s \`deployWindows[].sha\`"
+  "never a second row for the same window"
   "A rails hit (Deploy windows step 2) or a migration-guard ask comes before the worker exists and is a WAITING row too"
-  "counts as inside the window until its outcome is recorded"
+  "stays checked until its outcome is recorded"
   "never a clock time written in a message"
   "This limits the concertmaster${Q}s own picker only"
   "Check the clock and the deploy state before any message that names a time or a release."
@@ -69,8 +77,7 @@ PINS=(
   "Never send a time already in the past"
   "never \"ships tonight at <time>\" without the deploy worker${Q}s state"
   "The message text is written AFTER a picker returns, not before"
-  "Inside 2 hours of a deploy window the picker also waits until that window${Q}s deploy is pinned, checked and its worker spawned and a wake is armed"
-  "Before an owner question or a message that names a time or a release near a window, run \`scripts/clock-check.sh\`"
+  "A blocking picker also waits until every past-and-unfinished window and the first window ahead is pinned and has its own live deploy worker and a wake is armed"
   "check any time or release it names against \`scripts/clock-check.sh\` in the same turn"
 )
 for ph in "${PINS[@]}"; do

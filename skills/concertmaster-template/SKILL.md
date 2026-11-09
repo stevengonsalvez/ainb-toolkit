@@ -328,9 +328,9 @@ cannot fire, and every tick stops until the owner answers. Put the decision in t
 table as `WAITING: <owner>, <question>, <age>` with the recommended option in the question,
 name it in the `next:` line, and keep ticking. Use `AskUserQuestion` only in a turn the
 owner started (they just wrote to the concertmaster), and even then call `ScheduleWakeup`
-BEFORE asking. Inside 2 hours of a deploy window the picker also waits until that window's deploy is pinned, checked and its worker spawned and a wake is armed, and any message that names a time or a release is checked against the clock (`scripts/clock-check.sh`) right before it is sent (§ The tick, "No owner question before a deploy is spawned").
+BEFORE asking, and only when the rule below allows it. A blocking picker also waits until every past-and-unfinished window and the first window ahead is pinned and has its own live deploy worker and a wake is armed (otherwise it is a WAITING row), and any message that names a time or a release is checked against the clock (`scripts/clock-check.sh`) right before it is sent (§ The tick, "No owner question before a deploy is spawned").
 
-**No owner question before a deploy is spawned.** In the 2 hours before a deploy window, do not open an owner question (any picker that waits for the owner) until that window's deploy is pinned, checked and its worker spawned. The windows come from `cfg.schedule.deploy_windows` (read the config key, never a clock time written in a message). Every window that is past and unfinished, or inside 2 hours, needs ITS OWN live deploy worker (the `deployWindows[]` row names a `worker` that `workers` lists as spawning, running or blocked-on-owner; not `stuck`, which needs the loop that a picker stops; one worker never covers another window), and a wake must be armed (`ScheduleWakeup` pending), before the picker is allowed. Until then the ask is a `WAITING: <owner>, <question>, <age>` row in the tick table and the turn ends normally with the wake armed; no picker. A rails hit (Deploy windows step 2) or a migration-guard ask comes before the worker exists and is a WAITING row too: the window waits and the owner answers in a turn they start. A window already missed (no deploy worker, no outcome row) counts as inside the window until its outcome is recorded (`skipped` or `stopped`, with the reason) or 12 hours pass; the next window is checked as well. This limits the concertmaster's own picker only: a dedicated interview session's picker does not stop the concertmaster's loop. `scripts/clock-check.sh` prints every window that matters, the minutes to the first and whether each has its deploy worker in the ledger. Why: an owner ask held the turn for hours and the window was missed.
+**No owner question before a deploy is spawned.** A blocking owner picker (`AskUserQuestion`) is allowed only when EVERY window that is past and still unfinished AND the first unfinished window still ahead (whatever its distance; later ones are not checked) is pinned and has its own live deploy worker, and a wake is armed (`ScheduleWakeup` pending). The windows come from `cfg.schedule.deploy_windows` (read the config key, never a clock time written in a message). Pinned means the window's `deployWindows[]` row is at `staging` or later (`staging`, `validating`, `prod`) or carries the trigger sha (`deployWindows[].sha`): the deploy sha was fixed at the freeze. The rails are checked later (Deploy windows step 2) and a deploy worker is spawned only after they clear, so pinned plus its own live worker means the rails cleared. Its own live worker is the `worker` that row names, listed in `workers` as spawning, running or blocked-on-owner; not `stuck`, which needs the loop that a picker stops; one worker never covers another window, and a worker named by two unfinished rows covers neither. A window that is done, skipped or stopped is not unfinished. Otherwise the ask is a `WAITING: <owner>, <question>, <age>` row in the tick table and the turn ends normally with the wake armed; no picker. A worker spawned long before its window does not open the picker by itself: the row must be pinned first. A time window does not do this job: a picker opened just outside any fixed number of hours can still hold the turn through the deploy, so the test is coverage, not distance. With windows configured this is not met in the normal flow: the first window ahead is pinned only at its freeze and gets its worker only after the window time, so no blocking picker opens and every owner ask is a WAITING row. That covers every picker this skill offers anywhere (each place that names `AskUserQuestion` points back here): each is a WAITING row with the recommended option first, and the owner answers in their next message. Never pin before the freeze, or spawn a deploy worker before the rails clear, to open a picker: an early pin goes stale (step 0). A picker that is already open when the window arrives is the one exposure left. With no windows configured a picker is allowed when the ledger is readable and every unfinished row on it is covered. A rails hit (Deploy windows step 2) or a migration-guard ask comes before the worker exists and is a WAITING row too: the window waits and the owner answers in a turn they start. A past window with no live worker (missed, or `row-<state>` when its row is at `rails-check` or later) stays checked until its outcome is recorded (`skipped` or `stopped`, with the reason) or 12 hours pass; a past window whose worker is still live stays checked until its row is finished. This limits the concertmaster's own picker only: a dedicated interview session's picker does not stop the concertmaster's loop. `scripts/clock-check.sh` prints every checked window with its pin and worker state. Why: a held owner picker stopped the loop, so the deploy was never pinned, checked or spawned and the window was missed.
 
 ```text
 ┌─────────┐  ┌──────────────┐  ┌────────────┐  ┌───────────┐  ┌──────────┐
@@ -706,7 +706,7 @@ The owner says "issues #101, #102 to dev" or "sort today's team chat".
    reads to a subagent.
 2. **Pair-sort.** One AskUserQuestion with the drafted routing as the
    recommended option first (`preview` shows the routing table) and the
-   realistic alternative second. Two options is enough.
+   realistic alternative second. Two options is enough. Only when § The tick, "No owner question before a deploy is spawned" allows a picker; otherwise the same routing goes in a WAITING row.
 3. **Spawn** per the answer, record in the ledger, report.
 
 ## Intake
@@ -898,7 +898,7 @@ with the same safety checks and a per-transcript attempt cap. Nothing is sent wh
 ASK means one decision with a recommended option first; work that does
 not depend on the answer carries on. In a tick turn the ASK is a
 `WAITING: <owner>, <question>, <age>` row, never an AskUserQuestion (§ The tick,
-"No blocking ask"); the picker is for a turn the owner started, after `ScheduleWakeup`.
+"No blocking ask"); the picker is for a turn the owner started, after `ScheduleWakeup`, when § The tick, "No owner question before a deploy is spawned" allows it.
 
 ## Merge gate
 
@@ -955,7 +955,7 @@ row marked ASK stops the merge until the owner answers.
 ## Deploy windows
 
 `cfg.schedule.deploy_windows` per day in `cfg.schedule.timezone`. Merges
-accumulate on staging between windows. Before an owner question or a message that names a time or a release near a window, run `scripts/clock-check.sh` (§ The tick, "No owner question before a deploy is spawned").
+accumulate on staging between windows. Before any blocking owner picker, at any distance from a window, and before a message that names a time or a release, run `scripts/clock-check.sh` (§ The tick, "No owner question before a deploy is spawned").
 
 ```text
 window due ─▶ delta since last tag? ─ no ─▶ skipped
@@ -970,13 +970,13 @@ window due ─▶ delta since last tag? ─ no ─▶ skipped
                                            STOP, never prod
 ```
 
-0. 30 minutes before a window: FREEZE. Set the ledger `freeze` (`state: on`, the window time) and, in the same step, run `scripts/fleet-state.sh write --freeze on --window <window> --push` (the `cm:state` line is what every lane reads; the push messages each lane matching `fleet_state.push_match`), then message every other lane that can merge "merge freeze until prod verifies". **Pin the deploy sha at freeze time, never earlier:** run `git fetch origin main` then `git rev-parse origin/main` in the same step that writes the freeze, and store the result as `freeze.sha` in the ledger freeze entry; that is the deploy sha. A sha read before the freeze goes stale as soon as one more PR merges, and a deploy worker that finds main moved must stop (why: a pin taken before the freeze left the deploy blocked once another PR landed). The moment the production run passes its jobs gate: UNFREEZE (`freeze.state=off`, release any production lock, run `scripts/fleet-state.sh write --freeze off --prod <tag>` in the same step, message lanes). A freeze never waits for `cm:done` or a post-deploy watch; a `skipped` window lifts at once.
+0. 30 minutes before a window: FREEZE. Set the ledger `freeze` (`state: on`, the window time) and, in the same step, run `scripts/fleet-state.sh write --freeze on --window <window> --push` (the `cm:state` line is what every lane reads; the push messages each lane matching `fleet_state.push_match`), then message every other lane that can merge "merge freeze until prod verifies". **Pin the deploy sha at freeze time, never earlier:** run `git fetch origin main` then `git rev-parse origin/main` in the same step that writes the freeze, and store the result as `freeze.sha` in the ledger freeze entry and in the window's `deployWindows[].sha` (a row with `id` = the window id as `<local date>T<HH:MM>`, `at` = its UTC time as ISO 8601, state `pending`, if no unfinished row for the window exists yet; the picker rule reads that field); that is the deploy sha. A sha read before the freeze goes stale as soon as one more PR merges, and a deploy worker that finds main moved must stop (why: a pin taken before the freeze left the deploy blocked once another PR landed). The moment the production run passes its jobs gate: UNFREEZE (`freeze.state=off`, release any production lock, run `scripts/fleet-state.sh write --freeze off --prod <tag>` in the same step, message lanes). A freeze never waits for `cm:done` or a post-deploy watch; a `skipped` window lifts at once.
 1. At or after the window time (and not already handled today), compute the
    delta: last production tag (`cfg.deploy.production_tag_glob`) to the
    sha pinned at freeze time, never to a fresh `origin/main`
    (`git log --oneline <tag>..<pinned sha>`,
    `git diff --name-only <tag>..<pinned sha>`), so the delta and the deploy
-   worker's `main_sha` cannot differ. Empty: `skipped`. If `freeze.sha` is missing at the window (the freeze step was missed), pin at window start with the same fetch and `git rev-parse origin/main` and note it in the tick table; after a stop because main moved, re-pin by re-running the freeze step.
+   worker's `main_sha` cannot differ. Empty: `skipped`. If `freeze.sha` is missing at the window (the freeze step was missed), pin at window start with the same fetch and `git rev-parse origin/main`, store it as `freeze.sha` and as the window row's `deployWindows[].sha` (creating the row as in step 0), and note it in the tick table; after a stop because main moved, re-pin by re-running the freeze step.
 2. Rails: every `cfg.deploy.rails` entry, by changed path and, where given,
    by content pattern in the changed files. Any hit: ASK, window waits. The
    delta's added migrations go through
@@ -984,12 +984,17 @@ window due ─▶ delta since last tag? ─ no ─▶ skipped
    (per PR with `--pr-body-file` and `--only` for an approved exception) before the
    rails verdict (hard rule 26). Any exit other than 0 blocks the window: 3 is a
    STOP, 2 is an owner ASK, and 1 or 127 means the check did not run.
+   Set the window row's state to `rails-check` before the rails run; a rail
+   hit or a migration-guard ask leaves it there (a WAITING row), and a clear
+   verdict goes on to step 3. Exit 3, or a rail or migration-guard ask the owner
+   declines: set the row to `stopped` with the reason in `blockedReason`. Exit 1 or 127: the row stays at
+   `rails-check` and the tick table says the check did not run.
 3. Clear: spawn the deploy worker (`references/lanes.md` § deploy worker),
    which follows `cfg.deploy.ship_verb`. **Order is fixed: merge, staging
    deploy, staging validate, only then prod. Never run staging validation in
    parallel with the prod trigger.** Staging red: STOP.
 4. Tick at `busy` while the window is in flight. Record runs, tag, outcome in
-   `deployWindows[]`; post the deploy summary on each shipped PR (the ship verb
+   the window's existing `deployWindows[]` row (the one the freeze step created, never a second row for the same window while that row is unfinished; a retry after a stop is a new `pending` row with the same `id` and `at` and the new sha, and the stopped row stays as the record); post the deploy summary on each shipped PR (the ship verb
    does this); emit `deploy.*` events.
 5. Production verified and `release-tester` is a live lane: send it
    `TEST RELEASE <version> <sha>` plus the release notes (the PR titles in the
@@ -1009,7 +1014,7 @@ Two different operations. Never improvise a third.
 | operation | what it does | when |
 |---|---|---|
 | **Retire worker** | read the pane (no menu showing, prompt idle), then `scripts/teardown.sh <host> <path> --retire-check` must exit 0 (ledger, standing, beads and follow-up gates only; it never acts), then `ORCA terminal close --terminal <h> $ENV` for that worker's ONE agent handle; keep the worktree; set `prs.<pr>.driver` to the pr-sweeper for any open PR; ledger state `retired` | a single-task worker is done (`cm:done`, `cm:merge-ready`, done-selfreported) with every epic bead closed, or a stuck worker is being replaced. Never a standing lane |
-| **Teardown worktree** | `scripts/teardown.sh`, dry run first, `--apply` only on a clean plan | single-task worker only, every epic bead closed, and the branch's PR is merged or closed; or, with no PR, after the owner approves that item via AskUserQuestion (then `--allow-no-pr`) |
+| **Teardown worktree** | `scripts/teardown.sh`, dry run first, `--apply` only on a clean plan | single-task worker only, every epic bead closed, and the branch's PR is merged or closed; or, with no PR, after the owner approves that item (via AskUserQuestion when § The tick, "No owner question before a deploy is spawned" allows it, else a WAITING row) (then `--allow-no-pr`) |
 
 Before either operation, four checks, every time:
 
@@ -1218,7 +1223,7 @@ When there is no ledger:
    list goes in `preview`; options (a) approve every listed item except those
    named in the answer, recommended; (b) report-only for every item; (c)
    decide item by item (follow-up multiSelect questions of up to 4 items:
-   selected = approved, unselected = declined). Record one entry per item in
+   selected = approved, unselected = declined). Only when § The tick, "No owner question before a deploy is spawned" allows a picker; otherwise the list goes in a WAITING row and the owner names the items to decline in the reply. Record one entry per item in
    `killList`: `{id, host, path, class, decision: approved|declined|report-only, at}`.
 5. Act autonomously from then on: retire and tear down `approved` items (with
    `--allow-no-pr` only where that item had no PR), hand open PRs to a freshly
@@ -1286,7 +1291,7 @@ When there is no ledger:
 
 Every tick and every turn ends with the owner's turn-end block, nothing after it.
 A tick turn never ends with an AskUserQuestion (§ The tick, "No blocking ask"); in a
-turn the owner started, an AskUserQuestion may follow the block, after `ScheduleWakeup`:
+turn the owner started, an AskUserQuestion may follow the block, after `ScheduleWakeup`, when § The tick, "No owner question before a deploy is spawned" allows it:
 
 ```text
 | thread              | state                               | next             |
@@ -1344,7 +1349,7 @@ next: trigger prod for the 16:00 window
 - A decision for the owner is a `WAITING: <owner>, <question>, <age>` row with the
   recommended option in the question, and `next:` names it. Outside a tick, in a turn
   the owner started, it may go into AskUserQuestion, recommended option first, after
-  `ScheduleWakeup`.
+  `ScheduleWakeup`, when § The tick, "No owner question before a deploy is spawned" allows it.
 - **Follow-ups:** one row per line of `scripts/followups.sh report` (an open follow-up whose
   owner is a lane or worker that is gone, idle or missing, or one owned by the project owner whose ask is
   no longer open (`owner-answered`: an answered ask does not close the item), and every `orphaned` row: an
@@ -1416,8 +1421,8 @@ shellcheck clean.
 | `scripts/test/doc-credential-scan.sh` | throwaway fixture repos, credentials built at run time from split strings: the login-line shapes refused in `--staged` and `--range`, placeholders, example addresses, ids, dates and out-of-scope files pass, the marker, removed and context lines, renames, exit 2 cases (bad range, no mode, not a repo, failing awk), output never carrying the address or value; under gawk, mawk and busybox awk |
 | `scripts/deploy-migration-check.sh <from-ref> <to-ref> [--pr-body-file <file> --only <path>]...` | deploy pre-check over the migrations ADDED in the range (hard rule 26), run from anywhere in the repo (`:(top)` pathspec, cross-checked against the full diff): reads one statement at a time, prints one line per file (`ok`, `ask`, `exception`, `stop`) with the found values only, never SQL, then `<n> migration files examined`; ask = a lock_timeout other than 3s or statement_timeout other than 30s (units case-sensitive, ms forms accepted), a missing one, a plain `SET`/`RESET` of either, a non-`SET` statement before both `SET LOCAL` lines (`guard=late`), a `set_config` naming either, an UPDATE of `pg_settings`, a `U&` escape or a `set_config` with an `E'..'` string (`set-timeout-call`), a `set_config` whose first argument is not a plain quoted literal (`set-config-dynamic`), either named in a dollar-quoted string (`timeout-in-body`, `timeout-in-function`); a `timeout-exception:` PR body line (3+ words, not inside a fence or HTML comment) turns an ask into `exception`, and `--pr-body-file` REQUIRES `--only` per file; stop = not exactly one `BEGIN` then `COMMIT` with only `SET`/`RESET` (and a `NOTIFY` after the `COMMIT`) outside, or any `ROLLBACK`/`ABORT`/`PREPARE TRANSACTION`/`COMMIT AND CHAIN`, no exception covers it; exit 0 all ok, 2 any ask, 3 any stop (outranks 2), 1 anything else; ANY exit other than 0 blocks the window; pure bash plus git, no network |
 | `scripts/test/deploy-migration-check.sh` | a throwaway fixture git repo per case, built at run time (about 290 assertions): values, ms forms, case and space in units, missing timeouts, exceptions (3 words, CRLF, fences, HTML comments, quoted lines, placeholders, `--only` required and scoped), every shape violation and every accepted transaction form, plain `SET`/`RESET`, `guard=late`, `set_config` forms (quoted, qualified, dynamic, inside literals and quoted identifiers), timeouts in dollar bodies (also across the scan-window edge), a run from the root and from two subdirectories giving the same output, `0 migration files examined`, swapped range, quoted path, tokens straddling the 2048-character window, a 1 MB and a 900 KB single-line file under each awk the host has, no SQL body in the output; `CM_DMC_SCRIPT` runs it against a mutated copy |
-| `scripts/clock-check.sh` | the clock and the deploy state for the deploy-window ask rules (§ The tick, "No owner question before a deploy is spawned"; § Deploy windows): UTC now, the first window that matters from `cfg.schedule.deploy_windows` with its minutes, the window row's state, tag and prod run, whether its deploy worker is in the ledger, and whether a picker is allowed or the ask is a WAITING row; `CM_NOW` stubs the clock (tests only, with `CM_TEST=1`); read-only, exit 0 always |
-| `scripts/test/clock-check.sh` | stubbed clock, temp config and ledger: window states and the 2 hour boundary, every window that matters needing its own live worker, `stuck`, a worker named by two rows, finished states, a missed window, an old unfinished row, zones, a clock change, a config that was not read, bad entries, unreadable ledger and clock, no change under `CM_HOME` |
+| `scripts/clock-check.sh` | the clock and the deploy state for the deploy-window ask rules (§ The tick, "No owner question before a deploy is spawned"; § Deploy windows): UTC now, the checked windows from `cfg.schedule.deploy_windows` (every past-and-unfinished one and the first ahead, whatever its distance) with the minutes to the first, the first window ahead on its own (`next-window:`), each window row's state, tag and prod run, whether each is pinned and has its own live deploy worker in the ledger, and whether a blocking picker is allowed or the ask is a WAITING row; `CM_NOW` stubs the clock (tests only, with `CM_TEST=1`); read-only, exit 0 always |
+| `scripts/test/clock-check.sh` | stubbed clock, temp config and ledger: 3 and 10 hours out with and without a worker, pinned and unpinned rows, every checked window (past-and-unfinished ones and the first ahead) needing its own live worker, `stuck`, a worker named by two rows, finished states beside unfinished rows, several rows at one instant, a missed window, an old unfinished row, a row that cannot be placed in time, zones, a clock change, a config that was not read, bad entries, an unreadable or missing ledger (even with no windows) and an unreadable clock, no change under `CM_HOME` |
 | `scripts/test/brief-commit-rule.sh` | text lint: the commit rule (commit ONLY through the commit skill, never a raw `git commit` or `git add -A`/`.`) is in the lanes.md common footer, the single-task worker and release-tester briefs, the spawn recipe, the lessons loop, hard rule 25 and the dev-flow companion, word for word |
 | `scripts/scan-secrets.sh [--strict] [--since-days n] [PATH...]` | counts secret-shaped strings per class and per transcript file (default dirs: config `credentials.transcript_dirs`, else `~/.claude/projects`); counts only, never the matched text; exit 1 on a strict class hit (`--strict`: advisory `password_assign` and `password_word` too; `password_word` is a pure-letter password of 8+ letters after the name password, passwd, pwd or passphrase), 2 when anything could not be read or nothing existed to scan, else 0 (`references/credentials.md`) |
 | `scripts/ask-timeout.sh [--ledger <path>] [--all] [--stamp] [--claim <ask-id>] [--record <ask-id> <comment-url>]` | away timeout (rule 16): lists open asks past `timeoutAt` that are own-scope and safe for an independent verdict, claims and records it; fails closed; the write modes need `cm_ledger_write` in `lib.sh` (`references/away-timeout.md`) |
