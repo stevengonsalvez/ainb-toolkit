@@ -325,7 +325,8 @@ and lane names also hold `:`, which is not a path token. One line, tab
 separated: `handle  host  agent  pid  written-at` (UTC, ISO 8601), mode 600, never a token.
 `scripts/lane-handles.sh` writes it, atomically (temp file in
 the lane directory, then `mv`), from `scripts/live-agent.sh`: the handle is the
-`PLUGLY_TERMINAL_HANDLE` (first, when non-empty), else `ORCA_TERMINAL_HANDLE`, in the live agent process's own environment, not the ledger's `terminal`. Why: a
+`PLUGLY_TERMINAL_HANDLE` (first, when non-empty), else `ORCA_TERMINAL_HANDLE`, in the live agent process's own environment, not the ledger's `terminal`
+(both set, non-empty and different is ambiguous: no handle, the lane is `no-handle`; `lib.sh` `cm_environ_handle`). Why: a
 ledger terminal handle goes stale after a restart or a moved terminal, and a send that trusted one typed
 into the wrong terminal or started a second agent in a live lane.
 

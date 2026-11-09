@@ -280,14 +280,21 @@ penv 301 'HOME=/h\0PLUGLY_TERMINAL_HANDLE=term_plug\0PATH=/p\0'
 check "plugly (a): only PLUGLY_TERMINAL_HANDLE set: that is the handle" '[ "$(handle_row)" = term_plug ]'
 penv 301 'HOME=/h\0ORCA_TERMINAL_HANDLE=term_orca\0PATH=/p\0'
 check "plugly (b): only ORCA_TERMINAL_HANDLE set: that is the handle (unchanged)" '[ "$(handle_row)" = term_orca ]'
+# both set, non-empty and different is AMBIGUOUS (an agent in an Orca terminal can carry a Plugly handle it inherited, or the
+# reverse): no handle, whichever comes first, and the process is still a row (so lane-handles.sh sees an agent with no handle)
 penv 301 'ORCA_TERMINAL_HANDLE=term_orca\0PLUGLY_TERMINAL_HANDLE=term_plug\0'
-check "plugly (c1): both set and different, ORCA first in the environ: PLUGLY wins" '[ "$(handle_row)" = term_plug ]'
+check "plugly (c1): both set and different, ORCA first in the environ: ambiguous, empty handle, still one row" '[ -z "$(handle_row)" ] && [ "$(CM_PROC_ROOT="$P" "$LA" "$WT" | wc -l)" = 1 ]'
 penv 301 'PLUGLY_TERMINAL_HANDLE=term_plug\0ORCA_TERMINAL_HANDLE=term_orca\0'
-check "plugly (c2): both set and different, PLUGLY first in the environ: PLUGLY wins" '[ "$(handle_row)" = term_plug ]'
+check "plugly (c2): both set and different, PLUGLY first in the environ: ambiguous, empty handle" '[ -z "$(handle_row)" ]'
 penv 301 'ORCA_TERMINAL_HANDLE=term_orca\0HOME=/h\0PLUGLY_TERMINAL_HANDLE=term_plug'
-check "plugly (c3): PLUGLY is the last variable with no closing NUL, ORCA before it: PLUGLY wins" '[ "$(handle_row)" = term_plug ]'
+check "plugly (c3): PLUGLY is the last variable with no closing NUL, ORCA before it: still read, ambiguous, empty handle" '[ -z "$(handle_row)" ]'
+penv 301 'ORCA_TERMINAL_HANDLE=term_live_orca\0PLUGLY_TERMINAL_HANDLE=term_inherited_plugly\0'
+check "plugly (c4): an agent in an Orca terminal with an inherited PLUGLY handle: neither handle is reported" '[ -z "$(handle_row)" ]'
+check "plugly (c5): the row keeps its format (pid, empty handle, agent)" '[ "$(CM_PROC_ROOT="$P" "$LA" "$WT" 2>/dev/null)" = "301		claude" ]'
 penv 301 'PLUGLY_TERMINAL_HANDLE=term_same\0ORCA_TERMINAL_HANDLE=term_same\0'
 check "plugly (d): both set and equal: that handle" '[ "$(handle_row)" = term_same ]'
+penv 301 'ORCA_TERMINAL_HANDLE=term_same\0HOME=/h\0PLUGLY_TERMINAL_HANDLE=term_same\0'
+check "plugly (d2): both set and equal, ORCA first: that handle" '[ "$(handle_row)" = term_same ]'
 penv 301 'PLUGLY_TERMINAL_HANDLE=\0ORCA_TERMINAL_HANDLE=term_orca\0'
 check "plugly (e1): PLUGLY set but empty (first), ORCA set: ORCA" '[ "$(handle_row)" = term_orca ]'
 penv 301 'ORCA_TERMINAL_HANDLE=term_orca\0PLUGLY_TERMINAL_HANDLE=\0'
@@ -308,6 +315,11 @@ penv 301 'PLUGLY_TERMINAL_HANDLE=term_first\0HOME=/h\0PLUGLY_TERMINAL_HANDLE=ter
 check "plugly (dup): PLUGLY_TERMINAL_HANDLE twice with different values: the FIRST one counts" '[ "$(handle_row)" = term_first ]'
 penv 301 'ORCA_TERMINAL_HANDLE=term_first\0ORCA_TERMINAL_HANDLE=term_last\0'
 check "plugly (dup): ORCA_TERMINAL_HANDLE twice with different values and no PLUGLY: the FIRST one counts" '[ "$(handle_row)" = term_first ]'
+penv 301 'PLUGLY_TERMINAL_HANDLE=term_x\0ORCA_TERMINAL_HANDLE=term_x\0PLUGLY_TERMINAL_HANDLE=term_y\0'
+check "plugly (dup): a later different PLUGLY value does not make an equal pair ambiguous (the FIRST counts)" '[ "$(handle_row)" = term_x ]'
+# the rule lives in lib.sh cm_environ_handle; live-agent.sh carries a byte for byte copy (it is streamed to a remote bash with no lib.sh)
+fn_text() { awk '/^cm_environ_handle\(\) \{$/ { f = 1 } f { print } f && /^\}$/ { exit }' "$1"; }
+check "cm_environ_handle: the live-agent.sh copy is byte for byte the lib.sh one" '[ -n "$(fn_text "$SCRIPTS/lib.sh")" ] && [ "$(fn_text "$SCRIPTS/lib.sh")" = "$(fn_text "$LA")" ]'
 
 echo
 printf 'passed=%s failed=%s\n' "$PASS" "$FAIL"

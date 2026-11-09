@@ -879,31 +879,50 @@ _cm_lane_handle_commit() {
   fi
 }
 
-# _cm_lane_agent_alive <pid> <handle>: the agent the file was written from is still the process holding that
-# terminal: /proc/<pid> exists and its environ PLUGLY_TERMINAL_HANDLE (first, when non-empty) else ORCA_TERMINAL_HANDLE is <handle>. No /proc on this host
-# (macOS): cannot tell, 0 (lane-handles.sh's own live check exits 3 there too). A process entry that
-# cannot be read fails closed. Returns 0 alive, 1 the pid is gone, 2 it carries another terminal, 3 its
-# environ is unreadable (another uid, hidepid). What it proves: the process EXISTS and was STARTED with
-# that terminal in its environment, not that Orca has not moved it since. CM_PROC_ROOT is honoured with
-# CM_TEST=1 only, as in live-agent.sh. Files with a pid only come from live-agent.sh output, which needs
-# /proc, so a host without it never holds a pid to check.
-_cm_lane_agent_alive() {
-  local root=/proc kv
-  if [ "${CM_TEST:-}" = 1 ] && [ -n "${CM_PROC_ROOT:-}" ]; then root="$CM_PROC_ROOT"; fi
-  [ -d "$root" ] || return 0
-  [ -d "$root/$1" ] || return 1
-  [ -r "$root/$1/environ" ] || return 3
-  # The whole environ is read before choosing (the names come in either order): PLUGLY_TERMINAL_HANDLE when
-  # present and non-empty, else ORCA_TERMINAL_HANDLE, as in live-agent.sh. The first occurrence of a name counts.
-  local hp="" ho="" sp=0 so=0
+# cm_environ_handle <environ-file>: the terminal handle a process was started with, from its NUL separated
+# environ (/proc/<pid>/environ). The ONE rule for it: used by _cm_lane_agent_alive below, copied byte for byte
+# into live-agent.sh (that script is streamed to a remote bash that has no lib.sh; test/live-agent.sh checks
+# the two copies are identical) and mirrored by handle_of in teardown.sh's process scan (shell text run on the
+# host, so it keeps its own copy of the same rule).
+#   - the whole environ is read before choosing (the names come in either order); the FIRST value of a name counts
+#   - PLUGLY_TERMINAL_HANDLE and ORCA_TERMINAL_HANDLE both set, both non-empty and different: AMBIGUOUS. An agent
+#     in an Orca terminal can carry a Plugly handle it inherited (the Orca daemon was started from a Plugly
+#     shell), or the reverse, and nothing in the environ says which terminal it runs in. No handle, return 1.
+#   - otherwise PLUGLY_TERMINAL_HANDLE when non-empty, else ORCA_TERMINAL_HANDLE (empty when neither), return 0
+# Sets CM_EH_HANDLE to the chosen value, raw (the caller keeps a plain token only); empty when ambiguous. The
+# caller tests the file is readable first.
+cm_environ_handle() {
+  local kv hp="" ho="" sp=0 so=0
+  CM_EH_HANDLE=""
   while IFS= read -r -d '' kv || [ -n "$kv" ]; do
     case "$kv" in
       PLUGLY_TERMINAL_HANDLE=*) if [ "$sp" = 0 ]; then sp=1; hp="${kv#PLUGLY_TERMINAL_HANDLE=}"; fi ;;
       ORCA_TERMINAL_HANDLE=*)   if [ "$so" = 0 ]; then so=1; ho="${kv#ORCA_TERMINAL_HANDLE=}"; fi ;;
     esac
-  done < "$root/$1/environ"
-  if [ -n "$hp" ]; then kv="$hp"; elif [ "$so" = 1 ]; then kv="$ho"; else return 2; fi
-  if [ "$kv" = "$2" ]; then return 0; fi
+  done < "$1"
+  if [ -n "$hp" ] && [ -n "$ho" ] && [ "$hp" != "$ho" ]; then return 1; fi
+  if [ -n "$hp" ]; then CM_EH_HANDLE="$hp"; else CM_EH_HANDLE="$ho"; fi
+  return 0
+}
+
+# _cm_lane_agent_alive <pid> <handle>: the agent the file was written from is still the process holding that
+# terminal: /proc/<pid> exists and its environ handle (cm_environ_handle) is <handle>. No /proc on this host
+# (macOS): cannot tell, 0 (lane-handles.sh's own live check exits 3 there too). A process entry that
+# cannot be read fails closed. Returns 0 alive, 1 the pid is gone, 2 it carries another terminal (or none), 3
+# cannot tell, failing closed: its environ is unreadable (another uid, hidepid), or its handle is AMBIGUOUS
+# (PLUGLY_TERMINAL_HANDLE and ORCA_TERMINAL_HANDLE both set, non-empty and different, so either could be the
+# terminal it runs in). What it proves: the process EXISTS and was STARTED with
+# that terminal in its environment, not that Orca has not moved it since. CM_PROC_ROOT is honoured with
+# CM_TEST=1 only, as in live-agent.sh. Files with a pid only come from live-agent.sh output, which needs
+# /proc, so a host without it never holds a pid to check.
+_cm_lane_agent_alive() {
+  local root=/proc
+  if [ "${CM_TEST:-}" = 1 ] && [ -n "${CM_PROC_ROOT:-}" ]; then root="$CM_PROC_ROOT"; fi
+  [ -d "$root" ] || return 0
+  [ -d "$root/$1" ] || return 1
+  [ -r "$root/$1/environ" ] || return 3
+  cm_environ_handle "$root/$1/environ" || return 3   # ambiguous: cannot tell which terminal it holds
+  if [ -n "$CM_EH_HANDLE" ] && [ "$CM_EH_HANDLE" = "$2" ]; then return 0; fi
   return 2
 }
 
@@ -933,7 +952,7 @@ _cm_lane_handle_read() {
         0) ;;
         1) LH_STATE=stale; LH_WHY="agent pid $pid is gone" ;;
         2) LH_STATE=stale; LH_WHY="agent pid $pid does not carry terminal $h" ;;
-        *) LH_STATE=stale; LH_WHY="agent pid $pid cannot be inspected (environ unreadable)" ;;
+        *) LH_STATE=stale; LH_WHY="agent pid $pid cannot be inspected (environ unreadable) or carries two different terminal handles (PLUGLY and ORCA)" ;;
       esac ;;
     esac
   fi
