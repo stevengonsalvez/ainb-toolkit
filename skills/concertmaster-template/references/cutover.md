@@ -181,14 +181,30 @@ Rules that hold for every row:
   from `live-agent.sh` over ssh and rewrites the handle file and the ledger terminal. The journal entries stay in the copy: append
   one on the concertmaster host (`scripts/lane-journal.sh append <lane> "cm:handover cutover to plugly <UTC time>"`) if the lane's
   next session should read it. Throw the ledger copy away after the run; nothing reads it back.
-- **Remote shell mechanics (learned on a canary run).** Non-interactive `ssh` on a remote host lacks `orca` and `plugly` on
-  `PATH`: export it first inside single quotes, `ssh <host> 'export PATH=$HOME/.local/bin:$PATH; <command>'`, so the remote shell
-  expands `$HOME` and `$PATH` and a compound command keeps it (only the docker and supabase scans, `CM_REMOTE_PATH_FIX` in `lib.sh`,
-  repair `PATH` themselves; a command you type does not). Put the skill in a NEW empty directory made for the run:
-  `D=$(ssh <host> mktemp -d)`, then `git archive origin/main skills/concertmaster-template | ssh <host> "tar -x -C $D"` (the skill lands in
-  `$D/skills/concertmaster-template`; if `config.yaml` is tracked in your fork it comes along, else copy it). Never extract into an
-  existing checkout: `tar -x` would overwrite its tracked skill files and the cleanup would then delete them. After a clean run
-  (orphan check 0) remove `$D` and the remote ledger copy only, never a pre-existing path: leave nothing behind.
+- **Remote shell mechanics (learned on a canary run).** Non-interactive `ssh` on a remote host may lack `orca` and `plugly` on
+  `PATH`, and each one-shot `ssh <host> '<command>'` is a fresh shell that keeps no earlier `export`. Set `PATH`, `CM_HOME` and the
+  directory in every one-shot command, inside single quotes so the REMOTE shell expands `$HOME` and `$PATH`, or work from one
+  interactive `ssh <host>` shell. A command you type repairs nothing itself (`CM_REMOTE_PATH_FIX` in `lib.sh` covers only the docker
+  and supabase scans; `spawn-verify.sh resolve --ssh` does its own claude lookup). Put the skill in a NEW empty directory made for the
+  run. Run this on the concertmaster host from the skill directory, where every `scripts/...` command here runs (in a project copy,
+  `<repo>/.agents/skills/concertmaster`):
+
+  ```bash
+  ssh <host> 'test ! -e "$HOME/.concertmaster-cutover"' || echo "STOP: a ledger copy dir exists already"
+  D=$(ssh <host> mktemp -d); echo "$D"     # note it: the remote shell does not know $D
+  git archive origin/main . | ssh <host> "tar -x -C $D"
+  ssh <host> "test -x $D/scripts/cutover-host.sh" && echo "skill ok"
+  ```
+
+  The skill lands at the top of `$D`. `config.yaml` comes along only if that repo tracks it; else `scp` it to `$D/config.yaml`. Never
+  extract into an existing checkout: `tar -x` would overwrite its tracked skill files and the cleanup would then delete them. A
+  one-shot run names the path literally:
+  `ssh <host> 'export PATH=$HOME/.local/bin:$PATH CM_HOME=$HOME/.concertmaster-cutover; cd '"$D"' && scripts/cutover-host.sh local'`
+  (add `--apply` for the real run; without `CM_HOME` the script reads the host's default `~/.concertmaster`, not the copy). After a
+  clean run (orphan check 0) and the journal entries appended on the concertmaster host, remove both run directories whole and
+  nothing else: `[ -n "$D" ] && ssh <host> "rm -rf -- $D"; ssh <host> 'rm -rf -- "$HOME/.concertmaster-cutover"'`. The ledger copy
+  is the whole `CM_HOME` (`source.json`, `ledger.json`, `lanes/<id>/handle`, `lanes/<id>/journal.md`). Delete it only if the first
+  check passed: leave nothing behind, and never a directory that existed before the run.
 
 **Covered by the suite:** the dry run for `local` against stub runtimes (including `skip: self` for the shell's own terminal), the model
 gate reading panes, the ssh target rule (argv recorded) and `--except`.
