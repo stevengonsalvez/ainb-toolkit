@@ -199,7 +199,7 @@ Rules that hold for every row:
   # creates the ledger copy dir, and fails if it exists already: COPY_OK is what lets the cleanup delete it
   COPY_OK=; ssh <host> 'mkdir -- "$HOME/.concertmaster-cutover"' && COPY_OK=1 || echo "STOP: the ledger copy dir exists already, or ssh failed"
   D=$(ssh <host> mktemp -d); echo "$D"     # note it: the remote shell does not know $D
-  [[ "$D" =~ ^/([A-Za-z0-9._-]+/)*tmp\.[A-Za-z0-9]+$ ]] || echo "STOP: not a mktemp dir (login output on the host?): $D"
+  [[ "$D" =~ ^/([A-Za-z0-9._-]+/)*tmp[.][A-Za-z0-9]+$ ]] || echo "STOP: not a mktemp dir (login output on the host?): $D"
   git archive origin/main . | ssh <host> "tar -x -C $D"
   ssh <host> "test -x $D/scripts/cutover-host.sh" && echo "skill ok"
   ```
@@ -211,8 +211,8 @@ Rules that hold for every row:
   (add `--apply` for the real run; without `CM_HOME` the script reads the host's default `~/.concertmaster`, not the copy). After the
   host's last run (orphan check 0) and the journal entries appended on the concertmaster host, remove both run directories whole and
   nothing else, from the same shell that set `D` and `COPY_OK`:
-  `[[ "$D" =~ ^/([A-Za-z0-9._-]+/)*tmp\.[A-Za-z0-9]+$ ]] && ssh <host> "rm -rf -- $D"; [ "${COPY_OK:-}" = 1 ] && ssh <host> 'rm -rf -- "$HOME/.concertmaster-cutover"'; unset COPY_OK D`.
-  Run the whole block again for each host: it resets `COPY_OK`, so one host's value never lets the cleanup delete another's directory.
+  `[[ "$D" =~ ^/([A-Za-z0-9._-]+/)*tmp[.][A-Za-z0-9]+$ ]] && ssh <host> "rm -rf -- $D"; [ "${COPY_OK:-}" = 1 ] && ssh <host> 'rm -rf -- "$HOME/.concertmaster-cutover"'; unset COPY_OK D`.
+  Finish one host (block, runs, cleanup) before starting the next host's block: `D` and `COPY_OK` hold one host at a time.
   The ledger copy is the whole `CM_HOME` (`source.json`, `ledger.json`, `lanes/<id>/handle`, `lanes/<id>/journal.md`); without
   `COPY_OK=1` it existed before the run and is never deleted. Leave nothing behind, and never a directory that existed before the run.
 
