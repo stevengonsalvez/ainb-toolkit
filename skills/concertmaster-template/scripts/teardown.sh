@@ -850,10 +850,15 @@ fi
 # handle was named with --close-handle; with no handle (started outside a
 # Plugly or Orca terminal, or the mapping failed) it always refuses.
 # handle_of reads the whole environ NUL-safe (a value may hold a newline), takes the FIRST value of each
-# name, chooses PLUGLY when it is non-empty, else ORCA, then keeps a plain token only (no leading "-",
-# nothing outside [A-Za-z0-9._:-], so no newline): a hostile PLUGLY value gives an empty handle and never
-# falls back to ORCA, as in live-agent.sh and _cm_lane_agent_alive. The macOS ps eww branch (no /proc) is
-# split on spaces, so a value that holds a space is cut at it; that is best effort and cannot be made exact.
+# name and applies the lib.sh cm_environ_handle rule (this scan is shell text run on the host, so it keeps
+# its own copy of it): PLUGLY_TERMINAL_HANDLE and ORCA_TERMINAL_HANDLE both set, non-empty and different is
+# AMBIGUOUS (an agent in an Orca terminal can carry a Plugly handle it inherited, or the reverse); otherwise
+# PLUGLY when it is non-empty, else ORCA, kept as a plain token only (no leading "-", nothing outside
+# [A-Za-z0-9._:-], so no newline): a hostile PLUGLY value alone gives an empty handle and never falls back to
+# ORCA. An ambiguous process is printed as "?plugly=<a>,orca=<b>" (each a plain token, else "<invalid>"):
+# it is never a leftover codex and never exempt by --close-handle, so it refuses (fail closed) and the
+# refusal names both candidates. The macOS ps eww branch (no /proc) is split on spaces, so a value that
+# holds a space is cut at it; that is best effort and cannot be made exact. It goes through the same rule.
 # Leftover codex processes. A codex app-server (and the node or shell children it spawned) outlives its
 # terminal and keeps burning CPU after the worktree is gone. They are found by cwd and by tree, never by
 # name alone, and stopped by EXACT pid on --apply, before the worktree is removed:
@@ -947,6 +952,7 @@ pick() {
     ORCA_TERMINAL_HANDLE=*)   if [ "$so" = 0 ]; then so=1; ho="${1#ORCA_TERMINAL_HANDLE=}"; fi ;;
   esac
 }
+tok() { case "$1" in ""|-*|*[!A-Za-z0-9._:-]*) printf "%s" "<invalid>" ;; *) printf "%s" "$1" ;; esac; }
 handle_of() {
   local hp="" ho="" sp=0 so=0 kv e h
   if [ -r "/proc/$1/environ" ]; then
@@ -954,6 +960,9 @@ handle_of() {
   else
     e=$(ps eww -o command= -p "$1" 2>/dev/null)
     while IFS= read -r -d "" kv || [ -n "$kv" ]; do pick "$kv"; done < <(printf "%s" "$e" | tr " " "\000")
+  fi
+  if [ -n "$hp" ] && [ -n "$ho" ] && [ "$hp" != "$ho" ]; then
+    printf "?plugly=%s,orca=%s\n" "$(tok "$hp")" "$(tok "$ho")"; return 0
   fi
   if [ -n "$hp" ]; then h="$hp"; else h="$ho"; fi
   case "$h" in -*|*[!A-Za-z0-9._:-]*) h="" ;; esac
@@ -971,7 +980,7 @@ list() {
   fi
 }
 list | while read -r pid comm; do printf "%s\t%s\t%s\n" "$pid" "$comm" "$(handle_of "$pid")"; done'
-  EXEMPT=""
+  EXEMPT=""; AMBIG=0
   TAB=$'\t'
   if PROCS="$(rrun "$SCAN" "$WT" 2>/dev/null)"; then
     NONSHELL=""
@@ -980,14 +989,21 @@ list | while read -r pid comm; do printf "%s\t%s\t%s\n" "$pid" "$comm" "$(handle
       # one line per process, TAB separated: pid, comm, handle. A handle is a plain token that cannot hold a TAB, and the
       # pid comes first, so a ":" in the handle (or in comm) cannot move the fields.
       pp="${pl%%"$TAB"*}"; ph="${pl##*"$TAB"}"; pc="${pl#*"$TAB"}"; pc="${pc%"$TAB"*}"
+      # "?plugly=<a>,orca=<b>": an AMBIGUOUS handle (handle_of). "?" is not a handle character, so no real handle reads as one.
+      pa=""; case "$ph" in "?"*) pa="${ph#\?}"; ph="" ;; esac
       case "$pc" in bash|zsh|sh|dash|fish|login|tmux|-bash|-zsh|-sh) continue ;; esac
       # a leftover codex process (or its child) is stopped by pid on --apply, so it does not block
       # unless it still belongs to a LIVE terminal of this worktree that --close-handle does not name: that is
-      # a running session, not a leftover, and it refuses like any other process.
+      # a running session, not a leftover, and it refuses like any other process. An ambiguous handle is never
+      # a leftover: either candidate could be a live terminal, so it falls through and refuses.
       case " $CODEX_PIDS " in *" $pp "*)
-        if [ -z "$ph" ] || ! printf '%s\n' "${HANDLES:-}" | grep -qxF -- "$ph"; then continue; fi
-        case "$CLOSE_HANDLES" in *" $ph "*) continue ;; esac ;;
+        if [ -z "$pa" ]; then
+          if [ -z "$ph" ] || ! printf '%s\n' "${HANDLES:-}" | grep -qxF -- "$ph"; then continue; fi
+          case "$CLOSE_HANDLES" in *" $ph "*) continue ;; esac
+        fi ;;
       esac
+      # never exempt either: --close-handle names one terminal, and this process may be in the other
+      if [ -n "$pa" ]; then NONSHELL="$NONSHELL $pp:$pc@ambiguous($pa)"; AMBIG=1; continue; fi
       if [ -n "$ph" ]; then
         case "$CLOSE_HANDLES" in *" $ph "*) EXEMPT="$EXEMPT $pp:$pc@$ph"; continue ;; esac
       fi
@@ -1004,6 +1020,7 @@ EOF_PROCS
   else
     check processes "BLOCKING:$NONSHELL"
     refuse "non-shell processes run in the worktree:$NONSHELL (stop them first)"
+    [ "$AMBIG" = 0 ] || refuse "a process carries two different terminal handles (PLUGLY_TERMINAL_HANDLE and ORCA_TERMINAL_HANDLE, shown as ambiguous(plugly=...,orca=...)): which terminal it runs in cannot be told, so it is neither a leftover nor exempt. Close its terminal by hand, or restart the agent from a shell that carries only one of the two"
   fi
 fi
 

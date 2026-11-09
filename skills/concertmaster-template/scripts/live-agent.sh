@@ -10,10 +10,11 @@
 #
 # Per match one line on stdout, tab separated: pid, handle, agent.
 #   pid     the process id on the host that was scanned
-#   handle  PLUGLY_TERMINAL_HANDLE from the process environment when present and non-empty,
-#           else ORCA_TERMINAL_HANDLE (the REAL terminal handle; PLUGLY wins when both are set),
-#           empty when the process was not started by a Plugly or Orca terminal or its environ
-#           is unreadable
+#   handle  the REAL terminal handle from the process environment: PLUGLY_TERMINAL_HANDLE when
+#           present and non-empty, else ORCA_TERMINAL_HANDLE. EMPTY when the process was not
+#           started by a Plugly or Orca terminal, its environ is unreadable, or the handle is
+#           AMBIGUOUS: both names set, non-empty and different (an agent in an Orca terminal can
+#           carry a Plugly handle it inherited, or the reverse, and either could be its terminal)
 #   agent   the configured agent name the command line matched (claude, codex, agy, ...)
 #
 # A match is a process of this user that is not a zombie, runs on a terminal (an Orca agent
@@ -150,6 +151,24 @@ agent_of() {
   for a in $AGENTS; do [ "$b" = "$a" ] && { printf '%s' "$a"; return; }; done
 }
 
+# cm_environ_handle <environ-file>: sets CM_EH_HANDLE from PLUGLY_TERMINAL_HANDLE (non-empty) else
+# ORCA_TERMINAL_HANDLE; returns 1, with no handle, when both are set, non-empty and different. A byte for byte
+# copy of lib.sh cm_environ_handle (the rule is documented there): this script is streamed to a remote bash
+# that has no lib.sh. test/live-agent.sh fails when the two copies differ.
+cm_environ_handle() {
+  local kv hp="" ho="" sp=0 so=0
+  CM_EH_HANDLE=""
+  while IFS= read -r -d '' kv || [ -n "$kv" ]; do
+    case "$kv" in
+      PLUGLY_TERMINAL_HANDLE=*) if [ "$sp" = 0 ]; then sp=1; hp="${kv#PLUGLY_TERMINAL_HANDLE=}"; fi ;;
+      ORCA_TERMINAL_HANDLE=*)   if [ "$so" = 0 ]; then so=1; ho="${kv#ORCA_TERMINAL_HANDLE=}"; fi ;;
+    esac
+  done < "$1"
+  if [ -n "$hp" ] && [ -n "$ho" ] && [ "$hp" != "$ho" ]; then return 1; fi
+  if [ -n "$hp" ]; then CM_EH_HANDLE="$hp"; else CM_EH_HANDLE="$ho"; fi
+  return 0
+}
+
 found=0; unreadable=0
 for d in "$PROC"/[0-9]*; do
   [ -d "$d" ] || continue
@@ -180,19 +199,9 @@ for d in "$PROC"/[0-9]*; do
     case "$cwd" in "$want"/*) ;; *) continue ;; esac
   fi
   handle=""
-  if [ -r "$d/environ" ]; then
-    # Read the WHOLE environ before choosing: the two names come in either order. PLUGLY_TERMINAL_HANDLE is
-    # the handle when present and non-empty (a Plugly daemon started from an Orca shell inherits that
-    # shell's ORCA_TERMINAL_HANDLE, and PLUGLY wins); otherwise ORCA_TERMINAL_HANDLE. The first occurrence of a name counts.
-    h_plugly=""; h_orca=""; seen_plugly=0; seen_orca=0
-    while IFS= read -r -d '' kv || [ -n "$kv" ]; do
-      case "$kv" in
-        PLUGLY_TERMINAL_HANDLE=*) if [ "$seen_plugly" = 0 ]; then seen_plugly=1; h_plugly="${kv#PLUGLY_TERMINAL_HANDLE=}"; fi ;;
-        ORCA_TERMINAL_HANDLE=*)   if [ "$seen_orca" = 0 ]; then seen_orca=1; h_orca="${kv#ORCA_TERMINAL_HANDLE=}"; fi ;;
-      esac
-    done < "$d/environ"
-    if [ -n "$h_plugly" ]; then handle="$h_plugly"; else handle="$h_orca"; fi
-  fi
+  # an ambiguous handle (cm_environ_handle returns 1) stays empty: lane-handles.sh then reports no-handle and
+  # never writes a terminal the agent may not be in
+  if [ -r "$d/environ" ] && cm_environ_handle "$d/environ"; then handle="$CM_EH_HANDLE"; fi
   # The handle is written to the ledger and into commands later: a plain token only.
   case "$handle" in -*|*[!A-Za-z0-9._:-]*) handle="" ;; esac   # a leading "-" would read as an option wherever the handle is used
   printf '%s\t%s\t%s\n' "$pid" "$handle" "$agent"

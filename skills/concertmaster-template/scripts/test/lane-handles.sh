@@ -719,12 +719,13 @@ penv 401 'HOME=/h\0PLUGLY_TERMINAL_HANDLE=term_plug\0'
 check "plugly (a): only PLUGLY set: the file handle equal to it is alive (0)" '[ "$(alive 401 term_plug)" = 0 ]'
 penv 401 'HOME=/h\0ORCA_TERMINAL_HANDLE=term_orca\0'
 check "plugly (b): only ORCA set: alive (0) for it, 2 for another handle (unchanged)" '[ "$(alive 401 term_orca)" = 0 ] && [ "$(alive 401 term_other)" = 2 ]'
+# both set, non-empty and different is AMBIGUOUS: cannot tell which terminal the agent holds, 3 (fail closed, as an unreadable environ)
 penv 401 'ORCA_TERMINAL_HANDLE=term_orca\0PLUGLY_TERMINAL_HANDLE=term_plug\0'
-check "plugly (c1): both set and different, ORCA first: PLUGLY is 0, the ORCA handle is 2" '[ "$(alive 401 term_plug)" = 0 ] && [ "$(alive 401 term_orca)" = 2 ]'
+check "plugly (c1): both set and different, ORCA first: ambiguous, 3 for either handle and for a third" '[ "$(alive 401 term_plug)" = 3 ] && [ "$(alive 401 term_orca)" = 3 ] && [ "$(alive 401 term_other)" = 3 ]'
 penv 401 'PLUGLY_TERMINAL_HANDLE=term_plug\0ORCA_TERMINAL_HANDLE=term_orca\0'
-check "plugly (c2): both set and different, PLUGLY first: PLUGLY is 0, the ORCA handle is 2" '[ "$(alive 401 term_plug)" = 0 ] && [ "$(alive 401 term_orca)" = 2 ]'
+check "plugly (c2): both set and different, PLUGLY first: ambiguous, 3" '[ "$(alive 401 term_plug)" = 3 ] && [ "$(alive 401 term_orca)" = 3 ]'
 penv 401 'ORCA_TERMINAL_HANDLE=term_orca\0PLUGLY_TERMINAL_HANDLE=term_plug'
-check "plugly (c3): PLUGLY last with no closing NUL: still wins" '[ "$(alive 401 term_plug)" = 0 ] && [ "$(alive 401 term_orca)" = 2 ]'
+check "plugly (c3): PLUGLY last with no closing NUL: still read, ambiguous, 3" '[ "$(alive 401 term_plug)" = 3 ] && [ "$(alive 401 term_orca)" = 3 ]'
 penv 401 'PLUGLY_TERMINAL_HANDLE=term_same\0ORCA_TERMINAL_HANDLE=term_same\0'
 check "plugly (d): both set and equal: alive (0)" '[ "$(alive 401 term_same)" = 0 ]'
 penv 401 'PLUGLY_TERMINAL_HANDLE=\0ORCA_TERMINAL_HANDLE=term_orca\0'
@@ -734,9 +735,11 @@ check "plugly (e2): ORCA first, PLUGLY empty after it: ORCA is the handle" '[ "$
 penv 401 'PLUGLY_TERMINAL_HANDLE=\0HOME=/h\0'
 check "plugly (e3): PLUGLY empty and no ORCA: 2 (an empty PLUGLY is not a terminal)" '[ "$(alive 401 term_orca)" = 2 ]'
 penv 401 'PLUGLY_TERMINAL_HANDLE=bad;rm -rf\0ORCA_TERMINAL_HANDLE=term_orca\0'
-check "plugly (f1): hostile PLUGLY never falls back to ORCA: the ORCA handle is 2" '[ "$(alive 401 term_orca)" = 2 ]'
+check "plugly (f1): hostile PLUGLY beside ORCA never falls back to ORCA: ambiguous, 3 (never 0)" '[ "$(alive 401 term_orca)" = 3 ]'
 penv 401 'ORCA_TERMINAL_HANDLE=term_orca\0PLUGLY_TERMINAL_HANDLE=-x\0'
-check "plugly (f2): a hostile PLUGLY after ORCA still wins: the ORCA handle is 2" '[ "$(alive 401 term_orca)" = 2 ]'
+check "plugly (f2): a hostile PLUGLY after ORCA: ambiguous, 3 (never 0)" '[ "$(alive 401 term_orca)" = 3 ]'
+penv 401 'PLUGLY_TERMINAL_HANDLE=bad;rm -rf\0HOME=/h\0'
+check "plugly (f3): hostile PLUGLY alone: 2 (it is not the file handle), as before" '[ "$(alive 401 term_orca)" = 2 ]'
 penv 401 'PLUGLY_TERMINAL_HANDLE=term_first\0HOME=/h\0PLUGLY_TERMINAL_HANDLE=term_last\0'
 check "plugly (dup): PLUGLY twice with different values: the FIRST counts (0 for it, 2 for the last)" '[ "$(alive 401 term_first)" = 0 ] && [ "$(alive 401 term_last)" = 2 ]'
 penv 401 'ORCA_TERMINAL_HANDLE=term_first\0ORCA_TERMINAL_HANDLE=term_last\0'
@@ -760,8 +763,23 @@ cm_lane_handle w-one >"$ROOT/out" 2>/dev/null; RC=$?
 check "plugly: ...and the reader serves it (the pid check agrees)" '[ "$RC" = 0 ] && [ "$(cat "$ROOT/out")" = term_on_plugly ]'
 mkledger; rm -rf -- "${CM_HOME:?}/lanes"; reset_proc; mkproc 411 "$WT" "" claude
 penv 411 'ORCA_TERMINAL_HANDLE=term_inherited\0PLUGLY_TERMINAL_HANDLE=term_real_plugly\0'
+OUT="$(lh)"
+check "plugly: an agent started from an Orca shell (both set, different): ambiguous, reported no-handle, no handle written" '[ "$(field w-one 1)" = "-" ] && grep -Eq "^w-one	-	no-handle" <<<"$OUT"'
+check "plugly: ...neither candidate is in any lane file or the ledger" '! grep -rqE "term_inherited|term_real_plugly" "$CM_HOME/lanes" "$CM_HOME/ledger.json"'
+# the mirror: an agent in an Orca terminal (the listed ledger terminal) that inherited a PLUGLY handle from the shell that started the Orca daemon
+mkledger; rm -rf -- "${CM_HOME:?}/lanes"; reset_proc; mkproc 412 "$WT" "" claude
+penv 412 'ORCA_TERMINAL_HANDLE=term_stale\0PLUGLY_TERMINAL_HANDLE=term_inherited_plugly\0'
+OUT="$(lh)"
+check "plugly: an Orca agent with an inherited PLUGLY handle: no-handle, the inherited handle is never written" '[ "$(field w-one 1)" = "-" ] && grep -Eq "^w-one	-	no-handle" <<<"$OUT" && ! grep -rq term_inherited_plugly "$CM_HOME/lanes" "$CM_HOME/ledger.json"'
+cm_lane_handle w-one >"$ROOT/out" 2>/dev/null; RC=$?
+check "plugly: ...and the reader serves nothing (no send)" '[ "$RC" != 0 ] && [ ! -s "$ROOT/out" ]'
+# an old file (written before this rule) whose pid now reads as ambiguous is stale, never served
+mkledger; rm -rf -- "${CM_HOME:?}/lanes"; reset_proc; mkproc 413 "$WT" "" claude
+penv 413 'HOME=/h\0ORCA_TERMINAL_HANDLE=term_old\0'
 lh --quiet
-check "plugly: an agent started from an Orca shell (both set, different): the file holds the PLUGLY handle, not the inherited ORCA one" '[ "$(field w-one 1)" = term_real_plugly ]'
+penv 413 'ORCA_TERMINAL_HANDLE=term_old\0PLUGLY_TERMINAL_HANDLE=term_other\0'
+_cm_lane_handle_read w-one
+check "plugly: a fresh file whose pid is now ambiguous reads as stale (cannot tell), never fresh" '[ "$LH_STATE" = stale ] && grep -q "two different terminal handles" <<<"$LH_WHY"'
 rm -rf -- "${CM_HOME:?}/lanes"
 
 echo
