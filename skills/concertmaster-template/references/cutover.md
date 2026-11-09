@@ -187,12 +187,47 @@ Rules that hold for every row:
   from `live-agent.sh` over ssh and rewrites the handle file and the ledger terminal. The journal entries stay in the copy: append
   one on the concertmaster host (`scripts/lane-journal.sh append <lane> "cm:handover cutover to plugly <UTC time>"`) if the lane's
   next session should read it. Throw the ledger copy away after the run; nothing reads it back.
+- **Remote shell mechanics (learned on a canary run).** Non-interactive `ssh` on a remote host may lack `orca` and `plugly` on
+  `PATH`, and each one-shot `ssh <host> '<command>'` is a fresh shell that keeps no earlier `export`. Set `PATH`, `CM_HOME` and the
+  directory in every one-shot command, inside single quotes so the REMOTE shell expands `$HOME` and `$PATH`, or work from one
+  interactive `ssh <host>` shell. A command you type repairs nothing itself (`CM_REMOTE_PATH_FIX` in `lib.sh` covers only the docker
+  and supabase scans; `spawn-verify.sh resolve --ssh` does its own claude lookup). Put the skill in a NEW empty directory made for the
+  run. Run this on the concertmaster host from the skill directory, where every `scripts/...` command here runs (in a project copy,
+  `<repo>/.agents/skills/concertmaster`):
+
+  ```bash
+  # creates the ledger copy dir, and fails if it exists already: COPY_OK is what lets the cleanup delete it
+  COPY_OK=; ssh <host> 'mkdir -- "$HOME/.concertmaster-cutover"' && COPY_OK=1 || echo "STOP: the ledger copy dir exists already, or ssh failed"
+  D=$(ssh <host> mktemp -d); echo "$D"     # note it: the remote shell does not know $D
+  [[ "$D" =~ ^/([A-Za-z0-9._-]+/)*tmp[.][A-Za-z0-9]+$ ]] || echo "STOP: not a mktemp dir (login output on the host?): $D"
+  git archive origin/main . | ssh <host> "tar -x -C $D"
+  ssh <host> "test -x $D/scripts/cutover-host.sh" && echo "skill ok"
+  ```
+
+  The skill lands at the top of `$D`. `config.yaml` comes along only if that repo tracks it; else `scp` it to `$D/config.yaml`. Never
+  extract into an existing checkout: `tar -x` would overwrite its tracked skill files and the cleanup would then delete them. A
+  one-shot run names the path literally:
+  `ssh <host> 'export PATH=$HOME/.local/bin:$PATH CM_HOME=$HOME/.concertmaster-cutover; cd '"$D"' && scripts/cutover-host.sh local'`
+  (add `--apply` for the real run; without `CM_HOME` the script reads the host's default `~/.concertmaster`, not the copy). After the
+  host's last run (orphan check 0) and the journal entries appended on the concertmaster host, remove both run directories whole and
+  nothing else, from the same shell that set `D` and `COPY_OK`:
+  `[[ "$D" =~ ^/([A-Za-z0-9._-]+/)*tmp[.][A-Za-z0-9]+$ ]] && ssh <host> "rm -rf -- $D"; [ "${COPY_OK:-}" = 1 ] && ssh <host> 'rm -rf -- "$HOME/.concertmaster-cutover"'; unset COPY_OK D`.
+  Finish one host (block, runs, cleanup) before starting the next host's block: `D` and `COPY_OK` hold one host at a time.
+  The ledger copy is the whole `CM_HOME` (`source.json`, `ledger.json`, `lanes/<id>/handle`, `lanes/<id>/journal.md`); without
+  `COPY_OK=1` it existed before the run and is never deleted. Leave nothing behind, and never a directory that existed before the run.
 
 **Covered by the suite:** the dry run for `local` against stub runtimes (including `skip: self` for the shell's own terminal), the model
-gate reading panes, the ssh target rule (argv recorded) and `--except`. **Verify on first use:** a dry run from the concertmaster host for
-each remote host (the host-name alias resolves, `claude-binary` passes); `orca terminal create --environment <host>` for the
-operator terminal; the skill checkout and ledger copy on each remote kind; that `lane-handles.sh` on the concertmaster host picks up a
-remote worker's new Plugly handle (needs the Plugly environment names above); the Plugly handle variables; a real `--apply`.
+gate reading panes, the ssh target rule (argv recorded) and `--except`.
+
+**Canary result, for ONE host kind only: a Linux box reached by plain ssh.** Over plain `ssh <host>` as the operator shell, a real
+`--apply` on a throwaway plain worker moved it to a Plugly terminal (`verify ok`, orphan check 0); the skill checkout and the ledger
+copy on that host; `lane-handles.sh` on the concertmaster host picking up the worker's new Plugly handle over ssh (it read
+`PLUGLY_TERMINAL_HANDLE`); the hold released afterwards.
+
+**Verify on first use (not exercised by the canary):** a dry run from the concertmaster host for each remote host (the host-name alias
+resolves, `claude-binary` passes); a real `--apply` on the concertmaster's own host (with `--except`, last of all); a real `--apply`
+through an Orca environment terminal (`orca terminal create --environment <host>`); the skill checkout and ledger copy on an Orca
+environment host.
 
 ### Hold the concertmaster's resume (every remote `--apply`)
 
@@ -234,6 +269,7 @@ Make it from the concertmaster's ledger, never editing the original, in a fresh 
 # on the concertmaster host: where its ledger really is (CM_LEDGER, else $CM_HOME/ledger.json)
 bash -c '. scripts/lib.sh; cm_ledger_path'
 # on the remote host; <host> is the Orca environment name the concertmaster's ledger uses; the copy lands in a fresh CM_HOME
+# (run the Remote shell mechanics block first: it made this directory, and the mkdir -p below only reuses it)
 mkdir -p "$HOME/.concertmaster-cutover"; scp <concertmaster host>:<the path printed above> "$HOME/.concertmaster-cutover/source.json"
 jq --arg h "<host>" '{schema, project, hosts, workers: (.workers | with_entries(select((.value | type) == "object" and .value.host == $h)) | map_values(.host = "local"))}' \
   "$HOME/.concertmaster-cutover/source.json" > "$HOME/.concertmaster-cutover/ledger.json"
@@ -283,7 +319,7 @@ plans no rows, quietly). Only `schema`, `project`, `hosts` and `workers` travel 
       no agent until that is done; `scripts/resume.sh` does the same recreate when the lane is a ledger row.
    4. `CM_CLI_KIND=plugly scripts/spawn-verify.sh check --terminal <new handle> --model <family>-<n>.<m> --effort <effort>` (the values `read`
       printed; `CM_CLI_KIND=plugly` makes it read through the Plugly CLI, without it the new handle is looked up in Orca and the pane is
-      "unreadable"); then `scripts/lane-handles.sh --worker <id>` and nudge it with the `/loop` text (`CM_NUDGE_TICK` in `lib.sh`).
+      "unreadable"); then `scripts/lane-handles.sh --worker <id>` and nudge it with the `/loop` text (`CM_NUDGE_TICK` in `lib.sh`). Pick the CLI by the handle, never assume `orca`: a handle belongs to the app that issued it (`orca terminal send|read|close` for an Orca handle, `plugly terminal send|read|close` for a Plugly handle). Most scripts take the CLI from `CM_CLI_KIND`, so set it per handle; `cutover-host.sh` ignores it and drives both CLIs by name.
    5. `scripts/cutover-host.sh local` (dry run) must show every lane `already on plugly` and no orphan.
 
 ## The orphan rule
