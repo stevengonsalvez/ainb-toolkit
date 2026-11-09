@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const { execSync } = require('child_process');
+const { execFileSync, execSync } = require('child_process');
 
 // De-dup: read the SINGLE source-of-truth TOOL_CONFIG straight from
 // bootstrap.js (`--dump-config` prints it as JSON), instead of a hand-copied
@@ -194,6 +194,24 @@ printf '{"FEATURE_SPEC":"%s","IMPL_PLAN":"%s","SPECS_DIR":"%s","BRANCH":"%s"}\n'
         for (const rule of ALWAYS_COPY_RULES) {
             expect(fs.existsSync(path.join(destDir, rule))).toBe(true);
         }
+    });
+
+    it.each(['codex', 'claude-code-4.5'])('rejects remote %s bootstrap without an explicit target home', (tool) => {
+        expect(() => execSync(`node bootstrap.js --tool=${tool}`, {
+            cwd: __dirname,
+            stdio: 'pipe',
+            env: { ...process.env, SSH_CONNECTION: '100.0.0.1 22 100.0.0.2 22' },
+        })).toThrow(/Remote bootstrap requires --homeDir/);
+    });
+
+    it('preserves equals signs in --homeDir', () => {
+        const targetHome = path.join(tempDir, 'agent=blue');
+        execFileSync('node', ['bootstrap.js', '--tool=codex', `--homeDir=${targetHome}`], {
+            cwd: __dirname,
+            stdio: 'pipe',
+            env: { ...process.env, SSH_CONNECTION: '100.0.0.1 22 100.0.0.2 22' },
+        });
+        expect(fs.existsSync(path.join(targetHome, '.codex', 'skills', 'make-a-goal', 'SKILL.md'))).toBe(true);
     });
 
     it('deploys packages structure to antigravity home directory with template substitutions and setup-external.sh', () => {
@@ -689,15 +707,16 @@ describe('Ainb scoped Codex home (~/.agents-in-a-box/codex-home)', () => {
         }
     });
 
+    const scopedHomeOf = (mockHomeDir) => path.join(mockHomeDir, '.agents-in-a-box', 'codex-home');
+    const codexSkillsOf = (mockHomeDir) => path.join(mockHomeDir, TOOL_CONFIG[tool].targetSubdir, 'skills');
+
     const runBootstrap = (mockHomeDir) => {
-        execSync(`node bootstrap.js --tool=${tool} --homeDir=${mockHomeDir}`, {
+        execFileSync('node', ['bootstrap.js', `--tool=${tool}`, `--homeDir=${mockHomeDir}`], {
+            cwd: __dirname,
             stdio: 'pipe',
             env: { ...process.env },
         });
     };
-
-    const scopedHomeOf = (mockHomeDir) => path.join(mockHomeDir, '.agents-in-a-box', 'codex-home');
-    const codexSkillsOf = (mockHomeDir) => path.join(mockHomeDir, TOOL_CONFIG[tool].targetSubdir, 'skills');
 
     // A skill bootstrap always deploys, used as the canary for reconciliation.
     const CANARY = 'interview';
@@ -782,6 +801,8 @@ describe('Ainb scoped Codex home (~/.agents-in-a-box/codex-home)', () => {
         const script = fs.readFileSync(
             path.join(mockHomeDir, TOOL_CONFIG[tool].targetSubdir, 'setup-external.sh'), 'utf8');
         expect(script).toContain('--reconcile-scoped-skills');
+        expect(script).toContain(`export HOME='${mockHomeDir}'`);
+        expect(script).toContain(`--reconcile-scoped-skills --homeDir='${mockHomeDir}'`);
 
         // Simulate the clone, then run the callback the script emits.
         const lateSkill = path.join(codexSkillsOf(mockHomeDir), 'late-external-skill');
@@ -795,6 +816,21 @@ describe('Ainb scoped Codex home (~/.agents-in-a-box/codex-home)', () => {
         const linked = path.join(scopedHomeOf(mockHomeDir), 'skills', 'late-external-skill');
         expect(fs.lstatSync(linked).isSymbolicLink()).toBe(true);
         expect(fs.readFileSync(path.join(linked, 'SKILL.md'), 'utf8')).toBe('cloned by setup-external\n');
+    });
+
+    it('shell-quotes generated external installer home paths', () => {
+        const marker = path.join(tempDir, 'injected-marker');
+        const mockHomeDir = path.join(tempDir, `home-$(touch\${IFS}${marker})`);
+        fs.mkdirSync(scopedHomeOf(mockHomeDir), { recursive: true });
+
+        runBootstrap(mockHomeDir);
+
+        const script = fs.readFileSync(
+            path.join(mockHomeDir, TOOL_CONFIG[tool].targetSubdir, 'setup-external.sh'), 'utf8');
+        const exportLine = script.split('\n').find(line => line.startsWith('export HOME='));
+        expect(exportLine).toBe(`export HOME='${mockHomeDir}'`);
+        execFileSync('bash', ['-c', exportLine], { cwd: tempDir, stdio: 'pipe' });
+        expect(fs.existsSync(marker)).toBe(false);
     });
 
     it('does not create a scoped home that ainb has not created yet', () => {
