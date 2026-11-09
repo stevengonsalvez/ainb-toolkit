@@ -319,7 +319,7 @@ tracker when it does. After the owner answers, change the routing heading from
 $I ask < "$W/plan.json"
 ```
 
-prints the `AskUserQuestion` payload. Send it as it is, once:
+prints the `AskUserQuestion` payload. Send it as it is, once, when step 6 allows a picker; otherwise put the same options in a WAITING row, recommended first:
 
 - **Route as tabled (Recommended)**, first, with the routing table as its
   preview and a count of items that start without waiting on the owner.

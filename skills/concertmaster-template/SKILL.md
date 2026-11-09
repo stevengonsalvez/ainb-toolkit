@@ -898,7 +898,7 @@ with the same safety checks and a per-transcript attempt cap. Nothing is sent wh
 ASK means one decision with a recommended option first; work that does
 not depend on the answer carries on. In a tick turn the ASK is a
 `WAITING: <owner>, <question>, <age>` row, never an AskUserQuestion (§ The tick,
-"No blocking ask"); the picker is for a turn the owner started, after `ScheduleWakeup`.
+"No blocking ask"); the picker is for a turn the owner started, after `ScheduleWakeup`, when § The tick, "No owner question before a deploy is spawned" allows it.
 
 ## Merge gate
 
@@ -986,7 +986,9 @@ window due ─▶ delta since last tag? ─ no ─▶ skipped
    STOP, 2 is an owner ASK, and 1 or 127 means the check did not run.
    Set the window row's state to `rails-check` before the rails run; a rail
    hit or a migration-guard ask leaves it there (a WAITING row), and a clear
-   verdict goes on to step 3.
+   verdict goes on to step 3. Exit 3, or a rail the owner declines: set the
+   row to `stopped` with the reason. Exit 1 or 127: the row stays at
+   `rails-check` and the tick table says the check did not run.
 3. Clear: spawn the deploy worker (`references/lanes.md` § deploy worker),
    which follows `cfg.deploy.ship_verb`. **Order is fixed: merge, staging
    deploy, staging validate, only then prod. Never run staging validation in
@@ -1012,7 +1014,7 @@ Two different operations. Never improvise a third.
 | operation | what it does | when |
 |---|---|---|
 | **Retire worker** | read the pane (no menu showing, prompt idle), then `scripts/teardown.sh <host> <path> --retire-check` must exit 0 (ledger, standing, beads and follow-up gates only; it never acts), then `ORCA terminal close --terminal <h> $ENV` for that worker's ONE agent handle; keep the worktree; set `prs.<pr>.driver` to the pr-sweeper for any open PR; ledger state `retired` | a single-task worker is done (`cm:done`, `cm:merge-ready`, done-selfreported) with every epic bead closed, or a stuck worker is being replaced. Never a standing lane |
-| **Teardown worktree** | `scripts/teardown.sh`, dry run first, `--apply` only on a clean plan | single-task worker only, every epic bead closed, and the branch's PR is merged or closed; or, with no PR, after the owner approves that item via AskUserQuestion (then `--allow-no-pr`) |
+| **Teardown worktree** | `scripts/teardown.sh`, dry run first, `--apply` only on a clean plan | single-task worker only, every epic bead closed, and the branch's PR is merged or closed; or, with no PR, after the owner approves that item (via AskUserQuestion when § The tick, "No owner question before a deploy is spawned" allows it, else a WAITING row) (then `--allow-no-pr`) |
 
 Before either operation, four checks, every time:
 
