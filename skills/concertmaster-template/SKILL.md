@@ -258,11 +258,19 @@ The lane set above is the default; `cfg.lanes` is the list in use.
       No `BEGIN;` and `COMMIT;` at all is a STOP, not an ask: the `SET LOCAL` guard never runs
       and a bare push still ships the file.
     - **Already applied.** If a stopped file is already applied on the target environment, the
-      ONLY fix is connection-level timeouts on the push step (for example `PGOPTIONS='-c
-      lock_timeout=3s -c statement_timeout=30s'`, or the connection URL's `options=` form), never
-      an edit of the migration file: the migration runner tracks applied files by name and
-      silently skips an edited one. The migration CLI may ignore `PGOPTIONS`, so prove the
-      option reaches the session with a `SHOW lock_timeout` in the same session first.
+      ONLY fix is connection-level timeouts on the push step, never an edit of the migration
+      file: the migration runner tracks applied files by name and silently skips an edited one.
+      Use the connection URL's `options=` form (for example `options=-c lock_timeout=3s -c
+      statement_timeout=120000`, URL-encoded). Do not rely on the `PGOPTIONS` env: when
+      measured against a pinned Supabase CLI the push session ignored it (`lock_timeout=0`),
+      while the `options=` form reached the session. Re-measure on your own pinned CLI, and
+      prove any option reaches the session with a `SHOW lock_timeout` in the same session
+      first. The cap is looser than the in-file guard (statement 120000 ms against 30 s), and
+      without BEGIN/COMMIT a `SET LOCAL` only warns, so this is a fallback, not equivalent to
+      the in-file guard; the edit stays forbidden and the window stays blocked.
+    - **PR merge gate.** The same script runs at the PR merge gate, before the file is applied
+      (`references/lanes.md` § pr-sweeper, merge gate). A STOP there always means edit the
+      unmerged file; no workaround is offered.
     - **Exit codes.** 0 all ok (or excepted, or no added migration), 2 any ask, 3 any stop, 1
       anything else (unreadable input, a bad or swapped range, `--pr-body-file` without
       `--only`, an `--only` that matches no added file, a listing that disagrees with the full

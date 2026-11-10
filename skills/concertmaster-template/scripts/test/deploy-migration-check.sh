@@ -557,5 +557,19 @@ check "only statement_timeout in the window: exit 2" "$RC" 2; has "only statemen
 newrepo; addmig 88000000000002_a.sql "$(printf '%s\n%s %s = %s;\n%s\n' "$BG" "$SL" "$LK" "'3s'" "$CM")"; run
 check "only lock_timeout in the window: exit 2" "$RC" 2; has "only lock_timeout: statement_timeout shown as missing" "$OUT" "lock_timeout=3s statement_timeout=missing"
 
+# 40. the STOP note: merge-gate advice (edit the unmerged file) apart from deploy-time advice; the connection-level fix is the
+# options= db-url form, never the PGOPTIONS env
+newrepo; addmig 88000000000002_a.sql "no guard here"; run
+check "an unguarded file: exit 3" "$RC" 3
+has "the note gives merge-gate advice first: edit the unmerged file" "$OUT" "At the PR merge gate the file is not on the base branch yet: edit it"
+has "the note gives deploy-time advice apart" "$OUT" "At deploy time, if that version is already applied"
+has "the note names the options= db-url form with the 120000 cap" "$OUT" "options=-c lock_timeout=3s -c statement_timeout=120000"
+has "the note says the PGOPTIONS env is not a substitute" "$OUT" "The PGOPTIONS env is not a substitute"
+hasnt "the note no longer offers PGOPTIONS as the example fix" "$OUT" "for example PGOPTIONS="
+has "the note keeps the in-file values at 30s" "$OUT" "the in-file SET LOCAL values stay 3s / 30s"
+OUT="$(bash "$SCRIPT" --help 2>&1)"
+has "the help names the db-url options= fix" "$OUT" "options=-c lock_timeout=3s -c statement_timeout=120000"
+has "the help says the PGOPTIONS env was ignored when measured" "$OUT" "ignored it (lock_timeout=0)"
+
 printf '\npassed=%s failed=%s\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

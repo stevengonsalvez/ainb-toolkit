@@ -33,9 +33,11 @@
 # then `<n> migration files examined` (always printed; 0 is fine when git reports no added migration), then a `summary:`
 # line. A stop adds a `note:` line: if that version is already applied on staging, the migration file must NOT be edited
 # (the migration runner tracks applied files by name and silently skips an edited one); the only fix is connection-level timeouts on
-# the push step, for example PGOPTIONS='-c lock_timeout=3s -c statement_timeout=30s' in the workflow step that runs the
-# push, or the db-url form (options=-c lock_timeout=3s -c statement_timeout=30s, URL-encoded). The CLI may ignore
-# PGOPTIONS: prove the option reaches the session with a SHOW lock_timeout in the same session before relying on it.
+# the push step: the db-url form (options=-c lock_timeout=3s -c statement_timeout=120000, URL-encoded) in the workflow step
+# that runs the push. The PGOPTIONS env is not a substitute: when measured against a pinned Supabase CLI the push session
+# ignored it (lock_timeout=0), while the options= db-url form reached the session (3s / 2min). Re-measure on your own
+# pinned CLI version. The in-file SET LOCAL values stay 3s / 30s; 120000 is the connection-level cap only. Prove any option
+# reaches the session with a SHOW lock_timeout in the same session before relying on it.
 # One recorded exception covers every flagged file the run examines, so --pr-body-file REQUIRES --only <path> for each file
 # that PR added (repeatable; any other added file is skipped); for files from several PRs run it once per PR. The deploy
 # worker does the same for each file the owner approved and treats any other exit 2 as an ask.
@@ -394,7 +396,7 @@ done <<<"$ONLY"
 printf '%s migration files examined\n' "$N_EXAM"
 printf 'summary: ok=%s exception=%s ask=%s stop=%s (added migrations in %s..%s)\n' "$N_OK" "$N_EXC" "$N_ASK" "$N_STOP" "$FROM" "$TO"
 if [ "$N_STOP" -gt 0 ]; then
-  printf 'note: a stop blocks the window. If that version is already applied on staging, do NOT edit the file (the migration runner tracks applied files by name and silently skips an edited one); the only fix is connection-level timeouts on the push step, for example PGOPTIONS='"'"'-c lock_timeout=3s -c statement_timeout=30s'"'"' in the workflow step that runs the push, or the db-url form (options=-c lock_timeout=3s -c statement_timeout=30s, URL-encoded); the CLI may ignore PGOPTIONS, so prove it with a SHOW lock_timeout in the same session.\n'
+  printf 'note: a stop blocks the window. At the PR merge gate the file is not on the base branch yet: edit it so one BEGIN; ... COMMIT; window holds every statement, with both SET LOCAL lines first, and no ROLLBACK, COMMIT AND CHAIN, PREPARE TRANSACTION or statement outside the window (see the reason= above). At deploy time, if that version is already applied on staging, do NOT edit the file (the migration runner tracks applied files by name and silently skips an edited one); the only fix is connection-level timeouts on the push step: the db-url form (options=-c lock_timeout=3s -c statement_timeout=120000, URL-encoded) in the workflow step that runs the push. The PGOPTIONS env is not a substitute: measured against a pinned Supabase CLI the push session ignored it (lock_timeout=0), so do not rely on it; the in-file SET LOCAL values stay 3s / 30s, 120000 is the connection-level cap only; prove the options reach the session with a SHOW lock_timeout in the same session.\n'
   exit 3
 fi
 [ "$N_ASK" -gt 0 ] && exit 2
