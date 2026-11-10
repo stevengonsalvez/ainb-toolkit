@@ -61,7 +61,9 @@
 # judged on every occurrence, so one bad value flags the file.
 # The migration directory holds the delta files directly in it, ending .sql (a file in a subdirectory is not examined);
 # it comes from deploy.migrations_dir (default supabase/migrations) or env CM_MIGRATIONS_DIR: a relative path of letters,
-# digits, dot, dash, underscore and slash, no `..`, no leading or doubled slash (anything else is exit 1).
+# digits, dot, dash, underscore and slash, no `.` or `..` component, no leading or doubled slash (anything else is exit 1). A
+# config that exists but cannot be read, or an empty deploy.migrations_dir, is also exit 1 (never a silent fallback).
+# A well-formed directory that does not exist at <to-ref> is exit 1 too (a typo must not read as 0 files examined).
 # Pure bash plus git, no network. Needs bash 3.2 or later. The deploy worker runs it on Linux (gawk or mawk); macOS
 # one-true-awk is untested, and busybox awk does not finish a 10 MB one-line file in 240 s (a 1 MB line takes seconds).
 set -uo pipefail
@@ -74,8 +76,21 @@ usage() { awk 'NR > 1 { if (/^#/) print; else exit }' "$0"; }
 # The migration directory: relative to the repo top, plain characters only (it goes into a git pathspec and a regex).
 MIGDIR="${CM_MIGRATIONS_DIR:-$(cm_cfg .deploy.migrations_dir supabase/migrations)}"
 while [ "${MIGDIR%/}" != "$MIGDIR" ]; do MIGDIR="${MIGDIR%/}"; done
+# A config that exists but could not be read (yq missing, bad YAML) or a migrations_dir set to nothing must not fall back to
+# the default directory: that would examine the wrong directory and pass with 0 files. Fail closed (the env var is explicit).
+if [ -z "${CM_MIGRATIONS_DIR:-}" ] && [ -n "$CM_CONFIG_FILE" ]; then
+  if [ -s "$CM_CONFIG_FILE" ] && [ "$CM_CFG_JSON" = '{}' ]; then
+    cm_warn "deploy-migration-check.sh: config $CM_CONFIG_FILE exists but could not be read (is yq installed and the YAML valid?): refusing to guess the migrations directory"; exit 1
+  fi
+  if printf '%s' "$CM_CFG_JSON" | jq -e '(.deploy // {}) | type != "object"' >/dev/null 2>&1; then
+    cm_warn "deploy-migration-check.sh: the deploy section of the config is not a map: refusing to guess the migrations directory"; exit 1
+  fi
+  if printf '%s' "$CM_CFG_JSON" | jq -e '(.deploy // {}) | has("migrations_dir") and ((.migrations_dir | type) != "string" or .migrations_dir == "")' >/dev/null 2>&1; then
+    cm_warn "deploy-migration-check.sh: deploy.migrations_dir is set but empty or not a string"; exit 1
+  fi
+fi
 case "$MIGDIR" in
-  ''|.|/*|./*|*/./*|*//*|*..*|*[!A-Za-z0-9._/-]*)
+  ''|.|/*|./*|*/.|*/./*|*//*|*..*|*[!A-Za-z0-9._/-]*)
     cm_warn "deploy-migration-check.sh: bad migrations directory (deploy.migrations_dir or CM_MIGRATIONS_DIR): must be a plain relative path, no '..', no leading or doubled slash"; exit 1 ;;
 esac
 
@@ -104,6 +119,9 @@ for ref in "$FROM" "$TO"; do
   git rev-parse --verify --quiet "$ref^{commit}" >/dev/null || { cm_warn "deploy-migration-check.sh: bad ref: $ref"; exit 1; }
 done
 git merge-base --is-ancestor "$FROM" "$TO" 2>/dev/null || { cm_warn "deploy-migration-check.sh: bad range: $FROM is not an ancestor of $TO"; exit 1; }
+# A well-formed directory that is not in the tree being checked is a typo (config or CM_MIGRATIONS_DIR), not "no migrations":
+# examining nothing would pass every file unread. Fail closed.
+[ "$(git cat-file -t "$TO:$MIGDIR" 2>/dev/null)" = tree ] || { cm_warn "deploy-migration-check.sh: migrations directory '$MIGDIR' does not exist at $TO (typo in deploy.migrations_dir or CM_MIGRATIONS_DIR?): refusing to examine nothing"; exit 1; }
 if [ -n "$BODY" ] && [ ! -r "$BODY" ]; then cm_warn "deploy-migration-check.sh: PR body file not readable: $BODY"; exit 1; fi
 if [ -n "$BODY" ] && [ -z "$ONLY" ]; then cm_warn "deploy-migration-check.sh: --pr-body-file needs --only <path> for each file that PR added (one exception line must not cover other PRs' files)"; exit 1; fi
 

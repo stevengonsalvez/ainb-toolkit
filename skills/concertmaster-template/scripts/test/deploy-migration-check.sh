@@ -20,6 +20,7 @@ ROOT="$(mktemp -d "${TMPDIR:-/tmp}/cm-dmc-test.XXXXXX")" || { echo "cannot creat
 [ -n "$ROOT" ] && [ -d "$ROOT" ] || { echo "temp dir missing" >&2; exit 1; }
 trap '[ "${CM_TEST_KEEP_TMP:-}" = 1 ] && echo "cm-test: CM_TEST_KEEP_TMP set, kept $ROOT" >&2 || rm -rf -- "${ROOT:?}"' EXIT
 export HOME="$ROOT/home" CM_HOME="$ROOT/home" CM_CONFIG=/nonexistent
+unset CM_MIGRATIONS_DIR CM_DMC_WORKFLOWS CM_DMC_MAX_LOCK_MS CM_DMC_MAX_STATEMENT_MS   # the host's environment must not change a case
 mkdir -p "$HOME"
 PASS=0; FAIL=0
 ok() { PASS=$((PASS + 1)); printf 'PASS %s\n' "$1"; }
@@ -586,8 +587,25 @@ has "a literal dot: zero examined" "$OUT" "0 migration files examined"
 # the default stays supabase/migrations when nothing is configured
 newrepo; addmig 88000000000002_a.sql "$(guard "'3s'" "'30s'")"; run
 has "no configuration: the default directory is read" "$OUT" "ok $F1"
+# a well-formed directory that is not in the tree (a typo) fails closed: it must not read as "0 migration files examined"
+otherrepo supabase/migrations; addat supabase/migrations 88000000000002_a.sql "no guard here"; runenv supabse/migrations
+check "a typo in the migrations directory: exit 1, not a silent pass" "$RC" 1; has "a typo directory: names the missing directory" "$OUT" "'supabse/migrations' does not exist"
+hasnt "a typo directory: never reports a clean run" "$OUT" "migration files examined"
+otherrepo db/migrate; addat db/migrate 88000000000002_a.sql "$(guard "'3s'" "'30s'")"; runenv db/migrate
+check "the real directory still passes next to the typo case: exit 0" "$RC" 0
+otherrepo db/migrate; addat db/migrate 88000000000002_a.sql "no guard here"; runenv db/migrate/missing
+check "a missing subdirectory of a real directory: exit 1" "$RC" 1
+# mutation: drop the existence check and the typo directory reads as a clean run
+MUTD="$ROOT/mutant-missing-dir.sh"
+sed -e "s|^HERE=.*|HERE=\"$(dirname "$SCRIPT")\"|" -e '/does not exist at \$TO/d' "$SCRIPT" > "$MUTD"
+if cmp -s "$SCRIPT" "$MUTD"; then bad "mutation: the missing-directory sed no longer matches the script (update this test)"; else
+  otherrepo supabase/migrations; addat supabase/migrations 88000000000002_a.sql "no guard here"
+  MOUT="$(cd "$D" && CM_MIGRATIONS_DIR=supabse/migrations bash "$MUTD" "$BASE" HEAD 2>&1)"; MRC=$?
+  if [ "$MRC" = 0 ] && case "$MOUT" in *"0 migration files examined"*) true ;; *) false ;; esac; then ok "mutation: without the existence check a typo directory exits 0 with 0 files examined, so the exit-1 tests above fail"
+  else bad "mutation: the mutant still refused a missing directory (rc=$MRC)" "$MOUT"; fi
+fi
 # bad directories fail closed with exit 1
-for bad in /abs/dir ../out a//b . ./a 'a b' 'a*' 'a;b' '$(x)' 'a/../b'; do
+for bad in /abs/dir ../out a//b . ./a a/. a/./ 'a b' 'a*' 'a;b' '$(x)' 'a/../b'; do
   otherrepo db/migrate; addat db/migrate 88000000000002_a.sql "$(guard "'3s'" "'30s'")"; runenv "$bad"
   check "bad migrations directory '$bad': exit 1" "$RC" 1; has "bad migrations directory '$bad': says so" "$OUT" "bad migrations directory"
 done
@@ -598,9 +616,23 @@ if command -v yq >/dev/null 2>&1; then
   OUT="$(cd "$D" && CM_CONFIG="$ROOT/mig-cfg.yaml" bash "$SCRIPT" "$BASE" HEAD 2>&1)"; RC=$?
   check "deploy.migrations_dir from the config: exit 0" "$RC" 0; has "the config directory is read" "$OUT" "ok db/migrate/88000000000002_a.sql"
   OUT="$(cd "$D" && CM_CONFIG="$ROOT/mig-cfg.yaml" CM_MIGRATIONS_DIR=other/dir bash "$SCRIPT" "$BASE" HEAD 2>&1)"; RC=$?
-  check "the env var beats the config directory: nothing there, exit 0" "$RC" 0; has "env beats config: zero examined" "$OUT" "0 migration files examined"
+  check "the env var beats the config directory (which holds a guarded file): the other dir is missing, exit 1" "$RC" 1; has "env beats config: the missing directory is named" "$OUT" "'other/dir' does not exist"
+  # fail closed: a config that cannot be read, or an empty key, never falls back to the default directory
+  printf 'schema: concertmaster.config/v1\ndeploy:\n  migrations_dir: ""\n' > "$ROOT/mig-cfg-empty.yaml"
+  OUT="$(cd "$D" && CM_CONFIG="$ROOT/mig-cfg-empty.yaml" bash "$SCRIPT" "$BASE" HEAD 2>&1)"; RC=$?
+  check "an empty deploy.migrations_dir: exit 1" "$RC" 1; has "an empty deploy.migrations_dir: says so" "$OUT" "empty or not a string"
+  # a deploy section that is not a map must not fall back to the default directory either
+  for DEP in '"x"' '[]'; do
+    printf 'schema: concertmaster.config/v1\ndeploy: %s\n' "$DEP" > "$ROOT/mig-cfg-shape.yaml"
+    newrepo; addmig 88000000000002_a.sql "no guard here"
+    OUT="$(cd "$D" && CM_CONFIG="$ROOT/mig-cfg-shape.yaml" bash "$SCRIPT" "$BASE" HEAD 2>&1)"; RC=$?
+    check "a deploy section that is $DEP, not a map: exit 1, no silent default directory" "$RC" 1; has "a deploy section that is $DEP: says so" "$OUT" "not a map"
+  done
+  printf 'schema: [unclosed\n' > "$ROOT/mig-cfg-bad.yaml"
+  OUT="$(cd "$D" && CM_CONFIG="$ROOT/mig-cfg-bad.yaml" bash "$SCRIPT" "$BASE" HEAD 2>&1)"; RC=$?
+  check "a config that does not parse: exit 1, no silent default" "$RC" 1; has "unreadable config: says so" "$OUT" "could not be read"
 else
-  echo "skip the config-key cases: yq is not installed"
+  echo "SKIP the config-key cases: yq is not installed (they cover the config path)"
 fi
 
 # 40. the STOP note: merge-gate advice (edit the unmerged file) apart from deploy-time advice; the connection-level fix is the
