@@ -57,6 +57,15 @@
 #              printed, in the summary (covered=N) and again as a final `covered (not silent...)` line. A stop that was not
 #              covered says why. A covered file next to an ask still exits 2, next to a stop still exits 3. Every other stop
 #              class (a half transaction, a ROLLBACK, any shape stop) is never covered.
+#              A file that changes the SESSION timeouts (a plain SET or RESET, set_config, dynamic SQL) is never covered, and neither is any
+#              file after it in the push: the migrations share one connection, so the change outlives the file. This also holds for an
+#              earlier file that --only leaves out.
+#              Residual, not detected: the cover reads the push steps only. A push step that is skipped by an `if:` (for example
+#              `if: false`), or migrations that a later `uses:` action step applies, are not seen: the capped push step is still
+#              read as the push, so the file reads covered. The same goes for anything set outside the push step: a workflow- or
+#              job-level `env:` (BASH_ENV and the like) and `defaults.run.shell` are not read. Inside the push step a custom
+#              `shell:` (anything but bash or sh) and a backslash in the options are refused. A human reads the workflow when it
+#              changed. (Tests pin this, so a change to it is deliberate.)
 #              Residual, not detected: a plain file that calls an EXISTING database function which itself sets a timeout (for
 #              example one that runs set_config('lock_timeout', ...)); the cover cannot see inside functions it does not define.
 #   stop       no BEGIN; or no COMMIT; (COMMIT AND CHAIN is no COMMIT), or a shape that leaves a statement outside the timed window: a statement other
@@ -119,7 +128,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 DEFAULT_WORKFLOWS=".github/workflows/deploy-production.yml .github/workflows/deploy-staging.yml"
 # Each entry is validated on its own BEFORE the list is joined: an entry with a space must not split into two plain paths.
 WORKFLOWS=""
-if [ -n "${CM_DMC_WORKFLOWS:-}" ]; then _wf_src="$(printf '%s\n' $CM_DMC_WORKFLOWS)"
+if [ -n "${CM_DMC_WORKFLOWS:-}" ]; then read -ra _wf_arr <<<"$CM_DMC_WORKFLOWS"; _wf_src="$(printf '%s\n' "${_wf_arr[@]}")"   # read -ra: no glob expansion
 else
   _wf_src="$(printf '%s' "$CM_CFG_JSON" | jq -r '(.deploy.caps_workflows // []) | if type == "array" then .[] | tostring else "<not a list>" end' 2>/dev/null)"
 fi
@@ -280,7 +289,7 @@ strip_sql() {
           k = index(rest, tag)
           chunk = k ? substr(rest, 1, k - 1) : rest
           if (tolower(chunk) ~ /lock_timeout|statement_timeout/) { if (bodykind) hitfn = 1; else hitdo = 1 }
-          lc = tolower(chunk); gsub(/(grant|revoke)[ \t]+execute/, "", lc); gsub(/execute[ \t]+(function|procedure)([ \t]|$)/, " ", lc)
+          lc = tolower(chunk); gsub(/(grant|revoke)[ \t]+execute/, "", lc); gsub(/execute[ \t]+(function|procedure)[ \t]+([a-z_][a-z0-9_$]*|"[^"]*")(\.([a-z_][a-z0-9_$]*|"[^"]*"))*[ \t]*\(/, " (", lc)
           if (lc ~ /^[ \t]*--/) lc = ""
           if (lc ~ /(^|[^a-z_])(execute|discard)([^a-z_]|$)|reset[ \t]+all|set_config|pg_settings|(^|[^a-z0-9_$])u&["\047]/) hitdyn = 1
           if (!k) { if (!full) break; i += W - 70; continue }
@@ -447,7 +456,7 @@ push_records() {
     # A value is plain when its only expansions are simple ${NAME}: no operator (:-), no command substitution, no backtick.
     function plainvalue(v,   r) { r = v; gsub(/\$\{[A-Za-z_][A-Za-z0-9_]*\}/, "", r); return (r !~ /[$`\\]/) }
     # Lines of the current step that mention the variable at all: it must be assigned once and used once, nowhere else.
-    function mentions(nm,   i, c, re) { c = 0; re = "(^|[^A-Za-z0-9_])" nm "($|[^A-Za-z0-9_])"; for (i = 1; i <= nsb; i++) if (sb[i] ~ re) c++; return c }
+    function mentions(nm,   i, c, re, rc) { c = 0; re = "(^|[^A-Za-z0-9_])" nm "($|[^A-Za-z0-9_])"; rc = "^:[ ]+\"\\$\\{" nm ":\\?"; for (i = 1; i <= nsb; i++) if (sb[i] ~ re && sb[i] !~ rc) c++; return c }
     function bad(t) { print "UNPARSED\t" start "\t-\t0\t" t }
     # The step that runs the push is an ALLOWLIST: every line of it must be a YAML key, an echo, a `: "${X:?..}"` check, one plain
     # NAME=value assignment, or the plain push itself. Any other shell (a `||` fallback, a second assignment on a line, a variable
@@ -455,7 +464,8 @@ push_records() {
     # applies migrations, so the step is refused rather than guessed at.
     function allowed_shell(l) {
       if (l ~ /^echo([ ]+[^;&|`$<>()\\]*)?$/) return 1
-      if (l ~ /^:[ ]+"\$\{[A-Za-z_][A-Za-z0-9_]*:\?[^"`]*\}"$/) return 1
+      if (l ~ /^:[ ]+"\$\{[A-Za-z_][A-Za-z0-9_]*:\?[^"`$]*\}"$/) return 1
+      if (l ~ /^(BASH_ENV|ENV|PATH|LD_[A-Z_]*|SHELLOPTS|BASHOPTS|PS4|PROMPT_COMMAND|IFS|CDPATH|GLOBIGNORE|PGOPTIONS|PGSERVICE|PGSERVICEFILE|NODE_OPTIONS)=/) return 0
       if (l ~ /^[A-Za-z_][A-Za-z0-9_]*=("([^"$`]|\$\{[A-Za-z_][A-Za-z0-9_]*\})*"|\047[^\047]*\047|[^ \t"\047;&|$`<>()\\]*)$/) return 1
       if (l ~ /^(- )?(run: )?supabase[ ]+db[ ]+push[ ]+(--include-all[ ]+)?--db-url[ ]+("\$\{?[A-Za-z_][A-Za-z0-9_]*\}?"|"[^"$`]*")$/) return 1
       return 0
@@ -464,6 +474,8 @@ push_records() {
     function allowed_yaml(l) {
       if (l ~ /^(- )?(name|id|if|continue-on-error|working-directory|timeout-minutes):/) return 1
       if (l ~ /^(- )?env:$/) return 1
+      if (l ~ /^(- )?env:[ ]*[^ ]/) return 0
+      if (l ~ /^(- )?shell:/) return (l ~ /^(- )?shell:[ ]+(bash|sh)$/)
       if (l ~ /^(BASH_ENV|ENV|PATH|LD_[A-Z_]*|SHELLOPTS|BASHOPTS|PS4|PROMPT_COMMAND|IFS|CDPATH|GLOBIGNORE|PGOPTIONS|PGSERVICE|PGSERVICEFILE|NODE_OPTIONS):/) return 0
       if (l ~ /^[A-Za-z_][A-Za-z0-9_]*:[ ]/) return 1
       return 0
@@ -483,7 +495,7 @@ push_records() {
     function flush(   t, name, a, m, url, ul, ut, n, tmp, u) {
       t = trim(cur); cur = ""
       if (t == "" || t ~ /^#/) return
-      if (t ~ /^- [A-Za-z_-]+:/) { stepend(); stepstart = start; delete val; delete vline; delete vtext; delete vcount; delete vplus; delete vbad; delete sb; nsb = 0; folded = 0 }
+      if (t ~ /^- [A-Za-z_-]+:/) { stepend(); stepstart = start; stepind = curind; delete val; delete vline; delete vtext; delete vcount; delete vplus; delete vbad; delete sb; nsb = 0; folded = 0 }
       if (t ~ /(^|[ ])run:[ ]*>[-+]?[ ]*$/) folded = 1
       sb[++nsb] = t
       if (match(t, /^(export[ ]+)?[A-Za-z_][A-Za-z0-9_]*\+=/)) {
@@ -517,13 +529,20 @@ push_records() {
       if (url == "") url = "-"
       print start "\t" t "\t" url "\t" ul "\t" ut
     }
-    { line = $0; if (cur == "") start = NR
+    BEGIN { stepind = -1 }
+    { line = $0
+      if (cur == "") {
+        start = NR; match(line, /^[ \t]*/); curind = RLENGTH
+        # A line less indented than the dash of the step leaves the step, so a job that follows the push job is never read as shell
+        # of the push step.
+        if (nsb > 0 && line !~ /^[ \t]*(#|$)/ && curind < stepind) { stepend(); nsb = 0 }
+      }
       if (line ~ /\\[ \t]*$/) { sub(/\\[ \t]*$/, "", line); cur = cur " " line; next }
       cur = cur " " line; flush() }
     END { if (cur != "") flush(); stepend() }'
 }
 # Hide URL userinfo before a workflow line is quoted in the output.
-scrub() { sed -E 's#(://)[^@/ "]*@#\1***@#g'; }
+scrub() { sed -E 's#(://)[^/ "]*@#\1***@#g'; }
 # Deploy mode only (--caps-ref given). Sets CAPS_OK (yes|no) and CAPS_LINES (the quoted proof) once per run: BOTH workflows, read at $CAPS_REF (the ref that will deploy) AND, when the range edits a workflow, at <to-ref>, must have a
 # `supabase db push` whose --db-url carries options= with lock_timeout and statement_timeout caps inside the allowed bounds.
 CAPS_OK=""; CAPS_LINES=""
@@ -569,6 +588,13 @@ caps_covered() {
       # from the whitelist (a sibling lock_timeout=... or an encoded key could override it), and no #fragment (it cuts the query).
       case "$url" in *'#'*) return 0 ;; esac
       # A transaction-mode pooler (Supavisor, port 6543) rejects or ignores startup options: only a direct host is covered.
+      # A host or port that is an expansion cannot be judged here (a secret may hold a pooler host or port 6543): the port must be
+      # a literal, and the host must keep a literal part with a dot in it once every ${...} is removed.
+      _auth="${url#*://}"; _auth="${_auth%%\?*}"; _auth="${_auth%%/*}"; _hostport="${_auth##*@}"
+      _host="${_hostport%%:*}"; _port=""; case "$_hostport" in *:*) _port="${_hostport##*:}" ;; esac
+      _lit="$(printf '%s' "$_host" | sed -E 's/\$\{[A-Za-z_][A-Za-z0-9_]*\}//g')"
+      case "$_port" in *'$'*) CAPS_WHY="$wf:$ul builds the port from an expansion, which may be a pooler port"; return 0 ;; esac
+      case "$_lit" in *.*) ;; *) CAPS_WHY="$wf:$ul builds the host from an expansion, which may be a pooler host"; return 0 ;; esac
       case "$url" in *pooler*|*:6543*) CAPS_WHY="$wf:$ul uses a pooler host or port 6543, which may ignore options="; return 0 ;; esac
       case "$url" in *'?'*) q="${url#*\?}" ;; *) return 0 ;; esac
       # The CLI parses the query with Go url.Query(): a pair holding ";" or a bad %-escape is silently dropped, and "+" is a space.
@@ -590,9 +616,11 @@ caps_covered() {
       # %00 would vanish in the decode and join two tokens; any other control character (a decoded newline, tab, \v, \f, \r) is a
       # separator the server honours but a line-based read would not see, so both are refused outright.
       case "$opt" in *%00*) return 0 ;; esac
-      case "$opt" in *'\'*) opt="${opt//\\/\\\\}" ;; esac
+      # A backslash is refused both raw and decoded (%5C): the server's option splitter removes a backslash escape, so lock%5C_timeout=0
+      # is a later lock_timeout=0 that a line-based read would not recognise as the name.
+      case "$opt" in *'\'*) return 0 ;; esac
       dec="$(printf '%b' "${opt//%/\\x}")"
-      case "$dec" in *[[:cntrl:]]*) return 0 ;; esac
+      case "$dec" in *[[:cntrl:]]*|*'\'*) return 0 ;; esac
       # Tokenise like the server: only "-c name=value" pairs set a timeout; any other token that names one (any case, - or _),
       # a -cNAME or a --long form is refused, so the later-wins spellings (-clock_timeout=0, --lock-timeout=0) cannot hide.
       lk=""; st=""; want=0
@@ -639,11 +667,24 @@ timeout_tamper() {
   # Statement-level only (one statement per line): GRANT/REVOKE EXECUTE and a string that says "execute" are not dynamic SQL.
   grep -qiE '^(execute|discard)([^A-Za-z_]|$)|^reset[[:space:]]+all|\\gexec' <<<"$1" && return 0
   # A function or DO body written as a quoted string (not $$) is not scanned for dynamic SQL: never covered.
-  grep -qiE "^create[[:space:]]+(or[[:space:]]+replace[[:space:]]+)?(function|procedure)[[:space:]].*[[:space:]]as[[:space:]]+e?'|^do[[:space:]]+(language[[:space:]]+[a-z_]+[[:space:]]+)?e?'" <<<"$1" && return 0
+  grep -qiE "^create[[:space:]]+(or[[:space:]]+replace[[:space:]]+)?(function|procedure)[[:space:]].*[[:space:]]as[[:space:]]+e?'|^do[[:space:]]+(language[[:space:]]+(\"[^\"]*\"|[a-z_]+)[[:space:]]+)?e?'" <<<"$1" && return 0
   grep -q '^@@body-dynamic' <<<"$1" && return 0
   has_override <<<"$1" || has_set_config <<<"$1" || has_set_config_dynamic <<<"$1" \
     || [ -n "$(set_values lock_timeout <<<"$1")" ] || [ -n "$(set_values statement_timeout <<<"$1")" ] \
     || grep -q '^@@body-timeout-do' <<<"$1" || grep -q '^@@body-timeout-function' <<<"$1"
+}
+# 0 when the file changes the SESSION timeouts (a plain SET/RESET, set_config, dynamic SQL, an unscanned quoted body). The migrations of one push
+# share one connection, so such a change outlives the file and the connection-level caps no longer hold for the files after it.
+session_taint() {
+  has_override <<<"$1" && return 0
+  has_set_config <<<"$1" && return 0
+  has_set_config_dynamic <<<"$1" && return 0
+  grep -q '^@@body-dynamic' <<<"$1" && return 0
+  grep -q '^@@body-timeout-do' <<<"$1" && return 0         # a DO block that names a timeout runs at once
+  grep -q '^@@body-timeout-function' <<<"$1" && return 0   # a function that names a timeout may be called later in the same file
+  grep -qiE '^(execute|discard)([^A-Za-z_]|$)|\\gexec' <<<"$1" && return 0
+  grep -qiE "^create[[:space:]]+(or[[:space:]]+replace[[:space:]]+)?(function|procedure)[[:space:]].*[[:space:]]as[[:space:]]+e?'|^do[[:space:]]+(language[[:space:]]+(\"[^\"]*\"|[a-z_]+)[[:space:]]+)?e?'" <<<"$1" && return 0
+  return 1
 }
 # 0 when the file holds any transaction-control statement: such a file is never a plain no-transaction file.
 has_txn_control() {
@@ -663,6 +704,16 @@ MIG_RE="^${MIGDIR//./\\.}/[^/]*\\.sql\$"
 n_all="$(printf '%s\n' "$ADDED_ALL" | grep -c "$MIG_RE")"; n_list="$(printf '%s\n' "$LIST" | grep -c "$MIG_RE")"
 [ "$n_all" = "$n_list" ] || { cm_warn "deploy-migration-check.sh: the pathspec listing has $n_list added migrations but the full diff has $n_all: refusing to report"; exit 1; }
 
+# Deploy mode: the first added migration (any, also one --only leaves out) that changes the session timeouts. Every file after it is refused the
+# cover: its change stays on the shared push connection. Unreadable counts as a change (fail closed).
+TAINT_FILE=""
+if [ "$CAPS_EXPLICIT" = yes ]; then
+  while IFS= read -r tf; do
+    case "$tf" in "$MIGDIR"/*/*) continue ;; "$MIGDIR"/*.sql) ;; *) continue ;; esac
+    traw="$(git show "$TO:$tf" 2>/dev/null)" || { TAINT_FILE="$tf"; break; }
+    if session_taint "$(strip_sql <<<"$traw")"; then TAINT_FILE="$tf"; break; fi
+  done <<<"$LIST"
+fi
 N_OK=0; N_ASK=0; N_STOP=0; N_EXC=0; N_COV=0; N_EXAM=0; SEEN=""; COVERED_FILES=""
 while IFS= read -r f; do
   [ -n "$f" ] || continue
@@ -689,6 +740,8 @@ while IFS= read -r f; do
         NOTCOV="add the in-file guard: BEGIN; SET LOCAL lock_timeout = '3s'; SET LOCAL statement_timeout = '30s'; <your statements>; COMMIT;"
       elif timeout_tamper "$body"; then
         NOTCOV="not covered: the file touches a timeout or runs dynamic SQL (EXECUTE, DISCARD, RESET ALL)"
+      elif [ -n "$TAINT_FILE" ] && [ "$f" != "$TAINT_FILE" ] && [ "$(printf '%s\n%s\n' "$TAINT_FILE" "$f" | LC_ALL=C sort | head -n 1)" = "$TAINT_FILE" ]; then
+        NOTCOV="not covered: an earlier migration in this push ($TAINT_FILE) changes the session timeouts, and they stay changed on the shared connection for the files after it"
       else
         caps_covered
         if [ "$CAPS_OK" = yes ]; then

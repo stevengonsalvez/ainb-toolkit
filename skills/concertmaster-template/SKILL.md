@@ -235,8 +235,9 @@ The lane set above is the default; `cfg.lanes` is the list in use.
 
 26. **Deploy migration check: values, shape and exit codes.** The migrations a deploy delta
     ADDS (last production tag to the pinned deploy sha; older files are never re-flagged) go
-    through `scripts/deploy-migration-check.sh <from-ref> <to-ref>
+    through `scripts/deploy-migration-check.sh <from-ref> <to-ref> --caps-ref <to-ref>
     [--pr-body-file <file> --only <path>]...` before the rails verdict (§ Deploy windows step 2).
+    `--caps-ref` is what selects deploy mode; the PR merge gate omits it (item 3a).
     It reads the VALUES, not just that a guard exists, runs from anywhere in the repo, and always
     prints `<n> migration files examined`.
     - **Values.** `SET LOCAL lock_timeout` must be `3s` and `SET LOCAL statement_timeout` `30s`
@@ -258,7 +259,8 @@ The lane set above is the default; `cfg.lanes` is the list in use.
       `COMMIT`, nothing but `SET`/`RESET` outside them (a `NOTIFY` after the `COMMIT` is
       allowed), no `ROLLBACK`, `ABORT`, `PREPARE TRANSACTION` or `COMMIT`/`END AND CHAIN`.
       No `BEGIN;` and `COMMIT;` at all is a STOP, not an ask: the `SET LOCAL` guard never runs
-      and a bare push still ships the file.
+      and a bare push still ships the file. (At deploy time, with `--caps-ref`, one narrow class of
+      this is reported `covered` instead; see below.)
     - **Already applied.** If a stopped file is already applied on the target environment, the
       ONLY fix is connection-level timeouts on the push step, never an edit of the migration
       file: the migration runner tracks applied files by name and silently skips an edited one.
@@ -280,8 +282,10 @@ The lane set above is the default; `cfg.lanes` is the list in use.
       the push step is a plain allowlisted shape, and the file itself touches no timeout. It is never
       silent: the summary carries `covered=N` and a final line lists the files; the deploy worker
       copies both into the ledger or its report. A half transaction, a ROLLBACK, any shape stop,
-      a pooler URL or a file that touches a timeout stays a STOP. The exact rule lives in the script
-      header. `--no-cover` turns it off.
+      a pooler URL or a file that touches a timeout stays a STOP. The cover reads the push steps only:
+      a step that is skipped by `if:`, migrations applied by a `uses:` action, and anything set at workflow or
+      job level (`env:` such as `BASH_ENV`, `defaults.run.shell`) are not seen, so a human reads the workflow if it changed. The exact rule lives in the script header. `--no-cover`
+      turns it off.
     - **PR merge gate.** The same script runs at the PR merge gate, before the file is applied
       (`references/lanes.md` § pr-sweeper, merge gate) with NO `--caps-ref`: strict, output
       `mode: pr-gate`. A STOP there always means edit the unmerged file (add the in-file guard);
@@ -1176,7 +1180,7 @@ window due ─▶ delta since last tag? ─ no ─▶ skipped
    by content pattern in the changed files. Any hit: ASK, window waits. The
    delta's added migrations go through
    `scripts/deploy-migration-check.sh <tag> <pinned sha> --caps-ref <pinned sha>`
-   (per PR with `--pr-body-file` and `--only` for an approved exception) before the
+   (per PR keep `--caps-ref` and add `--pr-body-file` and `--only` for an approved exception) before the
    rails verdict (hard rule 26). Any exit other than 0 blocks the window: 3 is a
    STOP, 2 is an owner ASK, and 1 or 127 means the check did not run. A `covered (connection caps)`
    file exits 0: the deploy worker copies the `summary:` line (`covered=N`) and the list of covered
@@ -1640,7 +1644,7 @@ shellcheck clean.
 | `scripts/doc-credential-scan.sh --staged\|--range <base>..<head>\|--all` | repo-level guard, copied into the project (not a tick step): refuses an added line of a tracked doc (`*.md *.mdx *.txt *.yaml *.yml *.json`) that holds an email AND a password-looking value; prints path, line and rule only (never the value); exit 0 clean, 1 hit, 2 could not look; `--all` reports counts per file and never fails on hits; a `credential-ok: <3+ word reason>` marker on the line allows it. The commit skill plus this guard are the two layers; a CI step is a red job a human reads unless it is a required check, and the pre-commit hook is the only layer that stops a commit (`references/credentials.md`) |
 | `scripts/test/doc-credential-scan.sh` | throwaway fixture repos, credentials built at run time from split strings: the login-line shapes refused in `--staged` and `--range`, placeholders, example addresses, ids, dates and out-of-scope files pass, the marker, removed and context lines, renames, exit 2 cases (bad range, no mode, not a repo, failing awk), output never carrying the address or value; under gawk, mawk and busybox awk |
 | `scripts/deploy-migration-check.sh <from-ref> <to-ref> [--pr-body-file <file> --only <path>]... [--caps-ref <ref>] [--no-cover]` | pre-check over the migrations ADDED in the range, at the PR merge gate (item 3a; <from-ref> is the merge-base with the PR's base) and at deploy time (hard rule 26); the directory is `cfg.deploy.migrations_dir` (default `supabase/migrations`, env `CM_MIGRATIONS_DIR`), run from anywhere in the repo (`:(top)` pathspec, cross-checked against the full diff): reads one statement at a time, prints one line per file (`ok`, `ask`, `exception`, `stop`) with the found values only, never SQL, then `<n> migration files examined`; ask = a lock_timeout other than 3s or statement_timeout other than 30s (units case-sensitive, ms forms accepted), a missing one, a plain `SET`/`RESET` of either, a non-`SET` statement before both `SET LOCAL` lines (`guard=late`), a `set_config` naming either, an UPDATE of `pg_settings`, a `U&` escape or a `set_config` with an `E'..'` string (`set-timeout-call`), a `set_config` whose first argument is not a plain quoted literal (`set-config-dynamic`), either named in a dollar-quoted string (`timeout-in-body`, `timeout-in-function`); a `timeout-exception:` PR body line (3+ words, not inside a fence or HTML comment) turns an ask into `exception`, and `--pr-body-file` REQUIRES `--only` per file; stop = not exactly one `BEGIN` then `COMMIT` with only `SET`/`RESET` (and a `NOTIFY` after the `COMMIT`) outside, or any `ROLLBACK`/`ABORT`/`PREPARE TRANSACTION`/`COMMIT AND CHAIN`, no exception covers it; `--caps-ref` selects deploy mode, where a plain no-transaction file is `covered (connection caps)` (exit 0, counted `covered=N`) while all `cfg.deploy.caps_workflows` cap the push; no `--caps-ref` is the strict PR-gate mode (`mode: pr-gate`); exit 0 all ok, 2 any ask, 3 any stop (outranks 2), 1 anything else; ANY exit other than 0 blocks the window; pure bash plus git, no network |
-| `scripts/test/deploy-migration-check.sh` | a throwaway fixture git repo per case, built at run time (about 290 assertions): values, ms forms, case and space in units, missing timeouts, exceptions (3 words, CRLF, fences, HTML comments, quoted lines, placeholders, `--only` required and scoped), every shape violation and every accepted transaction form, plain `SET`/`RESET`, `guard=late`, `set_config` forms (quoted, qualified, dynamic, inside literals and quoted identifiers), timeouts in dollar bodies (also across the scan-window edge), a run from the root and from two subdirectories giving the same output, `0 migration files examined`, swapped range, quoted path, tokens straddling the 2048-character window, a 1 MB and a 900 KB single-line file under each awk the host has, no SQL body in the output; `CM_DMC_SCRIPT` runs it against a mutated copy |
+| `scripts/test/deploy-migration-check.sh` | a throwaway fixture git repo per case, built at run time (over 630 assertions, in both modes, with mutation checks of the mode and cover logic): values, ms forms, case and space in units, missing timeouts, exceptions (3 words, CRLF, fences, HTML comments, quoted lines, placeholders, `--only` required and scoped), every shape violation and every accepted transaction form, plain `SET`/`RESET`, `guard=late`, `set_config` forms (quoted, qualified, dynamic, inside literals and quoted identifiers), timeouts in dollar bodies (also across the scan-window edge), a run from the root and from two subdirectories giving the same output, `0 migration files examined`, swapped range, quoted path, tokens straddling the 2048-character window, a 1 MB and a 900 KB single-line file under each awk the host has, no SQL body in the output; `CM_DMC_SCRIPT` runs it against a mutated copy |
 | `scripts/clock-check.sh` | the clock and the deploy state for the deploy-window ask rules (§ The tick, "No owner question before a deploy is spawned"; § Deploy windows): UTC now, the checked windows from `cfg.schedule.deploy_windows` (every past-and-unfinished one and the first ahead, whatever its distance) with the minutes to the first, the first window ahead on its own (`next-window:`), each window row's state, tag and prod run, whether each is pinned and has its own live deploy worker in the ledger, and whether a blocking picker is allowed or the ask is a WAITING row; `CM_NOW` stubs the clock (tests only, with `CM_TEST=1`); read-only, exit 0 always |
 | `scripts/test/clock-check.sh` | stubbed clock, temp config and ledger: 3 and 10 hours out with and without a worker, pinned and unpinned rows, every checked window (past-and-unfinished ones and the first ahead) needing its own live worker, `stuck`, a worker named by two rows, finished states beside unfinished rows, several rows at one instant, a missed window, an old unfinished row, a row that cannot be placed in time, zones, a clock change, a config that was not read, bad entries, an unreadable or missing ledger (even with no windows) and an unreadable clock, no change under `CM_HOME` |
 | `scripts/test/brief-commit-rule.sh` | text lint: the commit rule (commit ONLY through the commit skill, never a raw `git commit` or `git add -A`/`.`) is in the lanes.md common footer, the single-task worker and release-tester briefs, the spawn recipe, the lessons loop, hard rule 25 and the dev-flow companion, word for word |

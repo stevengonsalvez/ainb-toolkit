@@ -939,7 +939,7 @@ CM_DMC_MAX_LOCK_MS=3000 covrepo "$CAPPED_URL" "$CAPPED_URL"
 has "an environment override is announced in the covered lines" "$OUT" "come from CM_DMC_* in the environment"
 
 # 46. second review: dynamic SQL, unquoted value with spaces, expansion in the query
-for sql in "$(printf 'DO $$ BEGIN EXECUTE %s; END $$;\n' "'SET lock_' || 'timeout = 0'")" 'DISCARD ALL;' 'RESET ALL;' "$(printf 'DO $$ BEGIN PERFORM 1; END $$;\nEXECUTE x;\n')" "$(printf 'DO $$ DECLARE function_sql text; BEGIN function_sql := %s; EXECUTE function_sql; END $$;\n' "'SET statement_' || 'timeout = 0'")" "$(printf 'DO $$ DECLARE procedure_sql text; BEGIN procedure_sql := %s; EXECUTE procedure_sql; END $$;\n' "'SET lock_' || 'timeout = 0'")"; do
+for sql in "$(printf 'DO $$ BEGIN EXECUTE %s; END $$;\n' "'SET lock_' || 'timeout = 0'")" 'DISCARD ALL;' 'RESET ALL;' "$(printf 'DO $$ BEGIN PERFORM 1; END $$;\nEXECUTE x;\n')" "$(printf 'DO $$ DECLARE function_sql text; BEGIN function_sql := %s; EXECUTE function_sql; END $$;\n' "'SET statement_' || 'timeout = 0'")" "$(printf 'DO $$ DECLARE procedure_sql text; BEGIN procedure_sql := %s; EXECUTE procedure_sql; END $$;\n' "'SET lock_' || 'timeout = 0'")" "$(printf 'DO $$ DECLARE function text := %s; BEGIN EXECUTE function || %s; END $$;\n' "'SET lock_'" "'timeout = 0'")"; do
   newrepo; wfput "$WP" "$CAPPED_URL" "$PUSH"; wfput "$WS" "$CAPPED_URL" "$PUSH"; addmig 88000000000002_a.sql "$sql"; run
   check "dynamic SQL or a session reset is not covered ($(printf '%s' "$sql" | head -c 30)): exit 3" "$RC" 3
 done
@@ -1161,7 +1161,7 @@ if ! mutant tamper-first -e 's/if \[ "\$CAPS_EXPLICIT" = no \]; then/if timeout_
   else bad "mutation: the tamper-first mutant did not print \"not covered\" in PR mode (rc=$MRC)" "$MOUT"; fi
 fi
 # mutation check: strip "EXECUTE function"/"EXECUTE procedure" by prefix again (the old regex) and a dynamic EXECUTE of a variable named function_sql reads as covered
-if ! mutant exec-prefix -e 's|gsub(/execute\[ \\t\]+(function\|procedure)(\[ \\t\]\|\$)/, " ", lc)|gsub(/execute[ \\t]+(function\|procedure)/, "", lc)|'; then bad "mutation: the exec-prefix sed no longer matches the script (update this test)"
+if ! mutant exec-prefix -e 's#(function|procedure)\[ \\t\]+(\[a-z_\].*\\(/, " (", lc)#(function|procedure)/, "", lc)#'; then bad "mutation: the exec-prefix sed no longer matches the script (update this test)"
 else
   newrepo; wfput "$WP" "$CAPPED_URL" "$PUSH"; wfput "$WS" "$CAPPED_URL" "$PUSH"
   addmig 88000000000002_a.sql "$(printf 'DO $$ DECLARE function_sql text; BEGIN function_sql := %s; EXECUTE function_sql; END $$;\n' "'SET statement_' || 'timeout = 0'")"
@@ -1235,6 +1235,257 @@ newrepo; addmig 88000000000002_a.sql "$(guard "'3s'" "'30s'")"; RUNARGS=(); run
 has "PR gate output names its mode" "$OUT" "mode: pr-gate"; has "PR gate output carries covered=0" "$OUT" "covered=0"
 RUNARGS=(--caps-ref HEAD); run
 has "deploy output names its mode" "$OUT" "mode: deploy (--caps-ref"
+
+# 57. review round: a ${VAR} host or port could be a pooler, a `: "${URL:?}"` check line is allowed, and a glob in the env list is not expanded
+RUNARGS=(--caps-ref HEAD)
+UQ='?options=-c%20lock_timeout%3D3s%20-c%20statement_timeout%3D120000'
+newrepo; wfput "$WP" ': "${DB_URL:?not set}"' 'DB_URL="postgresql://postgres@db.example.invalid:5432/postgres'"$UQ"'"' "$PUSH"; wfput "$WS" "$CAPPED_URL" "$PUSH"; addmig 88000000000002_a.sql "SELECT 1;"; run
+check "a ': \"\${DB_URL:?..}\"' check line beside the assignment and the push: covered, exit 0" "$RC" 0
+for u in 'postgresql://postgres@${DB_HOST}:5432/postgres' 'postgresql://postgres@db.example.invalid:${DB_PORT}/postgres' 'postgresql://postgres@${DB_HOST}/postgres'; do
+  newrepo; wfput "$WP" 'DB_URL="'"$u$UQ"'"' "$PUSH"; wfput "$WS" "$CAPPED_URL" "$PUSH"; addmig 88000000000002_a.sql "SELECT 1;"; run
+  check "a host or port built from an expansion ($u): stop, exit 3" "$RC" 3; has "expansion host or port ($u): the reason is named" "$OUT" "from an expansion"
+done
+newrepo; addmig 88000000000002_a.sql "SELECT 1;"; mkdir -p "$D/globdir"; : > "$D/globdir/a.yml"
+OUT="$(cd "$D/globdir" && CM_DMC_WORKFLOWS='*' bash "$SCRIPT" "$BASE" HEAD --caps-ref HEAD 2>&1)"; RC=$?
+check "a glob in CM_DMC_WORKFLOWS is not expanded against the directory: exit 1" "$RC" 1; has "glob workflow list: bad path named" "$OUT" "bad workflow path"
+
+# 58. documented residual (pinned so a change is deliberate): the cover reads the push steps only. A capped push step that is skipped
+#     by `if: false`, with the real migrations applied by a later `uses:` action step, still reads as covered. The script header,
+#     SKILL.md and the deploy brief say a human reads the workflow if it changed.
+RUNARGS=(--caps-ref HEAD)
+newrepo
+for f in "$WP" "$WS"; do
+  mkdir -p "$D/$(dirname "$f")"
+  { printf 'steps:\n  - name: push (disabled)\n    if: false\n    run: |\n'
+    printf '      %s\n' "$CAPPED_URL" "$PUSH"
+    printf '  - name: apply migrations\n    uses: example/apply-migrations@v1\n'; } > "$D/$f"
+done
+( cd "$D" && git add . && git_q commit -q -m "wf if-false push plus a uses: action" ) >/dev/null; BASE="$(git -C "$D" rev-parse HEAD)"
+addmig 88000000000002_a.sql "SELECT 1;"; run
+check "residual: a capped push step skipped by if: false, migrations applied by a uses: action, still reads covered: exit 0" "$RC" 0
+has "residual: the covered line is printed (a human reads the workflow if it changed)" "$OUT" "covered (connection caps): $F1"
+OUT="$(bash "$SCRIPT" --help 2>&1)"
+has "residual: the header documents that an if: skipped step is not seen" "$OUT" "skipped by an \`if:\`"
+has "residual: the header documents that a uses: action is not seen" "$OUT" "later \`uses:\` action step"
+RUNARGS=()
+
+# 59. fifth review: a backslash in the options (the server removes it, so lock%5C_timeout=0 is a later lock_timeout=0), and a custom
+#     step-level shell: (it can source a file that applies the migrations without the caps). Both are refused, so the file is not covered.
+RUNARGS=(--caps-ref HEAD)
+BSL_URL='DB_URL="postgresql://postgres@db.${DB_REF}.supabase.co:5432/postgres?options=-c%20lock_timeout%3D3s%20-c%20statement_timeout%3D120000%20-c%20lock%5C_timeout%3D0"'
+covrepo "$BSL_URL" "$BSL_URL"
+check "an options value with an escaped later lock_timeout (%5C) is not covered: exit 3" "$RC" 3
+BSL_RAW='DB_URL="postgresql://postgres@db.${DB_REF}.supabase.co:5432/postgres?options=-c%20lock_timeout%3D3s%20-c%20statement_timeout%3D120000%20-c%20lock\_timeout%3D0"'
+covrepo "$BSL_RAW" "$BSL_RAW"
+check "an options value with a raw backslash is not covered: exit 3" "$RC" 3
+wfshell() { # <shell value> : both workflows get a capped push step with that step-level shell:
+  newrepo
+  for f in "$WP" "$WS"; do
+    mkdir -p "$D/$(dirname "$f")"
+    { printf 'steps:\n  - name: push\n    shell: %s\n    run: |\n' "$1"; printf '      %s\n' "$CAPPED_URL" "$PUSH"; } > "$D/$f"
+  done
+  ( cd "$D" && git add . && git_q commit -q -m "wf shell" ) >/dev/null; BASE="$(git -C "$D" rev-parse HEAD)"
+  addmig 88000000000002_a.sql "SELECT 1;"; run
+}
+wfshell "bash"
+check "a step with shell: bash is still covered: exit 0" "$RC" 0
+wfshell "sh"
+check "a step with shell: sh is still covered: exit 0" "$RC" 0
+wfshell "bash -c 'source ./ci/deploy.sh; bash \"\$0\"' {0}"
+check "a step with a custom shell: command is not covered: exit 3" "$RC" 3
+if ! mutant bsl-decoded -e 's/\*\[\[:cntrl:\]\]\*|\*.\\.\*) return 0/*[[:cntrl:]]*) return 0/'; then bad "mutation: the bsl-decoded sed no longer matches the script (update this test)"
+else
+  newrepo; wfput "$WP" "$BSL_URL" "$PUSH"; wfput "$WS" "$BSL_URL" "$PUSH"; addmig 88000000000002_a.sql "SELECT 1 FROM $MARK;"
+  MOUT="$(cd "$D" && bash "$MUTF" "$BASE" HEAD --caps-ref HEAD 2>&1)"; MRC=$?
+  if [ "$MRC" = 0 ] && case "$MOUT" in *"covered (connection caps)"*) true ;; *) false ;; esac; then ok "mutation: without the decoded-backslash refusal, an escaped later lock_timeout reads as covered, so the test above fails"
+  else bad "mutation: the bsl-decoded mutant did not report the file as covered (rc=$MRC)" "$MOUT"; fi
+fi
+if ! mutant shell-key -e '/shell:\/) return (l/d'; then bad "mutation: the shell-key sed no longer matches the script (update this test)"
+else
+  newrepo
+  for f in "$WP" "$WS"; do
+    mkdir -p "$D/$(dirname "$f")"
+    { printf 'steps:\n  - name: push\n    shell: bash -c %s\n    run: |\n' "'source ./ci/deploy.sh; bash \"\$0\"' {0}"; printf '      %s\n' "$CAPPED_URL" "$PUSH"; } > "$D/$f"
+  done
+  ( cd "$D" && git add . && git_q commit -q -m "wf shell" ) >/dev/null; BASE="$(git -C "$D" rev-parse HEAD)"; addmig 88000000000002_a.sql "SELECT 1;"
+  MOUT="$(cd "$D" && bash "$MUTF" "$BASE" HEAD --caps-ref HEAD 2>&1)"; MRC=$?
+  if [ "$MRC" = 0 ] && case "$MOUT" in *"covered (connection caps)"*) true ;; *) false ;; esac; then ok "mutation: without the shell: refusal, a custom shell reads as covered, so the test above fails"
+  else bad "mutation: the shell-key mutant did not report the file as covered (rc=$MRC)" "$MOUT"; fi
+fi
+
+# 59b. sixth review: EXECUTE <keyword-named variable> is dynamic SQL (only a real trigger clause "EXECUTE FUNCTION name(" is exempt), and a
+#      PATH= (or another startup variable) line in the push step's shell is refused like the same variable under env:
+addmig_cov() { newrepo; wfput "$WP" "$CAPPED_URL" "$PUSH"; wfput "$WS" "$CAPPED_URL" "$PUSH"; addmig 88000000000002_a.sql "$1"; }
+KWV="$(printf 'DO $$ DECLARE function text := %s; BEGIN EXECUTE function || %s; END $$;\n' "'SET lock_'" "'timeout = 0'")"
+addmig_cov "$KWV"; run
+check "EXECUTE function || '...' (a variable named function) is dynamic SQL, not covered: exit 3" "$RC" 3
+addmig_cov "$(printf 'DO $$ BEGIN CREATE TRIGGER t AFTER INSERT ON x FOR EACH ROW EXECUTE PROCEDURE public.g(); END $$;\n')"; run
+check "a schema-qualified EXECUTE PROCEDURE trigger clause inside a DO body still covers: exit 0" "$RC" 0
+addmig_cov "$(printf 'DO $$ BEGIN CREATE TRIGGER t AFTER INSERT ON x FOR EACH ROW EXECUTE FUNCTION "my fn"(); END $$;\n')"; run
+check "a quoted EXECUTE FUNCTION trigger clause inside a DO body still covers: exit 0" "$RC" 0
+newrepo; wfput "$WP" 'PATH=/tmp/shims' "$CAPPED_URL" "$PUSH"; wfput "$WS" 'PATH=/tmp/shims' "$CAPPED_URL" "$PUSH"; addmig 88000000000002_a.sql "SELECT 1;"; run
+check "a PATH= line in the push step is refused, not covered: exit 3" "$RC" 3
+if ! mutant exec-kw -e 's#(function|procedure)\[ \\t\]+(\[a-z_\].*\\(/, " (", lc)#(function|procedure)/, "", lc)#'; then bad "mutation: the exec-kw sed no longer matches the script (update this test)"
+else
+  addmig_cov "$KWV"
+  MOUT="$(cd "$D" && bash "$MUTF" "$BASE" HEAD --caps-ref HEAD 2>&1)"; MRC=$?
+  if [ "$MRC" = 0 ] && case "$MOUT" in *"covered (connection caps)"*) true ;; *) false ;; esac; then ok "mutation: with the bare prefix strip, EXECUTE function || '...' reads as covered, so the test above fails"
+  else bad "mutation: the exec-kw mutant did not report the file as covered (rc=$MRC)" "$MOUT"; fi
+fi
+if ! mutant path-line -e '/NODE_OPTIONS)=\/) return 0/d'; then bad "mutation: the path-line sed no longer matches the script (update this test)"
+else
+  newrepo; wfput "$WP" 'PATH=/tmp/shims' "$CAPPED_URL" "$PUSH"; wfput "$WS" 'PATH=/tmp/shims' "$CAPPED_URL" "$PUSH"; addmig 88000000000002_a.sql "SELECT 1;"
+  MOUT="$(cd "$D" && bash "$MUTF" "$BASE" HEAD --caps-ref HEAD 2>&1)"; MRC=$?
+  if [ "$MRC" = 0 ] && case "$MOUT" in *"covered (connection caps)"*) true ;; *) false ;; esac; then ok "mutation: without the shell-line startup variable refusal, a PATH= line reads as covered, so the test above fails"
+  else bad "mutation: the path-line mutant did not report the file as covered (rc=$MRC)" "$MOUT"; fi
+fi
+
+# 59c. seventh review: the migrations of one push share one connection, so a file that changes the SESSION timeouts (SET, RESET, set_config, dynamic SQL)
+#      leaves them changed for every file after it. No later file is covered, also when --only leaves the earlier one out.
+RUNARGS=(--caps-ref HEAD)
+F3=supabase/migrations/88000000000003_b.sql
+twofiles() { newrepo; wfput "$WP" "$CAPPED_URL" "$PUSH"; wfput "$WS" "$CAPPED_URL" "$PUSH"; addmig 88000000000002_a.sql "$1"; addmig 88000000000003_b.sql "$2"; shift 2; run "$@"; }
+twofiles "$(printf 'SET statement_timeout = 0;\nSELECT 1;\n')" "SELECT 1 FROM $MARK;"
+check "an earlier file that does SET statement_timeout: the later plain file is not covered, exit 3" "$RC" 3
+has "an earlier session SET: the later file is named as not covered because of the earlier one" "$OUT" "an earlier migration in this push ($F1) changes the session timeouts"
+hasnt "an earlier session SET: the later file is never reported covered" "$OUT" "covered (connection caps): $F3"
+twofiles "$(printf 'SET statement_timeout = 0;\nSELECT 1;\n')" "SELECT 1 FROM $MARK;" --only "$F3"
+check "an earlier session SET left out by --only still blocks the later file: exit 3" "$RC" 3
+has "an earlier session SET left out by --only: the later file names the earlier one" "$OUT" "an earlier migration in this push ($F1) changes the session timeouts"
+twofiles "$(printf 'SELECT set_config(%s, %s, false);\n' "'statement_' || 'timeout'" "'0'")" "SELECT 1 FROM $MARK;"
+check "an earlier set_config on a rebuilt timeout name blocks the later file: exit 3" "$RC" 3
+twofiles "$(printf 'DO $$ BEGIN EXECUTE %s; END $$;\n' "'SET statement_' || 'timeout = 0'")" "SELECT 1 FROM $MARK;"
+check "an earlier dynamic EXECUTE blocks the later file: exit 3" "$RC" 3
+twofiles "SELECT 1 FROM $MARK;" "$(printf 'SET statement_timeout = 0;\nSELECT 1;\n')"
+has "a file BEFORE the session change stays covered" "$OUT" "covered (connection caps): $F1"
+twofiles "SELECT 2 FROM $MARK;" "SELECT 1 FROM $MARK;"
+check "two harmless plain files are both covered: exit 0" "$RC" 0
+has "two harmless plain files: the second is covered" "$OUT" "covered (connection caps): $F3"
+if ! mutant taint-off -e 's/elif \[ -n "\$TAINT_FILE" \] \&\&/elif false \&\&/'; then bad "mutation: the taint-off sed no longer matches the script (update this test)"
+else
+  newrepo; wfput "$WP" "$CAPPED_URL" "$PUSH"; wfput "$WS" "$CAPPED_URL" "$PUSH"; addmig 88000000000002_a.sql "$(printf 'SET statement_timeout = 0;\nSELECT 1;\n')"; addmig 88000000000003_b.sql "SELECT 1 FROM $MARK;"
+  MOUT="$(cd "$D" && bash "$MUTF" "$BASE" HEAD --caps-ref HEAD 2>&1)"; MRC=$?
+  if case "$MOUT" in *"covered (connection caps): $F3"*) true ;; *) false ;; esac; then ok "mutation: without the session-taint check the later file reads covered, so the tests above fail"
+  else bad "mutation: the taint-off mutant did not report the later file as covered (rc=$MRC)" "$MOUT"; fi
+fi
+# 59d. eighth review: a DO block that names a timeout runs at once, so it is a session change like a plain SET; and a job that follows the capped
+#      push job is not shell of the push step (the step ends where the indentation leaves it)
+DOSET="$(printf 'DO $$ BEGIN SET SESSION statement_timeout = 0; END $$;\n')"
+twofiles "$DOSET" "SELECT 1 FROM $MARK;"
+check "an earlier DO block that sets a session timeout blocks the later file: exit 3" "$RC" 3
+has "an earlier DO block that sets a session timeout: the later file names the earlier one" "$OUT" "an earlier migration in this push ($F1) changes the session timeouts"
+if ! mutant taint-do -e '/@@body-timeout-do.*&& return 0/d'; then bad "mutation: the taint-do sed no longer matches the script (update this test)"
+else
+  newrepo; wfput "$WP" "$CAPPED_URL" "$PUSH"; wfput "$WS" "$CAPPED_URL" "$PUSH"; addmig 88000000000002_a.sql "$DOSET"; addmig 88000000000003_b.sql "SELECT 1 FROM $MARK;"
+  MOUT="$(cd "$D" && bash "$MUTF" "$BASE" HEAD --caps-ref HEAD 2>&1)"; MRC=$?
+  if case "$MOUT" in *"covered (connection caps): $F3"*) true ;; *) false ;; esac; then ok "mutation: without the DO-block marker in the taint check, the later file reads covered, so the tests above fail"
+  else bad "mutation: the taint-do mutant did not report the later file as covered (rc=$MRC)" "$MOUT"; fi
+fi
+multijob() { # both workflows: a capped push job, then an unrelated echo-only job
+  newrepo
+  for f in "$WP" "$WS"; do
+    mkdir -p "$D/$(dirname "$f")"
+    { printf 'jobs:\n  deploy:\n    steps:\n      - name: push\n        run: |\n'; printf '          %s\n' "$CAPPED_URL" "$PUSH"
+      printf '  verify:\n    steps:\n      - run: echo done\n'; } > "$D/$f"
+  done
+  ( cd "$D" && git add . && git_q commit -q -m "wf two jobs" ) >/dev/null; BASE="$(git -C "$D" rev-parse HEAD)"
+  addmig 88000000000002_a.sql "SELECT 1;"
+}
+multijob; run
+check "a capped push job followed by another job is still covered: exit 0" "$RC" 0
+if ! mutant job-scope -e 's/if (nsb > 0 \&\& line !~/if (0 \&\& line !~/'; then bad "mutation: the job-scope sed no longer matches the script (update this test)"
+else
+  multijob
+  MOUT="$(cd "$D" && bash "$MUTF" "$BASE" HEAD --caps-ref HEAD 2>&1)"; MRC=$?
+  if [ "$MRC" = 3 ] && case "$MOUT" in *"covered (connection caps)"*) false ;; *) true ;; esac; then ok "mutation: without the step-scope close, the job after the push job is read as shell and the file is not covered, so the test above fails"
+  else bad "mutation: the job-scope mutant still covered the file (rc=$MRC)" "$MOUT"; fi
+fi
+# 59e. ninth review: an inline env map in the push step (env: { BASH_ENV: ... }) and a command substitution in a ${X:?message} check
+#      are shell or startup code outside the capped push: both are refused
+wfkey() { # <step key line> : both workflows get a capped push step carrying that extra key line
+  newrepo
+  for f in "$WP" "$WS"; do
+    mkdir -p "$D/$(dirname "$f")"
+    { printf 'steps:\n  - name: push\n    %s\n    run: |\n' "$1"; printf '      %s\n' "$CAPPED_URL" "$PUSH"; } > "$D/$f"
+  done
+  ( cd "$D" && git add . && git_q commit -q -m "wf key" ) >/dev/null; BASE="$(git -C "$D" rev-parse HEAD)"
+  addmig 88000000000002_a.sql "SELECT 1;"; run
+}
+wfkey "timeout-minutes: 5"
+check "a plain step key (timeout-minutes) still covers: exit 0" "$RC" 0
+wfkey "env: { BASH_ENV: ./ci/startup.sh }"
+check "an inline env map with BASH_ENV in the push step is refused, not covered: exit 3" "$RC" 3
+wfkey "env: { FOO: bar }"
+check "any inline env map in the push step is refused (it is not parsed): exit 3" "$RC" 3
+newrepo; wfput "$WP" ': "${DB_REF:?DB_REF is required}"' "$CAPPED_URL" "$PUSH"; wfput "$WS" ': "${DB_REF:?DB_REF is required}"' "$CAPPED_URL" "$PUSH"; addmig 88000000000002_a.sql "SELECT 1;"; run
+check "a literal \${X:?message} check still covers: exit 0" "$RC" 0
+newrepo; wfput "$WP" ': "${DB_REF:?$(./ci/deploy.sh)}"' "$CAPPED_URL" "$PUSH"; wfput "$WS" ': "${DB_REF:?$(./ci/deploy.sh)}"' "$CAPPED_URL" "$PUSH"; addmig 88000000000002_a.sql "SELECT 1;"; run
+check "a command substitution in a \${X:?message} check is refused, not covered: exit 3" "$RC" 3
+if ! mutant inline-env -e '/env:\[ \]\*\[^ \]/d'; then bad "mutation: the inline-env sed no longer matches the script (update this test)"
+else
+  newrepo
+  for f in "$WP" "$WS"; do
+    mkdir -p "$D/$(dirname "$f")"
+    { printf 'steps:\n  - name: push\n    env: { BASH_ENV: ./ci/startup.sh }\n    run: |\n'; printf '      %s\n' "$CAPPED_URL" "$PUSH"; } > "$D/$f"
+  done
+  ( cd "$D" && git add . && git_q commit -q -m "wf inline env" ) >/dev/null; BASE="$(git -C "$D" rev-parse HEAD)"; addmig 88000000000002_a.sql "SELECT 1;"
+  MOUT="$(cd "$D" && bash "$MUTF" "$BASE" HEAD --caps-ref HEAD 2>&1)"; MRC=$?
+  if [ "$MRC" = 0 ] && case "$MOUT" in *"covered (connection caps)"*) true ;; *) false ;; esac; then ok "mutation: without the inline-env refusal, BASH_ENV in an env map reads as covered, so the test above fails"
+  else bad "mutation: the inline-env mutant did not report the file as covered (rc=$MRC)" "$MOUT"; fi
+fi
+if ! mutant subst-msg -e 's/:\\?\[^"`$]\*/:\\?[^"`]*/'; then bad "mutation: the subst-msg sed no longer matches the script (update this test)"
+else
+  newrepo; wfput "$WP" ': "${DB_REF:?$(./ci/deploy.sh)}"' "$CAPPED_URL" "$PUSH"; wfput "$WS" ': "${DB_REF:?$(./ci/deploy.sh)}"' "$CAPPED_URL" "$PUSH"; addmig 88000000000002_a.sql "SELECT 1;"
+  MOUT="$(cd "$D" && bash "$MUTF" "$BASE" HEAD --caps-ref HEAD 2>&1)"; MRC=$?
+  if [ "$MRC" = 0 ] && case "$MOUT" in *"covered (connection caps)"*) true ;; *) false ;; esac; then ok "mutation: with the old message pattern, a command substitution in the check reads as covered, so the test above fails"
+  else bad "mutation: the subst-msg mutant did not report the file as covered (rc=$MRC)" "$MOUT"; fi
+fi
+# 59f. tenth review: a DO block with a quoted language name and a quoted body is not scanned, so it is never covered and a session change in
+#      it blocks the files after it; and the proof line redacts the whole userinfo when the password holds a raw @
+QLDO="DO LANGUAGE \"plpgsql\" 'BEGIN EXECUTE ''SET lock_'' || ''timeout = 0''; END';"
+addmig_cov "$QLDO"; run
+check "a DO LANGUAGE \"plpgsql\" '...' block (quoted language and body) is not covered: exit 3" "$RC" 3
+twofiles "$QLDO" "SELECT 1 FROM $MARK;"
+check "an earlier quoted-language DO block blocks the later file: exit 3" "$RC" 3
+has "an earlier quoted-language DO block: the later file names the earlier one" "$OUT" "an earlier migration in this push ($F1) changes the session timeouts"
+if ! mutant ql-do -e 's/(\\"\[^\\"\]\*\\"|\[a-z_\]+)/[a-z_]+/'; then bad "mutation: the ql-do sed no longer matches the script (update this test)"
+else
+  newrepo; wfput "$WP" "$CAPPED_URL" "$PUSH"; wfput "$WS" "$CAPPED_URL" "$PUSH"; addmig 88000000000002_a.sql "$QLDO"
+  MOUT="$(cd "$D" && bash "$MUTF" "$BASE" HEAD --caps-ref HEAD 2>&1)"; MRC=$?
+  if [ "$MRC" = 0 ] && case "$MOUT" in *"covered (connection caps)"*) true ;; *) false ;; esac; then ok "mutation: without the quoted-language alternative, the quoted DO block reads as covered, so the tests above fail"
+  else bad "mutation: the ql-do mutant did not report the file as covered (rc=$MRC)" "$MOUT"; fi
+fi
+PWX="du""mmy"
+AT2_URL='DB_URL="postgresql://deploy:'"$PWX$AT"'password-tail'"$AT"'db.example.test:5432/postgres?options=-c%20lock_timeout%3D3s%20-c%20statement_timeout%3D120000"'
+covrepo "$AT2_URL" "$AT2_URL"
+check "a URL whose password holds a raw @ is still read as covered: exit 0" "$RC" 0
+hasnt "the proof line does not print the password" "$OUT" "$PWX"
+hasnt "the proof line does not print the password tail after the first @" "$OUT" "password-tail"
+has "the proof line keeps the host" "$OUT" "***@db.example.test"
+if ! mutant scrub-first-at -e 's#\[^/ "\]\*@#[^@/ "]*@#'; then bad "mutation: the scrub-first-at sed no longer matches the script (update this test)"
+else
+  newrepo; wfput "$WP" "$AT2_URL" "$PUSH"; wfput "$WS" "$AT2_URL" "$PUSH"; addmig 88000000000002_a.sql "SELECT 1 FROM $MARK;"
+  MOUT="$(cd "$D" && bash "$MUTF" "$BASE" HEAD --caps-ref HEAD 2>&1)"; MRC=$?
+  if case "$MOUT" in *"password-tail"*) true ;; *) false ;; esac; then ok "mutation: with the old redaction (first @ only) the password tail is printed, so the test above fails"
+  else bad "mutation: the scrub-first-at mutant did not print the password tail (rc=$MRC)" "$MOUT"; fi
+fi
+RUNARGS=()
+
+# 60. documented residual, pinned: an inherited scope is not read. A workflow- or job-level env: BASH_ENV (or a defaults.run.shell) still
+#     reads covered, because the cover reads the push step's own text only. A human reads the workflow when it changed.
+RUNARGS=(--caps-ref HEAD)
+newrepo
+for f in "$WP" "$WS"; do
+  mkdir -p "$D/$(dirname "$f")"
+  { printf 'env:\n  BASH_ENV: ./ci/startup.sh\njobs:\n  deploy:\n    defaults:\n      run:\n        shell: bash -c "source ./ci/deploy.sh; bash \\"$0\\"" {0}\n    steps:\n      - name: push\n        run: |\n'
+    printf '          %s\n' "$CAPPED_URL" "$PUSH"; } > "$D/$f"
+done
+( cd "$D" && git add . && git_q commit -q -m "wf inherited env and shell" ) >/dev/null; BASE="$(git -C "$D" rev-parse HEAD)"
+addmig 88000000000002_a.sql "SELECT 1;"; run
+check "residual: a workflow-level BASH_ENV and a defaults.run.shell are not read, the file still reads covered: exit 0" "$RC" 0
+OUT="$(bash "$SCRIPT" --help 2>&1)"
+has "residual: the header documents that inherited env and default shell are not read" "$OUT" "defaults.run.shell"
+RUNARGS=()
 
 printf '\npassed=%s failed=%s\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

@@ -1002,13 +1002,15 @@ trigger production. Never run staging validation in parallel with the
 production trigger. Staging red: STOP, set "cm:failed staging red: <job +
 reason>", do not trigger production.
 Migration guard: re-run `scripts/deploy-migration-check.sh {{from_tag}} {{main_sha}} --caps-ref {{main_sha}}`
-on the pinned sha before staging (for a file the owner approved, with that PR's `--pr-body-file` and
-`--only <path>`). Any exit other than 0 blocks the window: exit 3 is a STOP (set "cm:failed migration
+on the pinned sha before staging (for a file the owner approved, keep `--caps-ref` and add that PR's
+`--pr-body-file` and `--only <path>`; without `--caps-ref` the run is the strict PR-gate mode). Any exit other than 0 blocks the window: exit 3 is a STOP (set "cm:failed migration
 guard stop: <file>", never trigger production), exit 2 is an ask for the owner (set "cm:blocked migration
 guard ask: <file>"), and exit 1 or 127 means the check did not run (set "cm:blocked migration guard did
 not run: <exit code>"). Read its "<n> migration files examined" line: n must match the delta you expect. A `covered (connection caps)` file
 exits 0, so nothing blocks on it: copy the `summary:` line (it carries `covered=N`) and the list of covered files into
-the ledger or your report, so the cover is never silent downstream.
+the ledger or your report, so the cover is never silent downstream. The cover reads the push steps only: a step that is
+skipped by `if:`, migrations applied by a `uses:` action, and anything set at workflow or job level (`env:` such as `BASH_ENV`,
+`defaults.run.shell`) are not seen, so a human reads the workflow if it changed.
 Evidence: screenshots of the staging checks and of the post-release production walk (test
 personas only, no real user data) are published per references/lanes.md § Evidence standard
 (<PR> is the release or deploy PR the brief names). Screenshots of real users stay in the
