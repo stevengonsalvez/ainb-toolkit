@@ -75,6 +75,7 @@ opt "schedule.digest_times are HH:MM"                   '.schedule.digest_times'
 opt "schedule.tick_delays_s are positive numbers"       '.schedule.tick_delays_s' 'type == "object" and all(.[]; type == "number" and . > 0)'
 opt "merge.strategy is merge, squash or rebase"         '.merge.strategy' 'IN("merge", "squash", "rebase")'
 opt "merge.command names the PR ({pr})"                 '.merge.command' 'type == "string" and contains("{pr}")'
+opt "deploy.migrations_dir is a plain relative path"      '.deploy.migrations_dir' 'type == "string" and test("^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$") and (test("(^|/)\\.(/|$)") | not) and (contains("..") | not)'
 opt "messaging.owner_digest.adapter is wacli, slack, email or none" '.messaging.owner_digest.adapter' 'IN("wacli", "slack", "email", "none")'
 req "messaging.owner_digest.send is set unless the adapter is none" \
   '(.messaging.owner_digest // null) as $d | $d == null or ($d.adapter // "none") == "none" or ($d.send | type == "string" and length > 0)'

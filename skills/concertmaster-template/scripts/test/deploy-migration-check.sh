@@ -557,6 +557,53 @@ check "only statement_timeout in the window: exit 2" "$RC" 2; has "only statemen
 newrepo; addmig 88000000000002_a.sql "$(printf '%s\n%s %s = %s;\n%s\n' "$BG" "$SL" "$LK" "'3s'" "$CM")"; run
 check "only lock_timeout in the window: exit 2" "$RC" 2; has "only lock_timeout: statement_timeout shown as missing" "$OUT" "lock_timeout=3s statement_timeout=missing"
 
+# 39. the migrations directory is configurable (deploy.migrations_dir, env CM_MIGRATIONS_DIR); default supabase/migrations
+# otherrepo <dir>: like newrepo, but the old migration and the files under test live in <dir>
+otherrepo() {
+  N=$((N + 1)); D="$ROOT/r$N"; mkdir -p "$D/$1"
+  ( cd "$D" && git init -q . && printf -- '-- old\n' > "$1/88000000000001_old.sql" \
+    && git add . && git_q commit -q -m base ) >/dev/null
+  BASE="$(git -C "$D" rev-parse HEAD)"
+}
+# addat <dir> <file> <content>
+addat() { mkdir -p "$D/$1"; printf '%s\n' "$3" > "$D/$1/$2"; ( cd "$D" && git add . && git_q commit -q -m "add $2" ) >/dev/null; }
+# runenv <dir>: run with CM_MIGRATIONS_DIR set
+runenv() { OUT="$(cd "$D" && CM_MIGRATIONS_DIR="$1" bash "$SCRIPT" "$BASE" HEAD 2>&1)"; RC=$?; }
+otherrepo db/migrate; addat db/migrate 88000000000002_a.sql "$(guard "'3s'" "'30s'")"; addat supabase/migrations 88000000000003_b.sql "no guard here"; runenv db/migrate
+check "a custom directory: only its files are examined, exit 0" "$RC" 0
+has "a custom directory: its file is read" "$OUT" "ok db/migrate/88000000000002_a.sql"
+has "a custom directory: one file examined" "$OUT" "1 migration files examined"
+hasnt "a custom directory: the default directory is not read" "$OUT" "supabase/migrations"
+otherrepo db/migrate; addat db/migrate 88000000000002_a.sql "$(guard "'3s'" "'30s'")"; runenv db/migrate/
+check "a trailing slash on the directory is accepted" "$RC" 0; has "a trailing slash: the file is read" "$OUT" "ok db/migrate/88000000000002_a.sql"
+otherrepo db/migrate; addat db/migrate 88000000000002_a.sql "no guard here"; runenv db/migrate
+check "an unguarded file in a custom directory is a stop: exit 3" "$RC" 3
+otherrepo db/migrate; addat db/migrate/sub 88000000000002_a.sql "no guard here"; runenv db/migrate
+check "a file in a subdirectory of a custom directory is not examined: exit 0" "$RC" 0; has "a subdirectory: zero examined" "$OUT" "0 migration files examined"
+# the dot in the directory name is literal: db/mxg is not db/m.g
+otherrepo db/m.g; addat db/mxg 88000000000002_a.sql "no guard here"; runenv db/m.g
+check "a dot in the directory name is literal (a sibling that only matches as a regex is not examined): exit 0" "$RC" 0
+has "a literal dot: zero examined" "$OUT" "0 migration files examined"
+# the default stays supabase/migrations when nothing is configured
+newrepo; addmig 88000000000002_a.sql "$(guard "'3s'" "'30s'")"; run
+has "no configuration: the default directory is read" "$OUT" "ok $F1"
+# bad directories fail closed with exit 1
+for bad in /abs/dir ../out a//b . ./a 'a b' 'a*' 'a;b' '$(x)' 'a/../b'; do
+  otherrepo db/migrate; addat db/migrate 88000000000002_a.sql "$(guard "'3s'" "'30s'")"; runenv "$bad"
+  check "bad migrations directory '$bad': exit 1" "$RC" 1; has "bad migrations directory '$bad': says so" "$OUT" "bad migrations directory"
+done
+# the config key is read through lib.sh (needs yq); the env var beats it
+if command -v yq >/dev/null 2>&1; then
+  printf 'schema: concertmaster.config/v1\ndeploy:\n  migrations_dir: db/migrate\n' > "$ROOT/mig-cfg.yaml"
+  otherrepo db/migrate; addat db/migrate 88000000000002_a.sql "$(guard "'3s'" "'30s'")"
+  OUT="$(cd "$D" && CM_CONFIG="$ROOT/mig-cfg.yaml" bash "$SCRIPT" "$BASE" HEAD 2>&1)"; RC=$?
+  check "deploy.migrations_dir from the config: exit 0" "$RC" 0; has "the config directory is read" "$OUT" "ok db/migrate/88000000000002_a.sql"
+  OUT="$(cd "$D" && CM_CONFIG="$ROOT/mig-cfg.yaml" CM_MIGRATIONS_DIR=other/dir bash "$SCRIPT" "$BASE" HEAD 2>&1)"; RC=$?
+  check "the env var beats the config directory: nothing there, exit 0" "$RC" 0; has "env beats config: zero examined" "$OUT" "0 migration files examined"
+else
+  echo "skip the config-key cases: yq is not installed"
+fi
+
 # 40. the STOP note: merge-gate advice (edit the unmerged file) apart from deploy-time advice; the connection-level fix is the
 # options= db-url form, never the PGOPTIONS env
 newrepo; addmig 88000000000002_a.sql "no guard here"; run
@@ -570,6 +617,8 @@ has "the note keeps the in-file values at 30s" "$OUT" "the in-file SET LOCAL val
 OUT="$(bash "$SCRIPT" --help 2>&1)"
 has "the help names the db-url options= fix" "$OUT" "options=-c lock_timeout=3s -c statement_timeout=120000"
 has "the help says the PGOPTIONS env was ignored when measured" "$OUT" "ignored it (lock_timeout=0)"
+has "the help names the configurable directory" "$OUT" "deploy.migrations_dir"
+has "the help names the PR merge gate range" "$OUT" "at the PR"
 
 printf '\npassed=%s failed=%s\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

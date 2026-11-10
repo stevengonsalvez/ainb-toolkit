@@ -4,8 +4,10 @@
 #   scripts/deploy-migration-check.sh <from-ref> <to-ref> [--pr-body-file <file> --only <path>]...
 #
 # Run it from anywhere inside the repo (the pathspec is anchored at the repo top, so a subdirectory gives the same
-# result as the root). <from-ref> is the last production tag, <to-ref> the pinned deploy sha (or origin/main). It lists
-# only the files ADDED in that range under supabase/migrations/ (a modified older file is never re-flagged; a rename
+# result as the root). <from-ref> is the last production tag, <to-ref> the pinned deploy sha (or origin/main); at the PR
+# merge gate <from-ref> is the merge-base of the PR's own base branch and the PR head, <to-ref> the PR head sha. It lists
+# only the files ADDED in that range under the migrations directory (deploy.migrations_dir in config.yaml, default
+# supabase/migrations; env CM_MIGRATIONS_DIR wins) (a modified older file is never re-flagged; a rename
 # counts as added, because a new name is a new version that the push runs), reads each at <to-ref>, and prints one
 # line per file:
 #
@@ -57,8 +59,9 @@
 # scanner reads the standard way); a SQL-standard function body (BEGIN ATOMIC ... END, read as a stop); a guard added in
 # the workflow step; and whether connection-level options reach the session. A SET LOCAL repeated in one file is
 # judged on every occurrence, so one bad value flags the file.
-# The migration directory is the supabase/migrations/ layout (files directly in it, ending .sql); a project with another
-# layout changes the pathspec and MIG_RE below.
+# The migration directory holds the delta files directly in it, ending .sql (a file in a subdirectory is not examined);
+# it comes from deploy.migrations_dir (default supabase/migrations) or env CM_MIGRATIONS_DIR: a relative path of letters,
+# digits, dot, dash, underscore and slash, no `..`, no leading or doubled slash (anything else is exit 1).
 # Pure bash plus git, no network. Needs bash 3.2 or later. The deploy worker runs it on Linux (gawk or mawk); macOS
 # one-true-awk is untested, and busybox awk does not finish a 10 MB one-line file in 240 s (a 1 MB line takes seconds).
 set -uo pipefail
@@ -67,6 +70,14 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/lib.sh"
 
 usage() { awk 'NR > 1 { if (/^#/) print; else exit }' "$0"; }
+
+# The migration directory: relative to the repo top, plain characters only (it goes into a git pathspec and a regex).
+MIGDIR="${CM_MIGRATIONS_DIR:-$(cm_cfg .deploy.migrations_dir supabase/migrations)}"
+while [ "${MIGDIR%/}" != "$MIGDIR" ]; do MIGDIR="${MIGDIR%/}"; done
+case "$MIGDIR" in
+  ''|.|/*|./*|*/./*|*//*|*..*|*[!A-Za-z0-9._/-]*)
+    cm_warn "deploy-migration-check.sh: bad migrations directory (deploy.migrations_dir or CM_MIGRATIONS_DIR): must be a plain relative path, no '..', no leading or doubled slash"; exit 1 ;;
+esac
 
 FROM=""; TO=""; BODY=""; ONLY=""
 while [ $# -gt 0 ]; do
@@ -327,10 +338,10 @@ shown() { case "$1" in ''|*[!A-Za-z0-9.]*) printf '<unparsed>' ;; *) [ "${#1}" -
 # Added files only. --no-renames: a renamed file is a new name, so a new version the push runs.
 # ":(top)" anchors the pathspec at the repo root, so the listing is the same from any subdirectory.
 GITLS=(git -c core.quotePath=false -c diff.relative=false diff --name-only --no-renames --diff-filter=A "$FROM..$TO")
-LIST="$("${GITLS[@]}" -- ':(top)supabase/migrations/')" || { cm_warn "deploy-migration-check.sh: git diff failed for $FROM..$TO"; exit 1; }
+LIST="$("${GITLS[@]}" -- ":(top)$MIGDIR/")" || { cm_warn "deploy-migration-check.sh: git diff failed for $FROM..$TO"; exit 1; }
 ADDED_ALL="$("${GITLS[@]}")" || { cm_warn "deploy-migration-check.sh: git diff failed for $FROM..$TO"; exit 1; }
 # The pathspec listing must agree with the full diff: if git reports added migrations that the listing lacks, fail closed.
-MIG_RE='^supabase/migrations/[^/]*\.sql$'
+MIG_RE="^${MIGDIR//./\\.}/[^/]*\\.sql\$"
 n_all="$(printf '%s\n' "$ADDED_ALL" | grep -c "$MIG_RE")"; n_list="$(printf '%s\n' "$LIST" | grep -c "$MIG_RE")"
 [ "$n_all" = "$n_list" ] || { cm_warn "deploy-migration-check.sh: the pathspec listing has $n_list added migrations but the full diff has $n_all: refusing to report"; exit 1; }
 
@@ -338,7 +349,7 @@ N_OK=0; N_ASK=0; N_STOP=0; N_EXC=0; N_EXAM=0; SEEN=""
 while IFS= read -r f; do
   [ -n "$f" ] || continue
   case "$f" in \"*) cm_warn "deploy-migration-check.sh: git prints an added path quoted, cannot read it: $f"; exit 1 ;; esac
-  case "$f" in supabase/migrations/*/*) continue ;; supabase/migrations/*.sql) ;; *) continue ;; esac   # a delta migration is a .sql file directly in the directory
+  case "$f" in "$MIGDIR"/*/*) continue ;; "$MIGDIR"/*.sql) ;; *) continue ;; esac   # a delta migration is a .sql file directly in the directory
   if [ -n "$ONLY" ]; then
     case $'\n'"$ONLY" in *$'\n'"$f"$'\n'*) ;; *) continue ;; esac   # --only: only the files named
     SEEN="$SEEN$f"$'\n'

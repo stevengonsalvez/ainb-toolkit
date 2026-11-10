@@ -176,6 +176,9 @@ deploy:
   # fixed: merge, staging deploy, staging validate, only then production.
   ship_verb: .agents/skills/pr-sweep/verbs/ship.md
   production_tag_glob: "v*"        # delta = <last tag>..origin/main
+  # Where the delta migration files live: scripts/deploy-migration-check.sh reads the .sql files DIRECTLY in this
+  # directory (relative to the repo top, plain characters only). [script] Env CM_MIGRATIONS_DIR wins. Default supabase/migrations.
+  migrations_dir: supabase/migrations
   # Rails: any hit means ASK the owner, the window waits.
   rails:
     - name: destructive-migration
