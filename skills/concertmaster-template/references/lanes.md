@@ -38,6 +38,8 @@ Config-backed placeholders (fill from `config.yaml`):
 | `{{review_verdict_cmd}}` | `merge.gates.review_verdict` (unused while no automated review pipeline runs; the gate is then the in-session review comment, § In-session review) |
 | `{{evidence_publish_cmd}}` | `evidence.publish_cmd` (a command that takes the PR number and the image paths and prints markdown links; may be empty: § Evidence standard) |
 | `{{ci_gate_cmd}}` | `merge.gates.ci_gate` |
+| `{{migrations_dir}}` | `deploy.migrations_dir` (default `supabase/migrations`) |
+| `{{migration_bases}}` | `merge.migration_check.bases`, backticked and comma separated (default `main`) |
 | `{{verify_merged_cmd}}` | `merge.gates.verify_merged` |
 | `{{review_round_cap}}` | `merge.review_round_cap` |
 | `{{approved_only_classes}}` | `merge.approved_only_classes` |
@@ -489,6 +491,40 @@ lifts the stale rule only and never a fresh `freeze=on` (Lead charter 1a).
 
 Merge gate, ALL at the current head sha:
 - {{evidence_cmd}} reports {{ready_value}} for that head.
+- For a PR that touches `{{migrations_dir}}/` (nothing in this item applies to any other PR; it is the only
+  copy of the migration-check policy, SKILL.md and the script header point here): read the PR's own base
+  (`gh pr view <n> --json baseRefName`). The checked bases are {{migration_bases}}; any other base: hold and ask the
+  concertmaster. Run `git fetch origin <base> pull/<n>/head`, then `MB=$(git merge-base origin/<base> <PR head sha>)`;
+  re-fetch and recompute at merge time. `<PR head sha>` is `headRefOid` from `gh pr view <n> --json headRefOid` (never
+  `FETCH_HEAD`, which holds the first fetched ref, the base tip); after the fetch `git cat-file -e <PR head sha>^{commit}`
+  must succeed, and it is the sha you pass to `--match-head-commit`. If the head moved, start again.
+  Two lists over `{{migrations_dir}}/` (pipe each list through a filter for files directly in that directory ending
+  `.sql`: those are the only files the script examines, so `n` and the held list count only them; a listed path in
+  quotes, or one under the directory that the filter drops other than a subdirectory file or a non-`.sql` file, is not
+  mergeable: hold), both with `--no-renames` (the script lists the same way, so a rename is a delete plus an add):
+  `git -c core.quotePath=false -c diff.relative=false diff --no-renames --diff-filter=A --name-only $MB <PR head sha> --
+  ':(top){{migrations_dir}}/'` (added; the `:(top)` pathspec is required, a plain path matches nothing from a
+  subdirectory) and the same with `--diff-filter=MDTUXB` (edited, deleted or type-changed). The edited or deleted list
+  must be empty: the script does not examine those files, and an applied file must never be edited (the migration
+  runner skips it silently), so a non-empty list is NOT mergeable; hold and ask the concertmaster, who clears a
+  legitimate case (for example deleting a duplicate-stamp file). If the added list is non-empty, at the exact head to
+  merge run `scripts/deploy-migration-check.sh $MB <PR head sha>`. Pass `--pr-body-file <file> --only <path>` (once per
+  approved file; produce the file at merge time from the GraphQL fields `body` and `lastEditedAt` of the pull request
+  (`updatedAt` moves on every comment and cannot show a body edit), never reuse an earlier copy) ONLY when an
+  owner-authored comment, posted after the PR body's last edit (`createdAt` when `lastEditedAt` is null), names that
+  file and the head sha and approves the `timeout-exception:`; the author's own line is never approval. Any exit other
+  than 0 is NOT mergeable: 1 or 127 means the check did not run (fix the input, re-run); 2 is an ASK, send it to the
+  owner as for any ask. A STOP (exit 3): do not merge, post `cm:blocked #<pr> migration-check STOP: <the STOP lines>`
+  on your comment and on the PR, and ask the author lane to fix the file as the script's own `note:` says (it also
+  lists ROLLBACK, COMMIT AND CHAIN and statements outside the block, not only a missing BEGIN/COMMIT), then re-run at
+  the new head. A clean result (exit 0 and `<n> migration files examined` where n equals the length of the added list)
+  is recorded in the merge line. A run with `--only` skips every file it does not name, so the merge needs each added
+  file covered: either the run without `--only` exits 0, or every file it flags is named in an approved `--only` run
+  that also exits 0 (record both runs). A STOP has no waiver at this gate: neither the author, the sweeper nor a
+  comment can turn it into a merge, and the PR's own file is unapplied, so the fix is always to edit it. (The deploy
+  workflows' push-step caps are a fallback for an already-applied file, not a gate-time answer.) Why: a merged
+  migration that the deploy pre-check STOPs on costs the whole deploy window, because an applied file cannot be
+  edited.
 - The in-session review at that head: a PR comment whose whole body matches
   `^in-session review: (/codex:review|/review) (APPROVED at [0-9a-f]{40}|CHANGES_REQUESTED at [0-9a-f]{7,40})$`,
   authored by a login in `merge.in_session_review_authors` (config; the review must come from an account

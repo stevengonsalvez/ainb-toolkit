@@ -556,7 +556,6 @@ newrepo; addmig 88000000000002_a.sql "$(printf '%s\n%s %s = %s;\n%s\n' "$BG" "$S
 check "only statement_timeout in the window: exit 2" "$RC" 2; has "only statement_timeout: lock_timeout shown as missing" "$OUT" "lock_timeout=missing statement_timeout=30s"
 newrepo; addmig 88000000000002_a.sql "$(printf '%s\n%s %s = %s;\n%s\n' "$BG" "$SL" "$LK" "'3s'" "$CM")"; run
 check "only lock_timeout in the window: exit 2" "$RC" 2; has "only lock_timeout: statement_timeout shown as missing" "$OUT" "lock_timeout=3s statement_timeout=missing"
-
 # 39. the migrations directory is configurable (deploy.migrations_dir, env CM_MIGRATIONS_DIR); default supabase/migrations
 # otherrepo <dir>: like newrepo, but the old migration and the files under test live in <dir>
 otherrepo() {
@@ -619,6 +618,21 @@ has "the help names the db-url options= fix" "$OUT" "options=-c lock_timeout=3s 
 has "the help says the PGOPTIONS env was ignored when measured" "$OUT" "ignored it (lock_timeout=0)"
 has "the help names the configurable directory" "$OUT" "deploy.migrations_dir"
 has "the help names the PR merge gate range" "$OUT" "at the PR"
+
+# 41. the docs carry the merge-gate rule and no issue number or absolute home path (text lint over the skill)
+SKILL_DIR="$(cd "$HERE/../.." && pwd)"
+LANES="$(cat "$SKILL_DIR/references/lanes.md")"; SKM="$(cat "$SKILL_DIR/SKILL.md")"
+has "lanes.md: the pr-sweeper merge gate runs the migration check at the exact head" "$LANES" 'scripts/deploy-migration-check.sh $MB <PR head sha>'
+has "lanes.md: the merge-base is of the PR's own base" "$LANES" 'MB=$(git merge-base origin/<base> <PR head sha>)'
+has "lanes.md: an edited or deleted migration is held" "$LANES" "The edited or deleted list"
+has "lanes.md: a STOP has no waiver at the gate" "$LANES" "A STOP has no waiver at this gate"
+has "lanes.md: the directory and bases are placeholders" "$LANES" "{{migration_bases}}"
+has "SKILL.md: merge gate item 3a points at the lane" "$SKM" "3a. **Migration check**"
+has "SKILL.md: the already-applied fix is the options= form" "$SKM" "Use the connection URL's \`options=\` form"
+hasnt "SKILL.md: PGOPTIONS is no longer the example fix" "$SKM" "(for example \`PGOPTIONS="
+for f in "$SKILL_DIR/references/lanes.md" "$SKILL_DIR/SKILL.md" "$SKILL_DIR/scripts/deploy-migration-check.sh" "$SKILL_DIR/config.example.yaml"; do
+  if grep -n -E '#[0-9]{4}|/home/[a-z]|/Users/[a-z]' "$f" >/dev/null 2>&1; then bad "$(basename "$f"): an issue number or an absolute home path found" "$(grep -n -E '#[0-9]{4}|/home/[a-z]|/Users/[a-z]' "$f" | head -3)"; else ok "$(basename "$f"): no issue number or absolute home path"; fi
+done
 
 printf '\npassed=%s failed=%s\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
