@@ -607,7 +607,8 @@ echo "--- no /proc (macOS): ps, lsof and sysctl"
 # same fake processes the way macOS shows them (ps -A tables, `ps -E` with the environment after the command, lsof
 # -d cwd, sysctl kern.boottime, an uptime with no -s). A pid dir with a `uid` file belongs to another user; one with a
 # `nolsof` file is a process whose cwd lsof cannot read (`lsof-ok` holding N: it answers N times, then not); one with a
-# `noargs` file is missing from the ps args table; `args2` is what `ps -p <pid> -o args=` shows later (pid reused).
+# `noargs` file is missing from the ps args table; `args2` is what `ps -p <pid> -o args=` shows later (pid reused), and
+# `argsfail` makes that later `ps -p <pid> -o args=` fail while the pid still runs.
 MACBIN="$ROOT/macbin"; mkdir -p "$MACBIN"
 cat > "$MACBIN/ps" <<'EOF'
 #!/usr/bin/env bash
@@ -632,7 +633,7 @@ one() {
       printf '%5s %5s %5s %-4s %-8s %11s %s\n' "$p" "$u" "$ppid" "${state}s" "$tty" "$(fmt $(( $(date +%s) - bt )))" "$(cat "$d/comm")" ;;
     pid=,args=) [ -e "$d/noargs" ] || printf '%5s %s\n' "$p" "$(argsof "$d")" ;;
     command=) if [ "$env" = 1 ]; then printf '%s %s\n' "$(argsof "$d")" "$(tr '\0' ' ' < "$d/environ" | sed 's/ $//')"; else argsof "$d"; echo; fi ;;
-    args=) if [ -f "$d/args2" ]; then cat "$d/args2"; else argsof "$d"; echo; fi ;;
+    args=) [ ! -e "$d/argsfail" ] || exit 1; if [ -f "$d/args2" ]; then cat "$d/args2"; else argsof "$d"; echo; fi ;;
     pid=) printf '%5s\n' "$p" ;;
   esac
 }
@@ -813,6 +814,29 @@ transcript "$T1" "$SID_1" $((NOW - 1800))
 mkproc "$P" 102 1000 "$T1" "ORCA_TERMINAL_HANDLE=term_1" claude --resume "$SID_1"; printf 'vim notes.txt\n' > "$P/102/args2"
 OUT="$(mac "$LH" --all --act --json 2>"$ROOT/lh.err")"
 check "no /proc: a pid that runs another command by the time its cwd is read makes the scan incomplete" \
+  '[ "$(word "$OUT" w-task-1)" = unknown ] && meaning "$OUT" w-task-1 | grep -q "incomplete" && [ "$(creates)" = 0 ]' "$OUT"
+reset_world
+ledger "{\"w-lead-a\":$(row "$LEAD_A" '{"standing":true,"lane":"lead-a"}')}"
+mkproc "$P" 101 1000 "$LEAD_A" "ORCA_TERMINAL_HANDLE=term_a" claude --dangerously-skip-permissions "summarise bbbbbbbb-0000-4000-8000-000000000002, run with --resume bbbbbbbb-0000-4000-8000-000000000002"
+transcript "$LEAD_A" "$SID_A" $((NOW - 600))
+printf 'I will say it once: never turn bypass permissions on here\n> \n  ? for shortcuts\n' > "$STUB/pane-term_a.txt"
+OUT="$(mac "$LH" --all --no-write --json 2>"$ROOT/lh.err")"
+check "no /proc: an id-shaped --resume quoted in a prompt, with no transcript of its own, is not the session" \
+  '[ "$(jq -r ".sessions[0].live | [.sessionId, .sessionSource] | @tsv" <<<"$OUT")" = "$(printf "%s\ttranscript" "$SID_A")" ]' "$OUT"
+check "no /proc: the phrase in the agent's own text is not the bypass footer line" '[ "$(jq -r ".sessions[0].live.bypass" <<<"$OUT")" = false ]' "$OUT"
+reset_world
+ledger "{\"w-task-1\":$(row "$T1" '{"health":{"word":"running"},"live":{"sessionId":"'"$SID_1"'","bypass":false}}')}"
+transcript "$T1" "$SID_1" $((NOW - 1800))
+FAKE_TTY=0 mkproc "$P" 501 1000 "$T1" "" claude -p --resume "$SID_1" "summarise"; : > "$P/501/nolsof"
+OUT="$(mac "$LH" --all --act --json 2>"$ROOT/lh.err")"
+check "no /proc: a headless agent whose cwd lsof cannot read makes the scan incomplete (it may be a copy): never resumed" \
+  '[ "$(word "$OUT" w-task-1)" = unknown ] && meaning "$OUT" w-task-1 | grep -q "incomplete" && [ "$(creates)" = 0 ]' "$OUT"
+reset_world
+ledger "{\"w-task-1\":$(row "$T1" '{"health":{"word":"running"},"live":{"sessionId":"'"$SID_1"'","bypass":false}}')}"
+transcript "$T1" "$SID_1" $((NOW - 1800))
+mkproc "$P" 102 1000 "$T1" "ORCA_TERMINAL_HANDLE=term_1" claude --resume "$SID_1"; : > "$P/102/argsfail"
+OUT="$(mac "$LH" --all --act --json 2>"$ROOT/lh.err")"
+check "no /proc: a live pid whose command cannot be read again after its cwd makes the scan incomplete" \
   '[ "$(word "$OUT" w-task-1)" = unknown ] && meaning "$OUT" w-task-1 | grep -q "incomplete" && [ "$(creates)" = 0 ]' "$OUT"
 reset_world
 ledger "{\"w-lead-a\":$(row "$LEAD_A" '{"standing":true,"lane":"lead-a"}')}"

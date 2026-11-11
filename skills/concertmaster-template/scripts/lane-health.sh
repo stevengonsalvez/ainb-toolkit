@@ -226,7 +226,7 @@ lh_probe() {
   }
   local now got boot up lastx pk pm sp u t e d pid stat rest state ppid tty argv arg comm agent cwd sid src model eff byp
   local headless i n kv hp ho sph sho h rt anc depth acomm acmd a1 a1d st2 r2 top br dirty ref merged onmain head s tdir tm p stt pst hz
-  local scan et a psnow cmd2
+  local scan et a psnow cmd2 nsf
   local -a items lps_pids lps_ppid lps_comm lps_args lps_stat lps_tty lps_et
   now="$(date +%s)"
   got="$(hostname -s 2>/dev/null || hostname 2>/dev/null)"; got="$(printf '%s' "${got%%.*}" | tr '[:upper:]' '[:lower:]')"
@@ -316,7 +316,7 @@ lh_probe() {
         # no argv for a live process named like an agent (or an interpreter that may run one): the scan is incomplete,
         # never "no agent here"; a process gone between the two ps calls is simply gone
         case "$comm" in node|nodejs|bun|deno) a="$comm" ;; *) a="$(_lhagent "$comm" "$comm")" ;; esac
-        if [ "$headless" = 0 ] && [ -n "$a" ] && ps -p "$pid" -o pid= >/dev/null 2>&1; then printf 'W\tunreadable\tcmdline of %s\n' "$pid"; fi
+        if [ -n "$a" ] && ps -p "$pid" -o pid= >/dev/null 2>&1; then printf 'W\tunreadable\tcmdline of %s\n' "$pid"; fi
         continue
       fi
     fi
@@ -326,22 +326,26 @@ lh_probe() {
       cwd="$(readlink "$d/cwd" 2>/dev/null)" || { [ "$headless" = 1 ] || { [ -e "$d" ] && printf 'W\tunreadable\tcwd of %s\n' "$pid"; }; continue; }
     else
       cwd="$(lsof -w -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -n 1)"
-      # no answer from a process that still runs: the scan is incomplete (never "no agent here")
-      if [ -z "$cwd" ]; then [ "$headless" = 1 ] || { ps -p "$pid" -o pid= >/dev/null 2>&1 && printf 'W\tunreadable\tcwd of %s\n' "$pid"; }; continue; fi
+      # no answer from a process that still runs: the scan is incomplete (never "no agent here"). Here a headless agent
+      # counts too: it is a copy (Q), and losing it would let a resume start beside it
+      if [ -z "$cwd" ]; then ps -p "$pid" -o pid= >/dev/null 2>&1 && printf 'W\tunreadable\tcwd of %s\n' "$pid"; continue; fi
       # lsof writes a byte it cannot print as \xNN: that is not the real path
-      case "$cwd" in *'\x'*) [ "$headless" = 1 ] || printf 'W\tunreadable\tcwd of %s\n' "$pid"; continue ;; esac
+      case "$cwd" in *'\x'*) printf 'W\tunreadable\tcwd of %s\n' "$pid"; continue ;; esac
       # the table is a snapshot: the pid must still run the same command now that its cwd is read
-      if ! cmd2="$(ps -ww -o args= -p "$pid" 2>/dev/null)"; then continue; fi
+      if ! cmd2="$(ps -ww -o args= -p "$pid" 2>/dev/null)"; then
+        ps -p "$pid" -o pid= >/dev/null 2>&1 && printf 'W\tunreadable\tcmdline of %s\n' "$pid"
+        continue
+      fi
       read -r cmd2 <<< "$cmd2"
-      if [ "$cmd2" != "${lps_args[$pid]:-}" ]; then [ "$headless" = 1 ] || printf 'W\tunreadable\tpid %s changed during the scan\n' "$pid"; continue; fi
+      if [ "$cmd2" != "${lps_args[$pid]:-}" ]; then printf 'W\tunreadable\tpid %s changed during the scan\n' "$pid"; continue; fi
     fi
     cwd="${cwd%/}"; [ -n "$cwd" ] || cwd=/
-    sid=""; src=""; model=""; eff=""; byp=0
+    sid=""; src=""; model=""; eff=""; byp=0; nsf=0
     n="${#argv[@]}"; i=0
     while [ "$i" -lt "$n" ]; do
       case "${argv[$i]}" in
-        --resume|-r|--session-id) [ $((i + 1)) -lt "$n" ] && { sid="${argv[$((i + 1))]}"; src=cmdline; } ;;
-        --resume=*|--session-id=*) sid="${argv[$i]#*=}"; src=cmdline ;;
+        --resume|-r|--session-id) nsf=$((nsf + 1)); [ $((i + 1)) -lt "$n" ] && { sid="${argv[$((i + 1))]}"; src=cmdline; } ;;
+        --resume=*|--session-id=*) nsf=$((nsf + 1)); sid="${argv[$i]#*=}"; src=cmdline ;;
         --model) [ $((i + 1)) -lt "$n" ] && model="${argv[$((i + 1))]}" ;;
         --model=*) model="${argv[$i]#*=}" ;;
         --effort) [ $((i + 1)) -lt "$n" ] && eff="${argv[$((i + 1))]}" ;;
@@ -359,6 +363,9 @@ lh_probe() {
     case "$model" in *[!A-Za-z0-9._-]*) model="" ;; esac
     case "$eff" in *[!a-z]*) eff="" ;; esac
     tdir="$(_lhdir "$cwd")"
+    # split argv (no /proc): a cmdline id is trusted only when it is the one id flag and that session's transcript is in
+    # this worktree (a prompt can quote --resume <some id>); otherwise the transcript rules below decide
+    if [ "$scan" = ps ] && [ "$src" = cmdline ] && { [ "$nsf" -gt 1 ] || [ ! -e "$tdir/$sid.jsonl" ]; }; then sid=""; src=""; fi
     _lhtinfo "$tdir"
     if [ -z "$sid" ] && [ -n "$LH_ONE" ]; then sid="$LH_ONE"; src=transcript; fi
     # the last write of THAT session; with no id at all, of the worktree (never another session's file for a known id)
@@ -692,7 +699,8 @@ while IFS=$'\t' read -r ph ppid prt phd; do
   [ -n "$ph" ] || continue
   if b="$(pane_bottom "$ph" "$prt" "$phd")"; then
     st="$(pane_state "$b")"
-    bp=false; if printf '%s\n' "$b" | tail -n 4 | grep -qi 'bypass permissions on'; then bp=true; fi
+    # the footer line itself (its ⏵⏵ mark first), on the bottom lines: quoted text that names it is not the footer
+    bp=false; if printf '%s\n' "$b" | tail -n 3 | grep -qiE '^[[:space:]]*⏵⏵[[:space:]]*bypass permissions on'; then bp=true; fi
     jq -nc --arg k "$ph|$ppid" --arg s "${st%%$'\t'*}" --arg l "${st#*$'\t'}" --argjson bp "$bp" '{($k): {state: $s, line: ($l | .[0:120]), bypass: $bp}}' >> "$TMP/panes.ndjson"
   else
     jq -nc --arg k "$ph|$ppid" '{($k): {state: "unread", line: ""}}' >> "$TMP/panes.ndjson"
