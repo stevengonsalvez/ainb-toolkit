@@ -92,7 +92,7 @@ The lane set above is the default; `cfg.lanes` is the list in use.
     more work will be assigned. Empty queue means idle, not done. Only
     single-task workers (`cfg.single_task_workers`: deploy-<window>,
     ops-<slug> fix workers, sweep-<pr>, native-release, one-PR workers) are
-    torn down.
+    torn down. A lead that must stop is put to sleep (rule 27).
 12. **Beads gate.** A lane or worktree that owns a beads epic (ledger
     `workers.<id>.beadsEpic`, or beads named in its work) is not done while any
     bead under that epic is open, whatever its picked items say. Before
@@ -269,6 +269,19 @@ The lane set above is the default; `cfg.lanes` is the list in use.
       The directory read is the `supabase/migrations/` layout.
     (A presence-only check passed a file with 5s and 120s values, and a file with no guard at
     all still ships through a bare push.)
+27. **Leads are put to sleep, never cleaned up** (owner rule, 11 Nov 2026). No agent cleans up,
+    retires or tears down a lead session (`standing: true`, a lane-shaped name, the concertmaster
+    itself): not the concertmaster, not another lead, not a script on its own judgment. Only the
+    owner cleans up a lead; an agent the owner asks to do it first asks the owner to confirm (an
+    `AskUserQuestion` in a turn the owner started, else a `WAITING` row; recorded as an approved
+    `remove-standing` ask) and acts only on a yes. To stop a lead, put it to SLEEP:
+    `scripts/lane-health.sh sleep <worker-id> --apply` stops the agent process and closes its
+    terminal, and keeps the worktree, the branch, the transcript and the ledger row (`state:
+    asleep`); `wake` resumes it on the same session id. Nothing revives an asleep lead on its own:
+    `roster.sh`, `resume.sh`, `boot-sweep.sh`, `runtime-check.sh` and `lane-health.sh` all skip it,
+    and `teardown.sh` refuses every `standing: true` row with this rule. Why: a lead holds long
+    context (the plan, its children, the review history) that a teardown destroys and no handover
+    fully rebuilds; sleep stops the cost and keeps all of it (`references/lane-health.md`).
 
 <!-- project-local: hard-rules -->
 
@@ -293,7 +306,8 @@ worktree.
    self-paced). Each tick ends by scheduling the next wake.
 
 Arguments: `boot` (steps 1 to 6), `tick` (one tick), `status` (read-only:
-ledger + discover + classify, report, schedule nothing new), `resume` (§ Resume:
+ledger + discover + classify, report, schedule nothing new; it opens with the `/cm-status` view,
+`scripts/cm-status.sh`, `companions/cm-status.md`), `resume` (§ Resume:
 bring dead lanes back from the roster), `hand <work>` (§ Handing work), `digest`
 (build and send the digest now), `intake <chat> [--since <time>]` (§ Intake: read
 a chat, dedupe, classify, route, create beads, write the tracker, ask once; only
@@ -364,6 +378,17 @@ BEFORE asking, and only when the rule below allows it. A blocking picker also wa
    autocompact prompt).
    Then `scripts/runtime-check.sh` (an Orca runtime restart that left a lane
    without its `/loop`, § Resume; call timeout 600000 ms).
+   **Lane health, every tick.** Then `scripts/lane-health.sh --all --act` (call timeout 600000 ms):
+   per host, the live agent processes (pid, session id, runtime, model, effort, last transcript
+   write) and the pane state, against the ledger; one word per session (running, idle, waiting on
+   you, stuck, stopped, asleep, unknown) and the cause of each stop (reboot, preemption, daemon
+   restart, limit, crash) into the ledger, host events into `hostEvents[]`. It resumes a stopped
+   lead or unowned session ONCE (`--resume <id>` in its owner runtime, verified), never before the
+   host's own resume settles; it puts a merged, clean unknown worker to sleep and only flags an
+   unknown that looks like a lead; it alerts on a lead that stays stopped, a reboot or preemption,
+   a session stuck 30 minutes, and two copies of one session (once per event). Every row that is
+   not running, idle or asleep gets its own report row with its meaning line. Exit 4: another
+   acting run holds its lock; leave it. Rules: `references/lane-health.md`.
    **Forbidden-agent check** (only when `cfg.agents.forbidden` is set): `classify.sh`
    prints a `violations: <n>` line and one `VIOLATION <agent> <host> <worktree> <handle>
    <title>` row per terminal under `cfg.worktrees.path_match`, on any host, whose
@@ -478,7 +503,9 @@ BEFORE asking, and only when the rule below allows it. A blocking picker also wa
      do not rotate anything yourself, `references/credentials.md`),
      `ci-queue-alert-*.md` (queue alert: look at the runner fleet,
      `references/ci-capacity.md`), `boot-sweep-*.md` (lanes the post-boot sweep
-     could not get going, `references/boot-sweep.md`), `backup-stale-*.md` (the
+     could not get going, `references/boot-sweep.md`), `lane-health-*.md` (a lead that stayed
+     stopped, a reboot or preemption, a stuck session, two copies of one session;
+     `references/lane-health.md`), `backup-stale-*.md` (the
      off-host backup has not succeeded within `backup.max_age_hours`, or that setting is
      not a whole number of hours; `references/recovery.md` § Off-host backup). Put each in the
      turn-end report; they are the only way these scripts reach you.
@@ -631,7 +658,7 @@ worktree path's last segment, which equals the Orca display name.
 | flag | meaning | action |
 |---|---|---|
 | `ORPHAN` | in scope, no owner by any rule | ask the likely lane lead, record `orphanAskedAt` on the worker's ledger row, tear down only after 2 ticks plus the lead's loop interval, and only for the classes the row's suggest names (idle, orphan-git-only, untracked-lane, done-merged, done-selfreported, never standing, never `has-child-agent`); every other class is asked about, never torn down on this flag. A family that keeps appearing gets a prefix |
-| `LEAD-DEAD` | a lane lead has no live session while it owns open work (open = class not done-merged and PR not merged or closed); or the ledger records the lead as spawned and its host answered in full yet it has no worktree | respawn in place (only through `scripts/resume.sh`), else hand its items to another lead and report it |
+| `LEAD-DEAD` | a lane lead has no live session while it owns open work (open = class not done-merged and PR not merged or closed); or the ledger records the lead as spawned and its host answered in full yet it has no worktree | respawn in place (only through `scripts/resume.sh`), else hand its items to another lead and report it; a lead whose ledger row is `asleep` was stopped on purpose (rule 27): report it, never respawn it |
 
 Open work is counted per lead: a lead's own comment claims are its work, and
 label-owned work (prefix, ledger) goes to a lead only while no other lead sharing
@@ -859,6 +886,15 @@ run to finish.
 
 Output is a table of lane, status, action. Details, the live-agent test and the
 safety rules: `references/resume.md`.
+
+`scripts/lane-health.sh --all --act` (tick step 2) is the other way back: it finds a session that
+should run and has no process, names the cause (a boot or daemon restart after its last write),
+and resumes it ONCE on its own session id (`<agent> --dangerously-skip-permissions --resume <id>`
+with its model and effort, in the runtime that owned it), after the host's own resume has had
+`health.settle_minutes`, then verifies one process, the bypass footer and the same transcript. A
+second stop soon after is alerted, never retried. A lead's children are the lead's own
+(`--lead <id>` each loop). An `asleep` row is never resumed by any of these (rule 27): only
+`scripts/lane-health.sh wake <id> --apply`. Details: `references/lane-health.md`.
 
 To move a host's lanes from Orca terminals to Plugly terminals (a deploy-window job, canary first), use
 `scripts/cutover-host.sh` and follow `references/cutover.md`; never hand-type the closes and creates.
@@ -1258,7 +1294,9 @@ When there is no ledger:
 ## Messaging
 
 - **Owner digest** at `cfg.schedule.digest_times`. The text is terse `- ` bullets, no
-  greeting, and carries only Merged and Deployed, so it is safe for a chat group: Needs
+  greeting, and carries only Merged, Deployed and Fleet health (counts of the seven lane-health words, restarts in
+  the window, and `concertmaster check missing` when the last `lane-health.sh --all` is older than two lane loops;
+  no names), so it is safe for a chat group: Needs
   <owner>, Open follow-ups, Stuck and the Fleet footer name workers and hosts, so put those in your
   terminal report with `scripts/digest.sh --full`, never in the sent text. Send steps:
   `scripts/digest.sh > $CM_HOME/digest.txt`, read it, then send with
@@ -1358,6 +1396,8 @@ next: trigger prod for the 16:00 window
   ask is open (its `orphaned` row still shows when its worker is dead).
 - No light ticks: every tick runs discover + classify + programme-rollup + asks scan and prints the programme table, the census problems line, blockers and the thread table. (Same rule as § The tick, "No light ticks".) A turn that is not a loop wake (a side answer) still re-arms the wake (tick step 6), still never opens the picker and prints no table.
 - Stall rows: every tick runs `scripts/pane-stalls.sh` (tick step 4) and prints one stall row per `STALL` line (lane, host, matched line) directly under the census problems line; an `UNREAD` row is printed there too, as unknown, never as clean. No hit and nothing unread prints no row.
+- Lane health: one row per `scripts/lane-health.sh --all --act` session that is not running, idle or asleep
+  (stopped, stuck, waiting on you, unknown), with its meaning line, and one row per action and alert it printed.
 - Quiet tick (nothing changed): every table above still prints in full; the thread table is one row per lane plus `next:`.
 - Every `scripts/asks.sh` row older than 1 tick gets a row with its age (a blocker, ask or
   `cm:waiting-owner` the owner has not answered).
@@ -1408,6 +1448,9 @@ shellcheck clean.
 | `scripts/followups.sh reconcile\|close\|open\|report\|escalate\|comment-open` | the follow-up ledger (rule 12a): `reconcile` reads discover JSON and adopts every lead-spawned `cm:child <name>` with no ledger row (`standing: false`, state from the child's own comment), and folds Orca's `parentWorktreeId`, `cm:child`, `cm:followup <id> owner=<o> <text>` and `cm:followup-done <id>` comment lines into `workers.<id>.parent` and `followUps[]` (an item owned by `project.owner.id` also gets an `asks[]` row; idempotent, writes nothing when nothing changed, through `cm_ledger_write`) and prints `followups: malformed`, `unmatched`, `unmatched-child`, `parent-conflict` and `reused-id` lines; `close` closes an item from outside a comment; `open [--lane]` lists open items as TSV; `report` prints the turn-end rows (`orphaned`, `followup`); `for-worktree <name-or-path>` lists the open items of that worktree's worker and its children (exit 3 when no ledger worker owns it; `salv3.sh` uses it); `escalate [--create]` (`escalate --resolve <lane>/<id> <n|release>` clears a claim left by a timed-out run: a release waits while the run that made the claim is alive and under an hour old, a number needs `github.org` and `github.main_repo`, and the claim is found by its whole `lane/id` name; a stale `--create` lock is taken over under a second lock, and a `gh` that cannot run, exit 126 or 127, releases the claim) makes ONE GitHub issue per open follow-up older than `followups.escalate_after_hours` (24) or owned by another lane than its poster, records `issue` on it, and is a dry run unless `--create` (budget under 800, a 180 s floor and 5 issues per run are respected; a credential- or path-looking text is refused); `comment-open [--texts]` reads one comment on stdin and prints its open ids, with their text under `--texts` (teardown uses it on the live comment) |
 | `scripts/mc-emit.sh <type> <msg> [meta]` / `--fleet-upsert ...` / `--tick <json>` / `--issue-state <issue> <state> [pr]` / `--flush` / `--requeue-dead` | outbox + telemetry POST, always exit 0; base URL or tenant not configured: sends nothing, lines stay queued (capped); `--requeue-dead [--any-tenant]` puts dead 400 lines with tenantId null (or any tenant; with a project id, also any without a projectId) back in front of the outbox, newest fleet upsert per agent only (backup kept, refused past the cap), events stamped with the project id and a deterministic eventId so a replay dedupes; with a project id every event carries projectId and fleet upserts are skipped; a 403 on an upsert, or on an event naming another project, dead-letters it; never sends an upsert older than one accepted (`fleet.sent.json`); unsent lines go back in front; write lock on every append and rewrite; `MC_NO_FLUSH=1` queues only; warns when the installed copy is older |
 | `scripts/boot-sweep.sh [--dry-run] [--no-wait] [--since <epoch> [--lanes <paths>]]` | after a host restart, nudges standing lanes that ran no turn since boot to re-arm their `/loop` (`references/boot-sweep.md`) |
+| `scripts/lane-health.sh --all\|--lead <id> [--act] [--no-write] [--json\|--line]`, `sleep <id> [--apply]`, `wake <id> [--apply]` | tick step 2 (`--all --act`) and every lead loop (`--lead <id> --act --line`): per host the live agent processes, panes and host events against the ledger; one of seven words per session with a meaning line and a stop cause; records live facts, expected state, last task and stop history (`--all`: the ledger and `hostEvents[]`; `--lead`: a cache file); with `--act` resumes a healthy stopped session once and verifies it, sleeps a merged clean unknown worker, alerts once per event through `health.alerts.send`; `sleep` and `wake` stop and resume a lead on purpose (rule 27). Exit 3 when something needs a look (`references/lane-health.md`) |
+| `scripts/cm-status.sh [--detail] [--lead <id>] [--from <file>]` | the `/cm-status` view (`companions/cm-status.md`): NEEDS A LOOK box, then host, lead and the sessions it owns, each with a mark, a word and a one-line meaning; `--detail` adds pid, session id, handle, runtime, model, effort, last write and the host events log. Read-only (one `lane-health.sh --no-write` pass) |
+| `scripts/test/lane-health.sh` | stubbed orca, plugly, ssh, hostname, uptime, last, journalctl, systemctl and curl over a fake `/proc` per host: each status word, the reboot, preemption, daemon-restart and crash causes, hostEvents, auto-resume once (owner runtime, verified, never twice), the settle wait, a failed resume, a lead's child left to the lead, `--lead` and `--line`, duplicates by worktree and by session id, unknown-worker sleep and the lead-shaped unknown never slept, `sleep` and `wake`, roster.sh skipping asleep, the teardown refusal, remote and unreachable hosts, the cm-status view and the digest Fleet health section |
 | `scripts/cutover-host.sh <host> [--apply] [--lane <worker-id>]... [--except <worker-id>]... [--wait-idle-s N] [--skip-census]` | the Plugly cutover kit (`references/cutover.md`): moves one host's Claude lanes from Orca terminals to Plugly terminals, one lane at a time, in the same worktree (`claude --continue`, banner checked, handle rewritten, `/loop` nudged). Dry run by default (plan table, `rows:` counts, `look:` list, changes nothing); only the terminal running it is `skip: self`, so leave the concertmaster's own lane out with `--except` (moved by hand last); `--apply` acts, workers first and the pr-sweeper last, a busy lane is skipped, any failure rolls that lane back to an Orca terminal and stops; ends with an orphan check (exit 1 on any). Exit 0 done, 1 refused or failed or orphans, 2 usage (also `--apply` on a remote host), 3 LANE DOWN / STRANDED / interrupted mid-lane (`resume.sh`), 4 a lane skipped or not moved (re-run, read the plan); `resume.sh` stands down while it runs |
 | `scripts/cutover-hold.sh start [--hours N] \| release \| status` | holds `resume.sh` (exit 4) in THIS CM_HOME while a cutover runs on ANOTHER machine (needs util-linux `flock`: Linux only, fails closed without it): a lock whose pid is a `cutover-host-hold` stand-in process; refuses an existing lock, `release` kills only its own stand-in (`references/cutover.md` § Hold the concertmaster's resume) |
 | `scripts/test/cutover-host.sh` | stub `orca` and `plugly` (argv recorded) over a fake `/proc` and the real `live-agent.sh`, `lane-handles.sh`, `lane-journal.sh`, `spawn-verify.sh`, run twice (no CLI on `PATH`, decoy CLIs on `PATH`), stubs in the real reply shapes with a key-list guard: model and effort from the live pane, ssh target rule, real footers; dry run touches nothing; host missing from the plugly list refuses; manual (codex), dead, duplicate and self rows; happy path argv in order with the handover note before each close; busy skipped; rollback on a failed banner, create, close and nudge; LANE DOWN; orphan census; idempotent and half-done reruns; held lock; `--skip-census` guard; `no-bare-orca.sh` |

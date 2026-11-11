@@ -6,6 +6,8 @@
 #
 # Default output is the text for a chat group: terse "- " bullets, no greeting. Sections:
 # merged, deployed (and stopped deploys). Nothing in it names a host or a worker.
+# Fleet health (ledger .health from scripts/lane-health.sh --all): session counts per status word, restarts in the
+# window and "concertmaster check missing" when the last check is older than 2 lane loops; no names in the group text.
 # --full adds the rest, for the concertmaster's terminal report and never for a group:
 # needs <owner>, open follow-ups (ledger followUps[], scripts/followups.sh), stuck, and a
 # one-line fleet footer (running, hosts, open PRs).
@@ -133,9 +135,14 @@ if [ -n "$DEPLOY_WORKFLOW" ]; then
   fi
 fi
 
+# Fleet health is "missing" when the last lane-health.sh --all is older than 2 lane loops (schedule.lane_loop_minutes, 30).
+HEALTH_STALE_S="$(cm_cfg .schedule.lane_loop_minutes 30)"
+case "$HEALTH_STALE_S" in ''|*[!0-9]*) HEALTH_STALE_S=30 ;; esac
+HEALTH_STALE_S=$((10#$HEALTH_STALE_S * 120))
+
 TZ="$CM_TZ" jq -r --argjson sinceH "$SINCE_H" --argjson since "$SINCE_EPOCH" --argjson ghMerged "$MERGED_JSON" --argjson ghOpen "$OPEN_JSON" \
   --argjson ghDeploys "$GH_DEPLOYS" --argjson runsTrunc "$RUNS_TRUNC" --arg deployJob "$DEPLOY_JOB" \
-  --argjson full "$FULL" --argjson mergedLimit "$MERGED_LIMIT" --argjson openLimit "$OPEN_LIMIT" --arg project "$CM_PROJECT" --arg owner "$CM_OWNER_NAME" --arg tzl "$CM_TZ_LABEL" '
+  --argjson healthStaleS "$HEALTH_STALE_S" --argjson full "$FULL" --argjson mergedLimit "$MERGED_LIMIT" --argjson openLimit "$OPEN_LIMIT" --arg project "$CM_PROJECT" --arg owner "$CM_OWNER_NAME" --arg tzl "$CM_TZ_LABEL" '
   def ts: if . == null then null
           else (tostring | sub("\\.[0-9]+"; "") | sub("\\+00:00$"; "Z") | try fromdateiso8601 catch null) end;
   def uk: if . == null then "?" else (localtime | strflocaltime("%a %H:%M")) end;
@@ -199,6 +206,19 @@ TZ="$CM_TZ" jq -r --argjson sinceH "$SINCE_H" --argjson since "$SINCE_EPOCH" --a
         (if ($dep | length) + ($unproven | length) + ($stopped | length) + ($drift | length) == 0 then "- none"
          else ((($dep | map(depline)) + $unproven + $drift + $stopped)[] | "- " + .) end) end ),
     "",
+    # Fleet health (scripts/lane-health.sh --all writes ledger .health each tick). The group text carries counts only;
+    # --full names each session that needs a look. A check older than 2 lane loops says the concertmaster check is missing.
+    ( (.health // {}) as $hl | ($hl.checkedAt | ts) as $hc
+      | "Fleet health",
+        (if $hc == null then "- not checked yet (scripts/lane-health.sh --all)"
+         else ( ($hl.summary // {}) as $s
+           | "- " + ([["running", "running"], ["idle", "idle"], ["waiting on you", "waiting on you"], ["stuck", "stuck"], ["stopped", "stopped"], ["asleep", "asleep"], ["unknown", "unknown"]]
+                     | map("\($s[.[0]] // 0) \(.[1])") | join(", ")),
+             ( [ (.hostEvents // [])[] | select(((.at | ts) // 0) >= $since and (.watched != false) and (.kind | IN("reboot", "preemption", "daemon-restart"))) ] as $ev
+               | if ($ev | length) > 0 then "- restarts in the window: \([$ev[] | select(.kind == "reboot")] | length) reboot(s), \([$ev[] | select(.kind == "preemption")] | length) preemption(s), \([$ev[] | select(.kind == "daemon-restart")] | length) daemon restart(s)" else empty end ),
+             (if (now - $hc) > $healthStaleS then "- concertmaster check missing: last run \($hl.checkedAt | ago) ago" else empty end),
+             (if $full then (($hl.attention // [])[] | "- \(.name // "?" | tostring) on \(.host // "?" | tostring): \(.word // "?" | tostring), \(.meaning // "" | tostring | gsub("[[:cntrl:]]+"; " ") | .[0:90])") else empty end) ) end),
+        "" ),
     ( if $full | not then empty else section("Needs \($owner)"; [ $workers[] | select(.state == "blocked-on-owner")
         | "\(.lane // "-") \(.task // .id | .[0:60]): \(.blockedQuestion // "see concertmaster")" ]
       + [ $asks[] | select(.state == "open") | "ask: \(.question | .[0:80]) (open \(.askedAt | ago))" ]) end ),

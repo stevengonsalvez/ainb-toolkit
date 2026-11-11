@@ -6,7 +6,8 @@
 #
 # The roster is a short view of ACTIVE work only: one row per live standing
 # lane or live worker (ledger worker state not queued, spawning, gone,
-# repurposed, retired, teardown or done: those have no worktree to resume).
+# repurposed, retired, teardown, done or asleep: none of those is resumed; an asleep
+# lead was stopped on purpose and only `lane-health.sh wake` brings it back).
 # The ledger stays the truth; the roster is rewritten whole every tick and
 # read by `/concertmaster resume` (references/resume.md).
 #
@@ -54,7 +55,7 @@ render() {
     | (if ($L.prs | type) == "object" then $L.prs else {} end) as $prs
     | [ (if ($L.workers | type) == "object" then $L.workers else {} end) | to_entries[]
         | select(.value | type == "object")
-        | select((.value.state // "running") | IN("queued", "spawning", "gone", "repurposed", "retired", "teardown", "done") | not)
+        | select((.value.state // "running") | IN("queued", "spawning", "gone", "repurposed", "retired", "teardown", "done", "asleep") | not)
         | .key as $id | .value as $w
         | { lane: ($w.lane // null),
             host: ($w.host // null),

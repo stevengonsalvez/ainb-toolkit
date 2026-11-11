@@ -130,12 +130,13 @@ if [ -z "$terms" ]; then
   echo "boot-sweep: no Claude terminals found for this project"; exit 0
 fi
 
-# only STANDING lanes of this host (ledger rows with standing==true and host local/unset) are ever
-# nudged: a dev or epic worker has no standing /loop to re-arm. The concertmaster session is nudged too
+# only STANDING lanes of this host (ledger rows with standing==true and host local/unset, never state asleep: a
+# lead put to sleep stays asleep through a reboot) are ever nudged: a dev or epic worker has no standing /loop to re-arm. The concertmaster session is nudged too
 # (below), by path or by its own ledger row. No readable ledger and no concertmaster terminal = send nothing.
 LEDGER="$CM_HOME/ledger.json"
 CM_LEDGER_PATH="$(jq -r --arg self "$CM_SELF_WORKTREE" '.workers[$self] // empty | select(.standing == true and ((.host // "local") == "local")) | (.path // .worktree // .worktreePath // empty)' "$LEDGER" 2>/dev/null | sed -E 's#/\.(/|$)#/#g; s#//+#/#g; s#(.)/+$#\1#' )"
-STANDING="$(jq -r '.workers // {} | to_entries[] | .value | select(.standing == true and ((.host // "local") == "local")) | (.path // .worktree // .worktreePath // empty)' "$LEDGER" 2>/dev/null | sed -E 's#/\.(/|$)#/#g; s#//+#/#g; s#(.)/+$#\1#' )"
+ASLEEP="$(jq -r '.workers // {} | to_entries[] | .value | select(((.host // "local") == "local") and ((.state // "") == "asleep")) | (.path // .worktree // .worktreePath // empty)' "$LEDGER" 2>/dev/null | sed -E 's#/\.(/|$)#/#g; s#//+#/#g; s#(.)/+$#\1#' )"
+STANDING="$(jq -r '.workers // {} | to_entries[] | .value | select(.standing == true and ((.host // "local") == "local") and ((.state // "") != "asleep")) | (.path // .worktree // .worktreePath // empty)' "$LEDGER" 2>/dev/null | sed -E 's#/\.(/|$)#/#g; s#//+#/#g; s#(.)/+$#\1#' )"
 if [ -z "$STANDING" ] && ! awk -F'|' '{print $2}' <<<"$terms" | grep -qE "$CM_PATH_RE"; then
   early_note "No standing local lanes found in $LEDGER (missing or unreadable ledger): nothing was nudged."
   echo "boot-sweep: no standing local lanes in the ledger, nothing to do"; exit 0
@@ -149,6 +150,8 @@ while IFS='|' read -r handle wt; do
   name="$(basename "$wt")"
   if grep -qxF -- "$wt" <<<"$dups"; then add "$name" "$handle" report "duplicate terminals in one worktree: left to resume.sh and the concertmaster"; kept=$((kept+1)); continue; fi
   normwt="$(printf '%s' "$wt" | sed -E 's#/\.(/|$)#/#g; s#//+#/#g; s#(.)/+$#\1#')"
+  # a session put to sleep on purpose (lane-health.sh sleep) is never nudged, the concertmaster's own row included
+  if [ -n "$ASLEEP" ] && grep -qxF -- "$normwt" <<<"$ASLEEP"; then add "$name" "$handle" asleep "ledger state asleep: never nudged"; continue; fi
   is_cm=0; text="$NUDGE"
   if [ -n "$CM_LEDGER_PATH" ] && [ "$normwt" = "$CM_LEDGER_PATH" ] || grep -qE "$CM_PATH_RE" <<<"$normwt"; then is_cm=1; text="$NUDGE_CM"; fi
   [ "$is_cm" = 1 ] && CM_HANDLES="$CM_HANDLES $handle"

@@ -129,7 +129,10 @@
 #     boolean on any live worker refuses as "standing state unknown". Names are
 #     never used to allow or refuse (the owner's rule); a sweeper-looking name
 #     with standing:false only prints a note. --force-standing <ask-id>
-#     overrides this one refusal and never the beads gate.
+#     overrides this one refusal and never the beads gate. A lead is never
+#     cleaned up or torn down by an agent (SKILL.md hard rule 27): only the
+#     owner cleans one up, after confirming it in that ask; an asleep lead
+#     (scripts/lane-health.sh sleep) is a standing row like any other.
 #   - OPEN FOLLOW-UPS: the worker, or a worker whose parent chain leads to it, has an
 #     open followUps[] row (scripts/followups.sh); same refusal style as the beads gate
 #   - OPEN BEADS: any live worker has beadsEpic (a non-string refuses) and any
@@ -1412,7 +1415,7 @@ if [ "$OWNER_MODE" -eq 1 ]; then
     done
     if [ -n "$SHIT" ]; then
       check standing "YES? ($SHIT)"
-      gate "standing lane ($SHIT): refused in lead mode; a standing lane is never torn down by a lead (concertmaster mode, owner-approved path only)"
+      gate "standing lane ($SHIT): refused in lead mode; a standing lane is never torn down by a lead: only $CM_OWNER_NAME cleans up a lead (concertmaster mode, after $CM_OWNER_NAME confirms; to stop it, scripts/lane-health.sh sleep)"
     else
       check standing "no (listed as a child of $OWNER; not a configured or lane-shaped name)"
     fi
@@ -1440,10 +1443,10 @@ elif [ -n "$LW" ]; then
     plan "concertmaster: set asks[$FORCE_STANDING].usedAt (single use)"
   elif [ -n "$FORCE_STANDING" ]; then
     check standing "YES ($WHY)"
-    gate "--force-standing $FORCE_STANDING is not an unused, approved remove-standing ask for $HOST:$WT: standing lane kept"
+    gate "--force-standing $FORCE_STANDING is not an unused, approved remove-standing ask for $HOST:$WT: standing lane kept (only $CM_OWNER_NAME cleans up a lead, after confirming it in that ask)"
   else
     check standing "YES ($WHY)"
-    gate "standing lane ($WHY): idle is not done, never torn down (--force-standing <ask-id> only after $CM_OWNER_NAME approves)"
+    gate "standing lane ($WHY): idle is not done, never torn down. A lead is never cleaned up or torn down by an agent: only $CM_OWNER_NAME cleans up a lead, and an agent asked to do it asks $CM_OWNER_NAME to confirm first (an approved remove-standing ask, then --force-standing <ask-id>). To stop it and keep its context, put it to sleep: scripts/lane-health.sh sleep <worker-id> --apply"
   fi
 elif [ -n "$WT" ]; then
   check standing "UNKNOWN (no ledger answer)"

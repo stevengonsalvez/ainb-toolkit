@@ -108,7 +108,8 @@ lock_held() {
   pid="$(lock_pid "$LOCK")"
   if [ -z "$pid" ]; then [ -n "$(find "$LOCK" -maxdepth 0 -mmin -1 2>/dev/null)" ]; return; fi
   kill -0 "$pid" 2>/dev/null || return 1
-  ps -p "$pid" -o args= 2>/dev/null | grep -q resume || { ps -p "$pid" -o args= >/dev/null 2>&1 && return 1; }
+  # lane-health.sh --act holds this same lock while it resumes or sleeps a session
+  ps -p "$pid" -o args= 2>/dev/null | grep -qE 'resume[.-]|lane-health' || { ps -p "$pid" -o args= >/dev/null 2>&1 && return 1; }
   return 0
 }
 # cutover_running: scripts/cutover-host.sh holds its lock. A lock with no pid yet and under a minute old is being made;
@@ -436,7 +437,7 @@ resume_dead() {
   if [ "$host" = local ] && [ -s "$LEDGER" ]; then
     # a retired or torn-down record at a reused path is not the lane: only a live standing worker counts
     jlane="$(jq -r --arg p "$path" "$NORMP"'[ (.workers // {}) | to_entries[] | select(.value | type == "object")
-        | select((.value.state // "running") | IN("queued", "spawning", "gone", "repurposed", "retired", "teardown", "done") | not)
+        | select((.value.state // "running") | IN("queued", "spawning", "gone", "repurposed", "retired", "teardown", "done", "asleep") | not)
         | select(.value.standing == true and ((.value.host // "local") == "local") and ((.value.path // "" | normp) == $p))
         | (.value.lane // empty) ] | unique | if length == 1 then .[0] else empty end' "$LEDGER" 2>/dev/null || true)"
     if [ -n "$jlane" ]; then jname="$("$LANE_JOURNAL" name "$jlane" 2>/dev/null || true)"; fi

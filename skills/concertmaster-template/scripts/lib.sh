@@ -231,7 +231,8 @@ cm_ssh_target() {
   case "$t" in *[.:]*) printf '%s\n' "$t" ;; *) printf '%s\n' "$h" ;; esac
 }
 
-# cm_resume_lock_held: resume.sh holds $CM_HOME/resume.lock right now (a live process that looks like a resume run, or a lock
+# cm_resume_lock_held: resume.sh (or lane-health.sh --act, which takes the same lock while it resumes or sleeps a session)
+# holds $CM_HOME/resume.lock right now (a live process that looks like a resume or lane-health run, or a lock
 # younger than a minute that has no pid yet). Used by cutover-host.sh and cutover-hold.sh: neither may start while a resume.sh
 # run could still create an agent.
 cm_resume_lock_held() {
@@ -240,7 +241,7 @@ cm_resume_lock_held() {
   rp="$(cat "$rl/pid" 2>/dev/null || true)"
   if [ -z "$rp" ]; then [ -n "$(find "$rl" -maxdepth 0 -mmin -1 2>/dev/null)" ]; return; fi
   kill -0 "$rp" 2>/dev/null || return 1
-  if ps -p "$rp" -o args= >/dev/null 2>&1; then ps -p "$rp" -o args= 2>/dev/null | grep -q resume; return; fi
+  if ps -p "$rp" -o args= >/dev/null 2>&1; then ps -p "$rp" -o args= 2>/dev/null | grep -qE 'resume[.-]|lane-health'; return; fi
   return 0   # ps cannot answer: assume held
 }
 

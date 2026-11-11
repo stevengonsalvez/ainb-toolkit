@@ -13,7 +13,7 @@
 # Required: schema, project.name, project.owner.name and id, github.org and
 # main_repo, worktrees.orca_repo and self_name, hosts.home. Optional keys are
 # checked only when set: the shape of the schedule, merge, messaging, lanes,
-# telemetry, ci and unlinked_prs blocks. Run it after every config edit.
+# telemetry, ci, unlinked_prs and health blocks. Run it after every config edit.
 # shellcheck disable=SC2016  # the single-quoted filters are jq programs, not shell
 set -uo pipefail
 
@@ -97,6 +97,12 @@ opt "automations.names is a list of strings"            '.automations.names' 'ty
 opt "automations.expected is a list of strings"         '.automations.expected' 'type == "array" and all(.[]; type == "string" and length > 0)'
 opt "automations.forbidden_agents is a list of strings" '.automations.forbidden_agents' 'type == "array" and all(.[]; type == "string" and length > 0)'
 opt "automations.duplicate_pattern compiles as a regex" '.automations.duplicate_pattern' 'type == "string" and (. as $re | try ("" | test($re) | true) catch false)'
+opt "health minutes, seconds and hours are whole numbers" '.health' \
+  'type == "object" and all(to_entries[] | select(.key | test("_(minutes|seconds|hours)$")); .value == null or (.value | type == "number" and . >= 0 and . == floor))'
+opt "health.cloud is gce or none"                       '.health.cloud' 'IN("gce", "none")'
+opt "health.ignore_hosts is a list of host names"         '.health.ignore_hosts' 'type == "array" and all(.[]; type == "string" and test("^[A-Za-z0-9._-]+$"))'
+opt "health.daemon_units is a list of unit names"       '.health.daemon_units' 'type == "array" and all(.[]; type == "string" and test("^[A-Za-z0-9@._:-]+$"))'
+opt "health.alerts.send is a command (or empty: inbox note only)" '.health.alerts.send' 'type == "string"'
 
 # Secrets and house style, on the raw text. Pieces are split so this file never
 # holds a literal token prefix itself.
