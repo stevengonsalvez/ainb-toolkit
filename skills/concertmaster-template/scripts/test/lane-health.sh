@@ -163,7 +163,7 @@ printf '#!/usr/bin/env bash\necho "reboot   system boot  6.8.0 Wed Nov 11 10:27 
 printf '#!/usr/bin/env bash\ncat "$STUB/powerkey-${FAKE_HOST:-local}" 2>/dev/null; exit 0\n' > "$BIN/journalctl"
 printf '#!/usr/bin/env bash\ncase "$*" in *preempted*) cat "$STUB/preempted-${FAKE_HOST:-local}" 2>/dev/null || echo FALSE ;; *provisioning-model*) echo SPOT ;; esac\n' > "$BIN/curl"
 printf '#!/usr/bin/env bash\ncase "$*" in *ActiveEnterTimestamp*) cat "$STUB/daemon-${FAKE_HOST:-local}" 2>/dev/null ;; esac\nexit 0\n' > "$BIN/systemctl"
-printf '#!/usr/bin/env bash\necho "kill $1" >> "$STUB/calls.log"\nmv "$P/$1" "$DEAD/k.$1.$RANDOM" 2>/dev/null\n' > "$BIN/fakekill"
+printf '#!/usr/bin/env bash\necho "kill $1" >> "$STUB/calls.log"\nr="$P"; [ -z "${FAKE_HOST:-}" ] || r="$PR"\nmv "$r/$1" "$DEAD/k.$1.$RANDOM" 2>/dev/null\n' > "$BIN/fakekill"
 chmod +x "$BIN"/*
 export PATH="$BIN:$PATH" ORCA_CLI_COMMAND="$BIN/orca" PLUGLY_CLI_COMMAND="$BIN/plugly"
 export CM_PROC_ROOT="$P" CM_HEALTH_REMOTE_PROC_ROOT="$PR" CM_HEALTH_KILL_CMD="$BIN/fakekill" CM_HEALTH_AGENT_BIN=/opt/claude/bin/claude
@@ -594,6 +594,247 @@ check "wake of a session whose permission mode was never recorded: refused until
 OUT="$("$LH" wake w-lead-a --apply --bypass 2>&1)"
 check "wake --apply --bypass on the owner's word: resumed with the bypass" \
   '[ "$(creates)" = 1 ] && grep "terminal create" "$STUB/calls.log" | grep -q -- "--dangerously-skip-permissions --resume $SID_A" && [ "$(jq -r ".workers[\"w-lead-a\"].state" "$CM_HOME/ledger.json")" = running ]' "$OUT"
+reset_world
+ledger "{\"w-b\":$(row "$T1" '{"host":"host-b","standing":true,"lane":"lead-b"}')}"
+mkproc "$PR" 301 1000 "$T1" "ORCA_TERMINAL_HANDLE=term_r" claude --resume "$SID_1"; transcript "$T1" "$SID_1" "$NOW"
+printf '> \n  ? for shortcuts\n' > "$STUB/pane-term_r.txt"; wlrow "$T1" 'cm:running remote' > "$STUB/wl-host-b.json"
+OUT="$("$LH" sleep w-b --apply 2>&1)"
+check "/proc on a remote host: sleep --apply checks the cwd there and stops the exact pid" \
+  'grep -q "^kill 301$" "$STUB/calls.log" && [ ! -d "$PR/301" ] && [ "$(jq -r ".workers[\"w-b\"].state" "$CM_HOME/ledger.json")" = asleep ]' "$OUT"
+
+echo "--- no /proc (macOS): ps, lsof and sysctl"
+# A host with no /proc: CM_PROC_ROOT=ps and CM_HEALTH_REMOTE_PROC_ROOT=ps force the ps scan, and these stubs serve the
+# same fake processes the way macOS shows them (ps -A tables, `ps -E` with the environment after the command, lsof
+# -d cwd, sysctl kern.boottime, an uptime with no -s). A pid dir with a `uid` file belongs to another user; one with a
+# `nolsof` file is a process whose cwd lsof cannot read (`lsof-ok` holding N: it answers N times, then not); one with a
+# `noargs` file is missing from the ps args table; `args2` is what `ps -p <pid> -o args=` shows later (pid reused).
+MACBIN="$ROOT/macbin"; mkdir -p "$MACBIN"
+cat > "$MACBIN/ps" <<'EOF'
+#!/usr/bin/env bash
+root="$P"; [ -z "${FAKE_HOST:-}" ] || root="$PR"
+orig=("$@"); env=0; o=""; pid=""
+# macOS flags: -E shows the environment after the command; -e (like -A) would list every process
+while [ $# -gt 0 ]; do case "$1" in -E) env=1 ;; -e|eww) echo "ps: -e lists every process on macOS" >&2; exit 64 ;; -o) o="$2"; shift ;; -p) pid="$2"; shift ;; esac; shift; done
+echo "ps $o${pid:+ -p $pid}" >> "$STUB/ps.log"
+argsof() { tr '\0' ' ' < "$1/cmdline" | sed 's/ $//'; }
+fmt() {   # as ps prints etime: [[dd-]hh:]mm:ss
+  if [ "$1" -ge 86400 ]; then printf '%d-%02d:%02d:%02d' $(($1 / 86400)) $(($1 % 86400 / 3600)) $(($1 % 3600 / 60)) $(($1 % 60))
+  elif [ "$1" -ge 3600 ]; then printf '%02d:%02d:%02d' $(($1 / 3600)) $(($1 % 3600 / 60)) $(($1 % 60))
+  else printf '%02d:%02d' $(($1 / 60)) $(($1 % 60)); fi
+}
+one() {
+  local d="$1" p="${1##*/}" st rest state ppid tty u bt
+  st="$(cat "$d/stat" 2>/dev/null)" || return 0; rest="${st##*) }"; read -r state ppid _ _ tty _ <<< "$rest"
+  case "$o" in
+    pid=,uid=,ppid=,stat=,tty=,etime=,ucomm=)
+      u="$(cat "$d/uid" 2>/dev/null || id -u)"; if [ "$tty" = 0 ]; then tty='??'; else tty=ttys003; fi
+      bt="$(awk '$1 == "btime" { print $2 }' "$root/stat")"
+      printf '%5s %5s %5s %-4s %-8s %11s %s\n' "$p" "$u" "$ppid" "${state}s" "$tty" "$(fmt $(( $(date +%s) - bt )))" "$(cat "$d/comm")" ;;
+    pid=,args=) [ -e "$d/noargs" ] || printf '%5s %s\n' "$p" "$(argsof "$d")" ;;
+    command=) if [ "$env" = 1 ]; then printf '%s %s\n' "$(argsof "$d")" "$(tr '\0' ' ' < "$d/environ" | sed 's/ $//')"; else argsof "$d"; echo; fi ;;
+    args=) if [ -f "$d/args2" ]; then cat "$d/args2"; else argsof "$d"; echo; fi ;;
+    pid=) printf '%5s\n' "$p" ;;
+  esac
+}
+if [ -n "$pid" ]; then
+  if [ ! -d "$root/$pid" ]; then [ "$o" = args= ] && { command -p ps "${orig[@]}"; exit; }; exit 1; fi
+  one "$root/$pid"; exit 0
+fi
+for d in "$root"/[0-9]*; do [ -d "$d" ] && one "$d"; done
+exit 0
+EOF
+cat > "$MACBIN/lsof" <<'EOF'
+#!/usr/bin/env bash
+root="$P"; [ -z "${FAKE_HOST:-}" ] || root="$PR"; pid=""
+while [ $# -gt 0 ]; do case "$1" in -p) pid="$2"; shift ;; esac; shift; done
+echo "lsof -p $pid" >> "$STUB/ps.log"
+[ -n "$pid" ] && [ -d "$root/$pid" ] && [ ! -e "$root/$pid/nolsof" ] || exit 1
+if [ -f "$root/$pid/lsof-ok" ]; then k="$(cat "$root/$pid/lsof-ok")"; [ "$k" -gt 0 ] || exit 1; echo $((k - 1)) > "$root/$pid/lsof-ok"; fi
+c="$(readlink "$root/$pid/cwd")" || exit 1
+printf 'p%s\nfcwd\nn%s\n' "$pid" "$c"
+EOF
+cat > "$MACBIN/sysctl" <<'EOF'
+#!/usr/bin/env bash
+root="$P"; [ -z "${FAKE_HOST:-}" ] || root="$PR"
+[ "$*" = "-n kern.boottime" ] || exit 1
+printf '{ sec = %s, usec = 0 } Wed Nov 11 10:27:00 2026\n' "$(awk '$1 == "btime" { print $2 }' "$root/stat")"
+EOF
+printf '#!/usr/bin/env bash\necho "uptime: illegal option -- s" >&2\nexit 1\n' > "$MACBIN/uptime"
+printf '#!/usr/bin/env bash\ncase "${1:-}" in -s|"") echo Darwin ;; *) command -p uname "$@" ;; esac\n' > "$MACBIN/uname"
+chmod +x "$MACBIN"/*
+mac() { CM_PROC_ROOT=ps CM_HEALTH_REMOTE_PROC_ROOT=ps PATH="$MACBIN:$PATH" "$@"; }
+facts() { jq -S '[.sessions[] | {key, word, meaning, cause, resume, resumeWhy, live: (.live | del(.checkedAt))}]' <<<"$1"; }
+
+reset_world
+ledger "{\"w-lead-a\":$(row "$LEAD_A" '{"standing":true,"lane":"lead-a"}'),
+         \"w-task-1\":$(row "$T1" '{"parent":"w-lead-a"}'),
+         \"w-task-2\":$(row "$T2" '{"parent":"w-lead-a"}'),
+         \"w-task-3\":$(row "$T3" '{"parent":"w-lead-a","health":{"word":"running"},"live":{"sessionId":"'"$SID_1"'","bypass":true}}'),
+         \"w-task-4\":$(row "$T4" '{"parent":"w-lead-a","state":"asleep","asleepAt":"2026-11-10T09:00:00Z"}')}"
+mkproc "$P" 101 1000 "$LEAD_A" "ORCA_TERMINAL_HANDLE=term_a" claude --dangerously-skip-permissions --resume "$SID_A" --model claude-x-1-0 --effort high
+transcript "$LEAD_A" "$SID_A" "$NOW"; printf 'working\n  esc to interrupt\n  ⏵⏵ bypass permissions on (shift+tab to cycle)\n' > "$STUB/pane-term_a.txt"
+mkproc "$P" 102 2000 "$T1" "PLUGLY_TERMINAL_HANDLE=term_1" claude --model claude-x-1-0
+transcript "$T1" "$SID_1" $((NOW - 3600)); printf '> \n  ? for shortcuts\n' > "$STUB/pane-term_1.txt"
+mkproc "$P" 103 1000 "$T2" "ORCA_TERMINAL_HANDLE=term_2" claude
+printf 'Which option?\n  1. yes\n  2. no\nEnter to select · Tab/Arrow keys to navigate · Esc to cancel\n' > "$STUB/pane-term_2.txt"
+transcript "$T3" "$SID_1" $((NOW - 1800))
+mkdir -p "$W/stray-1"; mkproc "$P" 105 1000 "$W/stray-1" "ORCA_TERMINAL_HANDLE=term_s" claude
+printf '> \n  ? for shortcuts\n' > "$STUB/pane-term_s.txt"
+FAKE_TTY=0 mkproc "$P" 106 1000 "$T4" "" claude -p "summarise"
+mkproc "$P" 150 1 / "" "/Applications/Foo App.app/Contents/MacOS/Foo Helper" --type=renderer
+FAKE_TTY=34817 mkproc "$P" 151 1000 "$T4" "ORCA_TERMINAL_HANDLE=term_z" claude --resume "$SID_A"; sed -i 's/) S /) Z /' "$P/151/stat"
+printf '{"ok":true,"result":{"worktrees":[{"path":"%s","comment":"cm:running route-guard PR #10\\ncm:child task-1"}]}}\n' "$LEAD_A" > "$STUB/wl-local.json"
+cp "$CM_HOME/ledger.json" "$ROOT/before.json"
+OUT_P="$(lhj --all --no-write)"
+OUT_M="$(mac "$LH" --all --no-write --json 2>"$ROOT/lh.err")"
+check "no /proc: every session gets the same word, meaning and live facts as the /proc scan of the same processes" \
+  '[ -n "$(facts "$OUT_M")" ] && [ "$(facts "$OUT_M")" = "$(facts "$OUT_P")" ]' "$(diff <(facts "$OUT_P") <(facts "$OUT_M") | head -n 30)$(cat "$ROOT/lh.err")"
+check "no /proc: running, idle, waiting on you, stopped, asleep and unknown, none of them because the host was not read" \
+  '[ "$(jq -r "[.sessions[] | .word] | sort | join(\",\")" <<<"$OUT_M")" = "asleep,idle,running,stopped,unknown,waiting on you" ] && [ "$(jq -r ".hosts[0].ok" <<<"$OUT_M")" = true ]' "$OUT_M"
+check "no /proc: pid, session id, orca runtime from the parent chain, model, effort, bypass and the handle from ps -E" \
+  '[ "$(jq -c ".sessions[] | select(.key == \"w-lead-a\") | .live | [.pid, .sessionId, .runtime, .model, .effort, .bypass, .handle]" <<<"$OUT_M")" = "[101,\"$SID_A\",\"orca\",\"claude-x-1-0\",\"high\",true,\"term_a\"]" ]' "$OUT_M"
+check "no /proc: the plugly runtime through node and its script path, the session id from the one transcript" \
+  '[ "$(jq -c ".sessions[] | select(.key == \"w-task-1\") | .live | [.runtime, .sessionId, .handle]" <<<"$OUT_M")" = "[\"plugly\",\"$SID_1\",\"term_1\"]" ]' "$OUT_M"
+check "no /proc: the process table came from ps -A and each agent cwd from lsof" \
+  'grep -q "^ps pid=,uid=,ppid=,stat=,tty=,etime=,ucomm=$" "$STUB/ps.log" && grep -q "^lsof -p 101$" "$STUB/ps.log"'
+check "no /proc: the boot time from sysctl kern.boottime (no uptime -s on macOS)" \
+  '[ "$(jq -r ".hosts[0].bootAt" <<<"$OUT_M")" = "$(isoz $((NOW - 86400)))" ]' "$OUT_M"
+check "a /proc host never runs the ps scan or lsof" \
+  ': > "$STUB/ps.log"; PATH="$MACBIN:$PATH" "$LH" --all --no-write >/dev/null 2>&1; ! grep -qE "^(ps pid=,uid=|lsof)" "$STUB/ps.log"' "$(cat "$STUB/ps.log")"
+check "no /proc: --no-write writes nothing" 'cmp -s "$ROOT/before.json" "$CM_HOME/ledger.json"'
+check "no /proc: a zombie agent is not a copy, and a process name with spaces does not shift the table" \
+  '[ "$(word "$OUT_M" w-task-4)" = asleep ] && [ "$(jq -r ".hosts[0].incomplete" <<<"$OUT_M")" = false ]' "$OUT_M"
+V="$(mac "$SCRIPTS/cm-status.sh" 2>&1)"
+check "no /proc: cm-status shows the lead running and only real problems in NEEDS A LOOK" \
+  'printf "%s\n" "$V" | grep -q "^  lead-a .*● running" && printf "%s\n" "$V" | head -n 1 | grep -q "^NEEDS A LOOK (3)"' "$V"
+
+reset_world
+ledger "{\"w-task-1\":$(row "$T1" '{"health":{"word":"running"},"live":{"sessionId":"'"$SID_1"'"}}')}"
+transcript "$T1" "$SID_1" $((NOW - 1800))
+mkproc "$P" 102 1000 "$T1" "ORCA_TERMINAL_HANDLE=term_1" claude --resume "$SID_1"; printf '0\n' > "$P/102/uid"
+OUT="$(mac "$LH" --all --json 2>"$ROOT/lh.err")"
+check "no /proc: another user's agent process is not this session" '[ "$(word "$OUT" w-task-1)" = stopped ]' "$OUT"
+reset_world
+ledger "{\"w-task-1\":$(row "$T1" '{"health":{"word":"running"},"live":{"sessionId":"'"$SID_1"'"}}')}"
+transcript "$T1" "$SID_1" $((NOW - 1800))
+mkproc "$P" 107 1000 "$W/stray-1" "ORCA_TERMINAL_HANDLE=term_s" claude; : > "$P/107/nolsof"
+OUT="$(mac "$LH" --all --act --json 2>"$ROOT/lh.err")"
+check "no /proc: a live agent whose cwd lsof cannot read makes the scan incomplete: unknown, nothing resumed" \
+  '[ "$(word "$OUT" w-task-1)" = unknown ] && meaning "$OUT" w-task-1 | grep -q "incomplete" && [ "$(creates)" = 0 ]' "$OUT"
+
+# no /proc and no lsof (a PATH that has every tool but lsof): the host is not read, said why, nothing resumed
+reset_world
+ledger "{\"w-task-1\":$(row "$T1" '{"health":{"word":"running"},"live":{"sessionId":"'"$SID_1"'"}}')}"
+transcript "$T1" "$SID_1" $((NOW - 1800))
+FARM="$ROOT/farm"; NOLSOF="$ROOT/macbin-nolsof"; mkdir -p "$FARM" "$NOLSOF"
+cp "$MACBIN/ps" "$MACBIN/sysctl" "$MACBIN/uptime" "$NOLSOF/"
+IFS=: read -r -a PDIRS <<< "$PATH"
+for pd in "${PDIRS[@]}"; do
+  [ -d "$pd" ] || continue
+  for f in "$pd"/*; do b="${f##*/}"; [ "$b" != lsof ] && [ -x "$f" ] && [ ! -e "$FARM/$b" ] && ln -s "$f" "$FARM/$b"; done
+done
+OUT="$(CM_PROC_ROOT=ps PATH="$NOLSOF:$FARM" "$LH" --all --act --json 2>"$ROOT/lh.err")"
+check "no /proc and no lsof: unknown with the reason, never resumed" \
+  '[ "$(word "$OUT" w-task-1)" = unknown ] && meaning "$OUT" w-task-1 | grep -q "no /proc on this host, and no ps or no lsof" && [ "$(creates)" = 0 ]' "$OUT$(cat "$ROOT/lh.err")"
+
+reset_world
+ledger "{\"w-lead-a\":$(row "$LEAD_A" '{"standing":true,"lane":"lead-a","health":{"word":"running"},"live":{"sessionId":"'"$SID_A"'","runtime":"orca","bypass":true}}'),
+         \"w-task-1\":$(row "$T1" '{"health":{"word":"idle"},"live":{"sessionId":"'"$SID_1"'","runtime":"orca","bypass":false}}'),
+         \"w-task-2\":$(row "$T2" '{"health":{"word":"idle"},"live":{"sessionId":"bbbbbbbb-0000-4000-8000-000000000002","runtime":"orca"}}')}"
+jq --arg b "$(isoz $((NOW - 86400 * 3)))" '.hosts.local = {bootAt: $b}' "$CM_HOME/ledger.json" > "$ROOT/l.json" && cp "$ROOT/l.json" "$CM_HOME/ledger.json"
+transcript "$LEAD_A" "$SID_A" $((NOW - 1200)); transcript "$T1" "$SID_1" $((NOW - 1200)); transcript "$T2" bbbbbbbb-0000-4000-8000-000000000002 $((NOW - 1200))
+setboot "$P" $((NOW - 900))
+OUT="$(mac "$LH" --all --act --json 2>"$ROOT/lh.err")"
+check "no /proc: a reboot after the last write is the cause; the recorded sessions are resumed and verified, the bypass flag only where it was" \
+  '[ "$(grep -c "terminal create .*dangerously" "$STUB/calls.log")" = 1 ] && [ "$(jq -r "[.sessions[] | .cause] | unique | join(\",\")" <<<"$OUT")" = reboot ] && [ "$(creates)" = 2 ] && [ "$(jq -r "[.actions[] | select(.result == \"resumed\")] | length" <<<"$OUT")" = 2 ]' "$OUT$(cat "$ROOT/lh.err")"
+reset_world
+ledger "{\"w-lead-a\":$(row "$LEAD_A" '{"standing":true,"lane":"lead-a"}')}"
+wlrow "$LEAD_A" 'cm:running plan' > "$STUB/wl-local.json"
+mkproc "$P" 101 2000 "$LEAD_A" "PLUGLY_TERMINAL_HANDLE=term_a" claude --dangerously-skip-permissions --resume "$SID_A" --model claude-x-1-0
+transcript "$LEAD_A" "$SID_A" "$NOW"; printf '> \n  ⏵⏵ bypass permissions on (shift+tab to cycle)\n' > "$STUB/pane-term_a.txt"
+OUT="$(mac "$LH" sleep w-lead-a --apply 2>&1)"
+check "no /proc: sleep --apply stops the exact pid after its lsof cwd check, closes the terminal, records the bypass" \
+  'grep -q "^kill 101$" "$STUB/calls.log" && grep -q "^lsof -p 101$" "$STUB/ps.log" && grep -q "^plugly terminal close .*handle=term_a" "$STUB/calls.log" \
+   && [ "$(jq -r ".workers[\"w-lead-a\"] | [.state, .live.sessionId, .live.bypass] | @tsv" "$CM_HOME/ledger.json")" = "$(printf "asleep\t%s\ttrue" "$SID_A")" ]' "$OUT"
+OUT="$(mac "$LH" wake w-lead-a --apply 2>&1)"
+check "no /proc: wake --apply resumes the same session with the bypass it had, verified, state back to running" \
+  '[ "$(creates)" = 1 ] && grep "terminal create" "$STUB/calls.log" | grep -q -- "--dangerously-skip-permissions --resume $SID_A --model claude-x-1-0" && [ "$(jq -r ".workers[\"w-lead-a\"].state" "$CM_HOME/ledger.json")" = running ]' "$OUT"
+
+# review cases for the split argv and an incomplete scan
+reset_world
+ledger "{\"w-lead-a\":$(row "$LEAD_A" '{"standing":true,"lane":"lead-a"}')}"
+mkproc "$P" 101 1000 "$LEAD_A" "ORCA_TERMINAL_HANDLE=term_a" claude --resume "$SID_A" "explain --dangerously-skip-permissions please"
+transcript "$LEAD_A" "$SID_A" "$NOW"; printf '> \n  ? for shortcuts\n' > "$STUB/pane-term_a.txt"
+OUT="$(mac "$LH" --all --no-write --json 2>"$ROOT/lh.err")"
+check "no /proc: a prompt that only mentions --dangerously-skip-permissions is not the bypass (argv is split on spaces)" \
+  '[ "$(jq -r ".sessions[0].live.bypass" <<<"$OUT")" = false ] && [ "$(jq -r ".sessions[0].live.bypass" <<<"$(lhj --all --no-write)")" = false ]' "$OUT"
+mv "$STUB/pane-term_a.txt" "$DEAD/pa.$RANDOM"
+mkproc "$P" 101 1000 "$LEAD_A" "ORCA_TERMINAL_HANDLE=term_a" claude --dangerously-skip-permissions --resume "$SID_A"
+OUT="$(mac "$LH" --all --no-write --json 2>"$ROOT/lh.err")"
+check "no /proc: a bypass flag whose pane cannot be read counts as not bypassed (a resume never widens)" '[ "$(jq -r ".sessions[0].live.bypass" <<<"$OUT")" = false ]' "$OUT"
+reset_world
+ledger "{\"w-task-1\":$(row "$T1" '{"health":{"word":"running"},"live":{"sessionId":"'"$SID_1"'"}}')}"
+transcript "$T1" "$SID_1" $((NOW - 1800))
+mkproc "$P" 102 1000 "$T1" "ORCA_TERMINAL_HANDLE=term_1" claude --resume "$SID_1"; : > "$P/102/noargs"
+OUT="$(mac "$LH" --all --act --json 2>"$ROOT/lh.err")"
+check "no /proc: a live agent missing from the ps args table makes the scan incomplete: unknown, never resumed beside it" \
+  '[ "$(word "$OUT" w-task-1)" = unknown ] && meaning "$OUT" w-task-1 | grep -q "incomplete" && [ "$(creates)" = 0 ]' "$OUT"
+reset_world
+ledger "{\"w-lead-a\":$(row "$LEAD_A" '{"standing":true,"lane":"lead-a"}')}"
+wlrow "$LEAD_A" 'cm:running plan' > "$STUB/wl-local.json"
+mkproc "$P" 101 2000 "$LEAD_A" "PLUGLY_TERMINAL_HANDLE=term_a" claude --resume "$SID_A"
+transcript "$LEAD_A" "$SID_A" "$NOW"; printf '> \n  ? for shortcuts\n' > "$STUB/pane-term_a.txt"
+mkproc "$P" 107 1000 "$W/stray-1" "ORCA_TERMINAL_HANDLE=term_s" claude; : > "$P/107/nolsof"
+OUT="$(mac "$LH" sleep w-lead-a --apply 2>&1)"
+check "sleep --apply refuses when the host scan was incomplete (a second copy may be unseen): nothing stopped" \
+  'printf "%s" "$OUT" | grep -q "scan on local was incomplete" && ! grep -q "^kill" "$STUB/calls.log" && [ "$(jq -r ".workers[\"w-lead-a\"].state" "$CM_HOME/ledger.json")" = running ]' "$OUT"
+
+for up in 3000 7200; do   # etime as mm:ss, then as hh:mm:ss
+  reset_world
+  ledger "{\"w-lead-a\":$(row "$LEAD_A" '{"standing":true,"lane":"lead-a"}')}"
+  setboot "$P" $((NOW - up))
+  mkproc "$P" 101 1000 "$LEAD_A" "ORCA_TERMINAL_HANDLE=term_a" claude --resume "$SID_A"
+  transcript "$LEAD_A" "$SID_A" $((NOW - up - 600)); transcript "$LEAD_A" "$SID_1" $((NOW - 60))
+  printf '> \n  ? for shortcuts\n' > "$STUB/pane-term_a.txt"
+  OUT="$(mac "$LH" --all --no-write --json 2>"$ROOT/lh.err")"
+  check "no /proc: the process start from ps etime ($([ "$up" -lt 3600 ] && echo mm:ss || echo hh:mm:ss)): after /clear the newer transcript is its session" \
+    '[ "$(jq -r ".sessions[0].live | [.sessionId, .sessionSource] | @tsv" <<<"$OUT")" = "$(printf "%s\tnewest-transcript" "$SID_1")" ]' "$OUT"
+done
+reset_world
+ledger "{\"w-lead-a\":$(row "$LEAD_A" '{"standing":true,"lane":"lead-a"}')}"
+mkproc "$P" 101 1000 "$LEAD_A" "ORCA_TERMINAL_HANDLE=term_a" claude "fix it, never pass --resume deadbeef here"
+transcript "$LEAD_A" "$SID_A" $((NOW - 600)); printf '> \n  ? for shortcuts\n' > "$STUB/pane-term_a.txt"
+OUT="$(mac "$LH" --all --no-write --json 2>"$ROOT/lh.err")"
+check "no /proc: --resume <word> inside a prompt is not taken for the session id (only an id-shaped word is)" \
+  '[ "$(jq -r ".sessions[0].live | [.sessionId, .sessionSource] | @tsv" <<<"$OUT")" = "$(printf "%s\ttranscript" "$SID_A")" ]' "$OUT"
+reset_world
+ledger "{\"w-task-1\":$(row "$T1" '{"health":{"word":"running"},"live":{"sessionId":"'"$SID_1"'","bypass":false}}')}"
+transcript "$T1" "$SID_1" $((NOW - 1800))
+mkproc "$P" 102 1000 "$T1" "ORCA_TERMINAL_HANDLE=term_1" claude --resume "$SID_1"; printf 'vim notes.txt\n' > "$P/102/args2"
+OUT="$(mac "$LH" --all --act --json 2>"$ROOT/lh.err")"
+check "no /proc: a pid that runs another command by the time its cwd is read makes the scan incomplete" \
+  '[ "$(word "$OUT" w-task-1)" = unknown ] && meaning "$OUT" w-task-1 | grep -q "incomplete" && [ "$(creates)" = 0 ]' "$OUT"
+reset_world
+ledger "{\"w-lead-a\":$(row "$LEAD_A" '{"standing":true,"lane":"lead-a"}')}"
+wlrow "$LEAD_A" 'cm:running plan' > "$STUB/wl-local.json"
+mkproc "$P" 101 2000 "$LEAD_A" "PLUGLY_TERMINAL_HANDLE=term_a" claude --resume "$SID_A"; echo 1 > "$P/101/lsof-ok"
+transcript "$LEAD_A" "$SID_A" "$NOW"; printf '> \n  ? for shortcuts\n' > "$STUB/pane-term_a.txt"
+OUT="$(mac "$LH" sleep w-lead-a --apply 2>&1)"
+check "no /proc: a cwd that cannot be read at the kill is left alone, state and comment put back" \
+  'printf "%s" "$OUT" | grep -q "could not be read: left alone" && ! grep -q "^kill" "$STUB/calls.log" && [ "$(jq -r ".workers[\"w-lead-a\"].state" "$CM_HOME/ledger.json")" = running ] \
+   && [ "$(jq -r ".result.worktrees[0].comment" "$STUB/wl-local.json")" = "cm:running plan" ]' "$OUT"
+
+reset_world
+ledger "{\"w-b\":$(row "$T1" '{"host":"host-b","standing":true,"lane":"lead-b"}')}"
+mkproc "$PR" 301 1000 "$T1" "ORCA_TERMINAL_HANDLE=term_r" claude --resume "$SID_1"; transcript "$T1" "$SID_1" "$NOW"
+printf '  esc to interrupt\n' > "$STUB/pane-term_r.txt"
+wlrow "$T1" 'cm:running remote' > "$STUB/wl-host-b.json"
+OUT="$(mac "$LH" --all --no-write --json 2>"$ROOT/lh.err")"
+check "no /proc on a remote host: read over ssh with ps and lsof there" \
+  '[ "$(word "$OUT" w-b)" = running ] && [ "$(jq -r ".sessions[0].live.handle" <<<"$OUT")" = term_r ] && grep -q "^ssh host-b" "$STUB/calls.log"' "$OUT$(cat "$ROOT/lh.err")"
+OUT="$(mac "$LH" sleep w-b --apply 2>&1)"
+check "no /proc on a remote host: sleep --apply checks the cwd there with lsof and stops the exact pid" \
+  'grep -q "^kill 301$" "$STUB/calls.log" && [ ! -d "$PR/301" ] && [ "$(jq -r ".workers[\"w-b\"].state" "$CM_HOME/ledger.json")" = asleep ]' "$OUT"
 
 echo "--- cm-status view"
 reset_world
