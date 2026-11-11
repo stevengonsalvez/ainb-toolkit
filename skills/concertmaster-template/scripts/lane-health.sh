@@ -228,7 +228,7 @@ lh_probe() {
   }
   local now got boot up lastx pk pm sp u t e d pid stat rest state ppid tty argv arg comm agent cwd sid src model eff byp
   local headless i n kv hp ho sph sho h rt anc depth acomm acmd a1 a1d st2 r2 top br dirty ref merged onmain head s tdir tm p stt pst hz
-  local scan et a psnow cmd2 nsf
+  local scan et a psnow cmd2 nsf cut
   local -a items lps_pids lps_ppid lps_comm lps_args lps_stat lps_tty lps_et lps_adup
   now="$(date +%s)"
   got="$(hostname -s 2>/dev/null || hostname 2>/dev/null)"; got="$(printf '%s' "${got%%.*}" | tr '[:upper:]' '[:lower:]')"
@@ -315,12 +315,10 @@ lh_probe() {
       read -r -a argv <<< "${lps_args[$pid]:-}"
       comm="${lps_comm[$pid]:-}"
       if [ "${#argv[@]}" -eq 0 ]; then
-        # no argv for a live process on a terminal (its name may not say agent: a native install can show a version
-        # number), or for a headless one named like an agent or an interpreter: the scan is incomplete, never "no agent
-        # here"; a process gone between the two ps calls is simply gone
-        a=1
-        if [ "$headless" = 1 ]; then case "$comm" in node|nodejs|bun|deno) ;; *) a="$(_lhagent "$comm" "$comm")" ;; esac; fi
-        if [ -n "$a" ] && ps -p "$pid" -o pid= >/dev/null 2>&1; then printf 'W\tunreadable\tcmdline of %s\n' "$pid"; fi
+        # no argv for a live process of this user, on a terminal or not (its name may not say agent: a native install
+        # can show a version number, and a headless agent is a copy): the scan is incomplete, never "no agent here"; a
+        # process gone between the two ps calls is simply gone
+        if ps -p "$pid" -o pid= >/dev/null 2>&1; then printf 'W\tunreadable\tcmdline of %s\n' "$pid"; fi
         continue
       fi
     fi
@@ -346,7 +344,23 @@ lh_probe() {
     cwd="${cwd%/}"; [ -n "$cwd" ] || cwd=/
     sid=""; src=""; model=""; eff=""; byp=0; nsf=0
     n="${#argv[@]}"; i=0
+    # split argv (no /proc): flags are read only up to the first positional word (the prompt); a --resume, --model or
+    # --effort after it may be prompt text. An unknown flag's value also ends the flags, which only reads fewer of them
+    cut="$n"
+    if [ "$scan" = ps ]; then
+      i=1
+      case "${argv[0]##*/}" in node|nodejs|bun|deno) while [ "$i" -lt "$n" ] && [ "${argv[$i]#-}" != "${argv[$i]}" ]; do i=$((i + 1)); done; i=$((i + 1)) ;; esac
+      while [ "$i" -lt "$n" ]; do
+        case "${argv[$i]}" in
+          --resume|-r|--session-id|--model|--effort|--permission-mode|--fallback-model|--add-dir|--settings|--mcp-config) i=$((i + 2)) ;;
+          -*) i=$((i + 1)) ;;
+          *) cut="$i"; break ;;
+        esac
+      done
+      i=0
+    fi
     while [ "$i" -lt "$n" ]; do
+      [ "$i" -lt "$cut" ] || case "${argv[$i]}" in --resume*|-r|--session-id*|--model*|--effort*) i=$((i + 1)); continue ;; esac
       case "${argv[$i]}" in
         --resume|-r|--session-id) nsf=$((nsf + 1)); [ $((i + 1)) -lt "$n" ] && { sid="${argv[$((i + 1))]}"; src=cmdline; } ;;
         --resume=*|--session-id=*) nsf=$((nsf + 1)); sid="${argv[$i]#*=}"; src=cmdline ;;
@@ -1328,7 +1342,7 @@ if [ "$MODE" = sleep ] || [ "$MODE" = wake ]; then
   down="$(jq -r '[.[] | select(.ok | not) | .host] | join(", ")' "$TMP/hosts.json")"
   [ -z "$down" ] || echo "wake $TARGET: note: host(s) $down did not answer, so a copy there cannot be ruled out"
   part="$(jq -r '[.[] | select(.ok and (.incomplete // false)) | .host] | join(", ")' "$TMP/hosts.json")"
-  [ -z "$part" ] || echo "wake $TARGET: note: the process scan of $part was incomplete, so a copy there cannot be ruled out"
+  [ -z "$part" ] || { echo "wake $TARGET: the process scan of $part was incomplete, so a copy there cannot be ruled out: nothing done"; exit 3; }
   # the permission mode it slept in: never widened. Unrecorded (slept before it was kept): the owner says which
   rec="$(jq -r '.live.bypass | if type == "boolean" then tostring else "" end' <<<"$s")"
   case "$rec:$WAKE_BYP" in

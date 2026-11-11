@@ -839,6 +839,22 @@ mkproc "$P" 102 1000 "$T1" "ORCA_TERMINAL_HANDLE=term_1" claude --resume "$SID_1
 OUT="$(mac "$LH" --all --act --json 2>"$ROOT/lh.err")"
 check "no /proc: a live pid whose command cannot be read again after its cwd makes the scan incomplete" \
   '[ "$(word "$OUT" w-task-1)" = unknown ] && meaning "$OUT" w-task-1 | grep -q "incomplete" && [ "$(creates)" = 0 ]' "$OUT"
+reset_world
+ledger "{\"w-task-1\":$(row "$T1" '{"health":{"word":"running"},"live":{"sessionId":"'"$SID_1"'","bypass":false}}')}"
+transcript "$T1" "$SID_1" $((NOW - 1800))
+FAKE_TTY=0 mkproc "$P" 502 1000 "$T1" "" /opt/claude/versions/2.0.50 -p --resume "$SID_1" "summarise"; : > "$P/502/noargs"
+OUT="$(mac "$LH" --all --act --json 2>"$ROOT/lh.err")"
+check "no /proc: a headless process missing from the args table makes the scan incomplete whatever its name" \
+  '[ "$(word "$OUT" w-task-1)" = unknown ] && [ "$(creates)" = 0 ]' "$OUT"
+reset_world
+ledger "{\"w-lead-a\":$(row "$LEAD_A" '{"standing":true,"lane":"lead-a"}')}"
+setboot "$P" $((NOW - 3000))
+mkproc "$P" 101 1000 "$LEAD_A" "ORCA_TERMINAL_HANDLE=term_a" claude --model claude-x-1-0 "reopen --resume $SID_1 please"
+transcript "$LEAD_A" "$SID_1" $((NOW - 3600)); transcript "$LEAD_A" "$SID_A" $((NOW - 4000))
+printf '> \n  ? for shortcuts\n' > "$STUB/pane-term_a.txt"
+OUT="$(mac "$LH" --all --no-write --json 2>"$ROOT/lh.err")"
+check "no /proc: a --resume after the prompt starts is prompt text, even naming a transcript this worktree has" \
+  '[ "$(jq -r ".sessions[0].live.sessionId" <<<"$OUT")" != "$SID_1" ] && [ "$(jq -r ".sessions[0].live.model" <<<"$OUT")" = claude-x-1-0 ]' "$OUT"
 # the bypass on a split argv: known true, known false, or not known this pass
 reset_world
 ledger "{\"w-lead-a\":$(row "$LEAD_A" '{"standing":true,"lane":"lead-a"}')}"
@@ -892,8 +908,9 @@ wlrow "$LEAD_A" 'cm:asleep 2026-11-10T09:00:00Z put to sleep by lane-health' > "
 transcript "$LEAD_A" "$SID_A" $((NOW - 7200))
 mkproc "$PR" 301 1000 "$T1" "ORCA_TERMINAL_HANDLE=term_r" claude; : > "$PR/301/nolsof"
 printf '{"ok":true,"result":{"hosts":[{"kind":"local","name":"this machine"},{"name":"host-b"}]}}\n' > "$STUB/hosts.json"
-OUT="$(mac "$LH" wake w-lead-a 2>&1)"
-check "wake notes a host whose scan was incomplete (a copy there cannot be ruled out)" 'printf "%s" "$OUT" | grep -q "process scan of host-b was incomplete"' "$OUT"
+OUT="$(mac "$LH" wake w-lead-a --apply 2>&1)"
+check "wake refuses while any host's scan is incomplete (a copy there cannot be ruled out)" \
+  'printf "%s" "$OUT" | grep -q "process scan of host-b was incomplete.*nothing done" && [ "$(creates)" = 0 ]' "$OUT"
 
 reset_world
 ledger "{\"w-lead-a\":$(row "$LEAD_A" '{"standing":true,"lane":"lead-a"}')}"
