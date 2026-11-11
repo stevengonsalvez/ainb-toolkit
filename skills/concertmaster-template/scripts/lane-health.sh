@@ -353,6 +353,7 @@ lh_probe() {
       while [ "$i" -lt "$n" ]; do
         case "${argv[$i]}" in
           --resume|-r|--session-id|--model|--effort|--permission-mode|--fallback-model|--add-dir|--settings|--mcp-config) i=$((i + 2)) ;;
+          --) cut="$i"; break ;;   # the end of the options: everything after it is an argument
           -*) i=$((i + 1)) ;;
           *) cut="$i"; break ;;
         esac
@@ -931,6 +932,8 @@ $ST[0].names as $standingNames | $ST[0].sids as $standingSids
      elif ($live.bypass | type) != "boolean" then "its permission mode (bypass or not) was never recorded, so it is not resumed automatically: resume it by hand"
      elif ($h.settled | not) then "waiting \($settle) min for the server\u0027s own resume to settle, then I retry once"
      elif any($P[]; .sid == $sid) or any($hosts[] | select(.ok) | (.headless // [])[]; .sid == $sid) then "session \($sid | .[0:8]) already runs somewhere else"
+     # a host whose scan was incomplete may hold this session unseen (hard rule 4): never resume beside it
+     elif any($hosts[]; .ok and (.incomplete // false)) then "the process scan of \([$hosts[] | select(.ok and (.incomplete // false)) | .host] | join(", ")) was incomplete, so a copy there cannot be ruled out: not resumed this pass"
      elif (($rowSid[$sid] // []) | length) > 1 then "ledger rows \($rowSid[$sid] | join(", ")) share session \($sid | .[0:8]): resume one by hand"
      else "ok" end) as $why
   | ($v + (if $v.w == "stopped" then {m: "\(causetext($epi.cause; $h; $live.runtime)); \(if $why == "ok" then "I will retry once" else $why end)"} else {} end)) as $v

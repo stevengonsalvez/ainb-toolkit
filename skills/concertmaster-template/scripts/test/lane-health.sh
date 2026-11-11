@@ -855,6 +855,22 @@ printf '> \n  ? for shortcuts\n' > "$STUB/pane-term_a.txt"
 OUT="$(mac "$LH" --all --no-write --json 2>"$ROOT/lh.err")"
 check "no /proc: a --resume after the prompt starts is prompt text, even naming a transcript this worktree has" \
   '[ "$(jq -r ".sessions[0].live.sessionId" <<<"$OUT")" != "$SID_1" ] && [ "$(jq -r ".sessions[0].live.model" <<<"$OUT")" = claude-x-1-0 ]' "$OUT"
+reset_world
+ledger "{\"w-lead-a\":$(row "$LEAD_A" '{"standing":true,"lane":"lead-a"}')}"
+setboot "$P" $((NOW - 3000))
+mkproc "$P" 101 1000 "$LEAD_A" "ORCA_TERMINAL_HANDLE=term_a" claude -- "--resume $SID_1"
+transcript "$LEAD_A" "$SID_1" $((NOW - 3600)); transcript "$LEAD_A" "$SID_A" $((NOW - 4000))
+printf '> \n  ? for shortcuts\n' > "$STUB/pane-term_a.txt"
+OUT="$(mac "$LH" --all --no-write --json 2>"$ROOT/lh.err")"
+check "no /proc: -- ends the options, so a --resume after it is an argument" '[ "$(jq -r ".sessions[0].live.sessionId" <<<"$OUT")" != "$SID_1" ]' "$OUT"
+reset_world
+ledger "{\"w-lead-a\":$(row "$LEAD_A" '{"standing":true,"lane":"lead-a","health":{"word":"running"},"live":{"sessionId":"'"$SID_A"'","runtime":"orca","bypass":false}}'),\"w-b\":$(row "$T1" '{"host":"host-b","standing":true,"lane":"lead-b"}')}"
+transcript "$LEAD_A" "$SID_A" $((NOW - 1200))
+mkproc "$PR" 301 1000 "$T1" "ORCA_TERMINAL_HANDLE=term_r" claude; : > "$PR/301/nolsof"
+printf '{"ok":true,"result":{"hosts":[{"kind":"local","name":"this machine"},{"name":"host-b"}]}}\n' > "$STUB/hosts.json"
+OUT="$(mac "$LH" --all --act --json 2>"$ROOT/lh.err")"
+check "an incomplete scan on any host stops an automatic resume elsewhere (a copy there cannot be ruled out)" \
+  '[ "$(creates)" = 0 ] && meaning "$OUT" w-lead-a | grep -q "process scan of host-b was incomplete"' "$OUT"
 # the bypass on a split argv: known true, known false, or not known this pass
 reset_world
 ledger "{\"w-lead-a\":$(row "$LEAD_A" '{"standing":true,"lane":"lead-a"}')}"
