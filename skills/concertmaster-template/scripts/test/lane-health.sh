@@ -608,7 +608,8 @@ echo "--- no /proc (macOS): ps, lsof and sysctl"
 # -d cwd, sysctl kern.boottime, an uptime with no -s). A pid dir with a `uid` file belongs to another user; one with a
 # `nolsof` file is a process whose cwd lsof cannot read (`lsof-ok` holding N: it answers N times, then not); one with a
 # `noargs` file is missing from the ps args table; `args2` is what `ps -p <pid> -o args=` shows later (pid reused), and
-# `argsfail` makes that later `ps -p <pid> -o args=` fail while the pid still runs.
+# `argsfail` makes that later `ps -p <pid> -o args=` fail while the pid still runs; `argsdup` adds a second (forged)
+# args line for the pid.
 MACBIN="$ROOT/macbin"; mkdir -p "$MACBIN"
 cat > "$MACBIN/ps" <<'EOF'
 #!/usr/bin/env bash
@@ -631,7 +632,7 @@ one() {
       u="$(cat "$d/uid" 2>/dev/null || id -u)"; if [ "$tty" = 0 ]; then tty='??'; else tty=ttys003; fi
       bt="$(awk '$1 == "btime" { print $2 }' "$root/stat")"
       printf '%5s %5s %5s %-4s %-8s %11s %s\n' "$p" "$u" "$ppid" "${state}s" "$tty" "$(fmt $(( $(date +%s) - bt )))" "$(cat "$d/comm")" ;;
-    pid=,args=) [ -e "$d/noargs" ] || printf '%5s %s\n' "$p" "$(argsof "$d")" ;;
+    pid=,args=) [ -e "$d/noargs" ] || printf '%5s %s\n' "$p" "$(argsof "$d")"; [ ! -e "$d/argsdup" ] || printf '%5s claude --resume forged\n' "$p" ;;
     command=) if [ "$env" = 1 ]; then printf '%s %s\n' "$(argsof "$d")" "$(tr '\0' ' ' < "$d/environ" | sed 's/ $//')"; else argsof "$d"; echo; fi ;;
     args=) [ ! -e "$d/argsfail" ] || exit 1; if [ -f "$d/args2" ]; then cat "$d/args2"; else argsof "$d"; echo; fi ;;
     pid=) printf '%5s\n' "$p" ;;
@@ -772,7 +773,7 @@ check "no /proc: a prompt that only mentions --dangerously-skip-permissions is n
 mv "$STUB/pane-term_a.txt" "$DEAD/pa.$RANDOM"
 mkproc "$P" 101 1000 "$LEAD_A" "ORCA_TERMINAL_HANDLE=term_a" claude --dangerously-skip-permissions --resume "$SID_A"
 OUT="$(mac "$LH" --all --no-write --json 2>"$ROOT/lh.err")"
-check "no /proc: a bypass flag whose pane cannot be read counts as not bypassed (a resume never widens)" '[ "$(jq -r ".sessions[0].live.bypass" <<<"$OUT")" = false ]' "$OUT"
+check "no /proc: a bypass flag whose pane cannot be read is not known: unrecorded, so never resumed with it automatically" '[ "$(jq -r ".sessions[0].live.bypass" <<<"$OUT")" = null ]' "$OUT"
 reset_world
 ledger "{\"w-task-1\":$(row "$T1" '{"health":{"word":"running"},"live":{"sessionId":"'"$SID_1"'"}}')}"
 transcript "$T1" "$SID_1" $((NOW - 1800))
@@ -838,6 +839,62 @@ mkproc "$P" 102 1000 "$T1" "ORCA_TERMINAL_HANDLE=term_1" claude --resume "$SID_1
 OUT="$(mac "$LH" --all --act --json 2>"$ROOT/lh.err")"
 check "no /proc: a live pid whose command cannot be read again after its cwd makes the scan incomplete" \
   '[ "$(word "$OUT" w-task-1)" = unknown ] && meaning "$OUT" w-task-1 | grep -q "incomplete" && [ "$(creates)" = 0 ]' "$OUT"
+# the bypass on a split argv: known true, known false, or not known this pass
+reset_world
+ledger "{\"w-lead-a\":$(row "$LEAD_A" '{"standing":true,"lane":"lead-a"}')}"
+wlrow "$LEAD_A" 'cm:running plan' > "$STUB/wl-local.json"
+mkproc "$P" 101 1000 "$LEAD_A" "ORCA_TERMINAL_HANDLE=term_a" claude --dangerously-skip-permissions --resume "$SID_A" --model claude-x-1-0 --effort high "then try --model cheap-1 --effort low"
+transcript "$LEAD_A" "$SID_A" $((NOW - 600))
+printf '> \n  ⏵⏵ bypass permissions on (shift+tab to cycle)\n' > "$STUB/pane-term_a.txt"
+mac "$LH" --all >/dev/null 2>&1
+printf 'Allow this edit?\n  1. Yes\n  2. No\nEnter to confirm · Esc to cancel\n' > "$STUB/pane-term_a.txt"
+OUT="$(mac "$LH" --all --json 2>"$ROOT/lh.err")"
+check "no /proc: a bypass seen with its footer stays known while the same pid sits on a menu" '[ "$(jq -r ".workers[\"w-lead-a\"].live.bypass" "$CM_HOME/ledger.json")" = true ]' "$(jq -c ".workers[\"w-lead-a\"].live" "$CM_HOME/ledger.json")"
+check "no /proc: the first --model and --effort win over ones a prompt names after them" \
+  '[ "$(jq -c ".sessions[0].live | [.model, .effort]" <<<"$OUT")" = "[\"claude-x-1-0\",\"high\"]" ]' "$OUT"
+printf '> \n  ? for shortcuts\n' > "$STUB/pane-term_a.txt"
+mac "$LH" --all >/dev/null 2>&1
+check "no /proc: the flag word on an idle pane with no bypass footer is not the bypass (the mode was cycled off)" '[ "$(jq -r ".workers[\"w-lead-a\"].live.bypass" "$CM_HOME/ledger.json")" = false ]' "$(jq -c ".workers[\"w-lead-a\"].live" "$CM_HOME/ledger.json")"
+reset_world
+ledger "{\"w-lead-a\":$(row "$LEAD_A" '{"standing":true,"lane":"lead-a"}')}"
+wlrow "$LEAD_A" 'cm:running plan' > "$STUB/wl-local.json"
+mkproc "$P" 101 2000 "$LEAD_A" "PLUGLY_TERMINAL_HANDLE=term_a" claude --dangerously-skip-permissions --resume "$SID_A"
+transcript "$LEAD_A" "$SID_A" "$NOW"
+printf 'Allow this edit?\n  1. Yes\n  2. No\nEnter to confirm · Esc to cancel\n' > "$STUB/pane-term_a.txt"
+mac "$LH" sleep w-lead-a --apply >/dev/null 2>&1
+OUT="$(mac "$LH" wake w-lead-a --apply --bypass 2>&1)"
+check "no /proc: slept on a menu, the mode is unrecorded, and wake --bypass on the owner's word brings it back with it" \
+  '[ "$(creates)" = 1 ] && grep "terminal create" "$STUB/calls.log" | grep -q -- "--dangerously-skip-permissions --resume $SID_A"' "$OUT$(jq -c ".workers[\"w-lead-a\"].live" "$CM_HOME/ledger.json")"
+reset_world
+ledger "{\"w-task-1\":$(row "$T1" '{"health":{"word":"running"},"live":{"sessionId":"'"$SID_1"'","bypass":false}}')}"
+transcript "$T1" "$SID_1" $((NOW - 1800))
+mkproc "$P" 102 1000 "$T1" "ORCA_TERMINAL_HANDLE=term_1" claude --resume "$SID_1"; : > "$P/102/argsdup"
+OUT="$(mac "$LH" --all --act --json 2>"$ROOT/lh.err")"
+check "no /proc: a pid with two args lines (a forged one) has no trusted argv: the scan is incomplete" \
+  '[ "$(word "$OUT" w-task-1)" = unknown ] && meaning "$OUT" w-task-1 | grep -q "incomplete" && [ "$(creates)" = 0 ]' "$OUT"
+reset_world
+ledger "{\"w-task-1\":$(row "$T1" '{"health":{"word":"running"},"live":{"sessionId":"'"$SID_1"'","bypass":false}}')}"
+transcript "$T1" "$SID_1" $((NOW - 1800))
+mkproc "$P" 102 1000 "$T1" "ORCA_TERMINAL_HANDLE=term_1" /opt/claude/versions/2.0.50 --resume "$SID_1"; : > "$P/102/noargs"
+OUT="$(mac "$LH" --all --act --json 2>"$ROOT/lh.err")"
+check "no /proc: a terminal process missing from the args table makes the scan incomplete whatever its name" \
+  '[ "$(word "$OUT" w-task-1)" = unknown ] && [ "$(creates)" = 0 ]' "$OUT"
+reset_world
+ledger "{\"w-task-1\":$(row "$T1" '{"health":{"word":"running"},"live":{"sessionId":"'"$SID_1"'","bypass":false}}')}"
+transcript "$T1" "$SID_1" $((NOW - 1800))
+mkdir -p "$W/odd\\tdir"; mkproc "$P" 107 1000 "$W/odd\\tdir" "ORCA_TERMINAL_HANDLE=term_s" claude
+OUT="$(mac "$LH" --all --act --json 2>"$ROOT/lh.err")"
+check "no /proc: an lsof name with an escape (a backslash) is not taken for the path: the scan is incomplete" \
+  '[ "$(word "$OUT" w-task-1)" = unknown ] && [ "$(creates)" = 0 ]' "$OUT"
+reset_world
+ledger "{\"w-lead-a\":$(row "$LEAD_A" '{"standing":true,"lane":"lead-a","state":"asleep","asleepAt":"2026-11-10T09:00:00Z","live":{"sessionId":"'"$SID_A"'","runtime":"orca","bypass":false}}'),\"w-b\":$(row "$T1" '{"host":"host-b","standing":true,"lane":"lead-b"}')}"
+wlrow "$LEAD_A" 'cm:asleep 2026-11-10T09:00:00Z put to sleep by lane-health' > "$STUB/wl-local.json"
+transcript "$LEAD_A" "$SID_A" $((NOW - 7200))
+mkproc "$PR" 301 1000 "$T1" "ORCA_TERMINAL_HANDLE=term_r" claude; : > "$PR/301/nolsof"
+printf '{"ok":true,"result":{"hosts":[{"kind":"local","name":"this machine"},{"name":"host-b"}]}}\n' > "$STUB/hosts.json"
+OUT="$(mac "$LH" wake w-lead-a 2>&1)"
+check "wake notes a host whose scan was incomplete (a copy there cannot be ruled out)" 'printf "%s" "$OUT" | grep -q "process scan of host-b was incomplete"' "$OUT"
+
 reset_world
 ledger "{\"w-lead-a\":$(row "$LEAD_A" '{"standing":true,"lane":"lead-a"}')}"
 wlrow "$LEAD_A" 'cm:running plan' > "$STUB/wl-local.json"

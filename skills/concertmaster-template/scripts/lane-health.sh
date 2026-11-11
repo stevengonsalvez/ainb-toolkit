@@ -199,9 +199,11 @@ lh_probe() {
       [ "$lu" = "$me" ] || continue
       lps_pids+=("$lp"); lps_stat[lp]="$ls"; lps_tty[lp]="$lt"; lps_et[lp]="$le"
     done <<< "$tab"
-    # a pid not in the first table, or a second line for one (a newline inside an argument), is not a process line
+    # a pid not in the first table is not a process line; a pid with two lines (a newline inside some argument can
+    # forge one) has no trusted argv at all, so an agent among them makes the scan incomplete
     while read -r lp lc; do
-      isnum_lh "$lp" && [ -n "${lps_ppid[lp]:-}" ] && [ -z "${lps_args[lp]+x}" ] && lps_args[lp]="$lc"
+      isnum_lh "$lp" && [ -n "${lps_ppid[lp]:-}" ] || continue
+      if [ -n "${lps_args[lp]+x}" ] || [ -n "${lps_adup[lp]:-}" ]; then lps_adup[lp]=1; unset 'lps_args[lp]'; else lps_args[lp]="$lc"; fi
     done <<< "$args"
     return 0
   }
@@ -227,7 +229,7 @@ lh_probe() {
   local now got boot up lastx pk pm sp u t e d pid stat rest state ppid tty argv arg comm agent cwd sid src model eff byp
   local headless i n kv hp ho sph sho h rt anc depth acomm acmd a1 a1d st2 r2 top br dirty ref merged onmain head s tdir tm p stt pst hz
   local scan et a psnow cmd2 nsf
-  local -a items lps_pids lps_ppid lps_comm lps_args lps_stat lps_tty lps_et
+  local -a items lps_pids lps_ppid lps_comm lps_args lps_stat lps_tty lps_et lps_adup
   now="$(date +%s)"
   got="$(hostname -s 2>/dev/null || hostname 2>/dev/null)"; got="$(printf '%s' "${got%%.*}" | tr '[:upper:]' '[:lower:]')"
   if [ -n "$expect" ] && [ "$got" != "$(printf '%s' "${expect%%.*}" | tr '[:upper:]' '[:lower:]')" ]; then
@@ -313,9 +315,11 @@ lh_probe() {
       read -r -a argv <<< "${lps_args[$pid]:-}"
       comm="${lps_comm[$pid]:-}"
       if [ "${#argv[@]}" -eq 0 ]; then
-        # no argv for a live process named like an agent (or an interpreter that may run one): the scan is incomplete,
-        # never "no agent here"; a process gone between the two ps calls is simply gone
-        case "$comm" in node|nodejs|bun|deno) a="$comm" ;; *) a="$(_lhagent "$comm" "$comm")" ;; esac
+        # no argv for a live process on a terminal (its name may not say agent: a native install can show a version
+        # number), or for a headless one named like an agent or an interpreter: the scan is incomplete, never "no agent
+        # here"; a process gone between the two ps calls is simply gone
+        a=1
+        if [ "$headless" = 1 ]; then case "$comm" in node|nodejs|bun|deno) ;; *) a="$(_lhagent "$comm" "$comm")" ;; esac; fi
         if [ -n "$a" ] && ps -p "$pid" -o pid= >/dev/null 2>&1; then printf 'W\tunreadable\tcmdline of %s\n' "$pid"; fi
         continue
       fi
@@ -329,8 +333,8 @@ lh_probe() {
       # no answer from a process that still runs: the scan is incomplete (never "no agent here"). Here a headless agent
       # counts too: it is a copy (Q), and losing it would let a resume start beside it
       if [ -z "$cwd" ]; then ps -p "$pid" -o pid= >/dev/null 2>&1 && printf 'W\tunreadable\tcwd of %s\n' "$pid"; continue; fi
-      # lsof writes a byte it cannot print as \xNN: that is not the real path
-      case "$cwd" in *'\x'*) printf 'W\tunreadable\tcwd of %s\n' "$pid"; continue ;; esac
+      # lsof escapes a byte it cannot print (\xNN, \n, \t): a name with a backslash is not the real path
+      case "$cwd" in *\\*) printf 'W\tunreadable\tcwd of %s\n' "$pid"; continue ;; esac
       # the table is a snapshot: the pid must still run the same command now that its cwd is read
       if ! cmd2="$(ps -ww -o args= -p "$pid" 2>/dev/null)"; then
         ps -p "$pid" -o pid= >/dev/null 2>&1 && printf 'W\tunreadable\tcmdline of %s\n' "$pid"
@@ -346,10 +350,10 @@ lh_probe() {
       case "${argv[$i]}" in
         --resume|-r|--session-id) nsf=$((nsf + 1)); [ $((i + 1)) -lt "$n" ] && { sid="${argv[$((i + 1))]}"; src=cmdline; } ;;
         --resume=*|--session-id=*) nsf=$((nsf + 1)); sid="${argv[$i]#*=}"; src=cmdline ;;
-        --model) [ $((i + 1)) -lt "$n" ] && model="${argv[$((i + 1))]}" ;;
-        --model=*) model="${argv[$i]#*=}" ;;
-        --effort) [ $((i + 1)) -lt "$n" ] && eff="${argv[$((i + 1))]}" ;;
-        --effort=*) eff="${argv[$i]#*=}" ;;
+        --model) [ $((i + 1)) -lt "$n" ] && { [ "$scan" = proc ] || [ -z "$model" ]; } && model="${argv[$((i + 1))]}" ;;
+        --model=*) { [ "$scan" = proc ] || [ -z "$model" ]; } && model="${argv[$i]#*=}" ;;
+        --effort) [ $((i + 1)) -lt "$n" ] && { [ "$scan" = proc ] || [ -z "$eff" ]; } && eff="${argv[$((i + 1))]}" ;;
+        --effort=*) { [ "$scan" = proc ] || [ -z "$eff" ]; } && eff="${argv[$i]#*=}" ;;
         --dangerously-skip-permissions|--permission-mode=bypassPermissions) byp=1 ;;
         --permission-mode) [ $((i + 1)) -lt "$n" ] && [ "${argv[$((i + 1))]}" = bypassPermissions ] && byp=1 ;;
       esac
@@ -524,6 +528,9 @@ pane_bottom() {
   [ -n "$txt" ] || return 1
   printf '%s\n' "$txt"
 }
+# has_bypass_footer <bottom text>: the bypass footer line itself (its mark first) on the bottom three lines; agent text
+# or a typed draft that names the mode is not it
+has_bypass_footer() { printf '%s\n' "$1" | tail -n 3 | grep -qiE '^[[:space:]]*⏵⏵[[:space:]]*bypass permissions on'; }
 # pane_state <bottom text>: "<state><TAB><line>"; limit (also the usage-credits menu), error, menu, busy, idle, shell, other.
 pane_state() {   # a limit or an error is judged on the bottom 6 lines only: the agent's own text above may quote one
   local b="$1" l b6
@@ -699,8 +706,7 @@ while IFS=$'\t' read -r ph ppid prt phd; do
   [ -n "$ph" ] || continue
   if b="$(pane_bottom "$ph" "$prt" "$phd")"; then
     st="$(pane_state "$b")"
-    # the footer line itself (its ⏵⏵ mark first), on the bottom lines: quoted text that names it is not the footer
-    bp=false; if printf '%s\n' "$b" | tail -n 3 | grep -qiE '^[[:space:]]*⏵⏵[[:space:]]*bypass permissions on'; then bp=true; fi
+    bp=false; if has_bypass_footer "$b"; then bp=true; fi
     jq -nc --arg k "$ph|$ppid" --arg s "${st%%$'\t'*}" --arg l "${st#*$'\t'}" --argjson bp "$bp" '{($k): {state: $s, line: ($l | .[0:120]), bypass: $bp}}' >> "$TMP/panes.ndjson"
   else
     jq -nc --arg k "$ph|$ppid" '{($k): {state: "unread", line: ""}}' >> "$TMP/panes.ndjson"
@@ -800,9 +806,11 @@ $ST[0].names as $standingNames | $ST[0].sids as $standingSids
           and ([$hl[] | select(.cwd == $q.cwd)] | length) == 0
        then . + {sid: $q.nsid, sidsrc: "newest-transcript", tmtime: $q.nmt} else . end)
     | . + {host: $hn, key: "\($hn)|\(.pid)", pane: ($panes["\($hn)|\(.pid)"] // {state: "unread", line: ""})}
-    # argv split on spaces (no /proc): a prompt that only mentions --dangerously-skip-permissions must not read as the
-    # flag, so the bypass counts only when its pane shows the bypass footer too; unread counts as not bypassed
-    | (if $splitArgv then .bypass = (.bypass and (.pane.bypass // false)) else . end)
+    # argv split on spaces (no /proc): a prompt that only names --dangerously-skip-permissions must not read as the
+    # flag. No flag word: false. The flag word and the footer: true. The flag word, an idle or busy pane and no footer:
+    # false. Otherwise (a menu, an unread pane) not known this pass: null, and the caller keeps what it knew of this pid
+    | (if $splitArgv then .bypass = (if (.bypass | not) then false elif (.pane.bypass // false) then true
+                                      elif (.pane.state | IN("idle", "busy")) then false else null end) else . end)
     | . as $p | ([ $rows[] | .path as $rp | select(.host == $p.host and ($p.cwd | under($rp))) ]
                  | max_by([(.path | length), (if (.state | IN("retired", "done", "teardown")) then 0 else 1 end)])) as $r
     | . + {row: ($r.id // null)} ] as $P
@@ -846,8 +854,9 @@ $ST[0].names as $standingNames | $ST[0].sids as $standingSids
         sessionId: ($p.sid // (if $pl.pid == $p.pid then $pl.sessionId else null end) // null),
         sessionSource: (if $p.sid != null then $p.sidsrc elif $pl.pid == $p.pid then ($pl.sessionSource // null) else null end), handle: $p.handle,
         model: ($p.model // $pl.model // $r.model), effort: ($p.effort // $pl.effort // $r.effort), agent: ($p.agent // $pl.agent // $r.agent),
-        # the permission mode of THIS process: a resume adds --dangerously-skip-permissions only when it is true
-        bypass: ($p.bypass == true),
+        # the permission mode of THIS process: a resume adds --dangerously-skip-permissions only when it is true; not
+        # known this pass (null, no /proc only): what was recorded for this same pid, else unrecorded
+        bypass: (if $p.bypass == null then (if $pl.pid == $p.pid then $pl.bypass else null end) else $p.bypass end),
         lastTranscriptAt: (($p.tmtime // ($pl.lastTranscriptAt | ep)) | iso), checkedAt: ($now | iso)}
      elif $h.ok and ($h.incomplete | not) and $n == 0 then
        $pl + {host: $r.host, pid: null, handle: null, checkedAt: ($now | iso),
@@ -960,7 +969,7 @@ $ST[0].names as $standingNames | $ST[0].sids as $standingSids
                       else "not in the ledger; not slept: \($why)" end),
             task: null, pids: ($g | map(.pid)), resume: false, sleep: ($why == "ok" and $n == 1), sleepWhy: $why,
             live: {host: $p.host, runtime: $p.runtime, pid: $p.pid, sessionId: $p.sid, sessionSource: $p.sidsrc, handle: $p.handle,
-                   model: $p.model, effort: $p.effort, agent: $p.agent, bypass: ($p.bypass == true), lastTranscriptAt: ($p.tmtime | iso), checkedAt: ($now | iso)},
+                   model: $p.model, effort: $p.effort, agent: $p.agent, bypass: $p.bypass, lastTranscriptAt: ($p.tmtime | iso), checkedAt: ($now | iso)},
             branch: $p.branch } )
     # one adopt id each, unique against EVERY ledger key (dead records too) and within this pass
     | reduce .[] as $u ({out: [], used: $allKeys};
@@ -1079,16 +1088,16 @@ resume_session() {
     bottom="$(pane_bottom "$host" "$rt" "$h" 2>/dev/null || true)"
     # the agent is up only on an idle or busy pane (a trust dialog, a menu or an error is not up), and a bypassed resume
     # shows the bypass footer too
-    pstate="$(pane_state "$bottom" | cut -f1)"; footok=0
+    pstate=unread; [ -z "$bottom" ] || pstate="$(pane_state "$bottom" | cut -f1)"; footok=0
     case "$pstate" in idle|busy) footok=1 ;; esac
-    if [ "$footok" = 1 ] && [ "$byp" = true ] && ! printf '%s\n' "$bottom" | grep -qi 'bypass permissions'; then footok=0; fi
+    if [ "$footok" = 1 ] && [ "$byp" = true ] && ! has_bypass_footer "$bottom"; then footok=0; fi
     if [ "$n" = 1 ] && [ "$tsid" = "$sid" ] && [ "$footok" = 1 ]; then RS_OK=1; RS_WHY="verified after ${waited}s: one process on $sid, $footwhat, same transcript"; return; fi
     waited=$((SECONDS - t0))
     if [ "$waited" -ge "$VERIFY_S" ]; then
       why=""
       [ "$n" = 1 ] || why="$why${why:+, }$n process(es) on the session id"
       [ "$tsid" = "$sid" ] || why="$why${why:+, }newest transcript is ${tsid:-none}"
-      [ "$footok" = 1 ] || why="$why${why:+, }no $footwhat on an idle or busy pane (pane: ${pstate:-unread})"
+      [ "$footok" = 1 ] || why="$why${why:+, }no $footwhat on an idle or busy pane (pane: $pstate)"
       RS_WHY="not verified after ${VERIFY_S}s ($why); terminal $h left open, look at it"; return
     fi
   done
@@ -1126,7 +1135,7 @@ pid_cwd() {
   if [ "$1" = proc ]; then readlink "$2/$3/cwd" 2>/dev/null; return; fi
   c="$(lsof -w -a -p "$3" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -n 1)"
   [ -n "$c" ] || return 1
-  case "$c" in *'\x'*) return 1 ;; esac
+  case "$c" in *\\*) return 1 ;; esac
   printf '%s\n' "$c"
 }
 # pid_alive <scan> <proc root> <pid>
@@ -1149,7 +1158,7 @@ else
   alive() { ps -p "$p" -o pid= >/dev/null 2>&1; }
   c="$(lsof -w -a -p "$p" -d cwd -Fn 2>/dev/null | sed -n "s/^n//p" | head -n 1)"
   if [ -z "$c" ]; then alive && exit 8; exit 0; fi
-  case "$c" in *"\\x"*) exit 8 ;; esac
+  case "$c" in *"\\"*) exit 8 ;; esac
 fi
 case "${c%/}" in "$w"|"$w"/*) ;; *) exit 4 ;; esac
 if [ -n "$k" ]; then sh -c "$k \"\$1\"" _ "$p" || true; else kill -TERM "$p" || exit 5; fi
@@ -1318,6 +1327,8 @@ if [ "$MODE" = sleep ] || [ "$MODE" = wake ]; then
   [ -z "$elsewhere" ] || { echo "wake $TARGET: session $sid already runs at $elsewhere: nothing done"; exit 3; }
   down="$(jq -r '[.[] | select(.ok | not) | .host] | join(", ")' "$TMP/hosts.json")"
   [ -z "$down" ] || echo "wake $TARGET: note: host(s) $down did not answer, so a copy there cannot be ruled out"
+  part="$(jq -r '[.[] | select(.ok and (.incomplete // false)) | .host] | join(", ")' "$TMP/hosts.json")"
+  [ -z "$part" ] || echo "wake $TARGET: note: the process scan of $part was incomplete, so a copy there cannot be ruled out"
   # the permission mode it slept in: never widened. Unrecorded (slept before it was kept): the owner says which
   rec="$(jq -r '.live.bypass | if type == "boolean" then tostring else "" end' <<<"$s")"
   case "$rec:$WAKE_BYP" in
