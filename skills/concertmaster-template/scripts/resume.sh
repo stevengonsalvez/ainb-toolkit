@@ -108,7 +108,8 @@ lock_held() {
   pid="$(lock_pid "$LOCK")"
   if [ -z "$pid" ]; then [ -n "$(find "$LOCK" -maxdepth 0 -mmin -1 2>/dev/null)" ]; return; fi
   kill -0 "$pid" 2>/dev/null || return 1
-  ps -p "$pid" -o args= 2>/dev/null | grep -q resume || { ps -p "$pid" -o args= >/dev/null 2>&1 && return 1; }
+  # lane-health.sh --act holds this same lock while it resumes or sleeps a session
+  ps -p "$pid" -o args= 2>/dev/null | grep -qE 'resume[.-]|lane-health' || { ps -p "$pid" -o args= >/dev/null 2>&1 && return 1; }
   return 0
 }
 # cutover_running: scripts/cutover-host.sh holds its lock. A lock with no pid yet and under a minute old is being made;
