@@ -483,7 +483,7 @@ expect_hostname() {
 }
 # probe_host <host> <out-file> [path...]: the probe's lines in <out-file>, a JSON host document in <out-file>.json.
 probe_host() {
-  local host="$1" out="$2" rc=0 target expect remote_proc err
+  local host="$1" out="$2" rc=0 target expect remote_proc err ecode
   shift 2
   if [ "$host" = local ]; then
     {
@@ -508,12 +508,13 @@ probe_host() {
     fi
   fi
   err="$(awk -F'\t' '$1 == "E" { print $3; exit }' "$out" 2>/dev/null)"
+  ecode="$(awk -F'\t' '$1 == "E" { print $2; exit }' "$out" 2>/dev/null)"
   if [ -z "$err" ] && [ "$rc" != 0 ]; then err="$(head -c 120 "$out.err" 2>/dev/null | tr '\t\n' '  ')"; err="probe exit $rc${err:+: $err}"; fi
-  jq -R -s --arg host "$host" --arg err "$err" '
+  jq -R -s --arg host "$host" --arg err "$err" --arg ecode "$ecode" '
     def nn: if . == null or . == "" then null else . end;
     def num: if . == null or . == "" then null else (tonumber? // null) end;
     split("\n") | map(select(length > 0) | split("\t")) as $l
-    | if $err != "" then {host: $host, ok: false, error: $err}
+    | if $err != "" then {host: $host, ok: false, error: $err, noScan: ($ecode == "no-proc")}
       else {host: $host, ok: true, error: null,
             incomplete: ([$l[] | select(.[0] == "W")] | length > 0),
             facts: ([$l[] | select(.[0] == "H") | {(.[1]): (.[2] | nn)}] | add // {}),
@@ -933,7 +934,9 @@ $ST[0].names as $standingNames | $ST[0].sids as $standingSids
      elif ($h.settled | not) then "waiting \($settle) min for the server\u0027s own resume to settle, then I retry once"
      elif any($P[]; .sid == $sid) or any($hosts[] | select(.ok) | (.headless // [])[]; .sid == $sid) then "session \($sid | .[0:8]) already runs somewhere else"
      # a host whose scan was incomplete may hold this session unseen (hard rule 4): never resume beside it
-     elif any($hosts[]; .ok and (.incomplete // false)) then "the process scan of \([$hosts[] | select(.ok and (.incomplete // false)) | .host] | join(", ")) was incomplete, so a copy there cannot be ruled out: not resumed this pass"
+     # (a host that answered but could not scan its processes at all, such as no lsof, counts too; one that did not
+     # answer is the documented host-down case, which never stops a resume on another host)
+     elif any($hosts[]; (.ok and (.incomplete // false)) or (.noScan // false)) then "the process scan of \([$hosts[] | select((.ok and (.incomplete // false)) or (.noScan // false)) | .host] | join(", ")) was incomplete, so a copy there cannot be ruled out: not resumed this pass"
      elif (($rowSid[$sid] // []) | length) > 1 then "ledger rows \($rowSid[$sid] | join(", ")) share session \($sid | .[0:8]): resume one by hand"
      else "ok" end) as $why
   | ($v + (if $v.w == "stopped" then {m: "\(causetext($epi.cause; $h; $live.runtime)); \(if $why == "ok" then "I will retry once" else $why end)"} else {} end)) as $v
@@ -1344,7 +1347,7 @@ if [ "$MODE" = sleep ] || [ "$MODE" = wake ]; then
   [ -z "$elsewhere" ] || { echo "wake $TARGET: session $sid already runs at $elsewhere: nothing done"; exit 3; }
   down="$(jq -r '[.[] | select(.ok | not) | .host] | join(", ")' "$TMP/hosts.json")"
   [ -z "$down" ] || echo "wake $TARGET: note: host(s) $down did not answer, so a copy there cannot be ruled out"
-  part="$(jq -r '[.[] | select(.ok and (.incomplete // false)) | .host] | join(", ")' "$TMP/hosts.json")"
+  part="$(jq -r '[.[] | select((.ok and (.incomplete // false)) or (.noScan // false)) | .host] | join(", ")' "$TMP/hosts.json")"
   [ -z "$part" ] || { echo "wake $TARGET: the process scan of $part was incomplete, so a copy there cannot be ruled out: nothing done"; exit 3; }
   # the permission mode it slept in: never widened. Unrecorded (slept before it was kept): the owner says which
   rec="$(jq -r '.live.bypass | if type == "boolean" then tostring else "" end' <<<"$s")"

@@ -871,6 +871,10 @@ printf '{"ok":true,"result":{"hosts":[{"kind":"local","name":"this machine"},{"n
 OUT="$(mac "$LH" --all --act --json 2>"$ROOT/lh.err")"
 check "an incomplete scan on any host stops an automatic resume elsewhere (a copy there cannot be ruled out)" \
   '[ "$(creates)" = 0 ] && meaning "$OUT" w-lead-a | grep -q "process scan of host-b was incomplete"' "$OUT"
+rm -f "$STUB/calls.log"; : > "$STUB/calls.log"
+OUT="$(CM_HEALTH_REMOTE_PROC_ROOT="$ROOT/no-such-proc" "$LH" --all --act --json 2>"$ROOT/lh.err")"
+check "a host that answers but cannot scan its processes at all also stops an automatic resume elsewhere" \
+  '[ "$(creates)" = 0 ] && meaning "$OUT" w-lead-a | grep -q "process scan of host-b was incomplete"' "$OUT"
 # the bypass on a split argv: known true, known false, or not known this pass
 reset_world
 ledger "{\"w-lead-a\":$(row "$LEAD_A" '{"standing":true,"lane":"lead-a"}')}"
