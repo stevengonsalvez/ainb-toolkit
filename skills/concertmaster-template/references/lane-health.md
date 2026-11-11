@@ -44,6 +44,7 @@ every session on it, and nothing is resumed anywhere else (hard rule 6).
 | runtime | the first parent process whose name, argv[0] basename, or interpreted script path is a `plugly` or `orca` program, else the handle variable in its environment |
 | model, effort | `--model` and `--effort` on the cmdline, else the last recorded value, else the ledger row |
 | handle | `PLUGLY_TERMINAL_HANDLE`, else `ORCA_TERMINAL_HANDLE` (both set and different: none) |
+| permission mode | `--dangerously-skip-permissions` or `--permission-mode bypassPermissions` on the cmdline, kept as `live.bypass` |
 | last write | the mtime of that session's transcript |
 | boot | `/proc/stat` btime, else `uptime -s`; `last -x` lines are kept as evidence |
 | preemption | `health.cloud: gce` asks the metadata server (`instance/preempted`, `scheduling/provisioning-model`); a `Power key pressed` line logged by the previous boot counts too |
@@ -73,8 +74,8 @@ above); a daemon restart after it is `daemon restart`; a pane last seen on a lim
 
 | case | action |
 |---|---|
-| stopped, and running, idle or waiting the pass before | ONE resume in its owner runtime: `<agent> --dangerously-skip-permissions --resume <full id> [--model m] [--effort e]` in the same worktree (`terminal create --worktree path:<path>`), the binary from `spawn-verify.sh resolve` (or `CM_HEALTH_AGENT_BIN`). First a fresh probe: any process on that worktree or id means left alone. The try is written to `$CM_HOME/cache/lane-health-attempts/` before the create is checked |
-| verify | within `health.verify_seconds`: exactly one process on that session id, `bypass permissions` on the pane, and that id's transcript is the newest in the worktree. Else `retry 1 failed`, the terminal is left open to look at |
+| stopped, and running, idle or waiting the pass before | ONE resume in its owner runtime: `<agent> [--dangerously-skip-permissions] --resume <full id> [--model m] [--effort e]` in the same worktree; the bypass flag only when `live.bypass` is true (the process it replaces ran with it): a resume never widens a session's permissions. A session whose mode was never recorded (it stopped before the mode was kept) is not resumed automatically: the meaning line says so (`terminal create --worktree path:<path>`), the binary from `spawn-verify.sh resolve` (or `CM_HEALTH_AGENT_BIN`). First a fresh probe: any process on that worktree or id means left alone. The try is written to `$CM_HOME/cache/lane-health-attempts/` before the create is checked |
+| verify | within `health.verify_seconds`: exactly one process on that session id, an idle or busy agent pane (a trust dialog, a menu or an error is not up) with `bypass permissions` on it when bypassed, and that id's transcript is the newest in the worktree. Else `retry 1 failed`, the terminal is left open to look at |
 | stopped again, or the try failed | no second try until the session has run `health.resume_reset_hours` after it; a lead alerts |
 | a boot or daemon restart under `health.settle_minutes` ago | nothing is resumed on that host this pass: the host's own resume runs first |
 | no session id, an agent other than claude, no record from before the stop | not resumed; said in the meaning line; a lead alerts |
@@ -117,18 +118,22 @@ A lead holds long context that a teardown destroys, so no agent ever cleans up o
 scripts/lane-health.sh sleep <worker-id>            # dry run: what it would stop
 scripts/lane-health.sh sleep <worker-id> --apply    # stop the process (exact pid), close its terminal, state asleep
 scripts/lane-health.sh wake  <worker-id> --apply    # resume the same session id, verified, state back
+scripts/lane-health.sh wake  <worker-id> --apply --bypass     # only for a row whose permission mode was never recorded
+scripts/lane-health.sh wake  <worker-id> --apply --no-bypass  # the same, without the bypass (also narrows a bypassed one)
 ```
 
 Sleep keeps the worktree, the branch, the transcript and the ledger row (`state: asleep`, `asleepAt`, `asleepFrom`, the
 session id under `live`), and puts a `cm:asleep <UTC> ...` line at the top of the worktree comment (`wake` takes it off):
 a lead on a host with no ledger reads its children from comments only, and that line is how it knows. It refuses a duplicate and a session with no known id (it could not be woken on the same
-session). `roster.sh`, `resume.sh`, `boot-sweep.sh` and `runtime-check.sh` skip an asleep row, so neither a tick nor a
+session). Wake resumes in the
+permission mode the session slept in (`live.bypass`) and never widens it: `--bypass` on a row recorded without it is
+refused, and a row slept before the mode was kept needs `--bypass` or `--no-bypass`. `roster.sh`, `resume.sh`, `boot-sweep.sh` and `runtime-check.sh` skip an asleep row, so neither a tick nor a
 reboot revives it; `teardown.sh` still refuses it as a standing row.
 
 ## Ledger fields
 
 Per worker (`references/ledger.md`): `live` (host, runtime, pid, sessionId, sessionSource, handle, model, effort, agent,
-lastTranscriptAt, checkedAt; kept when the process is gone, so a resume knows the id), `kind` (standing, worker,
+bypass, lastTranscriptAt, checkedAt; kept when the process is gone, so a resume knows the id), `kind` (standing, worker,
 asleep, retired), `shouldRun`, `lastTask`, `lastStopAt`, `lastStopCause`, `stopHistory[]` (last 10), `resumeAttempts`,
 and `health` (word, meaning, paneState, paneSince, stopFromHealthy, healthySince, lastResumeAt, checkedAt). Top level:
 `hostEvents[]` (`{host, at, kind: reboot|preemption|daemon-restart, evidence, watched, seenAt}`, last 200),

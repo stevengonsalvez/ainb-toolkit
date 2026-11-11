@@ -4,7 +4,7 @@
 #   scripts/lane-health.sh --all  [--act] [--no-write] [--json|--line]   # concertmaster: every lead, worker and unknown
 #   scripts/lane-health.sh --lead <worker-id> [--act] [--no-write] [--json|--line]   # a lead: its own children only
 #   scripts/lane-health.sh sleep <worker-id> [--apply]   # stop a session on purpose: process and terminal, keep the rest
-#   scripts/lane-health.sh wake  <worker-id> [--apply]   # resume an asleep session on its own session id
+#   scripts/lane-health.sh wake  <worker-id> [--apply] [--bypass|--no-bypass]   # resume an asleep session on its own id
 #
 # Per host (this machine directly, any other over ssh to cm_ssh_target, the same way live-agent.sh does) it reads:
 #   live agent processes   pid, cwd, session id (the cmdline `--resume <id>`, else the ONE transcript of that cwd),
@@ -27,9 +27,12 @@
 # touched and nothing is sent without --act. --no-write writes nothing at all (scripts/cm-status.sh uses it).
 #
 # --act (references/lane-health.md):
-#   stopped, healthy before   resumed ONCE in its owner runtime: `<agent> --dangerously-skip-permissions --resume <full id>
-#                             [--model m] [--effort e]` in the same worktree, then verified (exactly one process on that
-#                             id, the bypass footer on the pane, the same transcript written); a second stop inside
+#   stopped, healthy before   resumed ONCE in its owner runtime: `<agent> [--dangerously-skip-permissions] --resume <full id>
+#                             [--model m] [--effort e]` in the same worktree (the bypass flag only when the process it
+#                             replaces ran with it: live.bypass; a resume never widens permissions, and a session whose
+#                             mode was never recorded is not resumed), then verified (exactly one process on that id, an
+#                             idle or busy agent pane, with the bypass footer when bypassed, the same transcript
+#                             written); a second stop inside
 #                             health.resume_reset_hours of healthy running is never retried. --all resumes leads and
 #                             unowned sessions; a lead's own children are its own (`--lead`), so two checkers never race.
 #   a fresh boot or daemon    nothing is resumed on that host until health.settle_minutes (5) have passed: the host's
@@ -59,7 +62,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/lib.sh"
 
 usage() { sed -n '2,7p' "$0" >&2; exit 2; }
-MODE=""; LEAD=""; ACT=0; NOWRITE=0; OUTFMT=tsv; APPLY=0; TARGET=""
+MODE=""; LEAD=""; ACT=0; NOWRITE=0; OUTFMT=tsv; APPLY=0; TARGET=""; WAKE_BYP=""
 case "${1:-}" in
   sleep|wake) MODE="$1"; TARGET="${2:-}"; [ -n "$TARGET" ] || { cm_warn "lane-health.sh $1: a worker id is required"; usage; }; shift 2 ;;
 esac
@@ -72,6 +75,8 @@ while [ $# -gt 0 ]; do
     --json) OUTFMT=json ;;
     --line) OUTFMT=line ;;
     --apply) APPLY=1 ;;
+    --bypass) WAKE_BYP=true ;;
+    --no-bypass) WAKE_BYP=false ;;
     -h|--help) awk 'NR > 1 { if (!/^#/) exit; sub(/^# ?/, ""); print }' "$0"; exit 0 ;;
     *) cm_warn "lane-health.sh: unknown arg: $1"; usage ;;
   esac
@@ -79,6 +84,7 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$MODE" ] || usage
 case "$MODE" in sleep|wake) [ "$ACT$NOWRITE" = 00 ] || { cm_warn "lane-health.sh $MODE takes --apply only"; usage; } ;; *) [ "$APPLY" = 0 ] || usage ;; esac
+[ -z "$WAKE_BYP" ] || [ "$MODE" = wake ] || { cm_warn "lane-health.sh: --bypass and --no-bypass go with wake only"; usage; }
 # an acting pass must record what it did (the one-try count and the alert dedup live in the record)
 [ "$ACT$NOWRITE" != 11 ] || { cm_warn "lane-health.sh: --act and --no-write do not go together"; usage; }
 case "$LEAD$TARGET" in *[!A-Za-z0-9._:@-]*) cm_warn "lane-health.sh: a worker id is a plain token"; exit 2 ;; esac
@@ -239,7 +245,8 @@ lh_probe() {
         --model=*) model="${argv[$i]#*=}" ;;
         --effort) [ $((i + 1)) -lt "$n" ] && eff="${argv[$((i + 1))]}" ;;
         --effort=*) eff="${argv[$i]#*=}" ;;
-        --dangerously-skip-permissions) byp=1 ;;
+        --dangerously-skip-permissions|--permission-mode=bypassPermissions) byp=1 ;;
+        --permission-mode) [ $((i + 1)) -lt "$n" ] && [ "${argv[$((i + 1))]}" = bypassPermissions ] && byp=1 ;;
       esac
       i=$((i + 1))
     done
@@ -708,6 +715,8 @@ $ST[0].names as $standingNames | $ST[0].sids as $standingSids
         sessionId: ($p.sid // (if $pl.pid == $p.pid then $pl.sessionId else null end) // null),
         sessionSource: (if $p.sid != null then $p.sidsrc elif $pl.pid == $p.pid then ($pl.sessionSource // null) else null end), handle: $p.handle,
         model: ($p.model // $pl.model // $r.model), effort: ($p.effort // $pl.effort // $r.effort), agent: ($p.agent // $pl.agent // $r.agent),
+        # the permission mode of THIS process: a resume adds --dangerously-skip-permissions only when it is true
+        bypass: ($p.bypass == true),
         lastTranscriptAt: (($p.tmtime // ($pl.lastTranscriptAt | ep)) | iso), checkedAt: ($now | iso)}
      elif $h.ok and ($h.incomplete | not) and $n == 0 then
        $pl + {host: $r.host, pid: null, handle: null, checkedAt: ($now | iso),
@@ -765,6 +774,7 @@ $ST[0].names as $standingNames | $ST[0].sids as $standingSids
      elif $sid == null then "no session id recorded: resume it by hand"
      elif ($live.agent // null) == null then "agent unknown in the ledger: resume it by hand"
      elif $live.agent != "claude" then "agent \($live.agent): resume it by hand"
+     elif ($live.bypass | type) != "boolean" then "its permission mode (bypass or not) was never recorded, so it is not resumed automatically: resume it by hand"
      elif ($h.settled | not) then "waiting \($settle) min for the server\u0027s own resume to settle, then I retry once"
      elif any($P[]; .sid == $sid) or any($hosts[] | select(.ok) | (.headless // [])[]; .sid == $sid) then "session \($sid | .[0:8]) already runs somewhere else"
      elif (($rowSid[$sid] // []) | length) > 1 then "ledger rows \($rowSid[$sid] | join(", ")) share session \($sid | .[0:8]): resume one by hand"
@@ -819,7 +829,7 @@ $ST[0].names as $standingNames | $ST[0].sids as $standingSids
                       else "not in the ledger; not slept: \($why)" end),
             task: null, pids: ($g | map(.pid)), resume: false, sleep: ($why == "ok" and $n == 1), sleepWhy: $why,
             live: {host: $p.host, runtime: $p.runtime, pid: $p.pid, sessionId: $p.sid, sessionSource: $p.sidsrc, handle: $p.handle,
-                   model: $p.model, effort: $p.effort, agent: $p.agent, lastTranscriptAt: ($p.tmtime | iso), checkedAt: ($now | iso)},
+                   model: $p.model, effort: $p.effort, agent: $p.agent, bypass: ($p.bypass == true), lastTranscriptAt: ($p.tmtime | iso), checkedAt: ($now | iso)},
             branch: $p.branch } )
     # one adopt id each, unique against EVERY ledger key (dead records too) and within this pass
     | reduce .[] as $u ({out: [], used: $allKeys};
@@ -899,9 +909,11 @@ mark_attempt() { # <session key>: written BEFORE the create is checked, so a kil
   f="$MARKS/$(printf '%s' "$1" | tr -c 'A-Za-z0-9._-' '_')"
   printf '%s\n%s\n' "$1" "$NOW" > "$f" 2>/dev/null || true
 }
-# resume_session <key> <host> <path> <sid> <runtime> <model> <effort>: sets RS_OK (1 verified) and RS_WHY
+# resume_session <key> <host> <path> <sid> <runtime> <model> <effort> <bypass true|false>: sets RS_OK (1 verified) and
+# RS_WHY. --dangerously-skip-permissions is added only when the process it replaces ran with it (bypass true): a resume
+# never widens a session's permissions (the callers never pass true for a mode that was not recorded).
 resume_session() {
-  local key="$1" host="$2" path="$3" sid="$4" rt="$5" model="$6" eff="$7" bin cmd cli out h waited n bottom tsid why
+  local key="$1" host="$2" path="$3" sid="$4" rt="$5" model="$6" eff="$7" byp="${8:-false}" bin cmd cli out h waited n bottom tsid why footwhat pstate footok
   local -a hs
   RS_OK=0; RS_WHY=""; RS_HANDLE=""
   if why="$(others_acting)"; then RS_WHY="$why: not resumed this pass"; return; fi
@@ -912,7 +924,11 @@ resume_session() {
   bin="$(agent_bin "$host" | head -n 1)"
   case "$bin" in /*) ;; *) RS_WHY="no working agent binary found on $host (spawn-verify.sh resolve)"; return ;; esac
   case "$bin" in *[!A-Za-z0-9._/+-]*) RS_WHY="agent binary path \"$bin\" holds characters a terminal command must not carry"; return ;; esac
-  cmd="$bin --dangerously-skip-permissions --resume $sid"
+  if [ "$byp" = true ]; then
+    cmd="$bin --dangerously-skip-permissions --resume $sid"; footwhat='bypass footer'
+  else
+    cmd="$bin --resume $sid"; footwhat='agent footer'
+  fi
   case "$model" in [A-Za-z]*) case "$model" in *[!A-Za-z0-9._-]*) ;; *) cmd="$cmd --model $model" ;; esac ;; esac
   case "$eff" in [a-z]*) case "$eff" in *[!a-z]*) ;; *) cmd="$cmd --effort $eff" ;; esac ;; esac
   cli="$(cli_for "$rt")" || { RS_WHY="no CLI for runtime $rt"; return; }
@@ -930,13 +946,18 @@ resume_session() {
     n="$(jq -r --arg s "$sid" 'if .ok and ((.incomplete // false) | not) then [(.procs[], (.headless // [])[]) | select(.sid == $s)] | length else "x" end' "$TMP/rv-$$.json" 2>/dev/null)"
     tsid="$(jq -r --arg p "$path" 'if .ok then (.trans[$p].newest // "") else "" end' "$TMP/rv-$$.json" 2>/dev/null)"
     bottom="$(pane_bottom "$host" "$rt" "$h" 2>/dev/null || true)"
-    if [ "$n" = 1 ] && [ "$tsid" = "$sid" ] && printf '%s\n' "$bottom" | grep -qi 'bypass permissions'; then RS_OK=1; RS_WHY="verified after ${waited}s: one process on $sid, bypass footer, same transcript"; return; fi
+    # the agent is up only on an idle or busy pane (a trust dialog, a menu or an error is not up), and a bypassed resume
+    # shows the bypass footer too
+    pstate="$(pane_state "$bottom" | cut -f1)"; footok=0
+    case "$pstate" in idle|busy) footok=1 ;; esac
+    if [ "$footok" = 1 ] && [ "$byp" = true ] && ! printf '%s\n' "$bottom" | grep -qi 'bypass permissions'; then footok=0; fi
+    if [ "$n" = 1 ] && [ "$tsid" = "$sid" ] && [ "$footok" = 1 ]; then RS_OK=1; RS_WHY="verified after ${waited}s: one process on $sid, $footwhat, same transcript"; return; fi
     waited=$((SECONDS - t0))
     if [ "$waited" -ge "$VERIFY_S" ]; then
       why=""
       [ "$n" = 1 ] || why="$why${why:+, }$n process(es) on the session id"
       [ "$tsid" = "$sid" ] || why="$why${why:+, }newest transcript is ${tsid:-none}"
-      printf '%s\n' "$bottom" | grep -qi 'bypass permissions' || why="$why${why:+, }no bypass footer on the pane"
+      [ "$footok" = 1 ] || why="$why${why:+, }no $footwhat on an idle or busy pane (pane: ${pstate:-unread})"
       RS_WHY="not verified after ${VERIFY_S}s ($why); terminal $h left open, look at it"; return
     fi
   done
@@ -1028,7 +1049,8 @@ if [ "$ACT" = 1 ]; then
     fi
     if [ "$(jq -r '.resume' <<<"$s")" = true ]; then
       resume_session "$k" "$(jq -r '.host' <<<"$s")" "$(jq -r '.path' <<<"$s")" "$(jq -r '.live.sessionId // ""' <<<"$s")" \
-        "$(jq -r '.live.runtime // ""' <<<"$s")" "$(jq -r '.live.model // ""' <<<"$s")" "$(jq -r '.live.effort // ""' <<<"$s")"
+        "$(jq -r '.live.runtime // ""' <<<"$s")" "$(jq -r '.live.model // ""' <<<"$s")" "$(jq -r '.live.effort // ""' <<<"$s")" \
+        "$(jq -r 'if .live.bypass == true then "true" else "false" end' <<<"$s")"
       case "$RS_OK" in
         1) action "$k" resume resumed "$RS_WHY" "$(jq -nc --arg h "$RS_HANDLE" '{handle: $h, attempted: true}')" ;;
         2) action "$k" resume skipped "$RS_WHY" ;;
@@ -1115,9 +1137,17 @@ if [ "$MODE" = sleep ] || [ "$MODE" = wake ]; then
   [ -z "$elsewhere" ] || { echo "wake $TARGET: session $sid already runs at $elsewhere: nothing done"; exit 3; }
   down="$(jq -r '[.[] | select(.ok | not) | .host] | join(", ")' "$TMP/hosts.json")"
   [ -z "$down" ] || echo "wake $TARGET: note: host(s) $down did not answer, so a copy there cannot be ruled out"
-  if [ "$APPLY" = 0 ]; then echo "wake $TARGET (dry run): resume session $sid in $path on $host; add --apply"; exit 0; fi
+  # the permission mode it slept in: never widened. Unrecorded (slept before it was kept): the owner says which
+  rec="$(jq -r '.live.bypass | if type == "boolean" then tostring else "" end' <<<"$s")"
+  case "$rec:$WAKE_BYP" in
+    true:|true:true|:true) WB=true ;;
+    false:|false:false|true:false|:false) WB=false ;;
+    false:true) echo "wake $TARGET: it ran without --dangerously-skip-permissions, and wake never widens that: nothing done"; exit 3 ;;
+    *) echo "wake $TARGET: its permission mode was never recorded: add --bypass or --no-bypass to say which it ran in"; exit 3 ;;
+  esac
+  if [ "$APPLY" = 0 ]; then echo "wake $TARGET (dry run): resume session $sid in $path on $host$([ "$WB" = true ] && echo " with --dangerously-skip-permissions"); add --apply"; exit 0; fi
   take_resume_lock || { echo "wake $TARGET: resume.sh is running: nothing done"; exit 4; }
-  resume_session "$TARGET" "$host" "$path" "$sid" "$(jq -r '.live.runtime // ""' <<<"$s")" "$(jq -r '.live.model // ""' <<<"$s")" "$(jq -r '.live.effort // ""' <<<"$s")"
+  resume_session "$TARGET" "$host" "$path" "$sid" "$(jq -r '.live.runtime // ""' <<<"$s")" "$(jq -r '.live.model // ""' <<<"$s")" "$(jq -r '.live.effort // ""' <<<"$s")" "$WB"
   [ "$RS_OK" = 1 ] || { echo "wake $TARGET: $RS_WHY (state stays asleep)"; exit 3; }
   # shellcheck disable=SC2016
   cm_ledger_write '.workers[$id] |= (. + {state: (.asleepFrom // "running"), asleepAt: null, updatedAt: $now}) | .updatedAt = $now' --arg id "$TARGET" --arg now "$NOWI" || exit 1

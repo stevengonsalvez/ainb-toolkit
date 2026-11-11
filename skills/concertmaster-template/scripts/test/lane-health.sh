@@ -125,7 +125,11 @@ case "$1 $2" in
       hv=ORCA_TERMINAL_HANDLE; [ "$kind" = plugly ] && hv=PLUGLY_TERMINAL_HANDLE
       mkproc "$root" $((9000 + n)) "$ppid" "$path" "$hv=$h" $cmd
       transcript "$path" "$sid" "$(date +%s)"
-      printf '> \n  ⏵⏵ bypass permissions on (shift+tab to cycle)\n' > "$STUB/pane-$h.txt"
+      if [ -f "$STUB/resume-menu" ]; then printf 'Do you trust the files in this folder?\n  1. Yes, proceed\n  2. No, exit\nEnter to confirm · Esc to cancel\n' > "$STUB/pane-$h.txt"
+      else case " $cmd " in
+        *" --dangerously-skip-permissions "*) printf '> \n  ⏵⏵ bypass permissions on (shift+tab to cycle)\n' > "$STUB/pane-$h.txt" ;;
+        *) printf '> \n  ? for shortcuts\n' > "$STUB/pane-$h.txt" ;;
+      esac; fi
     fi
     printf '{"ok":true,"result":{"terminal":{"handle":"%s"}}}\n' "$h" ;;
   "terminal close") echo '{"ok":true,"result":{"closed":true}}' ;;
@@ -253,7 +257,7 @@ check "cause crash: no boot or restart after its last write" '[ "$(jq -r ".sessi
 
 echo "--- auto-resume once"
 reset_world
-ledger "{\"w-lead-a\":$(row "$LEAD_A" '{"standing":true,"lane":"lead-a","health":{"word":"running","healthySince":"2026-11-11T00:00:00Z"},"live":{"sessionId":"'"$SID_A"'","runtime":"plugly","model":"claude-x-1-0","effort":"high"}}')}"
+ledger "{\"w-lead-a\":$(row "$LEAD_A" '{"standing":true,"lane":"lead-a","health":{"word":"running","healthySince":"2026-11-11T00:00:00Z"},"live":{"sessionId":"'"$SID_A"'","runtime":"plugly","model":"claude-x-1-0","effort":"high","bypass":true}}')}"
 jq --arg b "$(isoz $((NOW - 86400 * 3)))" '.hosts.local = {bootAt: $b}' "$CM_HOME/ledger.json" > "$ROOT/l.json" && cp "$ROOT/l.json" "$CM_HOME/ledger.json"
 transcript "$LEAD_A" "$SID_A" $((NOW - 1200))
 setboot "$P" $((NOW - 120))
@@ -278,7 +282,7 @@ check "the same event never alerts twice" '[ "$(grep -c "lead lead-a on local is
 export CM_NOW="$NOW"
 # a resume that does not come up: one try, failed, alerted
 reset_world
-ledger "{\"w-lead-a\":$(row "$LEAD_A" '{"standing":true,"lane":"lead-a","health":{"word":"idle"},"live":{"sessionId":"'"$SID_A"'","runtime":"orca"}}')}"
+ledger "{\"w-lead-a\":$(row "$LEAD_A" '{"standing":true,"lane":"lead-a","health":{"word":"idle"},"live":{"sessionId":"'"$SID_A"'","runtime":"orca","bypass":false}}')}"
 transcript "$LEAD_A" "$SID_A" $((NOW - 1200)); touch "$STUB/resume-dies"
 OUT="$(lhj --all --act)"
 check "a resume that never shows a process: failed, counted, alerted" \
@@ -293,7 +297,7 @@ OUT="$(lhj --all --act)"
 check "two transcripts and no recorded id: not resumed, said plainly" '[ "$(creates)" = 0 ] && meaning "$OUT" w-lead-a | grep -q "no session id recorded"'
 # a child of a live lead is the lead's to resume
 reset_world
-ledger "{\"w-lead-a\":$(row "$LEAD_A" '{"standing":true,"lane":"lead-a"}'),\"w-task-1\":$(row "$T1" '{"parent":"w-lead-a","health":{"word":"running"},"live":{"sessionId":"'"$SID_1"'"}}')}"
+ledger "{\"w-lead-a\":$(row "$LEAD_A" '{"standing":true,"lane":"lead-a"}'),\"w-task-1\":$(row "$T1" '{"parent":"w-lead-a","health":{"word":"running"},"live":{"sessionId":"'"$SID_1"'","bypass":false}}')}"
 mkproc "$P" 101 1000 "$LEAD_A" "ORCA_TERMINAL_HANDLE=term_a" claude --resume "$SID_A"; printf '  esc to interrupt\n' > "$STUB/pane-term_a.txt"
 transcript "$T1" "$SID_1" $((NOW - 1200))
 OUT="$(lhj --all --act)"
@@ -397,7 +401,7 @@ check "a remote host is read over ssh; its pane through --environment" \
   '[ "$(word "$OUT" w-b)" = running ] && grep -q "^ssh host-b" "$STUB/calls.log" && grep -q "terminal read host=host-b handle=term_r" "$STUB/calls.log"' "$OUT"
 check "an unreachable host: unknown, host down" '[ "$(word "$OUT" w-c)" = unknown ] && meaning "$OUT" w-c | grep -q "did not answer"'
 reset_world
-ledger "{\"w-c\":$(row "$T2" '{"host":"host-c","standing":true,"health":{"word":"running"},"live":{"sessionId":"'"$SID_1"'","runtime":"orca"}}')}"
+ledger "{\"w-c\":$(row "$T2" '{"host":"host-c","standing":true,"health":{"word":"running"},"live":{"sessionId":"'"$SID_1"'","runtime":"orca","bypass":false}}')}"
 transcript "$T2" "$SID_1" $((NOW - 1800)); touch "$STUB/ssh-down-host-c"
 OUT="$(lhj --all --act)"
 check "--act with the host down: never resumed anywhere, and the last verdict is kept" \
@@ -479,7 +483,7 @@ printf '{"ok":true,"result":{"worktrees":[{"path":"%s","comment":"cm:running\\nc
 OUT="$(lhj --all --act)"
 check "a row no ledger parent names, but a lead comment claims: left to that lead" '[ "$(creates)" = 0 ] && meaning "$OUT" w-task-1 | grep -q "its lead far-lead resumes it"' "$OUT"
 reset_world
-ledger "{\"w-lead-a\":$(row "$LEAD_A" '{"standing":true,"lane":"lead-a","health":{"word":"running"},"live":{"sessionId":"'"$SID_A"'"}}')}"
+ledger "{\"w-lead-a\":$(row "$LEAD_A" '{"standing":true,"lane":"lead-a","health":{"word":"running"},"live":{"sessionId":"'"$SID_A"'","bypass":false}}')}"
 transcript "$LEAD_A" "$SID_A" $((NOW - 1800))
 OUT="$(CM_HEALTH_RUN_BUDGET_S=10 "$LH" --all --act --json 2>/dev/null)"
 check "a resume whose worst case would pass the run budget is deferred, not started" \
@@ -526,13 +530,70 @@ OUT="$(lhj --all)"
 check "a recorded session id is not carried to a new process; the newest transcript written since it started is its session" \
   '[ "$(jq -r ".sessions[0].live.sessionId" <<<"$OUT")" = "$SID_1" ]' "$OUT"
 reset_world
-ledger "{\"w-a\":$(row "$T1" '{"health":{"word":"running"},"live":{"sessionId":"'"$SID_1"'"}}'),\"w-b\":$(row "$T2" '{"host":"host-b","health":{"word":"running"},"live":{"sessionId":"'"$SID_1"'"}}')}"
+ledger "{\"w-a\":$(row "$T1" '{"health":{"word":"running"},"live":{"sessionId":"'"$SID_1"'","bypass":false}}'),\"w-b\":$(row "$T2" '{"host":"host-b","health":{"word":"running"},"live":{"sessionId":"'"$SID_1"'","bypass":false}}')}"
 transcript "$T1" "$SID_1" $((NOW - 1800))
 OUT="$(lhj --all --act)"
 check "two ledger rows on one session id: neither is resumed" '[ "$(creates)" = 0 ] && meaning "$OUT" w-a | grep -q "share session"' "$OUT"
 jq '.health = {checkedAt: "'"$(isoz "$NOW")"'", summary: {}} | .hostEvents = [{host: "local", at: "'"$(isoz $((NOW - 600)))"'", kind: "reboot", watched: false}]' "$CM_HOME/ledger.json" > "$ROOT/l.json" && cp "$ROOT/l.json" "$CM_HOME/ledger.json"
 D="$(CM_DIGEST_GH_TIMEOUT=1 "$SCRIPTS/digest.sh" 2>/dev/null)"
 check "digest: a first-seen boot (not watched) is not counted as a restart" '! printf "%s\n" "$D" | grep -q "restarts in the window"' "$D"
+
+
+echo "--- a resume keeps the permission mode (it never widens it)"
+reset_world
+ledger "{\"w-lead-a\":$(row "$LEAD_A" '{"standing":true,"lane":"lead-a","health":{"word":"running"},"live":{"sessionId":"'"$SID_A"'","runtime":"orca","bypass":true}}'),
+         \"w-task-1\":$(row "$T1" '{"health":{"word":"idle"},"live":{"sessionId":"'"$SID_1"'","runtime":"orca","bypass":false}}'),
+         \"w-task-2\":$(row "$T2" '{"health":{"word":"idle"},"live":{"sessionId":"bbbbbbbb-0000-4000-8000-000000000002","runtime":"orca"}}')}"
+jq --arg b "$(isoz $((NOW - 86400 * 3)))" '.hosts.local = {bootAt: $b}' "$CM_HOME/ledger.json" > "$ROOT/l.json" && cp "$ROOT/l.json" "$CM_HOME/ledger.json"
+transcript "$LEAD_A" "$SID_A" $((NOW - 1200)); transcript "$T1" "$SID_1" $((NOW - 1200)); transcript "$T2" bbbbbbbb-0000-4000-8000-000000000002 $((NOW - 1200))
+OUT="$(lhj --all --act)"
+check "resume keeps the permission mode: --dangerously-skip-permissions only for the session that ran with it" \
+  'grep "terminal create .*wt=path:$LEAD_A " "$STUB/calls.log" | grep -q -- "cmd=/opt/claude/bin/claude --dangerously-skip-permissions --resume $SID_A" \
+   && grep "terminal create .*wt=path:$T1 " "$STUB/calls.log" | grep -q -- "cmd=/opt/claude/bin/claude --resume $SID_1" \
+   && [ "$(grep -c "terminal create .*dangerously" "$STUB/calls.log")" = 1 ]' "$(cat "$STUB/calls.log")"
+check "a permission mode never recorded is not resumed automatically, said plainly" \
+  '! grep -q "terminal create .*wt=path:$T2 " "$STUB/calls.log" && meaning "$OUT" w-task-2 | grep -q "permission mode (bypass or not) was never recorded"' "$OUT"
+check "a resume without the bypass is verified on the agent footer, never expecting the bypass one" \
+  'jq -r ".actions[] | select(.key == \"w-task-1\") | .detail" <<<"$OUT" | grep -q "agent footer"' "$OUT"
+"$LH" --all >/dev/null 2>&1
+check "the next pass records each resumed process's own permission mode" \
+  '[ "$(jq -c "[.workers[\"w-lead-a\"].live.bypass, .workers[\"w-task-1\"].live.bypass, .workers[\"w-task-2\"].live.bypass]" "$CM_HOME/ledger.json")" = "[true,false,null]" ]' "$(jq -c ".workers | map_values(.live)" "$CM_HOME/ledger.json")"
+reset_world
+ledger "{\"w-lead-a\":$(row "$LEAD_A" '{"standing":true,"lane":"lead-a","health":{"word":"running"},"live":{"sessionId":"'"$SID_A"'","runtime":"orca","bypass":false}}')}"
+transcript "$LEAD_A" "$SID_A" $((NOW - 1200)); touch "$STUB/resume-menu"
+OUT="$(lhj --all --act)"
+check "a resume that comes up on a menu (a trust dialog) is not verified: retry 1 failed, the pane named" \
+  '[ "$(creates)" = 1 ] && [ "$(jq -r ".actions[0].result" <<<"$OUT")" = failed ] && jq -r ".actions[0].detail" <<<"$OUT" | grep -q "pane: menu"' "$OUT"
+reset_world
+ledger "{\"w-lead-a\":$(row "$LEAD_A" '{"standing":true,"lane":"lead-a"}')}"
+mkproc "$P" 101 1000 "$LEAD_A" "ORCA_TERMINAL_HANDLE=term_a" claude --permission-mode bypassPermissions --resume "$SID_A"
+mkproc "$P" 102 1000 "$T1" "ORCA_TERMINAL_HANDLE=term_1" claude "explain --dangerously-skip-permissions please"
+OUT="$(lhj --all --no-write)"
+check "/proc: --permission-mode bypassPermissions is the bypass; a prompt that only mentions the flag is not" \
+  '[ "$(jq -r ".sessions[] | select(.key == \"w-lead-a\") | .live.bypass" <<<"$OUT")" = true ] && [ "$(jq -r ".sessions[] | select(.name == \"task-1\") | .live.bypass" <<<"$OUT")" = false ]' "$OUT"
+
+reset_world
+ledger "{\"w-lead-a\":$(row "$LEAD_A" '{"standing":true,"lane":"lead-a"}')}"
+wlrow "$LEAD_A" 'cm:running plan' > "$STUB/wl-local.json"
+mkproc "$P" 101 2000 "$LEAD_A" "PLUGLY_TERMINAL_HANDLE=term_a" claude --resume "$SID_A"
+transcript "$LEAD_A" "$SID_A" "$NOW"; printf '> \n  ? for shortcuts\n' > "$STUB/pane-term_a.txt"
+"$LH" sleep w-lead-a --apply >/dev/null 2>&1
+OUT="$("$LH" wake w-lead-a --bypass 2>&1)"
+check "wake --bypass of a session recorded without it: refused, wake never widens" \
+  'printf "%s" "$OUT" | grep -q "never widens" && [ "$(creates)" = 0 ]' "$OUT"
+OUT="$("$LH" wake w-lead-a --apply 2>&1)"
+check "wake of a session that ran without the bypass: resumed without it" \
+  '[ "$(creates)" = 1 ] && grep "terminal create" "$STUB/calls.log" | grep -q -- "cmd=/opt/claude/bin/claude --resume $SID_A" && ! grep -q "terminal create .*dangerously" "$STUB/calls.log"' "$OUT"
+reset_world
+ledger "{\"w-lead-a\":$(row "$LEAD_A" '{"standing":true,"lane":"lead-a","state":"asleep","asleepAt":"2026-11-10T09:00:00Z","live":{"sessionId":"'"$SID_A"'","runtime":"orca"}}')}"
+wlrow "$LEAD_A" 'cm:asleep 2026-11-10T09:00:00Z put to sleep by lane-health' > "$STUB/wl-local.json"
+transcript "$LEAD_A" "$SID_A" $((NOW - 7200))
+OUT="$("$LH" wake w-lead-a --apply 2>&1)"
+check "wake of a session whose permission mode was never recorded: refused until the owner says which" \
+  'printf "%s" "$OUT" | grep -q "add --bypass or --no-bypass" && [ "$(creates)" = 0 ]' "$OUT"
+OUT="$("$LH" wake w-lead-a --apply --bypass 2>&1)"
+check "wake --apply --bypass on the owner's word: resumed with the bypass" \
+  '[ "$(creates)" = 1 ] && grep "terminal create" "$STUB/calls.log" | grep -q -- "--dangerously-skip-permissions --resume $SID_A" && [ "$(jq -r ".workers[\"w-lead-a\"].state" "$CM_HOME/ledger.json")" = running ]' "$OUT"
 
 echo "--- cm-status view"
 reset_world
