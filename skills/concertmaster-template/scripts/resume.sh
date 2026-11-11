@@ -436,7 +436,7 @@ resume_dead() {
   if [ "$host" = local ] && [ -s "$LEDGER" ]; then
     # a retired or torn-down record at a reused path is not the lane: only a live standing worker counts
     jlane="$(jq -r --arg p "$path" "$NORMP"'[ (.workers // {}) | to_entries[] | select(.value | type == "object")
-        | select((.value.state // "running") | IN("queued", "spawning", "gone", "repurposed", "retired", "teardown", "done") | not)
+        | select((.value.state // "running") | IN("queued", "spawning", "gone", "repurposed", "retired", "teardown", "done", "asleep") | not)
         | select(.value.standing == true and ((.value.host // "local") == "local") and ((.value.path // "" | normp) == $p))
         | (.value.lane // empty) ] | unique | if length == 1 then .[0] else empty end' "$LEDGER" 2>/dev/null || true)"
     if [ -n "$jlane" ]; then jname="$("$LANE_JOURNAL" name "$jlane" 2>/dev/null || true)"; fi

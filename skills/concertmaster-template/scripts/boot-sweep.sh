@@ -130,12 +130,12 @@ if [ -z "$terms" ]; then
   echo "boot-sweep: no Claude terminals found for this project"; exit 0
 fi
 
-# only STANDING lanes of this host (ledger rows with standing==true and host local/unset) are ever
-# nudged: a dev or epic worker has no standing /loop to re-arm. The concertmaster session is nudged too
+# only STANDING lanes of this host (ledger rows with standing==true and host local/unset, never state asleep: a
+# lead put to sleep stays asleep through a reboot) are ever nudged: a dev or epic worker has no standing /loop to re-arm. The concertmaster session is nudged too
 # (below), by path or by its own ledger row. No readable ledger and no concertmaster terminal = send nothing.
 LEDGER="$CM_HOME/ledger.json"
 CM_LEDGER_PATH="$(jq -r --arg self "$CM_SELF_WORKTREE" '.workers[$self] // empty | select(.standing == true and ((.host // "local") == "local")) | (.path // .worktree // .worktreePath // empty)' "$LEDGER" 2>/dev/null | sed -E 's#/\.(/|$)#/#g; s#//+#/#g; s#(.)/+$#\1#' )"
-STANDING="$(jq -r '.workers // {} | to_entries[] | .value | select(.standing == true and ((.host // "local") == "local")) | (.path // .worktree // .worktreePath // empty)' "$LEDGER" 2>/dev/null | sed -E 's#/\.(/|$)#/#g; s#//+#/#g; s#(.)/+$#\1#' )"
+STANDING="$(jq -r '.workers // {} | to_entries[] | .value | select(.standing == true and ((.host // "local") == "local") and ((.state // "") != "asleep")) | (.path // .worktree // .worktreePath // empty)' "$LEDGER" 2>/dev/null | sed -E 's#/\.(/|$)#/#g; s#//+#/#g; s#(.)/+$#\1#' )"
 if [ -z "$STANDING" ] && ! awk -F'|' '{print $2}' <<<"$terms" | grep -qE "$CM_PATH_RE"; then
   early_note "No standing local lanes found in $LEDGER (missing or unreadable ledger): nothing was nudged."
   echo "boot-sweep: no standing local lanes in the ledger, nothing to do"; exit 0

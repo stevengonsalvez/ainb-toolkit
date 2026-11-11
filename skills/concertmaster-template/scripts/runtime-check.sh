@@ -14,8 +14,8 @@
 # up to CM_BOOT_CONFIRM_S (60 s) for its nudge to be confirmed. The ledger handles are written
 # BEFORE any nudge, so a killed run still leaves them fresh. Details: references/runtime-check.md.
 #
-# For every standing local lane in the ledger (workers.<id>.standing true; never a gone or
-# repurposed record, never the concertmaster itself):
+# For every standing local lane in the ledger (workers.<id>.standing true; never a gone, repurposed or
+# asleep record, never the concertmaster itself):
 #   handle     the lane's ONE Claude terminal, looked up by worktree PATH in `orca terminal list`
 #              (never by the recorded handle). Exactly one: workers.<id>.terminal is rewritten
 #              to it when it differs. None: `no-terminal` (resume.sh's job). More than one:
@@ -85,7 +85,7 @@ terms="$(printf '%s' "$tl" | jq -r --arg re "$CM_PATH_MATCH" '.result.terminals[
 
 CFG_LANES="$(printf '%s' "$CM_CFG_JSON" | jq -c '[(.lanes // [])[]? | select(type == "object") | {name, loop_minutes}]' 2>/dev/null || echo '[]')"
 lanes="$(jq -r --argjson cfg "$CFG_LANES" '.workers // {} | to_entries[] | select(.value | type == "object")
-    | select(.value.standing == true and ((.value.host // "local") == "local") and (((.value.state // "") | IN("gone", "repurposed")) | not))
+    | select(.value.standing == true and ((.value.host // "local") == "local") and (((.value.state // "") | IN("gone", "repurposed", "asleep")) | not))
     | .value as $w
     | .key as $k
     | ((($w.loopIntervalMin // ([$cfg[] | select(.name == ($w.lane // $k) or .name == $k or .name == ($k | sub("^w-"; ""))) | .loop_minutes][0]) // "") | tostring)) as $iv
