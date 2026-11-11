@@ -4,13 +4,15 @@
 #   scripts/lane-health.sh --all  [--act] [--no-write] [--json|--line]   # concertmaster: every lead, worker and unknown
 #   scripts/lane-health.sh --lead <worker-id> [--act] [--no-write] [--json|--line]   # a lead: its own children only
 #   scripts/lane-health.sh sleep <worker-id> [--apply]   # stop a session on purpose: process and terminal, keep the rest
-#   scripts/lane-health.sh wake  <worker-id> [--apply]   # resume an asleep session on its own session id
+#   scripts/lane-health.sh wake  <worker-id> [--apply] [--bypass|--no-bypass]   # resume an asleep session on its own id
 #
 # Per host (this machine directly, any other over ssh to cm_ssh_target, the same way live-agent.sh does) it reads:
-#   live agent processes   pid, cwd, session id (the cmdline `--resume <id>`, else the ONE transcript of that cwd),
+#   live agent processes   from /proc on Linux; with no /proc (macOS) from `ps` (the process table, argv split on
+#                          spaces, the environment through `ps -E`) and `lsof -a -p <pid> -d cwd` for the cwd.
+#                          pid, cwd, session id (the cmdline `--resume <id>`, else the ONE transcript of that cwd),
 #                          runtime (orca or plugly, from the parent process chain, else the handle variable),
 #                          model and effort (cmdline flags, else the ledger), terminal handle (environ), last transcript write
-#   host events            boot time (/proc/stat btime, else `uptime -s`), `last -x`, a Spot preemption where the GCE
+#   host events            boot time (/proc/stat btime, else `uptime -s`, else `sysctl -n kern.boottime`), `last -x`, a Spot preemption where the GCE
 #                          metadata server says so or the previous boot logged a power-key press (health.cloud: gce), and a
 #                          restart of the runtime daemon after boot (health.daemon_units, systemd ActiveEnterTimestamp)
 #   panes                  the bottom 12 non-empty lines of each agent's terminal: busy, idle, menu, usage limit, error
@@ -27,9 +29,12 @@
 # touched and nothing is sent without --act. --no-write writes nothing at all (scripts/cm-status.sh uses it).
 #
 # --act (references/lane-health.md):
-#   stopped, healthy before   resumed ONCE in its owner runtime: `<agent> --dangerously-skip-permissions --resume <full id>
-#                             [--model m] [--effort e]` in the same worktree, then verified (exactly one process on that
-#                             id, the bypass footer on the pane, the same transcript written); a second stop inside
+#   stopped, healthy before   resumed ONCE in its owner runtime: `<agent> [--dangerously-skip-permissions] --resume <full id>
+#                             [--model m] [--effort e]` in the same worktree (the bypass flag only when the process it
+#                             replaces ran with it: live.bypass; a resume never widens permissions, and a session whose
+#                             mode was never recorded is not resumed), then verified (exactly one process on that id, an
+#                             idle or busy agent pane, with the bypass footer when bypassed, the same transcript
+#                             written); a second stop inside
 #                             health.resume_reset_hours of healthy running is never retried. --all resumes leads and
 #                             unowned sessions; a lead's own children are its own (`--lead`), so two checkers never race.
 #   a fresh boot or daemon    nothing is resumed on that host until health.settle_minutes (5) have passed: the host's
@@ -52,14 +57,15 @@
 # 1 cannot run (no ledger in --all, sleep or wake); 2 usage; 4 another lane-health --act run holds the lock.
 # Env: CM_HOME, CM_NOW (clock), CM_HEALTH_* overrides of the health.* keys, CM_HEALTH_SEND (send command),
 # CM_HEALTH_AGENT_BIN (the agent binary to launch; default spawn-verify.sh resolve), CM_CLAUDE_PROJECTS.
-# Tests only (CM_TEST=1): CM_PROC_ROOT, CM_HEALTH_REMOTE_PROC_ROOT, CM_HEALTH_KILL_CMD.
+# Tests only (CM_TEST=1): CM_PROC_ROOT, CM_HEALTH_REMOTE_PROC_ROOT (the word `ps` forces the no-/proc scan),
+# CM_HEALTH_KILL_CMD.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=SCRIPTDIR/lib.sh
 . "$HERE/lib.sh"
 
 usage() { sed -n '2,7p' "$0" >&2; exit 2; }
-MODE=""; LEAD=""; ACT=0; NOWRITE=0; OUTFMT=tsv; APPLY=0; TARGET=""
+MODE=""; LEAD=""; ACT=0; NOWRITE=0; OUTFMT=tsv; APPLY=0; TARGET=""; WAKE_BYP=""
 case "${1:-}" in
   sleep|wake) MODE="$1"; TARGET="${2:-}"; [ -n "$TARGET" ] || { cm_warn "lane-health.sh $1: a worker id is required"; usage; }; shift 2 ;;
 esac
@@ -72,6 +78,8 @@ while [ $# -gt 0 ]; do
     --json) OUTFMT=json ;;
     --line) OUTFMT=line ;;
     --apply) APPLY=1 ;;
+    --bypass) WAKE_BYP=true ;;
+    --no-bypass) WAKE_BYP=false ;;
     -h|--help) awk 'NR > 1 { if (!/^#/) exit; sub(/^# ?/, ""); print }' "$0"; exit 0 ;;
     *) cm_warn "lane-health.sh: unknown arg: $1"; usage ;;
   esac
@@ -79,6 +87,7 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$MODE" ] || usage
 case "$MODE" in sleep|wake) [ "$ACT$NOWRITE" = 00 ] || { cm_warn "lane-health.sh $MODE takes --apply only"; usage; } ;; *) [ "$APPLY" = 0 ] || usage ;; esac
+[ -z "$WAKE_BYP" ] || [ "$MODE" = wake ] || { cm_warn "lane-health.sh: --bypass and --no-bypass go with wake only"; usage; }
 # an acting pass must record what it did (the one-try count and the alert dedup live in the record)
 [ "$ACT$NOWRITE" != 11 ] || { cm_warn "lane-health.sh: --act and --no-write do not go together"; usage; }
 case "$LEAD$TARGET" in *[!A-Za-z0-9._:@-]*) cm_warn "lane-health.sh: a worker id is a plain token"; exit 2 ;; esac
@@ -169,18 +178,83 @@ lh_probe() {
     esac
     for a in $agents; do [ "$b" = "$a" ] && { printf '%s' "$a"; return; }; done
   }
+  _lhkv() {   # one NAME=value of a process environment: the first PLUGLY and the first ORCA handle
+    case "$1" in
+      PLUGLY_TERMINAL_HANDLE=*) if [ "$sph" = 0 ]; then sph=1; hp="${1#PLUGLY_TERMINAL_HANDLE=}"; fi ;;
+      ORCA_TERMINAL_HANDLE=*) if [ "$sho" = 0 ]; then sho=1; ho="${1#ORCA_TERMINAL_HANDLE=}"; fi ;;
+    esac
+  }
+  # ---- the no-/proc scan (macOS; bash 3.2, so pid-indexed arrays and no associative ones) ----
+  _lhpsload() {   # the process table: this user's pids to scan; every pid's parent, name and argv for the runtime walk
+    local tab args me lp lu lq ls lt le lc
+    me="$(id -u 2>/dev/null)"
+    isnum_lh "$me" || return 1
+    tab="$(ps -A -ww -o pid=,uid=,ppid=,stat=,tty=,etime=,ucomm= 2>/dev/null)" || return 1
+    psnow="$(date +%s)"   # the elapsed times are as of this snapshot, not the probe start
+    args="$(ps -A -ww -o pid=,args= 2>/dev/null)" || return 1
+    [ -n "$tab" ] && [ -n "$args" ] || return 1
+    while read -r lp lu lq ls lt le lc; do
+      isnum_lh "$lp" || continue
+      lps_ppid[lp]="$lq"; lps_comm[lp]="$lc"
+      [ "$lu" = "$me" ] || continue
+      lps_pids+=("$lp"); lps_stat[lp]="$ls"; lps_tty[lp]="$lt"; lps_et[lp]="$le"
+    done <<< "$tab"
+    # a pid not in the first table is not a process line; a pid with two lines (a newline inside some argument can
+    # forge one) has no trusted argv at all, so an agent among them makes the scan incomplete
+    while read -r lp lc; do
+      isnum_lh "$lp" && [ -n "${lps_ppid[lp]:-}" ] || continue
+      if [ -n "${lps_args[lp]+x}" ] || [ -n "${lps_adup[lp]:-}" ]; then lps_adup[lp]=1; unset 'lps_args[lp]'; else lps_args[lp]="$lc"; fi
+    done <<< "$args"
+    return 0
+  }
+  _lhetime() {   # ps etime [[dd-]hh:]mm:ss: seconds, or nothing
+    local t="$1" dd=0 hh=0 mm ss x y z
+    case "$t" in *-*) dd="${t%%-*}"; t="${t#*-}" ;; esac
+    IFS=: read -r x y z <<< "$t"
+    if [ -n "$z" ]; then hh="$x"; mm="$y"; ss="$z"; else mm="$x"; ss="$y"; fi
+    isnum_lh "$dd" && isnum_lh "$hh" && isnum_lh "${mm:-}" && isnum_lh "${ss:-}" || return 0
+    printf '%s' $(( 10#$dd * 86400 + 10#$hh * 3600 + 10#$mm * 60 + 10#$ss ))
+  }
+  _lhpsenv() {   # the environment ps shows after the command, NUL separated; nothing when it is not shown
+    local plain full ef
+    # macOS: -E (its -e means every process); the BSDs: -e
+    case "$(uname -s 2>/dev/null)" in Darwin) ef=-E ;; *BSD|DragonFly) ef=-e ;; *) return 0 ;; esac
+    plain="$(ps -ww -o command= -p "$1" 2>/dev/null)" || return 0
+    full="$(ps "$ef" -ww -o command= -p "$1" 2>/dev/null)" || return 0
+    [ -n "$plain" ] || return 0
+    case "$full$plain" in *$'\n'*) return 0 ;; esac
+    case "$full" in "$plain"*) ;; *) return 0 ;; esac
+    printf '%s' "${full#"$plain"}" | tr ' ' '\000'
+  }
   local now got boot up lastx pk pm sp u t e d pid stat rest state ppid tty argv arg comm agent cwd sid src model eff byp
   local headless i n kv hp ho sph sho h rt anc depth acomm acmd a1 a1d st2 r2 top br dirty ref merged onmain head s tdir tm p stt pst hz
+  local scan et a psnow cmd2 nsf cut
+  local -a items lps_pids lps_ppid lps_comm lps_args lps_stat lps_tty lps_et lps_adup
   now="$(date +%s)"
   got="$(hostname -s 2>/dev/null || hostname 2>/dev/null)"; got="$(printf '%s' "${got%%.*}" | tr '[:upper:]' '[:lower:]')"
   if [ -n "$expect" ] && [ "$got" != "$(printf '%s' "${expect%%.*}" | tr '[:upper:]' '[:lower:]')" ]; then
     printf 'E\twrong-host\tthis host answered as %s, expected %s\n' "$(_lhf "$got")" "$(_lhf "$expect")"; return 3
   fi
-  if [ ! -d "$proc" ] || { [ "$proc" = /proc ] && [ ! -d /proc/self ]; }; then printf 'E\tno-proc\tno %s on this host (Linux only)\n' "$proc"; return 3; fi
+  # the scan: /proc where the host has one; with none (macOS) the process table from ps and each cwd from lsof
+  scan=proc
+  if [ "$proc" = ps ] || { [ "$proc" = /proc ] && [ ! -d /proc/self ]; }; then
+    scan="ps"
+    if ! command -v ps >/dev/null 2>&1 || ! command -v lsof >/dev/null 2>&1; then
+      printf 'E\tno-proc\tno /proc on this host, and no ps or no lsof to read its processes with\n'; return 3
+    fi
+    _lhpsload || { printf 'E\tno-proc\tno /proc on this host, and ps did not list its processes\n'; return 3; }
+  elif [ ! -d "$proc" ]; then printf 'E\tno-proc\tno %s on this host\n' "$proc"; return 3; fi
   printf 'H\thostname\t%s\nH\tnow\t%s\n' "$(_lhf "$got")" "$now"
-  boot="$(awk '$1 == "btime" { print $2; exit }' "$proc/stat" 2>/dev/null)"
+  # ps argv is split on spaces, so a prompt that mentions a flag reads as that flag: the caller corroborates the bypass
+  [ "$scan" = proc ] || printf 'H\tscan\tps\n'
+  boot=""
+  [ "$scan" = ps ] || boot="$(awk '$1 == "btime" { print $2; exit }' "$proc/stat" 2>/dev/null)"
   up="$(uptime -s 2>/dev/null || true)"
   if [ -z "$boot" ] && [ -n "$up" ]; then boot="$(date -d "$up" +%s 2>/dev/null || true)"; fi
+  # macOS: `{ sec = 1731318420, usec = 0 } Wed Nov 11 10:27:00 2026`
+  if [ -z "$boot" ] && command -v sysctl >/dev/null 2>&1; then
+    boot="$(sysctl -n kern.boottime 2>/dev/null | sed -n 's/^{ *sec = \([0-9][0-9]*\),.*/\1/p' | head -n 1)"
+  fi
   printf 'H\tboot\t%s\nH\tuptime_s\t%s\n' "$(_lhf "$boot")" "$(_lhf "$up")"
   lastx="$(last -x reboot shutdown 2>/dev/null | grep -Ev '^(wtmp|[[:space:]]*$)' | head -n 4 | tr -s ' ' | tr '\n' ';' || true)"
   printf 'H\tlastx\t%s\n' "$(_lhf "$lastx")"
@@ -208,46 +282,109 @@ lh_probe() {
     case "$e" in ''|*[!0-9]*) continue ;; esac
     printf 'D\t%s\t%s\n' "$(_lhf "$u")" "$e"
   done
-  for d in "$proc"/[0-9]*; do
-    [ -d "$d" ] || continue
-    pid="${d##*/}"
-    case "$pid" in ''|*[!0-9]*) continue ;; esac
-    [ -O "$d" ] || continue
-    if ! stat="$(cat "$d/stat" 2>/dev/null)"; then [ -e "$d" ] && printf 'W\tunreadable\tstat of %s\n' "$pid"; continue; fi
-    rest="${stat##*) }"
-    read -r state ppid _ _ tty _ <<< "$rest"
+  if [ "$scan" = ps ]; then items=(${lps_pids[@]+"${lps_pids[@]}"}); else items=("$proc"/[0-9]*); fi
+  for d in ${items[@]+"${items[@]}"}; do
+    if [ "$scan" = proc ]; then
+      [ -d "$d" ] || continue
+      pid="${d##*/}"
+      case "$pid" in ''|*[!0-9]*) continue ;; esac
+      [ -O "$d" ] || continue
+      if ! stat="$(cat "$d/stat" 2>/dev/null)"; then [ -e "$d" ] && printf 'W\tunreadable\tstat of %s\n' "$pid"; continue; fi
+      rest="${stat##*) }"
+      read -r state ppid _ _ tty _ <<< "$rest"
+    else
+      pid="$d"; rest=""
+      state="${lps_stat[$pid]:-}"; state="${state:0:1}"; ppid="${lps_ppid[$pid]:-}"; tty="${lps_tty[$pid]:-}"
+    fi
     case "$state" in Z|X|x) continue ;; esac
     # a process with no terminal (a daemon, a headless `claude -p` run) is never a lane; an agent among them is only
     # counted per cwd (Q), so its transcript is never taken for a lane's own session
     headless=0
-    case "$tty" in ''|*[!0-9]*) printf 'W\tunreadable\ttty of %s\n' "$pid"; continue ;; 0) headless=1 ;; esac
+    if [ "$scan" = proc ]; then
+      case "$tty" in ''|*[!0-9]*) printf 'W\tunreadable\ttty of %s\n' "$pid"; continue ;; 0) headless=1 ;; esac
+    else
+      case "$tty" in ''|'?'|'??'|-) headless=1 ;; esac
+    fi
     argv=()
-    while IFS= read -r -d '' arg || [ -n "$arg" ]; do argv+=("$arg"); done < "$d/cmdline" 2>/dev/null || true
-    if [ "${#argv[@]}" -eq 0 ]; then [ "$headless" = 1 ] || [ -r "$d/cmdline" ] || { [ -e "$d" ] && printf 'W\tunreadable\tcmdline of %s\n' "$pid"; }; continue; fi
-    comm=""; [ -r "$d/comm" ] && IFS= read -r comm < "$d/comm" 2>/dev/null
+    if [ "$scan" = proc ]; then
+      while IFS= read -r -d '' arg || [ -n "$arg" ]; do argv+=("$arg"); done < "$d/cmdline" 2>/dev/null || true
+      if [ "${#argv[@]}" -eq 0 ]; then [ "$headless" = 1 ] || [ -r "$d/cmdline" ] || { [ -e "$d" ] && printf 'W\tunreadable\tcmdline of %s\n' "$pid"; }; continue; fi
+      comm=""; [ -r "$d/comm" ] && IFS= read -r comm < "$d/comm" 2>/dev/null
+    else
+      # ps shows argv joined by spaces: an argument that holds a space is split at it (an id or a flag never does)
+      read -r -a argv <<< "${lps_args[$pid]:-}"
+      comm="${lps_comm[$pid]:-}"
+      if [ "${#argv[@]}" -eq 0 ]; then
+        # no argv for a live process of this user, on a terminal or not (its name may not say agent: a native install
+        # can show a version number, and a headless agent is a copy): the scan is incomplete, never "no agent here"; a
+        # process gone between the two ps calls is simply gone
+        if ps -p "$pid" -o pid= >/dev/null 2>&1; then printf 'W\tunreadable\tcmdline of %s\n' "$pid"; fi
+        continue
+      fi
+    fi
     agent="$(_lhagent "$comm" "${argv[@]}")"
     [ -n "$agent" ] || continue
-    cwd="$(readlink "$d/cwd" 2>/dev/null)" || { [ "$headless" = 1 ] || { [ -e "$d" ] && printf 'W\tunreadable\tcwd of %s\n' "$pid"; }; continue; }
+    if [ "$scan" = proc ]; then
+      cwd="$(readlink "$d/cwd" 2>/dev/null)" || { [ "$headless" = 1 ] || { [ -e "$d" ] && printf 'W\tunreadable\tcwd of %s\n' "$pid"; }; continue; }
+    else
+      cwd="$(lsof -w -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -n 1)"
+      # no answer from a process that still runs: the scan is incomplete (never "no agent here"). Here a headless agent
+      # counts too: it is a copy (Q), and losing it would let a resume start beside it
+      if [ -z "$cwd" ]; then ps -p "$pid" -o pid= >/dev/null 2>&1 && printf 'W\tunreadable\tcwd of %s\n' "$pid"; continue; fi
+      # lsof escapes a byte it cannot print (\xNN, \n, \t): a name with a backslash is not the real path
+      case "$cwd" in *\\*) printf 'W\tunreadable\tcwd of %s\n' "$pid"; continue ;; esac
+      # the table is a snapshot: the pid must still run the same command now that its cwd is read
+      if ! cmd2="$(ps -ww -o args= -p "$pid" 2>/dev/null)"; then
+        ps -p "$pid" -o pid= >/dev/null 2>&1 && printf 'W\tunreadable\tcmdline of %s\n' "$pid"
+        continue
+      fi
+      read -r cmd2 <<< "$cmd2"
+      if [ "$cmd2" != "${lps_args[$pid]:-}" ]; then printf 'W\tunreadable\tpid %s changed during the scan\n' "$pid"; continue; fi
+    fi
     cwd="${cwd%/}"; [ -n "$cwd" ] || cwd=/
-    sid=""; src=""; model=""; eff=""; byp=0
+    sid=""; src=""; model=""; eff=""; byp=0; nsf=0
     n="${#argv[@]}"; i=0
+    # split argv (no /proc): flags are read only up to the first positional word (the prompt); a --resume, --model or
+    # --effort after it may be prompt text. An unknown flag's value also ends the flags, which only reads fewer of them
+    cut="$n"
+    if [ "$scan" = ps ]; then
+      i=1
+      case "${argv[0]##*/}" in node|nodejs|bun|deno) while [ "$i" -lt "$n" ] && [ "${argv[$i]#-}" != "${argv[$i]}" ]; do i=$((i + 1)); done; i=$((i + 1)) ;; esac
+      while [ "$i" -lt "$n" ]; do
+        case "${argv[$i]}" in
+          --resume|-r|--session-id|--model|--effort|--permission-mode|--fallback-model|--add-dir|--settings|--mcp-config) i=$((i + 2)) ;;
+          --) cut="$i"; break ;;   # the end of the options: everything after it is an argument
+          -*) i=$((i + 1)) ;;
+          *) cut="$i"; break ;;
+        esac
+      done
+      i=0
+    fi
     while [ "$i" -lt "$n" ]; do
+      [ "$i" -lt "$cut" ] || case "${argv[$i]}" in --resume*|-r|--session-id*|--model*|--effort*) i=$((i + 1)); continue ;; esac
       case "${argv[$i]}" in
-        --resume|-r|--session-id) [ $((i + 1)) -lt "$n" ] && { sid="${argv[$((i + 1))]}"; src=cmdline; } ;;
-        --resume=*|--session-id=*) sid="${argv[$i]#*=}"; src=cmdline ;;
-        --model) [ $((i + 1)) -lt "$n" ] && model="${argv[$((i + 1))]}" ;;
-        --model=*) model="${argv[$i]#*=}" ;;
-        --effort) [ $((i + 1)) -lt "$n" ] && eff="${argv[$((i + 1))]}" ;;
-        --effort=*) eff="${argv[$i]#*=}" ;;
-        --dangerously-skip-permissions) byp=1 ;;
+        --resume|-r|--session-id) nsf=$((nsf + 1)); [ $((i + 1)) -lt "$n" ] && { sid="${argv[$((i + 1))]}"; src=cmdline; } ;;
+        --resume=*|--session-id=*) nsf=$((nsf + 1)); sid="${argv[$i]#*=}"; src=cmdline ;;
+        --model) [ $((i + 1)) -lt "$n" ] && { [ "$scan" = proc ] || [ -z "$model" ]; } && model="${argv[$((i + 1))]}" ;;
+        --model=*) { [ "$scan" = proc ] || [ -z "$model" ]; } && model="${argv[$i]#*=}" ;;
+        --effort) [ $((i + 1)) -lt "$n" ] && { [ "$scan" = proc ] || [ -z "$eff" ]; } && eff="${argv[$((i + 1))]}" ;;
+        --effort=*) { [ "$scan" = proc ] || [ -z "$eff" ]; } && eff="${argv[$i]#*=}" ;;
+        --dangerously-skip-permissions|--permission-mode=bypassPermissions) byp=1 ;;
+        --permission-mode) [ $((i + 1)) -lt "$n" ] && [ "${argv[$((i + 1))]}" = bypassPermissions ] && byp=1 ;;
       esac
       i=$((i + 1))
     done
     case "$sid" in *[!A-Za-z0-9._-]*|-*) sid=""; src="" ;; esac
+    if [ "$scan" = ps ] && [ -n "$sid" ]; then   # argv split on spaces: only a session-id-shaped word is an id
+      case "$sid" in ????????-????-????-????-????????????) case "$sid" in *[!0-9a-f-]*) sid=""; src="" ;; esac ;; *) sid=""; src="" ;; esac
+    fi
     if [ "$headless" = 1 ]; then printf 'Q\t%s\t%s\n' "$(_lhf "$cwd")" "$sid"; continue; fi
     case "$model" in *[!A-Za-z0-9._-]*) model="" ;; esac
     case "$eff" in *[!a-z]*) eff="" ;; esac
     tdir="$(_lhdir "$cwd")"
+    # split argv (no /proc): a cmdline id is trusted only when it is the one id flag and that session's transcript is in
+    # this worktree (a prompt can quote --resume <some id>); otherwise the transcript rules below decide
+    if [ "$scan" = ps ] && [ "$src" = cmdline ] && { [ "$nsf" -gt 1 ] || [ ! -e "$tdir/$sid.jsonl" ]; }; then sid=""; src=""; fi
     _lhtinfo "$tdir"
     if [ -z "$sid" ] && [ -n "$LH_ONE" ]; then sid="$LH_ONE"; src=transcript; fi
     # the last write of THAT session; with no id at all, of the worktree (never another session's file for a known id)
@@ -256,17 +393,22 @@ lh_probe() {
     # process start (stat field 22, clock ticks after boot): lets the caller tell a session this process began after
     # /clear (newer transcript, written after the start) from one of another process
     pst=""
-    read -r _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ stt _ <<< "$rest"
-    if isnum_lh "${stt:-}" && isnum_lh "${boot:-}"; then hz="$(getconf CLK_TCK 2>/dev/null || echo 100)"; isnum_lh "$hz" || hz=100; pst=$((boot + stt / hz)); fi
+    if [ "$scan" = proc ]; then
+      read -r _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ stt _ <<< "$rest"
+      if isnum_lh "${stt:-}" && isnum_lh "${boot:-}"; then hz="$(getconf CLK_TCK 2>/dev/null || echo 100)"; isnum_lh "$hz" || hz=100; pst=$((boot + stt / hz)); fi
+    else
+      et="$(_lhetime "${lps_et[$pid]:-}")"
+      if isnum_lh "$et" && isnum_lh "${psnow:-}"; then pst=$((psnow - et)); fi
+    fi
     # handle: PLUGLY_TERMINAL_HANDLE first, else ORCA_TERMINAL_HANDLE; both set and different = ambiguous, none
     hp=""; ho=""; sph=0; sho=0; h=""
-    if [ -r "$d/environ" ]; then
-      while IFS= read -r -d '' kv || [ -n "$kv" ]; do
-        case "$kv" in
-          PLUGLY_TERMINAL_HANDLE=*) if [ "$sph" = 0 ]; then sph=1; hp="${kv#PLUGLY_TERMINAL_HANDLE=}"; fi ;;
-          ORCA_TERMINAL_HANDLE=*) if [ "$sho" = 0 ]; then sho=1; ho="${kv#ORCA_TERMINAL_HANDLE=}"; fi ;;
-        esac
-      done < "$d/environ"
+    if [ "$scan" = proc ]; then
+      if [ -r "$d/environ" ]; then
+        while IFS= read -r -d '' kv || [ -n "$kv" ]; do _lhkv "$kv"; done < "$d/environ"
+      fi
+    else
+      # best effort: ps -E splits the environment on spaces too, so a value with a space is cut at it
+      while IFS= read -r -d '' kv || [ -n "$kv" ]; do _lhkv "$kv"; done < <(_lhpsenv "$pid")
     fi
     if [ -n "$hp" ] && [ -n "$ho" ] && [ "$hp" != "$ho" ]; then h=""; elif [ -n "$hp" ]; then h="$hp"; else h="$ho"; fi
     case "$h" in -*|*[!A-Za-z0-9._:-]*) h="" ;; esac
@@ -275,9 +417,14 @@ lh_probe() {
     # .../orca/workspaces/... path is not the runtime.
     rt=""; anc="$ppid"; depth=0
     while isnum_lh "$anc" && [ "$anc" -gt 1 ] && [ "$depth" -lt 15 ]; do
-      acomm=""; [ -r "$proc/$anc/comm" ] && IFS= read -r acomm < "$proc/$anc/comm" 2>/dev/null
-      acmd=""; a1=""
-      { IFS= read -r -d '' acmd; IFS= read -r -d '' a1; } < "$proc/$anc/cmdline" 2>/dev/null || true
+      acomm=""; acmd=""; a1=""
+      if [ "$scan" = proc ]; then
+        [ -r "$proc/$anc/comm" ] && IFS= read -r acomm < "$proc/$anc/comm" 2>/dev/null
+        { IFS= read -r -d '' acmd; IFS= read -r -d '' a1; } < "$proc/$anc/cmdline" 2>/dev/null || true
+      else
+        acomm="${lps_comm[$anc]:-}"
+        read -r acmd a1 _ <<< "${lps_args[$anc]:-}"
+      fi
       case "${acomm##*/}" in node|nodejs|bun|deno) acomm="" ;; esac
       a1d=""; case "${acmd##*/}" in node|nodejs|bun|deno) a1d="${a1%/*}"; a1d="${a1d##*/}"; a1="${a1##*/}" ;; *) a1="" ;; esac
       for e in "$acomm" "${acmd##*/}" "$a1" "$a1d"; do
@@ -287,8 +434,13 @@ lh_probe() {
         esac
       done
       [ -z "$rt" ] || break
-      st2="$(cat "$proc/$anc/stat" 2>/dev/null)" || break
-      r2="${st2##*) }"; read -r _ anc _ <<< "$r2"
+      if [ "$scan" = proc ]; then
+        st2="$(cat "$proc/$anc/stat" 2>/dev/null)" || break
+        r2="${st2##*) }"; read -r _ anc _ <<< "$r2"
+      else
+        [ -n "${lps_ppid[$anc]:-}" ] || break
+        anc="${lps_ppid[$anc]}"
+      fi
       depth=$((depth + 1))
     done
     if [ -z "$rt" ]; then
@@ -331,7 +483,7 @@ expect_hostname() {
 }
 # probe_host <host> <out-file> [path...]: the probe's lines in <out-file>, a JSON host document in <out-file>.json.
 probe_host() {
-  local host="$1" out="$2" rc=0 target expect remote_proc err
+  local host="$1" out="$2" rc=0 target expect remote_proc err ecode
   shift 2
   if [ "$host" = local ]; then
     {
@@ -356,12 +508,13 @@ probe_host() {
     fi
   fi
   err="$(awk -F'\t' '$1 == "E" { print $3; exit }' "$out" 2>/dev/null)"
+  ecode="$(awk -F'\t' '$1 == "E" { print $2; exit }' "$out" 2>/dev/null)"
   if [ -z "$err" ] && [ "$rc" != 0 ]; then err="$(head -c 120 "$out.err" 2>/dev/null | tr '\t\n' '  ')"; err="probe exit $rc${err:+: $err}"; fi
-  jq -R -s --arg host "$host" --arg err "$err" '
+  jq -R -s --arg host "$host" --arg err "$err" --arg ecode "$ecode" '
     def nn: if . == null or . == "" then null else . end;
     def num: if . == null or . == "" then null else (tonumber? // null) end;
     split("\n") | map(select(length > 0) | split("\t")) as $l
-    | if $err != "" then {host: $host, ok: false, error: $err}
+    | if $err != "" then {host: $host, ok: false, error: $err, noScan: ($ecode == "no-proc")}
       else {host: $host, ok: true, error: null,
             incomplete: ([$l[] | select(.[0] == "W")] | length > 0),
             facts: ([$l[] | select(.[0] == "H") | {(.[1]): (.[2] | nn)}] | add // {}),
@@ -391,6 +544,9 @@ pane_bottom() {
   [ -n "$txt" ] || return 1
   printf '%s\n' "$txt"
 }
+# has_bypass_footer <bottom text>: the bypass footer line itself (its mark first) on the bottom three lines; agent text
+# or a typed draft that names the mode is not it
+has_bypass_footer() { printf '%s\n' "$1" | tail -n 3 | grep -qiE '^[[:space:]]*⏵⏵[[:space:]]*bypass permissions on'; }
 # pane_state <bottom text>: "<state><TAB><line>"; limit (also the usage-credits menu), error, menu, busy, idle, shell, other.
 pane_state() {   # a limit or an error is judged on the bottom 6 lines only: the agent's own text above may quote one
   local b="$1" l b6
@@ -566,7 +722,8 @@ while IFS=$'\t' read -r ph ppid prt phd; do
   [ -n "$ph" ] || continue
   if b="$(pane_bottom "$ph" "$prt" "$phd")"; then
     st="$(pane_state "$b")"
-    jq -nc --arg k "$ph|$ppid" --arg s "${st%%$'\t'*}" --arg l "${st#*$'\t'}" '{($k): {state: $s, line: ($l | .[0:120])}}' >> "$TMP/panes.ndjson"
+    bp=false; if has_bypass_footer "$b"; then bp=true; fi
+    jq -nc --arg k "$ph|$ppid" --arg s "${st%%$'\t'*}" --arg l "${st#*$'\t'}" --argjson bp "$bp" '{($k): {state: $s, line: ($l | .[0:120]), bypass: $bp}}' >> "$TMP/panes.ndjson"
   else
     jq -nc --arg k "$ph|$ppid" '{($k): {state: "unread", line: ""}}' >> "$TMP/panes.ndjson"
   fi
@@ -656,7 +813,7 @@ $ST[0].names as $standingNames | $ST[0].sids as $standingSids
           spot: ((($h.facts.spot // "") | ascii_upcase) == "SPOT"),
           settled: ($h.ok and ($boot == null or ($now - $boot) >= $settle * 60) and ($dat == null or ($now - $dat) >= $settle * 60))})})
    | from_entries) as $H
-| [ $hosts[] | select(.ok) | .host as $hn | .procs as $all | (.headless // []) as $hl | .procs[]
+| [ $hosts[] | select(.ok) | .host as $hn | .procs as $all | (.headless // []) as $hl | ((.facts.scan // "") == "ps") as $splitArgv | .procs[]
     # /clear starts a new session in the same process while the cmdline keeps the old id: take the newest
     # transcript instead, only when this is the one agent in that cwd and the file was written after it started
     | . as $q
@@ -665,6 +822,11 @@ $ST[0].names as $standingNames | $ST[0].sids as $standingSids
           and ([$hl[] | select(.cwd == $q.cwd)] | length) == 0
        then . + {sid: $q.nsid, sidsrc: "newest-transcript", tmtime: $q.nmt} else . end)
     | . + {host: $hn, key: "\($hn)|\(.pid)", pane: ($panes["\($hn)|\(.pid)"] // {state: "unread", line: ""})}
+    # argv split on spaces (no /proc): a prompt that only names --dangerously-skip-permissions must not read as the
+    # flag. No flag word: false. The flag word and the footer: true. The flag word, an idle or busy pane and no footer:
+    # false. Otherwise (a menu, an unread pane) not known this pass: null, and the caller keeps what it knew of this pid
+    | (if $splitArgv then .bypass = (if (.bypass | not) then false elif (.pane.bypass // false) then true
+                                      elif (.pane.state | IN("idle", "busy")) then false else null end) else . end)
     | . as $p | ([ $rows[] | .path as $rp | select(.host == $p.host and ($p.cwd | under($rp))) ]
                  | max_by([(.path | length), (if (.state | IN("retired", "done", "teardown")) then 0 else 1 end)])) as $r
     | . + {row: ($r.id // null)} ] as $P
@@ -708,6 +870,9 @@ $ST[0].names as $standingNames | $ST[0].sids as $standingSids
         sessionId: ($p.sid // (if $pl.pid == $p.pid then $pl.sessionId else null end) // null),
         sessionSource: (if $p.sid != null then $p.sidsrc elif $pl.pid == $p.pid then ($pl.sessionSource // null) else null end), handle: $p.handle,
         model: ($p.model // $pl.model // $r.model), effort: ($p.effort // $pl.effort // $r.effort), agent: ($p.agent // $pl.agent // $r.agent),
+        # the permission mode of THIS process: a resume adds --dangerously-skip-permissions only when it is true; not
+        # known this pass (null, no /proc only): what was recorded for this same pid, else unrecorded
+        bypass: (if $p.bypass == null then (if $pl.pid == $p.pid then $pl.bypass else null end) else $p.bypass end),
         lastTranscriptAt: (($p.tmtime // ($pl.lastTranscriptAt | ep)) | iso), checkedAt: ($now | iso)}
      elif $h.ok and ($h.incomplete | not) and $n == 0 then
        $pl + {host: $r.host, pid: null, handle: null, checkedAt: ($now | iso),
@@ -765,8 +930,13 @@ $ST[0].names as $standingNames | $ST[0].sids as $standingSids
      elif $sid == null then "no session id recorded: resume it by hand"
      elif ($live.agent // null) == null then "agent unknown in the ledger: resume it by hand"
      elif $live.agent != "claude" then "agent \($live.agent): resume it by hand"
+     elif ($live.bypass | type) != "boolean" then "its permission mode (bypass or not) was never recorded, so it is not resumed automatically: resume it by hand"
      elif ($h.settled | not) then "waiting \($settle) min for the server\u0027s own resume to settle, then I retry once"
      elif any($P[]; .sid == $sid) or any($hosts[] | select(.ok) | (.headless // [])[]; .sid == $sid) then "session \($sid | .[0:8]) already runs somewhere else"
+     # a host whose scan was incomplete may hold this session unseen (hard rule 4): never resume beside it
+     # (a host that answered but could not scan its processes at all, such as no lsof, counts too; one that did not
+     # answer is the documented host-down case, which never stops a resume on another host)
+     elif any($hosts[]; (.ok and (.incomplete // false)) or (.noScan // false)) then "the process scan of \([$hosts[] | select((.ok and (.incomplete // false)) or (.noScan // false)) | .host] | join(", ")) was incomplete, so a copy there cannot be ruled out: not resumed this pass"
      elif (($rowSid[$sid] // []) | length) > 1 then "ledger rows \($rowSid[$sid] | join(", ")) share session \($sid | .[0:8]): resume one by hand"
      else "ok" end) as $why
   | ($v + (if $v.w == "stopped" then {m: "\(causetext($epi.cause; $h; $live.runtime)); \(if $why == "ok" then "I will retry once" else $why end)"} else {} end)) as $v
@@ -819,7 +989,7 @@ $ST[0].names as $standingNames | $ST[0].sids as $standingSids
                       else "not in the ledger; not slept: \($why)" end),
             task: null, pids: ($g | map(.pid)), resume: false, sleep: ($why == "ok" and $n == 1), sleepWhy: $why,
             live: {host: $p.host, runtime: $p.runtime, pid: $p.pid, sessionId: $p.sid, sessionSource: $p.sidsrc, handle: $p.handle,
-                   model: $p.model, effort: $p.effort, agent: $p.agent, lastTranscriptAt: ($p.tmtime | iso), checkedAt: ($now | iso)},
+                   model: $p.model, effort: $p.effort, agent: $p.agent, bypass: $p.bypass, lastTranscriptAt: ($p.tmtime | iso), checkedAt: ($now | iso)},
             branch: $p.branch } )
     # one adopt id each, unique against EVERY ledger key (dead records too) and within this pass
     | reduce .[] as $u ({out: [], used: $allKeys};
@@ -899,9 +1069,11 @@ mark_attempt() { # <session key>: written BEFORE the create is checked, so a kil
   f="$MARKS/$(printf '%s' "$1" | tr -c 'A-Za-z0-9._-' '_')"
   printf '%s\n%s\n' "$1" "$NOW" > "$f" 2>/dev/null || true
 }
-# resume_session <key> <host> <path> <sid> <runtime> <model> <effort>: sets RS_OK (1 verified) and RS_WHY
+# resume_session <key> <host> <path> <sid> <runtime> <model> <effort> <bypass true|false>: sets RS_OK (1 verified) and
+# RS_WHY. --dangerously-skip-permissions is added only when the process it replaces ran with it (bypass true): a resume
+# never widens a session's permissions (the callers never pass true for a mode that was not recorded).
 resume_session() {
-  local key="$1" host="$2" path="$3" sid="$4" rt="$5" model="$6" eff="$7" bin cmd cli out h waited n bottom tsid why
+  local key="$1" host="$2" path="$3" sid="$4" rt="$5" model="$6" eff="$7" byp="${8:-false}" bin cmd cli out h waited n bottom tsid why footwhat pstate footok
   local -a hs
   RS_OK=0; RS_WHY=""; RS_HANDLE=""
   if why="$(others_acting)"; then RS_WHY="$why: not resumed this pass"; return; fi
@@ -912,7 +1084,11 @@ resume_session() {
   bin="$(agent_bin "$host" | head -n 1)"
   case "$bin" in /*) ;; *) RS_WHY="no working agent binary found on $host (spawn-verify.sh resolve)"; return ;; esac
   case "$bin" in *[!A-Za-z0-9._/+-]*) RS_WHY="agent binary path \"$bin\" holds characters a terminal command must not carry"; return ;; esac
-  cmd="$bin --dangerously-skip-permissions --resume $sid"
+  if [ "$byp" = true ]; then
+    cmd="$bin --dangerously-skip-permissions --resume $sid"; footwhat='bypass footer'
+  else
+    cmd="$bin --resume $sid"; footwhat='agent footer'
+  fi
   case "$model" in [A-Za-z]*) case "$model" in *[!A-Za-z0-9._-]*) ;; *) cmd="$cmd --model $model" ;; esac ;; esac
   case "$eff" in [a-z]*) case "$eff" in *[!a-z]*) ;; *) cmd="$cmd --effort $eff" ;; esac ;; esac
   cli="$(cli_for "$rt")" || { RS_WHY="no CLI for runtime $rt"; return; }
@@ -930,13 +1106,18 @@ resume_session() {
     n="$(jq -r --arg s "$sid" 'if .ok and ((.incomplete // false) | not) then [(.procs[], (.headless // [])[]) | select(.sid == $s)] | length else "x" end' "$TMP/rv-$$.json" 2>/dev/null)"
     tsid="$(jq -r --arg p "$path" 'if .ok then (.trans[$p].newest // "") else "" end' "$TMP/rv-$$.json" 2>/dev/null)"
     bottom="$(pane_bottom "$host" "$rt" "$h" 2>/dev/null || true)"
-    if [ "$n" = 1 ] && [ "$tsid" = "$sid" ] && printf '%s\n' "$bottom" | grep -qi 'bypass permissions'; then RS_OK=1; RS_WHY="verified after ${waited}s: one process on $sid, bypass footer, same transcript"; return; fi
+    # the agent is up only on an idle or busy pane (a trust dialog, a menu or an error is not up), and a bypassed resume
+    # shows the bypass footer too
+    pstate=unread; [ -z "$bottom" ] || pstate="$(pane_state "$bottom" | cut -f1)"; footok=0
+    case "$pstate" in idle|busy) footok=1 ;; esac
+    if [ "$footok" = 1 ] && [ "$byp" = true ] && ! has_bypass_footer "$bottom"; then footok=0; fi
+    if [ "$n" = 1 ] && [ "$tsid" = "$sid" ] && [ "$footok" = 1 ]; then RS_OK=1; RS_WHY="verified after ${waited}s: one process on $sid, $footwhat, same transcript"; return; fi
     waited=$((SECONDS - t0))
     if [ "$waited" -ge "$VERIFY_S" ]; then
       why=""
       [ "$n" = 1 ] || why="$why${why:+, }$n process(es) on the session id"
       [ "$tsid" = "$sid" ] || why="$why${why:+, }newest transcript is ${tsid:-none}"
-      printf '%s\n' "$bottom" | grep -qi 'bypass permissions' || why="$why${why:+, }no bypass footer on the pane"
+      [ "$footok" = 1 ] || why="$why${why:+, }no $footwhat on an idle or busy pane (pane: $pstate)"
       RS_WHY="not verified after ${VERIFY_S}s ($why); terminal $h left open, look at it"; return
     fi
   done
@@ -966,38 +1147,84 @@ mark_comment() {
   j="$(cm_timeout 30 "$cli" worktree set --worktree "path:$path" --comment "$new" ${hs[@]+"${hs[@]}"} --json </dev/null 2>/dev/null)" || return 1
   printf '%s' "$j" | jq -e '.ok == true' >/dev/null 2>&1
 }
+# scan_kind <proc root>: proc, or ps where the host has no /proc (macOS); the probe's own rule
+scan_kind() { if [ "$1" = ps ] || { [ "$1" = /proc ] && [ ! -d /proc/self ]; }; then echo ps; else echo proc; fi; }
+# pid_cwd <scan> <proc root> <pid>: the cwd of a process (readlink of /proc, else lsof); status 1 when unreadable
+pid_cwd() {
+  local c
+  if [ "$1" = proc ]; then readlink "$2/$3/cwd" 2>/dev/null; return; fi
+  c="$(lsof -w -a -p "$3" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -n 1)"
+  [ -n "$c" ] || return 1
+  case "$c" in *\\*) return 1 ;; esac
+  printf '%s\n' "$c"
+}
+# pid_alive <scan> <proc root> <pid>
+pid_alive() { if [ "$1" = proc ]; then [ -d "$2/$3" ]; else ps -p "$3" -o pid= >/dev/null 2>&1; fi; }
+# The remote half of stop_session, run there with e (expected hostname), p (pid), w (worktree), m and k set first.
+# m and k are empty outside tests (CM_TEST=1 only): m is `ps` to force the no-/proc scan or a fake /proc root, k a kill
+# command run instead of kill -TERM (CM_HEALTH_KILL_CMD, shipped to the remote side for the test ssh stub). It checks it
+# is the right machine (a Spot VM can come back on another address) and the cwd (/proc, else lsof), then TERMs. Exit 0
+# stopped or gone, 4 another cwd, 5 the TERM failed, 6 still running after 10s, 7 another machine, 8 a process that
+# cannot be checked (its cwd unreadable while it runs, or no ps or lsof).
+# shellcheck disable=SC2016  # the remote side expands these
+STOP_REMOTE_SH='g="$(hostname -s 2>/dev/null || hostname)"; g="$(printf "%s" "${g%%.*}" | tr "[:upper:]" "[:lower:]")"
+[ "$g" = "$(printf "%s" "${e%%.*}" | tr "[:upper:]" "[:lower:]")" ] || exit 7
+r=/proc; [ -z "$m" ] || [ "$m" = ps ] || r="$m"
+if [ "$m" != ps ] && { [ "$r" != /proc ] || [ -d /proc/self ]; }; then
+  alive() { [ -d "$r/$p" ]; }
+  c="$(readlink "$r/$p/cwd" 2>/dev/null)" || exit 0
+else
+  command -v ps >/dev/null 2>&1 && command -v lsof >/dev/null 2>&1 || exit 8
+  alive() { ps -p "$p" -o pid= >/dev/null 2>&1; }
+  c="$(lsof -w -a -p "$p" -d cwd -Fn 2>/dev/null | sed -n "s/^n//p" | head -n 1)"
+  if [ -z "$c" ]; then alive && exit 8; exit 0; fi
+  case "$c" in *"\\"*) exit 8 ;; esac
+fi
+case "${c%/}" in "$w"|"$w"/*) ;; *) exit 4 ;; esac
+if [ -n "$k" ]; then sh -c "$k \"\$1\"" _ "$p" || true; else kill -TERM "$p" || exit 5; fi
+i=0; while alive && [ $i -lt 10 ]; do sleep 1; i=$((i+1)); done
+alive && exit 6
+exit 0'
 # stop_session <host> <pid> <path> <handle> <runtime>: stops the process by exact pid (its cwd checked first), closes the
 # terminal; sets SS_OK (1 stopped) and SS_WHY
 stop_session() {
-  local host="$1" pid="$2" path="$3" h="$4" rt="$5" proc c i cli out
+  local host="$1" pid="$2" path="$3" h="$4" rt="$5" proc c i cli out scan
   local -a hs
   SS_OK=0; SS_WHY=""
   case "$pid" in ''|*[!0-9]*) SS_WHY="no pid"; return ;; esac
   owns_locks || { SS_WHY="lost the resume lock before the kill: left alone"; return; }
   if [ "$host" = local ]; then
-    proc="$(cm_proc_root)"
-    c="$(readlink "$proc/$pid/cwd" 2>/dev/null)" || { SS_WHY="pid $pid is gone already"; SS_OK=1; }
+    proc="$(cm_proc_root)"; scan="$(scan_kind "$proc")"
+    if [ "$scan" = ps ] && { ! command -v ps >/dev/null 2>&1 || ! command -v lsof >/dev/null 2>&1; }; then
+      SS_WHY="no ps or no lsof on this host to check pid $pid with: left alone"; return
+    fi
+    if ! c="$(pid_cwd "$scan" "$proc" "$pid")"; then
+      # with lsof, no answer from a process that still runs is not "gone": never TERM what cannot be checked
+      if [ "$scan" = ps ] && pid_alive "$scan" "$proc" "$pid"; then SS_WHY="the working directory of pid $pid could not be read: left alone"; return; fi
+      SS_WHY="pid $pid is gone already"; SS_OK=1
+    fi
     if [ "$SS_OK" = 0 ]; then
       case "${c%/}" in "$path"|"$path"/*) ;; *) SS_WHY="pid $pid now runs in $c, not $path: left alone"; return ;; esac
       if [ "${CM_TEST:-}" = 1 ] && [ -n "${CM_HEALTH_KILL_CMD:-}" ]; then sh -c "$CM_HEALTH_KILL_CMD \"\$1\"" _ "$pid" || true; else kill -TERM "$pid" 2>/dev/null || true; fi
-      i=0; while [ -d "$proc/$pid" ] && [ "$i" -lt 10 ]; do sleep 1; i=$((i + 1)); done
-      if [ -d "$proc/$pid" ]; then SS_WHY="pid $pid did not stop within 10s of TERM: left running, look at it"; return; fi
+      i=0; while pid_alive "$scan" "$proc" "$pid" && [ "$i" -lt 10 ]; do sleep 1; i=$((i + 1)); done
+      if pid_alive "$scan" "$proc" "$pid"; then SS_WHY="pid $pid did not stop within 10s of TERM: left running, look at it"; return; fi
       SS_OK=1
     fi
   else
-    local ex tg
+    local ex tg rm_ rk_
     ex="$(expect_hostname "$host")" || { SS_WHY="no valid expected hostname for $host: left alone"; return; }
     tg="$(cm_ssh_target "$host")"
     case "$tg" in -*|*[[:space:]]*|'') SS_WHY="invalid ssh target for $host: left alone"; return ;; esac
-    # the remote side checks it is the right machine (a Spot VM can come back on another address) and the cwd, then TERMs
-    # shellcheck disable=SC2016  # the remote side expands these
-    out="$(printf 'e=%q; p=%q; w=%q; g="$(hostname -s 2>/dev/null || hostname)"; g="$(printf "%%s" "${g%%%%.*}" | tr "[:upper:]" "[:lower:]")"; [ "$g" = "$(printf "%%s" "${e%%%%.*}" | tr "[:upper:]" "[:lower:]")" ] || exit 7; c="$(readlink /proc/$p/cwd 2>/dev/null)" || exit 0; case "${c%%/}" in "$w"|"$w"/*) kill -TERM "$p" || exit 5 ;; *) exit 4 ;; esac; i=0; while [ -d /proc/$p ] && [ $i -lt 10 ]; do sleep 1; i=$((i+1)); done; [ ! -d /proc/$p ] || exit 6\n' "$ex" "$pid" "$path" \
+    rm_=""; rk_=""
+    if [ "${CM_TEST:-}" = 1 ]; then rm_="${CM_HEALTH_REMOTE_PROC_ROOT:-}"; rk_="${CM_HEALTH_KILL_CMD:-}"; fi
+    out="$({ printf 'e=%q; p=%q; w=%q; m=%q; k=%q\n' "$ex" "$pid" "$path" "$rm_" "$rk_"; printf '%s\n' "$STOP_REMOTE_SH"; } \
       | cm_timeout 30 ssh -o BatchMode=yes -o ConnectTimeout=8 -- "$tg" bash -s 2>&1)"
     case $? in
       0) SS_OK=1 ;;
       7) SS_WHY="the ssh target for $host answered as another machine: left alone"; return ;;
       4) SS_WHY="pid $pid no longer runs in $path: left alone"; return ;;
       6) SS_WHY="pid $pid did not stop within 10s of TERM: left running"; return ;;
+      8) SS_WHY="pid $pid on $host could not be checked (cwd unreadable, or no ps or lsof there): left alone"; return ;;
       *) SS_WHY="could not stop pid $pid on $host: ${out:0:80}"; return ;;
     esac
   fi
@@ -1028,7 +1255,8 @@ if [ "$ACT" = 1 ]; then
     fi
     if [ "$(jq -r '.resume' <<<"$s")" = true ]; then
       resume_session "$k" "$(jq -r '.host' <<<"$s")" "$(jq -r '.path' <<<"$s")" "$(jq -r '.live.sessionId // ""' <<<"$s")" \
-        "$(jq -r '.live.runtime // ""' <<<"$s")" "$(jq -r '.live.model // ""' <<<"$s")" "$(jq -r '.live.effort // ""' <<<"$s")"
+        "$(jq -r '.live.runtime // ""' <<<"$s")" "$(jq -r '.live.model // ""' <<<"$s")" "$(jq -r '.live.effort // ""' <<<"$s")" \
+        "$(jq -r 'if .live.bypass == true then "true" else "false" end' <<<"$s")"
       case "$RS_OK" in
         1) action "$k" resume resumed "$RS_WHY" "$(jq -nc --arg h "$RS_HANDLE" '{handle: $h, attempted: true}')" ;;
         2) action "$k" resume skipped "$RS_WHY" ;;
@@ -1065,6 +1293,10 @@ if [ "$MODE" = sleep ] || [ "$MODE" = wake ]; then
   NOWI="$(iso "$NOW")"
   if [ "$MODE" = sleep ]; then
     [ "$word" != unknown ] || { echo "sleep $TARGET: host $host not judged ($(jq -r '.meaning' <<<"$s")): nothing done"; exit 3; }
+    # an incomplete scan of that host may hide a second copy (hard rule 4): never stop what was seen
+    if [ "$(jq -r --arg h "$host" 'any(.hosts[]; .host == $h and (.incomplete // false))' "$TMP/doc.json")" = true ]; then
+      echo "sleep $TARGET: the process scan on $host was incomplete, so a second copy cannot be ruled out: nothing done"; exit 3
+    fi
     [ "$npid" -le 1 ] || { echo "sleep $TARGET: $npid processes in $path (duplicate, hard rule 4): nothing done, ask $CM_OWNER_NAME which one keeps going"; exit 3; }
     [ "$(jq -r '.dup' <<<"$s")" != true ] || { echo "sleep $TARGET: $(jq -r '.meaning' <<<"$s") (hard rule 4): nothing done"; exit 3; }
     [ -n "$sid" ] || { echo "sleep $TARGET: no session id known for it, so it could not be woken on the same session: nothing done"; exit 3; }
@@ -1115,9 +1347,19 @@ if [ "$MODE" = sleep ] || [ "$MODE" = wake ]; then
   [ -z "$elsewhere" ] || { echo "wake $TARGET: session $sid already runs at $elsewhere: nothing done"; exit 3; }
   down="$(jq -r '[.[] | select(.ok | not) | .host] | join(", ")' "$TMP/hosts.json")"
   [ -z "$down" ] || echo "wake $TARGET: note: host(s) $down did not answer, so a copy there cannot be ruled out"
-  if [ "$APPLY" = 0 ]; then echo "wake $TARGET (dry run): resume session $sid in $path on $host; add --apply"; exit 0; fi
+  part="$(jq -r '[.[] | select((.ok and (.incomplete // false)) or (.noScan // false)) | .host] | join(", ")' "$TMP/hosts.json")"
+  [ -z "$part" ] || { echo "wake $TARGET: the process scan of $part was incomplete, so a copy there cannot be ruled out: nothing done"; exit 3; }
+  # the permission mode it slept in: never widened. Unrecorded (slept before it was kept): the owner says which
+  rec="$(jq -r '.live.bypass | if type == "boolean" then tostring else "" end' <<<"$s")"
+  case "$rec:$WAKE_BYP" in
+    true:|true:true|:true) WB=true ;;
+    false:|false:false|true:false|:false) WB=false ;;
+    false:true) echo "wake $TARGET: it ran without --dangerously-skip-permissions, and wake never widens that: nothing done"; exit 3 ;;
+    *) echo "wake $TARGET: its permission mode was never recorded: add --bypass or --no-bypass to say which it ran in"; exit 3 ;;
+  esac
+  if [ "$APPLY" = 0 ]; then echo "wake $TARGET (dry run): resume session $sid in $path on $host$([ "$WB" = true ] && echo " with --dangerously-skip-permissions"); add --apply"; exit 0; fi
   take_resume_lock || { echo "wake $TARGET: resume.sh is running: nothing done"; exit 4; }
-  resume_session "$TARGET" "$host" "$path" "$sid" "$(jq -r '.live.runtime // ""' <<<"$s")" "$(jq -r '.live.model // ""' <<<"$s")" "$(jq -r '.live.effort // ""' <<<"$s")"
+  resume_session "$TARGET" "$host" "$path" "$sid" "$(jq -r '.live.runtime // ""' <<<"$s")" "$(jq -r '.live.model // ""' <<<"$s")" "$(jq -r '.live.effort // ""' <<<"$s")" "$WB"
   [ "$RS_OK" = 1 ] || { echo "wake $TARGET: $RS_WHY (state stays asleep)"; exit 3; }
   # shellcheck disable=SC2016
   cm_ledger_write '.workers[$id] |= (. + {state: (.asleepFrom // "running"), asleepAt: null, updatedAt: $now}) | .updatedAt = $now' --arg id "$TARGET" --arg now "$NOWI" || exit 1
