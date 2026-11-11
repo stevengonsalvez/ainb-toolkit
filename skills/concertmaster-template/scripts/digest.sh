@@ -214,7 +214,7 @@ TZ="$CM_TZ" jq -r --argjson sinceH "$SINCE_H" --argjson since "$SINCE_EPOCH" --a
          else ( ($hl.summary // {}) as $s
            | "- " + ([["running", "running"], ["idle", "idle"], ["waiting on you", "waiting on you"], ["stuck", "stuck"], ["stopped", "stopped"], ["asleep", "asleep"], ["unknown", "unknown"]]
                      | map("\($s[.[0]] // 0) \(.[1])") | join(", ")),
-             ( [ (.hostEvents // [])[] | select(((.at | ts) // 0) >= $since and (.watched // true) and (.kind | IN("reboot", "preemption", "daemon-restart"))) ] as $ev
+             ( [ (.hostEvents // [])[] | select(((.at | ts) // 0) >= $since and (.watched != false) and (.kind | IN("reboot", "preemption", "daemon-restart"))) ] as $ev
                | if ($ev | length) > 0 then "- restarts in the window: \([$ev[] | select(.kind == "reboot")] | length) reboot(s), \([$ev[] | select(.kind == "preemption")] | length) preemption(s), \([$ev[] | select(.kind == "daemon-restart")] | length) daemon restart(s)" else empty end ),
              (if (now - $hc) > $healthStaleS then "- concertmaster check missing: last run \($hl.checkedAt | ago) ago" else empty end),
              (if $full then (($hl.attention // [])[] | "- \(.name // "?" | tostring) on \(.host // "?" | tostring): \(.word // "?" | tostring), \(.meaning // "" | tostring | gsub("[[:cntrl:]]+"; " ") | .[0:90])") else empty end) ) end),
