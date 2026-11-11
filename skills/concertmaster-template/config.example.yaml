@@ -185,6 +185,30 @@ deploy:
 respawn:
   live_agents: [claude, codex, agy]  # [script] command names scripts/live-agent.sh counts as a live agent before any respawn
 
+# Lane health (scripts/lane-health.sh, scripts/cm-status.sh, references/lane-health.md): is every session really running,
+# and why did one stop. The concertmaster runs `lane-health.sh --all --act` every tick; each lead runs
+# `lane-health.sh --lead <its worker id> --act` every loop for its own children. [script] Env CM_HEALTH_<KEY> wins.
+health:
+  settle_minutes: 5                # after a boot or a daemon restart nothing is resumed on that host for this long: the host's own resume runs first
+  stuck_minutes: 30                # a question menu on screen this long is stuck; a stuck session this long raises one alert
+  running_seconds: 120             # a transcript written this recently counts as running (no busy footer needed)
+  unknown_idle_minutes: 60         # an unknown worker (not in the ledger, merged, clean) is put to sleep only when its transcript is this old
+  resume_reset_hours: 6            # a session healthy this long after its one auto-resume gets one try again at its next stop
+  verify_seconds: 90               # how long a resume has to show one process on the id, the bypass footer and the same transcript
+  run_budget_seconds: 540          # a pass starts a resume or a sleep only while its worst case still ends inside this many seconds from the start (the rest waits for the next pass), so it ends inside the tick's 600 s call
+  cloud: none                      # gce: ask the GCE metadata server whether the VM was preempted (Spot); none: only the previous boot's power-key line counts
+  ignore_hosts: []                 # hosts gone for good: never probed and never counted as unread (their comments)
+  daemon_units: []                 # systemd units of the terminal runtime (user units first, then system), e.g. [orca-serve.service]; a restart after boot is a daemon-restart event
+  # limit_regex and error_regex (extended, case-insensitive, judged on the pane's bottom 6 lines) replace the defaults when set
+  alerts:
+    # The four alerts (lead stopped after its one resume try, host rebooted or preempted, stuck 30 min, two copies of one
+    # session) name sessions and hosts: send them to the owner or a private group. Each event is sent once (ledger
+    # health.alerted). null = reuse messaging.owner_digest.send (nothing when its adapter is none); "" = the inbox note only;
+    # else a command with {to} and {text}; they become "$CM_ALERT_TO" and "$CM_ALERT_TEXT" (the values arrive as
+    # environment), so write them bare, never inside quotes (`--message {text}`). Env CM_HEALTH_SEND wins.
+    send: null
+    to: null                       # null = messaging.owner_digest.to
+
 handles:
   max_age_s: 900                   # [script] a lane handle file (lanes/<worker-id>/handle) older than this is re-checked before any send, never trusted
 
