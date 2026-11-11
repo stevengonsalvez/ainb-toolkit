@@ -126,6 +126,7 @@ them) after the first-line `cm:<state>`:
 | `cm:child <worktree-name>` | you spawned or own that child worktree | sets `workers.<child>.parent` to you when unset (`scripts/followups.sh reconcile`; Orca's own parent link does the same); two claimants set nothing |
 | `cm:followup <id> owner=<owner-id\|lane-or-worker-id> <short text>` | an open item must outlive the worker that raised it; `<id>` is kebab-case, unique in your lane, never reused; `<owner-id>` is `project.owner.id` | opens `followUps[]`; an item owned by `<owner-id>` is also a `WAITING: <owner>` row; no teardown of the worker or its parent until it closes |
 | `cm:followup-done <id>` | the item is finished or handed over | closes it |
+| `cm:health <ok>/<n> ok \| stopped: a, b \| ... \| at <UTC>` | every loop, the line `scripts/lane-health.sh --lead <your id> --line` prints for your children | reads it; its own `lane-health.sh --all` pass is the record |
 
 `<id>` is at most 40 chars (`a-z0-9-`), the owner `[A-Za-z0-9._:-]` up to 40, and the text has no pipe. A line that
 does not parse (a leading `- `, wrong case, a bad id) is reported (`followups: malformed`) and refuses teardown, never dropped silently; a `cm:child` naming no ledger worker is reported as `unmatched-child`, and a closed `<id>` posted again with other text as `reused-id` (post it under a new id; `teardown.sh` also refuses a closed id reused with new text). A `cm:followup` or `cm:child` tag that is not at the start of its line (after `;`, `-`, `>`, a backtick, a number) or is spelled `follow_up` is reported malformed too. Whoever rewrites a comment (a lead
@@ -316,6 +317,14 @@ host. A lead may run on any agent and may move hosts; the protocol must not chan
    concertmaster pushes `[cm-freeze-...]` into your terminal, it is the same state, only sooner.
 2. `orca host list --json`, then per host `orca worktree list --json` (timeout 30s; an
    unreachable host is skipped, never treated as gone). Find every worktree it owns.
+2a. Lane health of your own children: `scripts/lane-health.sh --lead <your worker id> --act --line` (call
+   timeout 600000 ms). It reads each child's process, session id, pane and last transcript write on its host,
+   gives it one word (running, idle, waiting on you, stuck, stopped, asleep, unknown) with a meaning line, and
+   resumes a child that stopped after running fine ONCE on its own session id, verified; it never answers a
+   menu and never touches two copies of one session. Put the `cm:health ...` line it prints in your comment
+   (step 6) and act on every child it calls stopped, stuck or waiting on you. Never clean up, retire or tear
+   down a lead, yours or another's: only the owner does that; a lead that must stop is put to sleep (SKILL.md
+   hard rule 27, `references/lane-health.md`).
 3. Per owned worker: no output 45 min, so read the pane and nudge with a concrete step; 2 nudges
    or 2 h idle, so respawn in place (same model and effort) with a handover. Journal every respawn as
    `respawn cause: <short cause>` (the lessons recon counts the same cause twice as a signal). PR
@@ -326,7 +335,7 @@ host. A lead may run on any agent and may move hosts; the protocol must not chan
    `cm:merge-ready` within the hour and relay a CHANGES REQUESTED or BLOCK once per comment id; a
    child at `cm:merge-ready` with either open on its head is `cm:running` until it answers.
 6. Rewrite its comment in one call: `cm:<state> <phase> | beads <open>/<total> | blockers` plus
-   the carried lines.
+   the carried lines and the `cm:health` line of step 2a.
 7. Append one line to its lane journal. Re-arm the next tick (900 s busy, 1800 s idle).
 
 ## Standing lead footer (append to every lead brief)
@@ -344,6 +353,11 @@ its ticker does each tick).
   read it first and follow it every tick.
 - Model: you run `claude-sonnet-5-5` at effort high, and so does every worker you spawn
   (SKILL.md § Spawn recipe). A stronger model only for an independent review pass.
+- Lane health, every loop: run `scripts/lane-health.sh --lead <your worker id> --act --line` and put the
+  `cm:health ...` line it prints in your comment. It resumes a child that stopped after running fine ONCE
+  on its own session id; act on every child it calls stopped, stuck or waiting on you. Never clean up, retire
+  or tear down a lead (yours or another's): only {{owner}} does that, after confirming it; a lead that must
+  stop is put to sleep (SKILL.md hard rule 27).
 - In-session review: before any `cm:merge-ready` (yours or a worker's), the PR head carries the
   comment `in-session review: <tool> <verdict> at <sha>` (full 40-character head) from `/codex:review` (where Codex
   works on that host) or `/review` (§ In-session review). Re-run and re-post on every new head;
