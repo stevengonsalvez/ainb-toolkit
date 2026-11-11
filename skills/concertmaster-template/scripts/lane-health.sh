@@ -648,6 +648,7 @@ $ST[0].names as $standingNames | $ST[0].sids as $standingSids
 | $S[0] as $store | $RW[0] as $rows | $HS[0] as $hosts | $PN[0] as $panes | $CO[0] as $comments | $MK[0] as $marks
 | ($store.health.alerted // {}) as $alerted
 | ($rows | map({key: .id, value: .}) | from_entries) as $byId
+| ([ $rows[] | select(.live.sessionId != null) | {sid: .live.sessionId, id} ] | group_by(.sid) | map(select(length > 1)) | map({key: .[0].sid, value: map(.id)}) | from_entries) as $rowSid
 | ($hosts | map(. as $h | ($h.facts.boot | num) as $boot
      | ([($h.daemons // [])[] | select(.at != null and ($boot == null or .at > $boot + 120)) | .at] | max) as $dat
      | {key: $h.host, value: ($h + {boot: $boot, daemonAt: $dat,
@@ -659,8 +660,8 @@ $ST[0].names as $standingNames | $ST[0].sids as $standingSids
     # /clear starts a new session in the same process while the cmdline keeps the old id: take the newest
     # transcript instead, only when this is the one agent in that cwd and the file was written after it started
     | . as $q
-    | (if $q.sidsrc == "cmdline" and $q.nsid != null and $q.nsid != $q.sid and $q.nmt != null and $q.start != null
-          and $q.nmt > $q.start and $q.nmt > ($q.tmtime // 0) and ([$all[] | select(.cwd == $q.cwd)] | length) == 1
+    | (if ($q.sidsrc == "cmdline" or $q.sid == null) and $q.nsid != null and $q.nsid != $q.sid and $q.nmt != null and $q.start != null
+          and $q.nmt > $q.start and ($q.sid == null or $q.nmt > ($q.tmtime // 0)) and ([$all[] | select(.cwd == $q.cwd)] | length) == 1
           and ([$hl[] | select(.cwd == $q.cwd)] | length) == 0
        then . + {sid: $q.nsid, sidsrc: "newest-transcript", tmtime: $q.nmt} else . end)
     | . + {host: $hn, key: "\($hn)|\(.pid)", pane: ($panes["\($hn)|\(.pid)"] // {state: "unread", line: ""})}
@@ -701,8 +702,11 @@ $ST[0].names as $standingNames | $ST[0].sids as $standingSids
   | $r.state as $st
   | ((($comments["\($r.host)|\($r.path)"] // null) | nn) // (($r.lastComment // "") | tostring | split("\n")[0] | nn) // $r.task) as $task
   | (if $p != null then
-       {host: $r.host, runtime: ($p.runtime // $pl.runtime // null), pid: $p.pid, sessionId: ($p.sid // $pl.sessionId // null),
-        sessionSource: (if $p.sid != null then $p.sidsrc else ($pl.sessionSource // null) end), handle: $p.handle,
+       {host: $r.host, runtime: ($p.runtime // $pl.runtime // null), pid: $p.pid,
+        # a recorded id is carried only for the SAME process: a new process (a --continue resume, a respawn) may be on
+        # another session, and resuming the old id would bring back the wrong conversation
+        sessionId: ($p.sid // (if $pl.pid == $p.pid then $pl.sessionId else null end) // null),
+        sessionSource: (if $p.sid != null then $p.sidsrc elif $pl.pid == $p.pid then ($pl.sessionSource // null) else null end), handle: $p.handle,
         model: ($p.model // $pl.model // $r.model), effort: ($p.effort // $pl.effort // $r.effort), agent: ($p.agent // $pl.agent // $r.agent),
         lastTranscriptAt: (($p.tmtime // ($pl.lastTranscriptAt | ep)) | iso), checkedAt: ($now | iso)}
      elif $h.ok and ($h.incomplete | not) and $n == 0 then
@@ -763,6 +767,7 @@ $ST[0].names as $standingNames | $ST[0].sids as $standingSids
      elif $live.agent != "claude" then "agent \($live.agent): resume it by hand"
      elif ($h.settled | not) then "waiting \($settle) min for the server\u0027s own resume to settle, then I retry once"
      elif any($P[]; .sid == $sid) or any($hosts[] | select(.ok) | (.headless // [])[]; .sid == $sid) then "session \($sid | .[0:8]) already runs somewhere else"
+     elif (($rowSid[$sid] // []) | length) > 1 then "ledger rows \($rowSid[$sid] | join(", ")) share session \($sid | .[0:8]): resume one by hand"
      else "ok" end) as $why
   | ($v + (if $v.w == "stopped" then {m: "\(causetext($epi.cause; $h; $live.runtime)); \(if $why == "ok" then "I will retry once" else $why end)"} else {} end)) as $v
   | { key: $r.id, rowId: $r.id, name: (if $r.path == "" then ($r.id | split("@")[0]) else ($r.path | base) end), host: $r.host, path: $r.path, lane: $r.lane, parent: $r.parent,
@@ -827,11 +832,12 @@ $ST[0].names as $standingNames | $ST[0].sids as $standingSids
 | ($rowS | map(if (.word == "unknown" and (.state // "" | IN("retired", "done", "teardown")) and (.pids | length) == 1) then
       (.pids[0]) as $pid | .host as $sh | ([$P[] | select(.host == $sh and .pid == $pid)] | first) as $p
       | (if $p == null then . else
-          ((.name | . as $nm | leadlike($nm)) or .isLead or ($standingNames | index(.name | ascii_downcase)) != null
+          .name as $nm
+          | ((leadlike($nm)) or .isLead or ($standingNames | index($nm | ascii_downcase)) != null
            or ($p.sid != null and ($standingSids | index($p.sid)) != null)) as $ll
           | (if $ll then "looks like a lead: never slept; ask the owner"
-             elif ($neverTouch | index(.name)) != null then "in worktrees.never_touch: never touched"
-             elif (.name | ascii_downcase) as $sn | ([ $claims[] | select(.name == $sn and .host == $sh) ] | length) > 0 then "a lead claims it: left to that lead"
+             elif ($neverTouch | index($nm)) != null then "in worktrees.never_touch: never touched"
+             elif ($nm | ascii_downcase) as $sn | ([ $claims[] | select(.name == $sn and .host == $sh) ] | length) > 0 then "a lead claims it: left to that lead"
              elif ($unread | length) > 0 then "the worktree comments of \($unread | join(", ")) were not read (a lead there may own it)"
              elif .dup then "two copies: nothing touched"
              elif $p.sid == null then "no session id, so it could not be woken again"

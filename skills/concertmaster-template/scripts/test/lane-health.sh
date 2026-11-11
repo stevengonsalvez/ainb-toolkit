@@ -508,6 +508,32 @@ OUT="$(lhj --all --act)"
 check "an adopted id never overwrites a dead ledger record of the same name" \
   '[ "$(jq -r ".workers[\"w-done-9\"].state" "$CM_HOME/ledger.json")" = gone ] && [ "$(jq -r ".workers[\"w-done-9-local\"].state" "$CM_HOME/ledger.json")" = asleep ]' "$OUT"
 
+# code-review and Codex cases
+reset_world
+ledger "{\"w-old\":$(row "$W/done-9" '{"state":"done"}')}"
+mkproc "$P" 201 1000 "$W/done-9" "ORCA_TERMINAL_HANDLE=term_d" claude --resume "$SID_1"
+transcript "$W/done-9" "$SID_1" $((NOW - 7200)); printf '> \n  ? for shortcuts\n' > "$STUB/pane-term_d.txt"
+wlrow "$W/done-9" 'cm:done shipped' > "$STUB/wl-local.json"
+OUT="$(lhj --all --act)"
+check "done work that came back with an ordinary name: classified (no jq error) and slept, the row becomes asleep" \
+  '[ "$(jq -r ".workers[\"w-old\"].state" "$CM_HOME/ledger.json")" = asleep ] && grep -q "^kill 201$" "$STUB/calls.log"' "$OUT$(cat "$ROOT/lh.err")"
+reset_world
+ledger "{\"w-task-1\":$(row "$T1" '{"live":{"pid":999,"sessionId":"'"$SID_A"'"}}')}"
+mkproc "$P" 102 1000 "$T1" "ORCA_TERMINAL_HANDLE=term_1" claude --continue
+transcript "$T1" "$SID_1" $((NOW - 7200)); transcript "$T1" bbbbbbbb-0000-4000-8000-000000000002 $((NOW - 7300))
+printf '> \n  ? for shortcuts\n' > "$STUB/pane-term_1.txt"
+OUT="$(lhj --all)"
+check "a recorded session id is not carried to a new process; the newest transcript written since it started is its session" \
+  '[ "$(jq -r ".sessions[0].live.sessionId" <<<"$OUT")" = "$SID_1" ]' "$OUT"
+reset_world
+ledger "{\"w-a\":$(row "$T1" '{"health":{"word":"running"},"live":{"sessionId":"'"$SID_1"'"}}'),\"w-b\":$(row "$T2" '{"host":"host-b","health":{"word":"running"},"live":{"sessionId":"'"$SID_1"'"}}')}"
+transcript "$T1" "$SID_1" $((NOW - 1800))
+OUT="$(lhj --all --act)"
+check "two ledger rows on one session id: neither is resumed" '[ "$(creates)" = 0 ] && meaning "$OUT" w-a | grep -q "share session"' "$OUT"
+jq '.health = {checkedAt: "'"$(isoz "$NOW")"'", summary: {}} | .hostEvents = [{host: "local", at: "'"$(isoz $((NOW - 600)))"'", kind: "reboot", watched: false}]' "$CM_HOME/ledger.json" > "$ROOT/l.json" && cp "$ROOT/l.json" "$CM_HOME/ledger.json"
+D="$(CM_DIGEST_GH_TIMEOUT=1 "$SCRIPTS/digest.sh" 2>/dev/null)"
+check "digest: a first-seen boot (not watched) is not counted as a restart" '! printf "%s\n" "$D" | grep -q "restarts in the window"' "$D"
+
 echo "--- cm-status view"
 reset_world
 ledger "{\"w-lead-a\":$(row "$LEAD_A" '{"standing":true,"lane":"lead-a"}'),

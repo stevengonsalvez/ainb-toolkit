@@ -40,7 +40,7 @@ every session on it, and nothing is resumed anywhere else (hard rule 6).
 | fact | source |
 |---|---|
 | live agents | processes of this user on a terminal whose command is a `respawn.live_agents` name; never a zombie or a tty-less daemon |
-| session id | the cmdline `--resume <id>` (or `--session-id`), unless a transcript in that cwd is newer than that id's own and was written after the process started while it is the only agent in that cwd, headless ones counted (`/clear` starts a new session in the same process); else the ONE transcript in that cwd's `~/.claude/projects/<dir>`; two or more and no recorded id: unknown |
+| session id | the cmdline `--resume <id>` (or `--session-id`), unless a transcript in that cwd is newer than that id's own and was written after the process started while it is the only agent in that cwd, headless ones counted (`/clear` starts a new session in the same process); else the ONE transcript in that cwd's `~/.claude/projects/<dir>`; with two or more, the newest one written after the process started when it is the only agent there (a `--continue` resume); otherwise unknown. A recorded id is carried forward only for the same pid |
 | runtime | the first parent process whose name, argv[0] basename, or interpreted script path is a `plugly` or `orca` program, else the handle variable in its environment |
 | model, effort | `--model` and `--effort` on the cmdline, else the last recorded value, else the ledger row |
 | handle | `PLUGLY_TERMINAL_HANDLE`, else `ORCA_TERMINAL_HANDLE` (both set and different: none) |
