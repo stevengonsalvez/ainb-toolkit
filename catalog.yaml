@@ -75,7 +75,6 @@ components:
     - resume-formatter
     - retro-pdf
     - scrapling-official
-    - security-audit
     - security-scan
     - sentry-cli
     - session-info
