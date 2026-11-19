@@ -890,6 +890,24 @@ npx-skills:
       The `-g` install reports one failure for the PromptScript harness,
       which does not support global installs; harmless for claude/codex.
 
+  - name: security-audit
+    repo: cloudflare/security-audit-skill
+    install: "npx skills add https://github.com/cloudflare/security-audit-skill --skill security-audit -g -y -a claude-code codex github-copilot antigravity gemini-cli"
+    version: "c1c8a8c"
+    purpose: "Multi-phase security audit: reconnaissance, coverage-led hunting, adversarial candidate validation, schema-validated findings, independent verification, target-neutral report"
+    features:
+      - Six phases run by isolated agents, each candidate given to a fresh verifier that tries to disprove it
+      - confirmed / needs_validation / rejected verdicts written to findings.json and checked by validate-findings.cjs
+      - Coverage ledger (validate-coverage-ledger.cjs); repeat runs are additive
+      - Hunting classes for memory safety, AI/LLM, web auth, client side, supply chain, cloud, RPC, tenancy, desktop/mobile
+      - MIT licensed, zero-dependency Node validators
+    notes: >-
+      Replaced the toolkit's own skills/security-audit (a single-file red/blue/auditor
+      pipeline imported 2026-03-11 from ECC research with no upstream link), removed 2026-11-19.
+      Same /security-audit trigger name. Installs globally to ~/.agents/skills/security-audit
+      and symlinks into ~/.claude/skills. Pinned by commit in apm/apm.yml; re-pin to upgrade.
+    docs: "https://github.com/cloudflare/security-audit-skill"
+
   - name: summarize
     source: "npx add-skill"
     homepage: "https://summarize.sh"
