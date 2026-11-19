@@ -86,7 +86,6 @@ dependencies:
     - stevengonsalvez/ainb-toolkit/skills/resume-formatter
     - stevengonsalvez/ainb-toolkit/skills/retro-pdf
     - stevengonsalvez/ainb-toolkit/skills/scrapling-official
-    - stevengonsalvez/ainb-toolkit/skills/security-audit
     - stevengonsalvez/ainb-toolkit/skills/security-scan
     - stevengonsalvez/ainb-toolkit/skills/sentry-cli
     - stevengonsalvez/ainb-toolkit/skills/session-info
