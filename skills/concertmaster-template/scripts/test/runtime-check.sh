@@ -33,8 +33,9 @@ if [ "${1:-}" = --worker ]; then ids="$2"; else ids="$(jq -r '.workers | keys[]'
 for id in $ids; do
   h="$(jq -r --arg i "$id" '.workers[$i].terminal // empty' "$CM_HOME/ledger.json" 2>/dev/null)"
   [ -n "$h" ] || continue
+  ho="$(jq -r --arg i "$id" '.workers[$i].host // "local"' "$CM_HOME/ledger.json" 2>/dev/null)"
   mkdir -p "$CM_HOME/lanes/$id"
-  printf '%s\tlocal\tclaude\t-\t%s\n' "$h" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$CM_HOME/lanes/$id/handle"
+  printf '%s\t%s\tclaude\t-\t%s\n' "$h" "$ho" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$CM_HOME/lanes/$id/handle"
 done
 exit 0
 FAKE
@@ -271,7 +272,7 @@ case "$cmd" in
     else printf '{"ok":true,"result":{"terminal":{"handle":"%s","tail":["❯ ","  ? for shortcuts"]}}}\n' "$h"; fi ;;
   "terminal send")
     if [ "$txt" = $'\033' ]; then
-      n="$(cat "$P2/esc.$h" 2>/dev/null || echo 0)"; echo $((n + 1)) > "$P2/esc.$h"
+      echo x >> "$P2/esc.$h"
       [ -f "$P2/after-esc.$h" ] && cp "$P2/after-esc.$h" "$P2/pane.$h"
       [ -f "$P2/swap-handle.$h" ] && printf 't_elsewhere\tlocal\tclaude\t-\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$(cat "$P2/swap-handle.$h")"
     else
@@ -343,7 +344,7 @@ world() { # a fresh world: ledger, panes, Esc counters, state, call log
   : > "$P2/pane.t_cmu"                                       # a pane that reads blank (still loading): nothing may be sent or skipped
   pane t_cmf "${DIALOG[@]}"; printf '%s\n' "${IDLE[@]}" > "$P2/flip.t_cmf"   # the dialog is gone by the second read, before any Esc
 }
-esc2() { cat "$P2/esc.$1" 2>/dev/null || echo 0; }
+esc2() { if [ -f "$P2/esc.$1" ]; then wc -l < "$P2/esc.$1" | tr -d ' '; else echo 0; fi; }
 sends2() { grep -c '^terminal send' "$STUB_DIR/calls2.log" 2>/dev/null || true; }
 nudges2() { grep -c "^terminal send --terminal $1 .*--enter" "$STUB_DIR/calls2.log" 2>/dev/null || true; }
 ESCB="$(printf '\033')"
@@ -463,6 +464,33 @@ world r
 mkdir -p "$CM_HOME/cache"; printf 'local/t_cm3\t1\t%s\n' "$(date +%s)" > "$CM_HOME/cache/codemode-recover.tsv"
 ( direct t_cm3 w-cm3 > "$ROOT/par1" & direct t_cm3 w-cm3 > "$ROOT/par2" & wait )
 check "two recoveries of one terminal at once cannot both take the last Esc of the cap" "$(esc2 t_cm3)" "1"
+world p
+( direct t_cm1 w-cm1 > "$ROOT/par1" & direct t_cm1 w-cm1 > "$ROOT/par2" & wait )
+check "two recoveries of one terminal at once, from zero: ONE Esc and ONE nudge (the second is held or finds the dialog gone)" "$(esc2 t_cm1)/$(nudges2 t_cm1)" "1/1"
+world q2
+pane t_cm1 '● We discussed Code Mode and Fast Mode today.' '╭──────────────────────────╮' '│ Try the new Auto mode?   │' '│  1. Yes     2. No        │' '╰──────────────────────────╯' ' Enter to confirm · Esc to start without it'
+CT="$(direct t_cm1 w-cm1)"
+check "Code Mode only in the history above a DIFFERENT dialog with the same footer: none, no Esc" "$(printf '%s' "$CT" | cut -f1)/$(esc2 t_cm1)" "none/0"
+pane t_cm1 'Code Mode dialog says:' '- Enter to confirm · Esc to start without it'
+CT="$(direct t_cm1 w-cm1)"
+check "a markdown bullet that quotes the footer is not the dialog: none, no Esc" "$(printf '%s' "$CT" | cut -f1)/$(esc2 t_cm1)" "none/0"
+pane t_cm1 '╭─ Code Mode ──────────────────╮' '│ Turn it on?                  │' '╰──────────────────────────────╯' ' Enter to confirm · Esc to start without it'
+CT="$("$HERE/../codemode-recover.sh" --terminal t_cm1 --lane w-cm1 --text hello --dry-run 2>/dev/null)"
+check "a boxed dialog with the heading on its top border still matches" "$(printf '%s' "$CT" | cut -f1)" "would-recover"
+world hb
+printf 't_rcm\tlocal\tclaude\t-\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$CM_HOME/lanes/w-rcm/handle" 2>/dev/null || { mkdir -p "$CM_HOME/lanes/w-rcm"; printf 't_rcm\tlocal\tclaude\t-\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$CM_HOME/lanes/w-rcm/handle"; }
+CT="$("$HERE/../codemode-recover.sh" --terminal t_rcm --lane w-rcm --host remote-host --text hello 2>/dev/null)"
+check "a lane file that names another HOST than the destination: held, no Esc" "$(printf '%s' "$CT" | cut -f1)/$(esc2 t_rcm)" "held/0"
+world mf
+CT="$(direct t_cm1 w-cm1)"
+check "a missing lane file is re-checked live (lane-handles.sh --worker) and then accepted for this terminal" "$(printf '%s' "$CT" | cut -f1)/$(esc2 t_cm1)" "recovered/1"
+world bg
+OUT="$(CM_CODEMODE_BUDGET_S=0 "$SCRIPT")"
+check "a Code Mode pass out of budget stops with ONE skipped row and sends nothing" "$(printf '%s\n' "$OUT" | awk -F'\t' '$4=="skipped"' | wc -l | tr -d ' ')/$(for h in t_cm1 t_cm2 t_cm3 t_cm4 t_rcm t_rcw; do esc2 $h; done | tr '\n' ' ')" "1/0 0 0 0 0 0 "
+world xf
+printf '#!/bin/sh\nexit 2\n' > "$ROOT/cm-fail.sh"; chmod +x "$ROOT/cm-fail.sh"
+OUT="$(CM_CODEMODE_RECOVER="$ROOT/cm-fail.sh" "$SCRIPT")"
+check "a Code Mode sender that exits non-zero leaves an unreadable row, not silence" "$(printf '%s\n' "$OUT" | grep -c 'w-cm1.*exited 2')" "1"
 check "no temp file or lock is left behind by the state update" "$(find "$CM_HOME/cache" -mindepth 1 ! -name codemode-recover.tsv | wc -l | tr -d ' ')" "0"
 
 # direct: the script refuses a control byte in the nudge text before reading or sending anything
@@ -484,10 +512,10 @@ mutant() { # <name> <sed script>
 if mutant noanchor '/for (j = f + 1; j <= NR; j++)/d'; then
   check "mutant: without the end-of-screen anchor old dialog text gets an Esc (caught by the scrollback row)" "$([ "$(esc2 t_cm7)" = 0 ] && echo missed || echo caught)" "caught"
 fi
-if mutant noheading 's/for (k = 1; k <= f; k++) if (l\[k\] ~ \/code mode\/) { h = 1; break }/h = 1/'; then
+if mutant noheading 's/if (l\[k\] ~ \/code mode\/) { h = 1; break }/{ h = 1; break }/'; then
   check "mutant: without the Code Mode heading the lookalike footer gets an Esc (caught)" "$([ "$(esc2 t_cm8)" = 0 ] && echo missed || echo caught)" "caught"
 fi
-if mutant nocap 's/if \[ "\$tries" -ge "\$MAXESC" \]; then unlock_state/if false; then unlock_state/'; then
+if mutant nocap 's/if \[ "\$tries" -ge "\$MAXESC" \]; then RESERVED_TRIES/if false; then RESERVED_TRIES/'; then
   for _ in 1 2; do "$ROOT/mut-nocap/runtime-check.sh" >/dev/null 2>&1; done
   check "mutant: without the Esc cap a stubborn dialog gets a 3rd key (caught)" "$([ "$(esc2 t_cm3)" -le 2 ] && echo missed || echo caught)" "caught"
 fi
