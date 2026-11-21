@@ -77,16 +77,16 @@ question menu and never type into one, so the lanes stay stale. After it has wri
    `lane-handles.sh --worker` first): only a fresh handle that is this terminal on this host is accepted, a dead, still-stale,
    other-terminal or other-host file is `held`, and the script never writes a lane handle. One recovery per terminal runs at a time
    (a mkdir lock), from the last read through the nudge;
-4. read the pane and check the lock once more right before the key, then reserve the Esc against the cap: at most 2 per terminal in
-   6 h from the last one (kept through recoveries), written under a mkdir lock with a unique temp file and read back; a count that
-   cannot be recorded means no Esc. Send ONE Esc (a single key, no Enter), read again until the dialog is gone; still showing after
+4. reserve the Esc against the cap: at most 2 per terminal in 6 h from the last one (kept through recoveries), written under a
+   mkdir lock with a unique temp file and read back; a count that cannot be recorded means no Esc. Then read the pane and check the
+   lock once more right before the key (a dialog gone or a lock present gives the count back and sends nothing). Send ONE Esc (a single key, no Enter), read again until the dialog is gone; still showing after
    the last read is `menu` (reported, not retried);
 5. only with the dialog gone, a Claude footer last, no menu and no mid-turn marker on a fresh read, the lane handle unchanged and no
    lock: one re-arm nudge.
 
 A lane the pass handled gets its row from the pass and is taken out of the stale plan, so pass 2 does not nudge it again (a fresh
 lane on the dialog keeps its pass 1 row and gets the recovery row). Env:
-`CM_CODEMODE_SETTLE_S` (2), `CM_CODEMODE_POLLS` (5), `CM_CODEMODE_MAX_ESC` (2), `CM_CODEMODE_BUDGET_S` (300: the pass stops with a `skipped` row and the rest wait for the next tick), `CM_CODEMODE_RECOVER` (a stub script, tests, `CM_TEST=1` only).
+`CM_CODEMODE_SETTLE_S` (2), `CM_CODEMODE_POLLS` (5), `CM_CODEMODE_MAX_ESC` (2), `CM_CODEMODE_BUDGET_S` (300: the pass stops with a `skipped` row and the rest wait for the next tick; one recovery is cut at what is left of the budget, 30 s up to `CM_CODEMODE_LANE_MAX_S` (180), and a cut one is an `unreadable` row), `CM_CODEMODE_RECOVER` (a stub script, tests, `CM_TEST=1` only). A host whose terminal list cannot be read gives each of its in-scope lanes an `unreadable` row (no local pass looks at a remote worker).
 
 ## Test
 `scripts/test/runtime-check.sh`: stubbed orca (live `terminal read` shape), fake transcripts with set
