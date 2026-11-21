@@ -11,14 +11,17 @@
 # spawn-verify.sh use, no new transport). Steps, each one fails closed:
 #   1. read the pane. The dialog is matched NARROWLY (codemode_dialog below): the LAST footer line "Esc to start without it" that begins
 #      (after border characters) with "Enter to confirm" or "Esc to start without it", with "Enter to confirm" on it or starting the line
-#      above, the words "Code Mode" at or above it, and NOTHING but blank lines and border characters below it. A sentence that quotes the
+#      above, the words "Code Mode" within 8 lines above it and not past the top border of the dialog, and NOTHING but blank lines and
+#      border characters below it. A sentence that quotes the
 #      words, a permission prompt, a model picker, a trust dialog and every other menu fail that match and are never touched; so does old
 #      dialog text that scrolled up under a live prompt. No match: prints "none", sends nothing;
 #   2. resume.lock (scripts/resume.sh is running): nothing is sent ("held"), checked here, again right before the Esc and again before the
 #      nudge;
-#   3. the send goes to the handle cm_lane_handle returns for --lane (the lane handle file, with its live re-check). Only a fresh handle
-#      that IS this terminal is accepted; a missing, stale, dead (-) or other-terminal file is "held". This script never writes a lane
-#      handle (lane-handles.sh and resume.sh own that);
+#   3. the send goes to the handle cm_lane_handle returns for --lane (the lane handle file; a missing or stale file is re-checked against
+#      the live agent by lane-handles.sh --worker first). Only a fresh handle that IS this terminal, on THIS host, is accepted; a dead (-),
+#      still-stale, other-terminal or other-host file is "held". This script never writes a lane handle (lane-handles.sh and resume.sh own
+#      that). ONE recovery per terminal runs at a time, from the last read through the nudge (a mkdir lock with the owner pid, released at
+#      exit; a second run for the same terminal is "held");
 #   4. the pane is read once more and the lock checked once more right before the Esc, then the Esc is reserved against the cap: at most 2
 #      per terminal in 6 hours counted from the last one, kept in cache/codemode-recover.tsv through a recovery, written under a mkdir lock
 #      with a unique temp file and read back. A dialog that survives them is "menu", left to a person. A count that cannot be recorded
@@ -113,12 +116,17 @@ codemode_dialog() {
       f = 0
       for (i = NR; i >= 1; i--) if (l[i] ~ /esc to start without it/) { f = i; break }
       if (!f) exit 1
-      s = l[f]; sub(/^([[:space:]]|│|┃|╰|╯|╭|╮|┌|┐|└|┘|─|━|═|-)+/, "", s)
+      s = l[f]; sub(/^([[:space:]]|│|┃|╰|╯|╭|╮|┌|┐|└|┘|─|━|═)+/, "", s)
       if (s !~ /^(enter to confirm|esc to start without it)/) exit 1          # a footer, not prose that quotes the words
-      p = (f > 1) ? l[f - 1] : ""; sub(/^([[:space:]]|│|┃|╰|╯|╭|╮|┌|┐|└|┘|─|━|═|-)+/, "", p)
+      p = (f > 1) ? l[f - 1] : ""; sub(/^([[:space:]]|│|┃|╰|╯|╭|╮|┌|┐|└|┘|─|━|═)+/, "", p)
       if (!(s ~ /^enter to confirm/ && s ~ /esc to start without it/) && !(s ~ /^esc to start without it/ && p ~ /^enter to confirm/)) exit 1
       for (j = f + 1; j <= NR; j++) if (l[j] !~ /^([[:space:]]|│|┃|╰|╯|╭|╮|┌|┐|└|┘|─|━|═|-)*$/) exit 1
-      for (k = 1; k <= f; k++) if (l[k] ~ /code mode/) { h = 1; break }
+      # the heading must sit INSIDE this dialog: within 8 lines above the footer and not past the top border of the dialog (a different dialog
+      # with the same footer, under a transcript that mentions Code Mode, is not this one)
+      for (k = f; k >= 1 && f - k <= 8; k--) {
+        if (l[k] ~ /code mode/) { h = 1; break }
+        if (l[k] ~ /^[[:space:]]*(╭|┌)/) break
+      }
       exit !h
     }'
 }
@@ -144,55 +152,82 @@ if [ "$DRY" = 1 ]; then out would-recover "Code Mode dialog on screen: would sen
 locked() { [ -e "$CM_HOME/resume.lock" ]; }
 if locked; then out held "resume.lock exists (resume.sh is running): nothing sent"; fi
 
-# 3. the handle the send uses: what cm_lane_handle returns for the lane (it re-checks a stale file against the live agent). Only a fresh
-# handle that IS this terminal is accepted. A missing, stale, dead (-) or other-terminal file is "held": nothing here writes a lane handle
-# (lane-handles.sh and resume.sh own that), so a lane with two agents or no live agent never gets a key from this script.
+# 3. the handle the send uses: what cm_lane_handle returns for the lane (it re-checks a stale or missing file against the live agent through
+# lane-handles.sh --worker). Only a fresh handle that IS this terminal, on THIS host, is accepted. A dead (-), stale-after-recheck,
+# other-terminal or other-host file is "held": this script never writes a lane handle (lane-handles.sh and resume.sh own that).
 send_h="$(cm_lane_handle "$LANE" 2>/dev/null)" || send_h=""
 [ "$send_h" = "$TERM_H" ] || out held "the lane handle file does not confirm terminal $TERM_H: nothing sent; read the pane"
+IFS=$'\t' read -r _lh lane_host _rest < "$(cm_lane_dir "$LANE")/handle" 2>/dev/null || true
+[ "${lane_host:-local}" = "$HOSTSEL" ] || out held "the lane handle file names host ${lane_host:-local}, not $HOSTSEL: nothing sent"
 
-# 4. the pane once more right before the key (the handle work above takes time), the lock once more, then the Esc is RESERVED against the
-# cap (at most MAXESC per terminal in 6 hours counted from the last one, kept through a recovery) under a mkdir lock, with a unique temp
-# file, and read back; an Esc that cannot be recorded is never sent (the cap must hold, also for two runs at once)
+# locks (mkdir, owner pid inside, released at exit): ONE recovery per terminal from the last read through the nudge (a second run for the
+# same terminal is "held", never a second Esc into whatever the first one opened), and a short lock around the Esc-cap record
+LOCKS_HELD=()
+release_locks() { local d; for d in ${LOCKS_HELD[@]+"${LOCKS_HELD[@]}"}; do rm -f -- "${d:?}/pid" 2>/dev/null; rmdir "$d" 2>/dev/null; done; return 0; }
+trap release_locks EXIT
+# take_lock <dir> <tries of 0.1 s>: a lock whose owner is gone and that is over a minute old is reclaimed through an atomic rename that
+# checks it moved the lock it judged; anything else fails closed
+take_lock() {
+  local d="$1" n="${2:-1}" i=0 pid
+  mkdir -p "$CM_HOME/cache" 2>/dev/null || return 1
+  while :; do
+    if mkdir "$d" 2>/dev/null; then printf '%s\n' "$$" > "$d/pid" 2>/dev/null; LOCKS_HELD+=("$d"); return 0; fi
+    pid="$(cat -- "$d/pid" 2>/dev/null || true)"
+    if [ -n "$(find "$d" -maxdepth 0 -mmin +1 2>/dev/null)" ] && { [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; }; then
+      if mv "$d" "$d.stale.$$" 2>/dev/null; then
+        if [ "$(cat -- "$d.stale.$$/pid" 2>/dev/null || true)" = "$pid" ]; then rm -f -- "${d:?}.stale.$$/pid" 2>/dev/null; rmdir "$d.stale.$$" 2>/dev/null; continue; fi
+        mv "$d.stale.$$" "$d" 2>/dev/null   # it was a live holder's fresh lock: put it back, fail closed
+        return 1
+      fi
+    fi
+    i=$((i + 1)); [ "$i" -lt "$n" ] || return 1
+    sleep 0.1
+  done
+}
+TERM_LOCK="$CM_HOME/cache/codemode-term.$(printf '%s' "$KEY" | tr -c 'A-Za-z0-9._-' '_').lock"
+take_lock "$TERM_LOCK" 1 || out held "another recovery of this terminal is running (or a killed one left $TERM_LOCK): nothing sent"
+
+# 4. the pane once more and the lock once more, then the Esc is RESERVED against the cap (at most MAXESC per terminal in 6 hours counted from
+# the last one, kept through a recovery) under the cap lock, with a unique temp file, and read back; an Esc that cannot be recorded is
+# never sent (the cap must hold). The resume lock is looked at again right after the reservation (a refused Esc gives the count back)
 screen="$(read_screen)"
 codemode_dialog "$screen" || out none "the Code Mode dialog is gone from the screen: nothing sent"
 if locked; then out held "resume.lock appeared (resume.sh started): nothing sent"; fi
 STATE_LOCK="$CM_HOME/cache/codemode-recover.lock"
-unlock_state() { rmdir "$STATE_LOCK" 2>/dev/null || true; }
-lock_state() {
-  local i=0
-  mkdir -p "$CM_HOME/cache" 2>/dev/null || return 1
-  while ! mkdir "$STATE_LOCK" 2>/dev/null; do
-    if [ -n "$(find "$STATE_LOCK" -maxdepth 0 -mmin +2 2>/dev/null)" ] && mv "$STATE_LOCK" "$STATE_LOCK.stale.$$" 2>/dev/null; then rmdir "$STATE_LOCK.stale.$$" 2>/dev/null || true; continue; fi
-    i=$((i + 1)); [ "$i" -le 50 ] || return 1
-    sleep 0.1
-  done
-}
-# reserve_esc: 0 reserved, 10 cap reached, 11 cannot be recorded
-reserve_esc() {
-  local rd="" tries last now tmp
-  lock_state || return 11
-  if [ -e "$STATE" ] && [ ! -f "$STATE" ]; then unlock_state; return 11; fi
-  if [ -f "$STATE" ]; then rd="$(cat -- "$STATE" 2>/dev/null)" || { unlock_state; return 11; }; fi
+# esc_record reserve|refund: 0 done, 10 cap reached (reserve), 11 cannot be recorded
+esc_record() {
+  local op="$1" rd="" tries last now tmp new
+  take_lock "$STATE_LOCK" 50 || return 11
+  if [ -e "$STATE" ] && [ ! -f "$STATE" ]; then return 11; fi
+  if [ -f "$STATE" ]; then rd="$(cat -- "$STATE" 2>/dev/null)" || return 11; fi
   now="$(date +%s)"
   read -r tries last < <(printf '%s\n' "$rd" | awk -F'\t' -v k="$KEY" '$1 == k { print $2, $3; f = 1; exit } END { if (!f) print "0 0" }')
   case "${tries:-0}" in ''|*[!0-9]*) tries=0 ;; esac; case "${last:-0}" in ''|*[!0-9]*) last=0 ;; esac
-  if [ $((now - last)) -gt 21600 ]; then tries=0; fi
-  if [ "$tries" -ge "$MAXESC" ]; then unlock_state; RESERVED_TRIES="$tries"; return 10; fi
-  tmp="$(mktemp "$CM_HOME/cache/codemode-recover.XXXXXX" 2>/dev/null)" || { unlock_state; return 11; }
-  if { printf '%s\n' "$rd" | awk -F'\t' -v k="$KEY" 'NF && $1 != k'; printf '%s\t%s\t%s\n' "$KEY" "$((tries + 1))" "$now"; } > "$tmp" 2>/dev/null && mv -f -- "$tmp" "$STATE" 2>/dev/null \
-     && [ "$(awk -F'\t' -v k="$KEY" '$1 == k { print $2 }' "$STATE" 2>/dev/null)" = "$((tries + 1))" ]; then
-    unlock_state; return 0
+  if [ "$op" = reserve ]; then
+    if [ $((now - last)) -gt 21600 ]; then tries=0; fi
+    if [ "$tries" -ge "$MAXESC" ]; then RESERVED_TRIES="$tries"; return 10; fi
+    new=$((tries + 1))
+  else
+    new=$((tries > 0 ? tries - 1 : 0)); now="$last"
+  fi
+  tmp="$(mktemp "$CM_HOME/cache/codemode-recover.XXXXXX" 2>/dev/null)" || return 11
+  if { printf '%s\n' "$rd" | awk -F'\t' -v k="$KEY" 'NF && $1 != k'; printf '%s\t%s\t%s\n' "$KEY" "$new" "$now"; } > "$tmp" 2>/dev/null && mv -f -- "$tmp" "$STATE" 2>/dev/null \
+     && [ "$(awk -F'\t' -v k="$KEY" '$1 == k { print $2 }' "$STATE" 2>/dev/null)" = "$new" ]; then
+    return 0
   fi
   rm -f -- "${tmp:?}" 2>/dev/null || true
-  unlock_state; return 11
+  return 11
 }
+# the cap lock is held only inside esc_record
+cap_record() { local rc; esc_record "$1"; rc=$?; rm -f -- "${STATE_LOCK:?}/pid" 2>/dev/null; rmdir "$STATE_LOCK" 2>/dev/null; return "$rc"; }
 RESERVED_TRIES=0
-reserve_esc; rc=$?
+cap_record reserve; rc=$?
 case "$rc" in
   0) ;;
   10) out menu "$RESERVED_TRIES Esc keys already sent to this terminal in the last 6 h and the Code Mode dialog is on screen again: not sent again, answer it by hand" ;;
   *)  out held "the Esc count could not be recorded in $STATE: not sent (the cap must hold)" ;;
 esac
+if locked; then cap_record refund || true; out held "resume.lock appeared (resume.sh started): nothing sent"; fi
 ESC=$'\033'
 resp="$(cm_timeout 60 "$ORCA" terminal send --terminal "$send_h" --text "$ESC" ${envargs[@]+"${envargs[@]}"} --json </dev/null 2>/dev/null)" || resp=""
 [ "$(printf '%s' "$resp" | jq -r '.ok // false | tostring' 2>/dev/null)" = true ] || out send-failed "the Esc to $send_h was not accepted: nothing else sent; read the pane"

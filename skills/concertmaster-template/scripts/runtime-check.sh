@@ -42,10 +42,12 @@
 # Code Mode dialog: after the ledger handles are written and before pass 2, for every live ledger worker on ANY host (standing or
 # not; a remote host through --environment) whose worktree has exactly one Claude terminal, scripts/codemode-recover.sh closes the Claude
 # Code "Code Mode" opt-in dialog a host reboot leaves lanes on (one Esc, then one re-arm nudge; any other menu is never touched). Rows:
-# lane handle - recovered | closed | menu | held | unreadable | send-failed | would-recover. Nothing is sent while resume.lock exists.
+# lane handle - recovered | closed | menu | held | unreadable | send-failed | would-recover (and one `skipped` row when the pass stops at
+# CM_CODEMODE_BUDGET_S, default 300 s, so pass 2 keeps its time). Nothing is sent while resume.lock exists.
 # The ledger is written under a mkdir lock (<ledger>.lock), atomically, keeping its file mode.
 # Env: CM_HOME, CM_PATH_MATCH, CM_SELF_PATH_RE (default: the config worktrees.self_name directory),
-#      CM_RUNTIME_SWEEP and CM_CODEMODE_RECOVER (stub scripts, tests, CM_TEST=1 only), CM_CLAUDE_PROJECTS, CM_BOOT_CONFIRM_S (via boot-sweep.sh).
+#      CM_RUNTIME_SWEEP and CM_CODEMODE_RECOVER (stub scripts, tests, CM_TEST=1 only), CM_CODEMODE_BUDGET_S (300), CM_CLAUDE_PROJECTS,
+#      CM_BOOT_CONFIRM_S (via boot-sweep.sh).
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=SCRIPTDIR/lib.sh
@@ -54,7 +56,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 DRY=0
 case "${1:-}" in
   --dry-run) DRY=1 ;;
-  -h|--help) sed -n '2,48p' "$0"; exit 0 ;;
+  -h|--help) sed -n '2,50p' "$0"; exit 0 ;;
   '') ;;
   *) cm_warn "runtime-check.sh: unknown arg: $1"; exit 2 ;;
 esac
@@ -128,12 +130,13 @@ rc_ledger_write() {
 # it again this tick (a fresh lane on the dialog keeps its pass 1 row and gets the recovery row). Remote hosts go through the same fleet CLI with --environment (cm_cli_host_into), a terminal list per host.
 # resume.lock: nothing is sent. Output rows: lane handle - result detail (recovered, closed, menu, held, unreadable, send-failed, would-recover).
 codemode_pass() {
-  local rows host hosts hsel hl id path h res result detail text hp np standing args
+  local rows host hosts hsel hl id path h res result detail text hp np standing args cm_started cm_budget cmout cmrc
   handled="$US"   # unit-separator joined ids ($US id $US id $US), no newline: portable through awk -v
+  cm_started="$(date +%s)"; cm_budget="${CM_CODEMODE_BUDGET_S:-300}"; case "$cm_budget" in ''|*[!0-9]*) cm_budget=300 ;; esac
   [ -e "$CM_HOME/resume.lock" ] && return 0
   [ -x "$CODEMODE" ] || { cm_warn "runtime-check.sh: $CODEMODE is missing or not executable: Code Mode dialogs not checked"; return 0; }
   rows="$(jq -r '.workers // {} | to_entries[] | select(.value | type == "object")
-      | select((((.value.state // "") | IN("gone", "repurposed", "asleep")) | not))
+      | select((((.value.state // "") | IN("gone", "torn-down", "repurposed", "asleep")) | not))
       | .value as $w | [.key, ($w.host // "local"), ($w.path // $w.worktree // $w.worktreePath // ""), (if $w.standing == true then "1" else "0" end)]
       | join("\u001f")' "$LEDGER" 2>/dev/null)"
   [ -n "$rows" ] || return 0
@@ -149,6 +152,11 @@ codemode_pass() {
     while IFS="$US" read -r id hp path standing; do
       [ "$hp" = "$host" ] && [ -n "$id" ] || continue
       [ -e "$CM_HOME/resume.lock" ] && return 0   # resume.sh may start while this pass runs: checked per lane, as pass 2 does
+      # the tick call has a 600 s budget and pass 2 still has to run: a pass over many lanes stops here and the rest wait for the next tick
+      if [ $(($(date +%s) - cm_started)) -ge "$cm_budget" ]; then
+        row - - - skipped "Code Mode pass stopped after ${cm_budget}s: the remaining lanes are checked next tick"
+        return 0
+      fi
       np="$(printf '%s' "$path" | norm)"
       [ -n "$np" ] || continue
       if [ "$id" = concertmaster ] || grep -qE "$CM_PATH_RE" <<<"$np"; then continue; fi
@@ -157,10 +165,13 @@ codemode_pass() {
       [ -n "$h" ] || continue   # none, or two Claude terminals in one worktree: pass 1 and resume.sh own that
       if [ "$standing" = 1 ]; then text="$NUDGE_CODEMODE_LANE"; else text="$NUDGE_CODEMODE_WORKER"; fi
       args=(--terminal "$h" --lane "$id" --host "$host" --text "$text"); [ "$DRY" = 1 ] && args+=(--dry-run)
-      res="$("$CODEMODE" "${args[@]}" </dev/null 2>/dev/null | tail -n 1)"
+      cmout="$("$CODEMODE" "${args[@]}" </dev/null 2>/dev/null)"; cmrc=$?
+      res="$(printf '%s\n' "$cmout" | tail -n 1)"
       result="${res%%$'\t'*}"; detail="${res#*$'\t'}"
+      [ "$cmrc" = 0 ] || { result=unreadable; detail="codemode-recover.sh exited $cmrc (usage or setup error): nothing was judged, read the pane"; }
       case "$result" in
-        ''|none) continue ;;
+        none) continue ;;
+        '') result=unreadable; detail="codemode-recover.sh printed nothing (exit $cmrc): an Esc may have been sent, read the pane" ;;
         recovered|closed|menu|held|unreadable|send-failed|would-recover) ;;
         *) result=unreadable; detail="codemode-recover.sh answered something unexpected" ;;
       esac
