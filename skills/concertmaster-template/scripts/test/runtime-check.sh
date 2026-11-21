@@ -262,14 +262,18 @@ done
 case "$cmd" in
   "terminal list") case "$env" in remote-host) cat "$LIST_R" ;; bad-host) echo '{"ok":false}' ;; *) cat "$LIST2" ;; esac ;;
   "terminal read")
+    n="$(cat "$P2/reads.$h" 2>/dev/null || echo 0)"; n=$((n + 1)); echo "$n" > "$P2/reads.$h"
     [ -f "$P2/lock-on-read.$h" ] && : > "$CM_HOME/resume.lock"
-    if [ -f "$P2/pane.$h" ]; then printf '{"ok":true,"result":{"terminal":{"handle":"%s","tail":%s}}}\n' "$h" "$(jq -Rn '[inputs]' < "$P2/pane.$h")"
+    [ "$(cat "$P2/lock-on-nth.$h" 2>/dev/null)" = "$n" ] && : > "$CM_HOME/resume.lock"
+    pf="$P2/pane.$h"; [ -f "$P2/seq.$h.$n" ] && pf="$P2/seq.$h.$n"
+    if [ -f "$pf" ]; then printf '{"ok":true,"result":{"terminal":{"handle":"%s","tail":%s}}}\n' "$h" "$(jq -Rn '[inputs]' < "$pf")"
       if [ -f "$P2/flip.$h" ]; then cp "$P2/flip.$h" "$P2/pane.$h"; rm -f "$P2/flip.$h"; fi
     else printf '{"ok":true,"result":{"terminal":{"handle":"%s","tail":["❯ ","  ? for shortcuts"]}}}\n' "$h"; fi ;;
   "terminal send")
     if [ "$txt" = $'\033' ]; then
       n="$(cat "$P2/esc.$h" 2>/dev/null || echo 0)"; echo $((n + 1)) > "$P2/esc.$h"
       [ -f "$P2/after-esc.$h" ] && cp "$P2/after-esc.$h" "$P2/pane.$h"
+      [ -f "$P2/swap-handle.$h" ] && printf 't_elsewhere\tlocal\tclaude\t-\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$(cat "$P2/swap-handle.$h")"
     else
       lane="${h#t_}"; for d in "$CM_CLAUDE_PROJECTS"/*-"$lane"; do [ -d "$d" ] && touch "$d/s.jsonl"; done
     fi
@@ -391,9 +395,10 @@ check "tick 3: the cap of 2 Esc keys holds, nothing is sent to that terminal" "$
 check "tick 3: the row tells a person to answer it" "$(printf '%s\n' "$OUT" | grep -c 'w-cm3.*menu.*by hand')" "1"
 
 # the Esc record survives a recovery: a terminal that is recovered, then hits the dialog again twice more inside 6 h, gets no 3rd key
-pane t_cm1 "${DIALOG[@]}"; after t_cm1 "${IDLE[@]}"; : > "$STUB_DIR/calls2.log"; OUT="$("$SCRIPT")"
+stale1() { touch -d "@$((NOW - 90 * 60))" "$(tdirp "$(wt cm1)")/s.jsonl"; }   # a reboot leaves the transcript old again
+stale1; pane t_cm1 "${DIALOG[@]}"; after t_cm1 "${IDLE[@]}"; : > "$STUB_DIR/calls2.log"; OUT="$("$SCRIPT")"
 check "a 2nd dialog on a recovered terminal (a 2nd reboot) is recovered: Esc number 2" "$(res w-cm1)/$(esc2 t_cm1)" "recovered/2"
-pane t_cm1 "${DIALOG[@]}"; after t_cm1 "${IDLE[@]}"; : > "$STUB_DIR/calls2.log"; OUT="$("$SCRIPT")"
+stale1; pane t_cm1 "${DIALOG[@]}"; after t_cm1 "${IDLE[@]}"; : > "$STUB_DIR/calls2.log"; OUT="$("$SCRIPT")"
 check "a 3rd inside the same 6 h is NOT sent: the record was kept through the recoveries" "$(res w-cm1)/$(esc2 t_cm1)/$(grep -c '^terminal send --terminal t_cm1 ' "$STUB_DIR/calls2.log" || true)" "menu/2/0"
 # a first read that comes back blank sends nothing and does not take the lane out of the other checks
 check "a blank pane is not a Code Mode row and gets no Esc" "$(esc2 t_cmu)/$(printf '%s\n' "$OUT" | grep -c 'w-cmu.*Code Mode')" "0/0"
@@ -418,6 +423,48 @@ check "resume.lock appearing mid-pass: that lane is held, not one key is sent" "
 check "resume.lock appearing mid-pass: no later lane is touched either (checked per lane)" "$(for h in t_cm2 t_cm3 t_cm4 t_rcm t_rcw; do esc2 $h; done | tr '\n' ' ')" "0 0 0 0 0 "
 rm -f "$CM_HOME/resume.lock"
 
+# direct: guards the gates found missing (each of these must fail when its guard is removed)
+direct() { "$HERE/../codemode-recover.sh" --terminal "$1" --lane "$2" --text hello 2>/dev/null; }
+world q
+pane t_cm1 'Example: Code Mode: Enter to confirm / Esc to start without it'
+CT="$(direct t_cm1 w-cm1)"
+check "a sentence that quotes the dialog words is not the dialog: none, no Esc" "$(printf '%s' "$CT" | cut -f1)/$(esc2 t_cm1)/$(sends2)" "none/0/0"
+world d
+mkdir -p "$CM_HOME/lanes/w-cm1"; printf -- '-\tlocal\tclaude\t-\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$CM_HOME/lanes/w-cm1/handle"; DEADF="$(cat "$CM_HOME/lanes/w-cm1/handle")"
+CT="$(direct t_cm1 w-cm1)"
+check "a fresh dead (-) lane file: held, no Esc, no text, and the file is NOT rewritten" "$(printf '%s' "$CT" | cut -f1)/$(esc2 t_cm1)/$(sends2)/$([ "$(cat "$CM_HOME/lanes/w-cm1/handle")" = "$DEADF" ] && echo same || echo changed)" "held/0/0/same"
+world k
+echo 2 > "$P2/lock-on-nth.t_cm1"   # resume.sh starts during the read right before the Esc
+CT="$(direct t_cm1 w-cm1)"
+check "resume.lock appearing during the read before the Esc: held, no Esc" "$(printf '%s' "$CT" | cut -f1)/$(esc2 t_cm1)/$(sends2)" "held/0/0"
+rm -f "$CM_HOME/resume.lock"
+world n
+echo 4 > "$P2/lock-on-nth.t_cm1"   # resume.sh starts during the read right before the nudge
+CT="$(direct t_cm1 w-cm1)"
+check "resume.lock appearing before the nudge: Esc was sent, the nudge is not" "$(printf '%s' "$CT" | cut -f1)/$(esc2 t_cm1)/$(nudges2 t_cm1)" "held/1/0"
+rm -f "$CM_HOME/resume.lock"
+world b
+printf '%s\n' 'working (12s · esc to interrupt)' 'bypass permissions on' > "$P2/seq.t_cm1.4"   # the lane is mid-turn on the read before the nudge
+CT="$(direct t_cm1 w-cm1)"
+check "the pane turns busy on the read before the nudge: closed, nudge not sent" "$(printf '%s' "$CT" | cut -f1)/$(esc2 t_cm1)/$(nudges2 t_cm1)" "closed/1/0"
+world m
+printf '%s\n' 'Pick a model' '  1. Sonnet' '  2. Opus' ' Enter to confirm · Esc to cancel' > "$P2/seq.t_cm1.4"   # another menu opens before the nudge
+CT="$(direct t_cm1 w-cm1)"
+check "a menu on the read before the nudge: closed, nothing typed into it" "$(printf '%s' "$CT" | cut -f1)/$(nudges2 t_cm1)" "closed/0"
+world h2
+printf '%s' "$CM_HOME/lanes/w-cm1/handle" > "$P2/swap-handle.t_cm1"   # the lane file names another terminal once the Esc went out
+CT="$(direct t_cm1 w-cm1)"
+check "the lane handle changed after the Esc: held, nudge not sent" "$(printf '%s' "$CT" | cut -f1)/$(esc2 t_cm1)/$(nudges2 t_cm1)" "held/1/0"
+world s2
+mkdir -p "$CM_HOME/cache/codemode-recover.tsv"
+CT="$(direct t_cm1 w-cm1)"
+check "a state path that is a directory: held, no Esc (the cap must hold)" "$(printf '%s' "$CT" | cut -f1)/$(esc2 t_cm1)" "held/0"
+world r
+mkdir -p "$CM_HOME/cache"; printf 'local/t_cm3\t1\t%s\n' "$(date +%s)" > "$CM_HOME/cache/codemode-recover.tsv"
+( direct t_cm3 w-cm3 > "$ROOT/par1" & direct t_cm3 w-cm3 > "$ROOT/par2" & wait )
+check "two recoveries of one terminal at once cannot both take the last Esc of the cap" "$(esc2 t_cm3)" "1"
+check "no temp file or lock is left behind by the state update" "$(find "$CM_HOME/cache" -mindepth 1 ! -name codemode-recover.tsv | wc -l | tr -d ' ')" "0"
+
 # direct: the script refuses a control byte in the nudge text before reading or sending anything
 : > "$STUB_DIR/calls2.log"
 CT="$("$HERE/../codemode-recover.sh" --terminal t_cm1 --lane w-cm1 --text "$(printf 'a\033b')" 2>/dev/null)"
@@ -440,7 +487,7 @@ fi
 if mutant noheading 's/for (k = 1; k <= f; k++) if (l\[k\] ~ \/code mode\/) { h = 1; break }/h = 1/'; then
   check "mutant: without the Code Mode heading the lookalike footer gets an Esc (caught)" "$([ "$(esc2 t_cm8)" = 0 ] && echo missed || echo caught)" "caught"
 fi
-if mutant nocap 's/if \[ "\$tries" -ge "\$MAXESC" \]; then out menu/if false; then out menu/'; then
+if mutant nocap 's/if \[ "\$tries" -ge "\$MAXESC" \]; then unlock_state/if false; then unlock_state/'; then
   for _ in 1 2; do "$ROOT/mut-nocap/runtime-check.sh" >/dev/null 2>&1; done
   check "mutant: without the Esc cap a stubborn dialog gets a 3rd key (caught)" "$([ "$(esc2 t_cm3)" -le 2 ] && echo missed || echo caught)" "caught"
 fi
