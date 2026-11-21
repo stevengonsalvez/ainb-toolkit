@@ -64,22 +64,27 @@ run still leaves fresh handles.
 
 After a host reboot the resumer reopens each lane with `claude --resume` and every lane stops on the Claude Code
 "Code Mode" opt-in dialog ("Enter to confirm", "Esc to start without it"). The other passes read that screen as a
-question menu and never type into one, so the lanes stay stale. Before pass 1, `runtime-check.sh` calls
+question menu and never type into one, so the lanes stay stale. After it has written the ledger handles and before pass 2, `runtime-check.sh` calls
 `scripts/codemode-recover.sh` for every live ledger worker on every host (standing or not; a remote host through
 `--environment`, one terminal list per host) whose worktree has exactly one Claude terminal:
 
-1. match the bottom of the pane NARROWLY: the last "Esc to start without it" line, "Enter to confirm" on it or the line above,
-   "Code Mode" at or above, only blank or border lines below. A permission prompt, a model picker or old dialog text
-   scrolled above a live prompt is never touched;
-2. at most 2 Esc keys per terminal in 6 h (kept through recoveries); a count that cannot be recorded means no Esc;
-3. nothing is sent while `resume.lock` exists (checked per lane and again before the nudge);
-4. read the pane again right before the key; send ONE Esc (a single key, no Enter), read again until the dialog is gone;
-   still showing after the last read is `menu` (reported, not retried);
-5. only with the dialog gone, a Claude footer last, no menu and no mid-turn marker on a fresh read: one re-arm nudge.
+1. match the bottom of the pane NARROWLY: the last footer line that begins (after border characters) with "Enter to confirm" or
+   "Esc to start without it", "Enter to confirm" on it or starting the line above, "Code Mode" at or above, only blank or
+   border lines below. A sentence that quotes the words, a permission prompt, a model picker or old dialog text scrolled above a
+   live prompt is never touched;
+2. nothing is sent while `resume.lock` exists (checked per lane, right before the key and again before the nudge);
+3. the send goes to the handle `cm_lane_handle` returns for the lane: only a fresh handle that is this terminal is accepted, a
+   missing, stale, dead or other-terminal file is `held`, and the script never writes a lane handle;
+4. read the pane and check the lock once more right before the key, then reserve the Esc against the cap: at most 2 per terminal in
+   6 h from the last one (kept through recoveries), written under a mkdir lock with a unique temp file and read back; a count that
+   cannot be recorded means no Esc. Send ONE Esc (a single key, no Enter), read again until the dialog is gone; still showing after
+   the last read is `menu` (reported, not retried);
+5. only with the dialog gone, a Claude footer last, no menu and no mid-turn marker on a fresh read, the lane handle unchanged and no
+   lock: one re-arm nudge.
 
-Every send goes to the handle `cm_lane_handle` returns for the lane. A lane the pass handled gets its row from the pass, keeps
-its handle and churn refresh in pass 1, and is taken out of the stale plan so pass 2 does not nudge it again. Env:
-`CM_CODEMODE_SETTLE_S` (2), `CM_CODEMODE_POLLS` (5), `CM_CODEMODE_MAX_ESC` (2), `CM_CODEMODE_RECOVER` (the script, tests).
+A lane the pass handled gets its row from the pass and is taken out of the stale plan, so pass 2 does not nudge it again (a fresh
+lane on the dialog keeps its pass 1 row and gets the recovery row). Env:
+`CM_CODEMODE_SETTLE_S` (2), `CM_CODEMODE_POLLS` (5), `CM_CODEMODE_MAX_ESC` (2), `CM_CODEMODE_RECOVER` (a stub script, tests, `CM_TEST=1` only).
 
 ## Test
 `scripts/test/runtime-check.sh`: stubbed orca (live `terminal read` shape), fake transcripts with set
