@@ -60,8 +60,31 @@ unreadable (1) or usage is wrong (2).
 The ledger is written under a lock, atomically, keeping its file mode, BEFORE any nudge, so a killed
 run still leaves fresh handles.
 
+## Code Mode dialog (after a host reboot)
+
+After a host reboot the resumer reopens each lane with `claude --resume` and every lane stops on the Claude Code
+"Code Mode" opt-in dialog ("Enter to confirm", "Esc to start without it"). The other passes read that screen as a
+question menu and never type into one, so the lanes stay stale. Before pass 1, `runtime-check.sh` calls
+`scripts/codemode-recover.sh` for every live ledger worker on every host (standing or not; a remote host through
+`--environment`, one terminal list per host) whose worktree has exactly one Claude terminal:
+
+1. match the bottom of the pane NARROWLY: the last "Esc to start without it" line, "Enter to confirm" on it or the line above,
+   "Code Mode" at or above, only blank or border lines below. A permission prompt, a model picker or old dialog text
+   scrolled above a live prompt is never touched;
+2. at most 2 Esc keys per terminal in 6 h (kept through recoveries); a count that cannot be recorded means no Esc;
+3. nothing is sent while `resume.lock` exists (checked per lane and again before the nudge);
+4. read the pane again right before the key; send ONE Esc (a single key, no Enter), read again until the dialog is gone;
+   still showing after the last read is `menu` (reported, not retried);
+5. only with the dialog gone, a Claude footer last, no menu and no mid-turn marker on a fresh read: one re-arm nudge.
+
+Every send goes to the handle `cm_lane_handle` returns for the lane. A lane the pass handled gets its row from the pass, keeps
+its handle and churn refresh in pass 1, and is taken out of the stale plan so pass 2 does not nudge it again. Env:
+`CM_CODEMODE_SETTLE_S` (2), `CM_CODEMODE_POLLS` (5), `CM_CODEMODE_MAX_ESC` (2), `CM_CODEMODE_RECOVER` (the script, tests).
+
 ## Test
 `scripts/test/runtime-check.sh`: stubbed orca (live `terminal read` shape), fake transcripts with set
 ages, a fixture ledger, no network. Covers churn and refresh by path, the 1x and 2x limits, per-lane
 intervals, every refusal, the two-nudge episode cap, the 3-in-6 h cap, persistent churn and
-`resume.lock`.
+`resume.lock`, and the Code Mode recovery: Esc then nudge, a dialog that survives Esc, a closed dialog into a busy lane,
+permission prompts, other menus, lookalike footers and old scrollback untouched, a remote host, the cap, the lane-file and
+lock races, and matcher mutants.
