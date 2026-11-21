@@ -282,6 +282,18 @@ The lane set above is the default; `cfg.lanes` is the list in use.
     and `teardown.sh` refuses every `standing: true` row with this rule. Why: a lead holds long
     context (the plan, its children, the review history) that a teardown destroys and no handover
     fully rebuilds; sleep stops the cost and keeps all of it (`references/lane-health.md`).
+28. **Owner questions go through the structured ask, and the tick nudges a session that left one in prose.** A session
+    blocked on input only the owner can give (a decision, an approval, an answer, a credential step, a pick between options)
+    asks through its interview or structured-question tool, batched, recommended option first, so the owner gets a
+    notification. A question left in prose, a PR or issue comment or a table row is not enough. Every tick, after the census,
+    scan the in-scope panes, the `cm:` worktree comments (`cm:blocked`, `cm:waiting`, `cm:ask`) and `asks[]` for anything
+    waiting on the owner. Read the pane with `--screen` first: an open picker is left alone, nothing is typed into a menu. At
+    an empty prompt, or while the session is busy, nudge it once to put the question through the interview, and record the nudge
+    on the ask (`asks[].interviewNudgedAt`) so the next tick does not repeat it. While the owner is away
+    (`references/away-timeout.md`) the nudge points at the second-opinion verdict path instead, and the session decides on it.
+    The concertmaster follows the same rule: its own owner decisions use the structured ask only in a turn the owner started;
+    in a tick turn they stay `WAITING` rows and `asks[]` entries. Why: a question in prose raises no notification, so a
+    blocked session waits unseen.
 
 <!-- project-local: hard-rules -->
 
