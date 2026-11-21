@@ -39,9 +39,13 @@
 # ledger is unreadable (1) or usage is wrong (2). Churn persists: the refresh stamps
 # workers.<id>.terminalChurnAt, and a lane stays "churned" (1 x limit, restart text) until its
 # transcript is newer than that, so the first tick refreshing the handle never hides the restart.
+# Code Mode dialog: after the ledger handles are written and before pass 2, for every live ledger worker on ANY host (standing or
+# not; a remote host through --environment) whose worktree has exactly one Claude terminal, scripts/codemode-recover.sh closes the Claude
+# Code "Code Mode" opt-in dialog a host reboot leaves lanes on (one Esc, then one re-arm nudge; any other menu is never touched). Rows:
+# lane handle - recovered | closed | menu | held | unreadable | send-failed | would-recover. Nothing is sent while resume.lock exists.
 # The ledger is written under a mkdir lock (<ledger>.lock), atomically, keeping its file mode.
 # Env: CM_HOME, CM_PATH_MATCH, CM_SELF_PATH_RE (default: the config worktrees.self_name directory),
-#      CM_RUNTIME_SWEEP (the sweep script, tests), CM_CLAUDE_PROJECTS, CM_BOOT_CONFIRM_S (via boot-sweep.sh).
+#      CM_RUNTIME_SWEEP and CM_CODEMODE_RECOVER (stub scripts, tests, CM_TEST=1 only), CM_CLAUDE_PROJECTS, CM_BOOT_CONFIRM_S (via boot-sweep.sh).
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=SCRIPTDIR/lib.sh
@@ -50,7 +54,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 DRY=0
 case "${1:-}" in
   --dry-run) DRY=1 ;;
-  -h|--help) sed -n '2,44p' "$0"; exit 0 ;;
+  -h|--help) sed -n '2,48p' "$0"; exit 0 ;;
   '') ;;
   *) cm_warn "runtime-check.sh: unknown arg: $1"; exit 2 ;;
 esac
@@ -115,16 +119,16 @@ rc_ledger_write() {
   return "$rc"
 }
 
-# ---- Code Mode dialog recovery, before pass 1 -----------------------------------------------------------
+# ---- Code Mode dialog recovery, run after the ledger handles are written -----------------------------------------------------------
 # After a HOST reboot the resumer reopens each lane with "claude --resume" and every lane stops on the Claude Code Code Mode opt-in
 # dialog. boot-sweep.sh reads that dialog as a question menu and never types into it, so the lane stayed stale for hours. For every
 # live ledger worker (local OR on another host, standing or not) whose worktree has exactly ONE Claude terminal, scripts/codemode-recover.sh
 # reads the pane and, only when the bottom of it is that dialog, sends Esc ("start without it"), confirms it closed and sends one re-arm
-# nudge. Every other pane, every other menu included, is left to the existing passes. A lane it handled is listed in $handled: pass 1 still
-# refreshes its handle and churn, but the lane is taken out of the stale plan so pass 2 does not nudge it again this tick. Remote hosts go through the same fleet CLI with --environment (cm_cli_host_into), a terminal list per host.
+# nudge. Every other pane, every other menu included, is left to the existing passes. A lane it handled is listed in $handled and is taken out of the stale plan, so pass 2 does not nudge
+# it again this tick (a fresh lane on the dialog keeps its pass 1 row and gets the recovery row). Remote hosts go through the same fleet CLI with --environment (cm_cli_host_into), a terminal list per host.
 # resume.lock: nothing is sent. Output rows: lane handle - result detail (recovered, closed, menu, held, unreadable, send-failed, would-recover).
 codemode_pass() {
-  local rows host hosts hsel hl id path h res result detail text hp np standing
+  local rows host hosts hsel hl id path h res result detail text hp np standing args
   handled="$US"   # unit-separator joined ids ($US id $US id $US), no newline: portable through awk -v
   [ -e "$CM_HOME/resume.lock" ] && return 0
   [ -x "$CODEMODE" ] || { cm_warn "runtime-check.sh: $CODEMODE is missing or not executable: Code Mode dialogs not checked"; return 0; }
@@ -166,28 +170,24 @@ codemode_pass() {
   done <<<"$hosts"
 }
 handled="$US"
-CODEMODE="${CM_CODEMODE_RECOVER:-$HERE/codemode-recover.sh}"
+CODEMODE="$HERE/codemode-recover.sh"
+[ "${CM_TEST:-}" = 1 ] && [ -n "${CM_CODEMODE_RECOVER:-}" ] && CODEMODE="$CM_CODEMODE_RECOVER"   # a stub sender only under the test switch
 NUDGE_CODEMODE_LANE="Status check from the concertmaster after a restart: your session stopped at the Claude Code start-up dialog and it has been closed. Any /loop or ScheduleWakeup timer you had died with the restart. Check git status and your worktree comment, re-arm your standing /loop now with the same prompt as before (your brief under $CM_HOME/briefs lists it if you lost it), and carry on."
 NUDGE_CODEMODE_WORKER="Status check from the concertmaster after a restart: your session stopped at the Claude Code start-up dialog and it has been closed. Check git status and your worktree comment, then carry on from where you stopped and set cm:running with the next step."
-codemode_pass
 
 # ---- pass 1: decide per lane, collect handle refreshes ----------------------------------------
 plan="$(mktemp "${TMPDIR:-/tmp}/cm-runtime.XXXXXX")" || exit 0
 trap 'rm -f -- "${plan:?}"; if declare -F cm_ledger_unlock >/dev/null; then cm_ledger_unlock; fi' EXIT
 refresh=""   # id<TAB>handle lines for the ledger write
-# a lane the Code Mode pass already reported gets no second row from pass 1 (its handle and churn are still refreshed)
-skiprow=0
-prow() { [ "$skiprow" = 1 ] || row "$@"; }
 while IFS="$US" read -r id path rec interval churnat; do
   [ -n "$id" ] || continue
-  skiprow=0; case "$handled" in *"$US$id$US"*) skiprow=1;; esac
   np="$(printf '%s' "$path" | norm)"
-  [ -n "$np" ] || { prow "$id" - - unknown "ledger row has no worktree path"; continue; }
+  [ -n "$np" ] || { row "$id" - - unknown "ledger row has no worktree path"; continue; }
   if [ "$id" = concertmaster ] || grep -qE "$CM_PATH_RE" <<<"$np"; then continue; fi   # the tick itself, never nudged from here
   cur="$(printf '%s\n' "$terms" | awk -F'\t' -v p="$np" '{q = $2; sub(/\/+$/, "", q); if (q == p) print $1}')"
   n="$(printf '%s' "$cur" | grep -c . || true)"
-  if [ "$n" = 0 ]; then prow "$id" "${rec:--}" - no-terminal "no Claude terminal in that worktree: resume.sh's job"; continue; fi
-  if [ "$n" -gt 1 ]; then prow "$id" "${rec:--}" - duplicate "$n Claude terminals in one worktree: left to resume.sh and the tick"; continue; fi
+  if [ "$n" = 0 ]; then row "$id" "${rec:--}" - no-terminal "no Claude terminal in that worktree: resume.sh's job"; continue; fi
+  if [ "$n" -gt 1 ]; then row "$id" "${rec:--}" - duplicate "$n Claude terminals in one worktree: left to resume.sh and the tick"; continue; fi
   note=""; churn=0; fresh_churn=0
   if [ "$rec" != "$cur" ]; then
     if [ -n "$rec" ]; then churn=1; fresh_churn=1; note="handle churn $rec -> $cur"; else note="handle set $cur"; fi
@@ -199,19 +199,17 @@ while IFS="$US" read -r id path rec interval churnat; do
   if [ "$churn" = 0 ] && [[ "${churnat:-0}" =~ ^[0-9]+$ ]] && [ "${churnat:-0}" -gt 0 ] && [ "$m" != unknown ] && [ "$churnat" -gt "$m" ]; then
     churn=1; note="Orca restart seen at $(date -u -d "@$churnat" +%FT%TZ 2>/dev/null || echo "$churnat"), no turn since"
   fi
-  if [ "$m" = unknown ]; then prow "$id" "$cur" - unknown "${note:+$note; }no Claude transcript visible: not nudged"; continue; fi
+  if [ "$m" = unknown ]; then row "$id" "$cur" - unknown "${note:+$note; }no Claude transcript visible: not nudged"; continue; fi
   { [[ "$interval" =~ ^[0-9]+$ ]] && [ "$interval" -gt 0 ]; } || interval="$DEFAULT_MIN"
   age=$((NOW - m)); mult=2; [ "$churn" = 1 ] && mult=1
   limit=$((mult * interval * 60)); amin=$((age / 60))
   if [ "$age" -le "$limit" ]; then
-    prow "$id" "$cur" "${amin}m" "$([ -n "$note" ] && echo refreshed || echo ok)" "${note:-transcript ${amin}m old, loop every ${interval}m}"
+    row "$id" "$cur" "${amin}m" "$([ -n "$note" ] && echo refreshed || echo ok)" "${note:-transcript ${amin}m old, loop every ${interval}m}"
     continue
   fi
   # a stale lane: planned for pass 2 (fields joined by the unit separator; the note may hold spaces)
   printf '%s\n' "$id$US$cur$US$np$US$amin$US$mult$US$interval$US$limit$US$churn$US$note" >> "$plan"
 done <<<"$lanes"
-# lanes the Code Mode pass handled are not nudged again (their handles and churn were refreshed above)
-if [ "$handled" != "$US" ]; then plan_kept="$(awk -F"$US" -v h="$handled" -v u="$US" 'index(h, u $1 u) == 0' "$plan")"; printf '%s\n' "$plan_kept" > "$plan"; fi
 
 # ---- ledger handles first: a killed run still leaves them fresh ---------------------------------
 if [ -n "$refresh" ] && [ "$DRY" = 0 ]; then
@@ -222,6 +220,12 @@ if [ -n "$refresh" ] && [ "$DRY" = 0 ]; then
     cm_warn "runtime-check.sh: ledger write failed: handles not refreshed"
   fi
 fi
+
+# ---- Code Mode dialogs (after the ledger handles are written, before any nudge) ----------------------------------------
+codemode_pass
+# a lane the pass handled is not nudged again by pass 2 this tick (a fresh lane on the dialog keeps its pass 1 row and gets the recovery row)
+# lanes the Code Mode pass handled are not nudged again (their handles and churn were refreshed above)
+if [ "$handled" != "$US" ]; then plan_kept="$(awk -F"$US" -v h="$handled" -v u="$US" 'index(h, u $1 u) == 0' "$plan")"; printf '%s\n' "$plan_kept" > "$plan"; fi
 
 # ---- pass 2: nudge the stale lanes -------------------------------------------------------------
 while IFS="$US" read -r id cur np amin mult interval limit churn note; do

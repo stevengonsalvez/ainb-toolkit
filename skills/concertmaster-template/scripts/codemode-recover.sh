@@ -9,23 +9,28 @@
 #
 # One terminal per call, local or remote (--host is the environment name, sent as --environment; the same CLI path resume.sh and
 # spawn-verify.sh use, no new transport). Steps, each one fails closed:
-#   1. read the pane. The dialog is matched NARROWLY (codemode_dialog below): a footer line "Esc to start without it" with
-#      "Enter to confirm" on the same line or the line above, the words "Code Mode" at or above it, and NOTHING but blank lines and
-#      border characters below it. A permission prompt, a model picker, a trust dialog and every other menu fail that match and are
-#      never touched; so does old dialog text that scrolled up under a live prompt. No match: prints "none", sends nothing;
-#   2. at most 2 Esc keys per terminal in 6 hours, kept in cache/codemode-recover.tsv until the 6 hours pass (a recovery does not clear
-#      them): a dialog that survives them is "menu", left to a person. A cap that cannot be recorded means no Esc ("held");
-#   3. resume.lock (scripts/resume.sh is running): nothing is sent ("held"), checked before the Esc and again before the nudge;
-#   4. the send goes to the handle cm_lane_handle returns for --lane (the lane handle file, with its live re-check). A lane whose file is
-#      stale or missing is written with this terminal (the same write-then-read-back resume.sh does after its own screen gates) and read
-#      back; a file that names ANOTHER terminal is "held". The pane is read once more right before the Esc, and the Esc goes out only if
-#      the dialog is still the bottom of it. Then ONE Esc (a single key, text only, no Enter), and the pane is read again up to
-#      CM_CODEMODE_POLLS times, CM_CODEMODE_SETTLE_S apart. The dialog still showing after the last read is "menu" (reported once, not
-#      retried, no nudge, no loop);
+#   1. read the pane. The dialog is matched NARROWLY (codemode_dialog below): the LAST footer line "Esc to start without it" that begins
+#      (after border characters) with "Enter to confirm" or "Esc to start without it", with "Enter to confirm" on it or starting the line
+#      above, the words "Code Mode" at or above it, and NOTHING but blank lines and border characters below it. A sentence that quotes the
+#      words, a permission prompt, a model picker, a trust dialog and every other menu fail that match and are never touched; so does old
+#      dialog text that scrolled up under a live prompt. No match: prints "none", sends nothing;
+#   2. resume.lock (scripts/resume.sh is running): nothing is sent ("held"), checked here, again right before the Esc and again before the
+#      nudge;
+#   3. the send goes to the handle cm_lane_handle returns for --lane (the lane handle file, with its live re-check). Only a fresh handle
+#      that IS this terminal is accepted; a missing, stale, dead (-) or other-terminal file is "held". This script never writes a lane
+#      handle (lane-handles.sh and resume.sh own that);
+#   4. the pane is read once more and the lock checked once more right before the Esc, then the Esc is reserved against the cap: at most 2
+#      per terminal in 6 hours counted from the last one, kept in cache/codemode-recover.tsv through a recovery, written under a mkdir lock
+#      with a unique temp file and read back. A dialog that survives them is "menu", left to a person. A count that cannot be recorded
+#      (also a state path that is not a regular file) means no Esc ("held"). Then ONE Esc (a single key, text only, no Enter), and the pane
+#      is read again up to CM_CODEMODE_POLLS times, CM_CODEMODE_SETTLE_S apart. The dialog still showing after the last read is "menu"
+#      (reported once, not retried, no nudge, no loop);
 #   5. only with the dialog gone AND a Claude footer as the last line AND no menu and no mid-turn marker on a fresh read right before
-#      the send: send --text and Enter, once ("recovered"). Anything else is "closed" with the reason, and nothing more is sent.
-# --text is ONE LINE OF PLAIN TEXT: a control byte in it is refused with nothing read or sent (gsend.sh's rule). This script is the one
-# place that sends an Escape; every other send in the skill refuses it.
+#      the send, the lane handle unchanged and no resume.lock: send --text and Enter, once ("recovered"). Anything else is "closed" or
+#      "held" with the reason, and nothing more is sent.
+# --text is ONE LINE OF PLAIN TEXT: a control byte in it is refused with nothing read or sent (gsend.sh's rule). This is the one script
+# that sends an Escape to a Code Mode dialog (the tick's Escape to a menu in no-human mode, and to the autocompact prompt, are other
+# rules: standing-rules sections 7 and 14); every other send in the skill refuses it.
 # Output: one line, result TAB detail. Results: none, would-recover (--dry-run), recovered, closed, menu, held, unreadable, send-failed.
 # Exit 0 for every result; 2 for bad usage.
 # Env: CM_CODEMODE_SETTLE_S (2), CM_CODEMODE_POLLS (5), CM_CODEMODE_MAX_ESC (2 per 6 h), CM_HOME, CM_CLI_KIND.
@@ -34,7 +39,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=SCRIPTDIR/lib.sh
 . "$HERE/lib.sh"
 
-# Helpers the template lib.sh may not carry: defined here only when lib.sh lacks them (same behaviour as the concertmaster skill lib.sh).
+# Helpers the template lib.sh may not carry: defined here only when lib.sh lacks them (same behaviour as the SHOT skill's lib.sh).
 if ! declare -F cm_handle_ok >/dev/null; then
   cm_handle_ok() { [[ "${1-}" =~ ^[A-Za-z0-9_][A-Za-z0-9_.:@=-]{0,127}$ ]]; }
 fi
@@ -98,8 +103,9 @@ read_screen() {
 }
 
 # codemode_dialog <text>: success only when the bottom of the screen IS the Code Mode dialog (see the header, step 1). The footer is the
-# anchor: the LAST line with "esc to start without it", "enter to confirm" on that line or the one above, "code mode" on or above it, and
-# only blank or border lines below it. Scrollback that quotes the dialog above a live prompt has real lines below it and fails.
+# anchor: the LAST line with "esc to start without it" that BEGINS (after border characters) with "enter to confirm" or "esc to start without
+# it" and has "enter to confirm" on it or beginning the line above (a sentence that quotes the words does not match), "code mode" on or above
+# it, and only blank or border lines below it. Scrollback that quotes the dialog above a live prompt has real lines below it and fails.
 codemode_dialog() {
   printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | tail -n 30 | awk '
     { l[NR] = tolower($0) }
@@ -107,7 +113,10 @@ codemode_dialog() {
       f = 0
       for (i = NR; i >= 1; i--) if (l[i] ~ /esc to start without it/) { f = i; break }
       if (!f) exit 1
-      if (!(l[f] ~ /enter to confirm/ || (f > 1 && l[f - 1] ~ /enter to confirm/))) exit 1
+      s = l[f]; sub(/^([[:space:]]|│|┃|╰|╯|╭|╮|┌|┐|└|┘|─|━|═|-)+/, "", s)
+      if (s !~ /^(enter to confirm|esc to start without it)/) exit 1          # a footer, not prose that quotes the words
+      p = (f > 1) ? l[f - 1] : ""; sub(/^([[:space:]]|│|┃|╰|╯|╭|╮|┌|┐|└|┘|─|━|═|-)+/, "", p)
+      if (!(s ~ /^enter to confirm/ && s ~ /esc to start without it/) && !(s ~ /^esc to start without it/ && p ~ /^enter to confirm/)) exit 1
       for (j = f + 1; j <= NR; j++) if (l[j] !~ /^([[:space:]]|│|┃|╰|╯|╭|╮|┌|┐|└|┘|─|━|═|-)*$/) exit 1
       for (k = 1; k <= f; k++) if (l[k] ~ /code mode/) { h = 1; break }
       exit !h
@@ -131,31 +140,59 @@ screen="$(read_screen)"
 if ! codemode_dialog "$screen"; then out none "no Code Mode dialog at the bottom of the screen"; fi
 if [ "$DRY" = 1 ]; then out would-recover "Code Mode dialog on screen: would send Esc, confirm it closed, then nudge"; fi
 
-# 2. at most MAXESC Esc keys per terminal in 6 hours (the record stays until they pass: a recovery does not clear it)
-now="$(date +%s)"
-read -r _k tries last < <(awk -F'\t' -v k="$KEY" '$1 == k { print $1, $2, $3; f = 1; exit } END { if (!f) print "- 0 0" }' "$STATE" 2>/dev/null)
-case "${tries:-0}" in ''|*[!0-9]*) tries=0 ;; esac; case "${last:-0}" in ''|*[!0-9]*) last=0 ;; esac
-if [ $((now - last)) -gt 21600 ]; then tries=0; fi
-if [ "$tries" -ge "$MAXESC" ]; then out menu "$tries Esc keys already sent to this terminal in the last 6 h and the Code Mode dialog is on screen again: not sent again, answer it by hand"; fi
+# 2. resume.lock (resume.sh is running): nothing is sent, here, after the second read and again before the nudge
 locked() { [ -e "$CM_HOME/resume.lock" ]; }
 if locked; then out held "resume.lock exists (resume.sh is running): nothing sent"; fi
 
-# 3. the handle the send uses: what cm_lane_handle returns for the lane (it re-checks a stale file against the live agent); a lane whose
-# file is stale or missing gets this terminal written, as resume.sh does after its own screen gates, and is read back
+# 3. the handle the send uses: what cm_lane_handle returns for the lane (it re-checks a stale file against the live agent). Only a fresh
+# handle that IS this terminal is accepted. A missing, stale, dead (-) or other-terminal file is "held": nothing here writes a lane handle
+# (lane-handles.sh and resume.sh own that), so a lane with two agents or no live agent never gets a key from this script.
 send_h="$(cm_lane_handle "$LANE" 2>/dev/null)" || send_h=""
-if [ -z "$send_h" ]; then
-  cm_lane_handle_write "$LANE" "$TERM_H" "$HOSTSEL" screen - >/dev/null 2>&1 || true
-  send_h="$(cm_lane_handle "$LANE" 2>/dev/null)" || send_h=""
-fi
 [ "$send_h" = "$TERM_H" ] || out held "the lane handle file does not confirm terminal $TERM_H: nothing sent; read the pane"
 
-# 4. the pane once more right before the key (the handle work above takes time), then ONE Esc; the record is written BEFORE it is sent
-# so a killed run still counts it, and an Esc that cannot be recorded is never sent (the cap must hold)
+# 4. the pane once more right before the key (the handle work above takes time), the lock once more, then the Esc is RESERVED against the
+# cap (at most MAXESC per terminal in 6 hours counted from the last one, kept through a recovery) under a mkdir lock, with a unique temp
+# file, and read back; an Esc that cannot be recorded is never sent (the cap must hold, also for two runs at once)
 screen="$(read_screen)"
 codemode_dialog "$screen" || out none "the Code Mode dialog is gone from the screen: nothing sent"
-mkdir -p "$CM_HOME/cache" 2>/dev/null
-{ awk -F'\t' -v k="$KEY" '$1 != k' "$STATE" 2>/dev/null; printf '%s\t%s\t%s\n' "$KEY" "$((tries + 1))" "$now"; } > "$STATE.new" 2>/dev/null && mv "$STATE.new" "$STATE" 2>/dev/null \
-  || out held "the Esc count could not be recorded in $STATE: not sent (the cap must hold)"
+if locked; then out held "resume.lock appeared (resume.sh started): nothing sent"; fi
+STATE_LOCK="$CM_HOME/cache/codemode-recover.lock"
+unlock_state() { rmdir "$STATE_LOCK" 2>/dev/null || true; }
+lock_state() {
+  local i=0
+  mkdir -p "$CM_HOME/cache" 2>/dev/null || return 1
+  while ! mkdir "$STATE_LOCK" 2>/dev/null; do
+    if [ -n "$(find "$STATE_LOCK" -maxdepth 0 -mmin +2 2>/dev/null)" ] && mv "$STATE_LOCK" "$STATE_LOCK.stale.$$" 2>/dev/null; then rmdir "$STATE_LOCK.stale.$$" 2>/dev/null || true; continue; fi
+    i=$((i + 1)); [ "$i" -le 50 ] || return 1
+    sleep 0.1
+  done
+}
+# reserve_esc: 0 reserved, 10 cap reached, 11 cannot be recorded
+reserve_esc() {
+  local rd="" tries last now tmp
+  lock_state || return 11
+  if [ -e "$STATE" ] && [ ! -f "$STATE" ]; then unlock_state; return 11; fi
+  if [ -f "$STATE" ]; then rd="$(cat -- "$STATE" 2>/dev/null)" || { unlock_state; return 11; }; fi
+  now="$(date +%s)"
+  read -r tries last < <(printf '%s\n' "$rd" | awk -F'\t' -v k="$KEY" '$1 == k { print $2, $3; f = 1; exit } END { if (!f) print "0 0" }')
+  case "${tries:-0}" in ''|*[!0-9]*) tries=0 ;; esac; case "${last:-0}" in ''|*[!0-9]*) last=0 ;; esac
+  if [ $((now - last)) -gt 21600 ]; then tries=0; fi
+  if [ "$tries" -ge "$MAXESC" ]; then unlock_state; RESERVED_TRIES="$tries"; return 10; fi
+  tmp="$(mktemp "$CM_HOME/cache/codemode-recover.XXXXXX" 2>/dev/null)" || { unlock_state; return 11; }
+  if { printf '%s\n' "$rd" | awk -F'\t' -v k="$KEY" 'NF && $1 != k'; printf '%s\t%s\t%s\n' "$KEY" "$((tries + 1))" "$now"; } > "$tmp" 2>/dev/null && mv -f -- "$tmp" "$STATE" 2>/dev/null \
+     && [ "$(awk -F'\t' -v k="$KEY" '$1 == k { print $2 }' "$STATE" 2>/dev/null)" = "$((tries + 1))" ]; then
+    unlock_state; return 0
+  fi
+  rm -f -- "${tmp:?}" 2>/dev/null || true
+  unlock_state; return 11
+}
+RESERVED_TRIES=0
+reserve_esc; rc=$?
+case "$rc" in
+  0) ;;
+  10) out menu "$RESERVED_TRIES Esc keys already sent to this terminal in the last 6 h and the Code Mode dialog is on screen again: not sent again, answer it by hand" ;;
+  *)  out held "the Esc count could not be recorded in $STATE: not sent (the cap must hold)" ;;
+esac
 ESC=$'\033'
 resp="$(cm_timeout 60 "$ORCA" terminal send --terminal "$send_h" --text "$ESC" ${envargs[@]+"${envargs[@]}"} --json </dev/null 2>/dev/null)" || resp=""
 [ "$(printf '%s' "$resp" | jq -r '.ok // false | tostring' 2>/dev/null)" = true ] || out send-failed "the Esc to $send_h was not accepted: nothing else sent; read the pane"
