@@ -39,7 +39,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=SCRIPTDIR/lib.sh
 . "$HERE/lib.sh"
 
-# Helpers the template lib.sh may not carry: defined here only when lib.sh lacks them (same behaviour as the SHOT skill's lib.sh).
+# Helpers the template lib.sh may not carry: defined here only when lib.sh lacks them (same behaviour as the concertmaster skill lib.sh).
 if ! declare -F cm_handle_ok >/dev/null; then
   cm_handle_ok() { [[ "${1-}" =~ ^[A-Za-z0-9_][A-Za-z0-9_.:@=-]{0,127}$ ]]; }
 fi
