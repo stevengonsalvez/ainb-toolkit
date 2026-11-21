@@ -275,6 +275,7 @@ case "$cmd" in
       echo x >> "$P2/esc.$h"
       [ -f "$P2/after-esc.$h" ] && cp "$P2/after-esc.$h" "$P2/pane.$h"
       [ -f "$P2/swap-handle.$h" ] && printf 't_elsewhere\tlocal\tclaude\t-\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$(cat "$P2/swap-handle.$h")"
+      [ -f "$P2/swap-host.$h" ] && printf '%s\tremote-host\tclaude\t-\t%s\n' "$h" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$(cat "$P2/swap-host.$h")"
     else
       lane="${h#t_}"; for d in "$CM_CLAUDE_PROJECTS"/*-"$lane"; do [ -d "$d" ] && touch "$d/s.jsonl"; done
     fi
@@ -383,7 +384,7 @@ check "remote lane: EVERY call about it names its host (read, Esc, nudge)" "$(gr
 check "remote lane: the host's terminal list was read with --environment" "$(grep -c '^terminal list --environment remote-host' "$STUB_DIR/calls2.log")" "1"
 check "local lanes never carry --environment on read or send" "$(grep -E '^terminal (read|send) --terminal t_(cm1|cm3|ctl) ' "$STUB_DIR/calls2.log" | grep -c -- '--environment' || true)" "0"
 check "remote worker with a stubborn dialog: menu, one Esc, no nudge" "$(res w-rcw)/$(esc2 t_rcw)/$(nudges2 t_rcw)" "menu/1/0"
-check "a host whose terminal list fails is skipped quietly (no row, nothing sent to it)" "$(printf '%s\n' "$OUT" | grep -c 'w-bad')/$(grep -c 't_bad' "$STUB_DIR/calls2.log" || true)" "0/0"
+check "a host whose terminal list fails: the lane gets an unreadable row (not silence), nothing is sent to it" "$(res w-bad)/$(grep -c 't_bad' "$STUB_DIR/calls2.log" || true)" "unreadable/0"
 check "a dead (gone) remote row at the same path adds nothing" "$(printf '%s\n' "$OUT" | grep -c 'w-gone2')" "0"
 check "exactly six Esc keys in all (cm1 cm2 cm3 cm4 rcm rcw), one each" "$(for h in t_cm1 t_cm2 t_cm3 t_cm4 t_rcm t_rcw; do esc2 $h; done | tr '\n' ' ')" "1 1 1 1 1 1 "
 
@@ -501,6 +502,26 @@ check "codemode-recover.sh refuses a control byte in --text, nothing read or sen
 "$HERE/../codemode-recover.sh" --terminal t_cm1 --text hello >/dev/null 2>&1; check "codemode-recover.sh without --lane: usage, exit 2 (every send is verified through the lane handle)" "$?" "2"
 CT="$("$HERE/../codemode-recover.sh" --terminal t_cm5 --lane w-cm5 --text hello 2>/dev/null)"
 check "codemode-recover.sh on a permission prompt: none, nothing sent" "$(printf '%s' "$CT" | cut -f1)/$(grep -c '^terminal send' "$STUB_DIR/calls2.log" || true)" "none/0"
+
+world ll
+mkdir -p "$CM_HOME/cache/codemode-recover.lock"; sleep 30 & LH=$!; echo "$LH" > "$CM_HOME/cache/codemode-recover.lock/pid"
+CT="$(direct t_cm1 w-cm1)"
+check "a live holder of the cap lock keeps its lock when this run cannot take it: held, no Esc, the lock still there" "$(printf '%s' "$CT" | cut -f1)/$(esc2 t_cm1)/$([ "$(cat "$CM_HOME/cache/codemode-recover.lock/pid" 2>/dev/null)" = "$LH" ] && echo kept || echo lost)" "held/0/kept"
+kill "$LH" 2>/dev/null; wait "$LH" 2>/dev/null; rm -rf "$CM_HOME/cache/codemode-recover.lock"
+world gr
+rm -rf "$CM_HOME/cache"
+printf '%s\n' "${IDLE[@]}" > "$P2/seq.t_cm1.2"   # a person answers the dialog while the Esc is being reserved
+CT="$(direct t_cm1 w-cm1)"
+check "the dialog gone on the read after the reservation: none, no Esc, the reserved count is given back" "$(printf '%s' "$CT" | cut -f1)/$(esc2 t_cm1)/$(awk -F'\t' '$1 == "local/t_cm1" { print $2 }' "$CM_HOME/cache/codemode-recover.tsv" 2>/dev/null)" "none/0/0"
+check "...and no lock is left behind" "$(find "$CM_HOME/cache" -mindepth 1 -name '*.lock' | wc -l | tr -d ' ')" "0"
+world hs
+printf '%s' "$CM_HOME/lanes/w-cm1/handle" > "$P2/swap-host.t_cm1"   # the lane file names another host (same handle) once the Esc went out
+CT="$(direct t_cm1 w-cm1)"
+check "the lane file naming another host before the nudge: held, nudge not sent" "$(printf '%s' "$CT" | cut -f1)/$(esc2 t_cm1)/$(nudges2 t_cm1)" "held/1/0"
+world to
+printf '#!/bin/sh\nsleep 6\n' > "$ROOT/cm-slow.sh"; chmod +x "$ROOT/cm-slow.sh"
+OUT="$(CM_CODEMODE_LANE_MAX_S=1 CM_CODEMODE_RECOVER="$ROOT/cm-slow.sh" "$SCRIPT")"
+check "a Code Mode sender that outruns its limit is cut and leaves an unreadable row" "$(printf '%s\n' "$OUT" | grep -c 'w-cm1.*ran past its 1s limit')" "1"
 
 # mutants: a copy of the skill with a guard removed must fail the rows above
 mutant() { # <name> <sed script>
