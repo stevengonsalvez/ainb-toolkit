@@ -189,7 +189,7 @@ codemode_pass() {
       cmout="$(cm_timeout "$cm_to" "$CODEMODE" "${args[@]}" </dev/null 2>/dev/null)"; cmrc=$?
       res="$(printf '%s\n' "$cmout" | tail -n 1)"
       result="${res%%$'\t'*}"; detail="${res#*$'\t'}"
-      if [ "$cmrc" = 124 ] || [ "$cmrc" = 137 ] || [ "$cmrc" = 142 ] || [ "$cmrc" = 143 ]; then result=unreadable; detail="codemode-recover.sh ran past its ${cm_to}s limit: an Esc may have been sent, read the pane"
+      if [ "$cmrc" = 124 ] || [ "$cmrc" = 137 ] || [ "$cmrc" = 142 ] || [ "$cmrc" = 143 ] || [ "$cmrc" = 129 ] || [ "$cmrc" = 130 ]; then result=unreadable; detail="codemode-recover.sh ran past its ${cm_to}s limit: an Esc may have been sent, read the pane"
       elif [ "$cmrc" != 0 ]; then result=unreadable; detail="codemode-recover.sh exited $cmrc (usage or setup error): nothing was judged, read the pane"; fi
       case "$result" in
         none) continue ;;

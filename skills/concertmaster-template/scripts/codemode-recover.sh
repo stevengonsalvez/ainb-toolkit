@@ -182,10 +182,13 @@ take_lock() {
     rcl=0
     # reclaim: ONE reclaimer at a time (a second mkdir lock, never waited for), and the staleness is judged AGAIN inside it. While it is held nothing
     # else can remove or replace a dead owner's lock (only the owner drops it, and it is dead), so what is removed is exactly what was judged
+    # a reclaim lock itself is held for milliseconds: one over a minute old was left by a killed run and is cleared (best effort)
+    if [ -n "$(find "$d.reclaim" -maxdepth 0 -mmin +1 2>/dev/null)" ]; then rm -f -- "${d:?}.reclaim/pid" 2>/dev/null; rmdir "$d.reclaim" 2>/dev/null; fi
     if mkdir "$d.reclaim" 2>/dev/null; then
       printf '%s\n' "$$" > "$d.reclaim/pid" 2>/dev/null; LOCKS_HELD+=("$d.reclaim")
       pid="$(cat -- "$d/pid" 2>/dev/null || true)"
-      if [ -d "$d" ] && [ -n "$(find "$d" -maxdepth 0 -mmin +1 2>/dev/null)" ] && { [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; }; then
+      if [ -d "$d" ] && [ -n "$(find "$d" -maxdepth 0 -mmin +1 2>/dev/null)" ] && { [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; } \
+         && [ "$(cat -- "$d/pid" 2>/dev/null || true)" = "$pid" ] && [ -n "$(find "$d" -maxdepth 0 -mmin +1 2>/dev/null)" ]; then   # judged twice, the second time right before the removal
         rm -f -- "${d:?}/pid" 2>/dev/null; rmdir "$d" 2>/dev/null && rcl=1
       fi
       drop_lock "$d.reclaim"
@@ -239,11 +242,12 @@ esac
 screen="$(read_screen)"
 if [ -z "$(printf '%s' "$screen" | tr -d '[:space:]')" ]; then cap_record refund || true; out unreadable "the screen could not be read after the Esc was reserved: nothing sent, read the pane"; fi
 if ! codemode_dialog "$screen"; then cap_record refund || true; out none "the Code Mode dialog is gone from the screen: nothing sent"; fi
-if locked; then cap_record refund || true; out held "resume.lock appeared (resume.sh started): nothing sent"; fi
-# the lane handle is still this terminal on this host right before the key (the reservation and the read can take a while)
+# the lane handle is still this terminal on this host right before the key (the reservation and the read can take a while); the resume lock is
+# looked at LAST, after the handle lookup (which can be slow on a remote host)
 if [ "$(cm_lane_handle "$LANE" 2>/dev/null)" != "$send_h" ]; then cap_record refund || true; out held "the lane handle changed before the Esc: nothing sent"; fi
 lane_host=""; IFS=$'\t' read -r _lh lane_host _rest < "$(cm_lane_dir "$LANE")/handle" 2>/dev/null || true
 if [ "${lane_host:-local}" != "$HOSTSEL" ]; then cap_record refund || true; out held "the lane handle file names another host before the Esc: nothing sent"; fi
+if locked; then cap_record refund || true; out held "resume.lock appeared (resume.sh started): nothing sent"; fi
 ESC=$'\033'
 resp="$(cm_timeout 60 "$ORCA" terminal send --terminal "$send_h" --text "$ESC" ${envargs[@]+"${envargs[@]}"} --json </dev/null 2>/dev/null)" || resp=""
 [ "$(printf '%s' "$resp" | jq -r '.ok // false | tostring' 2>/dev/null)" = true ] || out send-failed "the Esc to $send_h was not accepted: nothing else sent; read the pane"
@@ -266,7 +270,7 @@ case "$state" in
 esac
 # the dialog is gone and the pane looks idle: a fresh read right before the send, the same tests again (gsend.sh step 3)
 screen="$(read_screen)"
-[ "$(pane_state "$screen")" = ready ] || out closed "dialog closed, but the pane changed before the nudge: not sent"
+[ "$(pane_state "$screen")" = ready ] || { if [ "$HOSTSEL" = local ]; then out closed "dialog closed, but the pane changed before the nudge: not sent"; else out closed "dialog closed, but the pane changed before the nudge: not sent, and no later pass covers a remote lane: send the re-arm nudge by hand"; fi; }
 [ "$(cm_lane_handle "$LANE" 2>/dev/null)" = "$send_h" ] || out held "the lane handle changed before the nudge: not sent"
 lane_host=""; IFS=$'\t' read -r _lh lane_host _rest < "$(cm_lane_dir "$LANE")/handle" 2>/dev/null || true
 [ "${lane_host:-local}" = "$HOSTSEL" ] || out held "the lane handle file names host ${lane_host:-local}, not $HOSTSEL, before the nudge: not sent"
