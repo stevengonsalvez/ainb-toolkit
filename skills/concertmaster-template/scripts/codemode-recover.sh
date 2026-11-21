@@ -23,7 +23,9 @@
 #      that). ONE recovery per terminal runs at a time, from the last read through the nudge (a mkdir lock with the owner pid, released at
 #      exit; a second run for the same terminal is "held");
 #   4. the Esc is reserved against the cap, THEN the pane is read once more and the lock checked once more right before the key (a dialog
-#      that is gone or a lock that appeared gives the count back and sends nothing). The cap: at most 2
+#      that is gone or a lock that appeared, or a lane handle or host that changed, gives the count back (the 6 h window keeps the reservation
+#      time) and sends nothing; a count whose Esc was never sent because the refund failed or the run was cut stays spent, so the cap errs
+#      toward fewer keys). The cap: at most 2
 #      per terminal in 6 hours counted from the last one, kept in cache/codemode-recover.tsv through a recovery, written under a mkdir lock
 #      with a unique temp file and read back. A dialog that survives them is "menu", left to a person. A count that cannot be recorded
 #      (also a state path that is not a regular file) means no Esc ("held"). Then ONE Esc (a single key, text only, no Enter), and the pane
@@ -34,7 +36,7 @@
 #      "held" with the reason, and nothing more is sent.
 # --text is ONE LINE OF PLAIN TEXT: a control byte in it is refused with nothing read or sent (gsend.sh's rule). This is the one script
 # that sends an Escape to a Code Mode dialog (the tick's Escape to a menu in no-human mode, and to the autocompact prompt, are other
-# rules: standing-rules sections 7 and 14); every other send in the skill refuses it.
+# rules: SKILL.md hard rules and references/prompt-stalls.md); every other send in the skill refuses it.
 # Output: one line, result TAB detail. Results: none, would-recover (--dry-run), recovered, closed, menu, held, unreadable, send-failed.
 # Exit 0 for every result; 2 for bad usage.
 # Env: CM_CODEMODE_SETTLE_S (2), CM_CODEMODE_POLLS (5), CM_CODEMODE_MAX_ESC (2 per 6 h), CM_HOME, CM_CLI_KIND.
@@ -170,21 +172,25 @@ drop_lock() { local d="$1"; [ "$(cat -- "$d/pid" 2>/dev/null || true)" = "$$" ] 
 # shellcheck disable=SC2329
 release_locks() { local d; for d in ${LOCKS_HELD[@]+"${LOCKS_HELD[@]}"}; do drop_lock "$d"; done; return 0; }
 trap release_locks EXIT
-# take_lock <dir> <tries of 0.1 s>: a lock whose owner is gone and that is over a minute old is reclaimed through an atomic rename that
-# checks it moved the lock it judged; anything else fails closed
+# take_lock <dir> <tries of 0.1 s>: a lock whose owner is gone and that is over a minute old is reclaimed under a reclaim lock (see below);
+# anything else fails closed
 take_lock() {
-  local d="$1" n="${2:-1}" i=0 pid
+  local d="$1" n="${2:-1}" i=0 pid rcl
   mkdir -p "$CM_HOME/cache" 2>/dev/null || return 1
   while :; do
     if mkdir "$d" 2>/dev/null; then printf '%s\n' "$$" > "$d/pid" 2>/dev/null; LOCKS_HELD+=("$d"); return 0; fi
-    pid="$(cat -- "$d/pid" 2>/dev/null || true)"
-    if [ -n "$(find "$d" -maxdepth 0 -mmin +1 2>/dev/null)" ] && { [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; }; then
-      if mv "$d" "$d.stale.$$" 2>/dev/null; then
-        if [ "$(cat -- "$d.stale.$$/pid" 2>/dev/null || true)" = "$pid" ]; then rm -f -- "${d:?}.stale.$$/pid" 2>/dev/null; rmdir "$d.stale.$$" 2>/dev/null; continue; fi
-        mv "$d.stale.$$" "$d" 2>/dev/null   # it was a live holder's fresh lock: put it back, fail closed
-        return 1
+    rcl=0
+    # reclaim: ONE reclaimer at a time (a second mkdir lock, never waited for), and the staleness is judged AGAIN inside it. While it is held nothing
+    # else can remove or replace a dead owner's lock (only the owner drops it, and it is dead), so what is removed is exactly what was judged
+    if mkdir "$d.reclaim" 2>/dev/null; then
+      printf '%s\n' "$$" > "$d.reclaim/pid" 2>/dev/null; LOCKS_HELD+=("$d.reclaim")
+      pid="$(cat -- "$d/pid" 2>/dev/null || true)"
+      if [ -d "$d" ] && [ -n "$(find "$d" -maxdepth 0 -mmin +1 2>/dev/null)" ] && { [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; }; then
+        rm -f -- "${d:?}/pid" 2>/dev/null; rmdir "$d" 2>/dev/null && rcl=1
       fi
+      drop_lock "$d.reclaim"
     fi
+    [ "$rcl" = 1 ] && continue
     i=$((i + 1)); [ "$i" -lt "$n" ] || return 1
     sleep 0.1
   done
@@ -231,8 +237,13 @@ case "$rc" in
   *)  out held "the Esc count could not be recorded in $STATE: not sent (the cap must hold)" ;;
 esac
 screen="$(read_screen)"
+if [ -z "$(printf '%s' "$screen" | tr -d '[:space:]')" ]; then cap_record refund || true; out unreadable "the screen could not be read after the Esc was reserved: nothing sent, read the pane"; fi
 if ! codemode_dialog "$screen"; then cap_record refund || true; out none "the Code Mode dialog is gone from the screen: nothing sent"; fi
 if locked; then cap_record refund || true; out held "resume.lock appeared (resume.sh started): nothing sent"; fi
+# the lane handle is still this terminal on this host right before the key (the reservation and the read can take a while)
+if [ "$(cm_lane_handle "$LANE" 2>/dev/null)" != "$send_h" ]; then cap_record refund || true; out held "the lane handle changed before the Esc: nothing sent"; fi
+lane_host=""; IFS=$'\t' read -r _lh lane_host _rest < "$(cm_lane_dir "$LANE")/handle" 2>/dev/null || true
+if [ "${lane_host:-local}" != "$HOSTSEL" ]; then cap_record refund || true; out held "the lane handle file names another host before the Esc: nothing sent"; fi
 ESC=$'\033'
 resp="$(cm_timeout 60 "$ORCA" terminal send --terminal "$send_h" --text "$ESC" ${envargs[@]+"${envargs[@]}"} --json </dev/null 2>/dev/null)" || resp=""
 [ "$(printf '%s' "$resp" | jq -r '.ok // false | tostring' 2>/dev/null)" = true ] || out send-failed "the Esc to $send_h was not accepted: nothing else sent; read the pane"
@@ -247,7 +258,8 @@ done
 case "$state" in
   dialog)     out menu "Code Mode dialog still open after Esc (read $POLLS times): not retried, no nudge; answer it by hand" ;;
   unreadable) out unreadable "Esc sent, then the screen could not be read: no nudge" ;;
-  nofooter)   out closed "dialog closed, no Claude footer on screen yet: no nudge, the next tick judges the lane" ;;
+  nofooter)   if [ "$HOSTSEL" = local ]; then out closed "dialog closed, no Claude footer on screen yet: no nudge, the next tick judges the lane"
+              else out closed "dialog closed, no Claude footer on screen yet: no nudge, and no later pass covers a remote lane: send the re-arm nudge by hand"; fi ;;
   menu)       out menu "dialog closed, but another menu is showing now: not typed into" ;;
   shell)      out closed "dialog closed, but a shell prompt is on screen (agent gone): resume.sh respawns it" ;;
   busy)       out closed "dialog closed and the lane is mid-turn: no nudge needed" ;;

@@ -158,6 +158,11 @@ codemode_pass() {
     [ -n "$host" ] || continue
     if [ "$host" = local ]; then hl="$tl"
     else
+      # a remote terminal list can take 60 s: the budget is checked before each one as well as before each lane
+      if [ $(($(date +%s) - cm_started)) -ge "$cm_budget" ]; then
+        row - - - skipped "Code Mode pass stopped after ${cm_budget}s: the remaining hosts and lanes are checked next tick"
+        return 0
+      fi
       cm_cli_host_into hsel "$host" || { cm_unreadable_host "$host" "host $host has no usable --environment: its Code Mode dialogs were not checked"; continue; }
       hl="$(cm_timeout 60 "$ORCA" terminal list "${hsel[@]}" --json </dev/null 2>/dev/null)"
       printf '%s' "$hl" | jq -e '.result.terminals | type == "array"' >/dev/null 2>&1 || { cm_warn "runtime-check.sh: terminal list of host $host unreadable: its Code Mode dialogs not checked"; cm_unreadable_host "$host" "terminal list of host $host unreadable: its Code Mode dialogs were not checked"; continue; }
@@ -184,7 +189,7 @@ codemode_pass() {
       cmout="$(cm_timeout "$cm_to" "$CODEMODE" "${args[@]}" </dev/null 2>/dev/null)"; cmrc=$?
       res="$(printf '%s\n' "$cmout" | tail -n 1)"
       result="${res%%$'\t'*}"; detail="${res#*$'\t'}"
-      if [ "$cmrc" = 124 ]; then result=unreadable; detail="codemode-recover.sh ran past its ${cm_to}s limit: an Esc may have been sent, read the pane"
+      if [ "$cmrc" = 124 ] || [ "$cmrc" = 137 ] || [ "$cmrc" = 142 ] || [ "$cmrc" = 143 ]; then result=unreadable; detail="codemode-recover.sh ran past its ${cm_to}s limit: an Esc may have been sent, read the pane"
       elif [ "$cmrc" != 0 ]; then result=unreadable; detail="codemode-recover.sh exited $cmrc (usage or setup error): nothing was judged, read the pane"; fi
       case "$result" in
         none) continue ;;
