@@ -266,6 +266,7 @@ case "$cmd" in
     n="$(cat "$P2/reads.$h" 2>/dev/null || echo 0)"; n=$((n + 1)); echo "$n" > "$P2/reads.$h"
     [ -f "$P2/lock-on-read.$h" ] && : > "$CM_HOME/resume.lock"
     [ "$(cat "$P2/lock-on-nth.$h" 2>/dev/null)" = "$n" ] && : > "$CM_HOME/resume.lock"
+    [ -f "$P2/swap-on-read.$h" ] && [ "$n" = 2 ] && printf 't_elsewhere\tlocal\tclaude\t-\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$(cat "$P2/swap-on-read.$h")"
     pf="$P2/pane.$h"; [ -f "$P2/seq.$h.$n" ] && pf="$P2/seq.$h.$n"
     if [ -f "$pf" ]; then printf '{"ok":true,"result":{"terminal":{"handle":"%s","tail":%s}}}\n' "$h" "$(jq -Rn '[inputs]' < "$pf")"
       if [ -f "$P2/flip.$h" ]; then cp "$P2/flip.$h" "$P2/pane.$h"; rm -f "$P2/flip.$h"; fi
@@ -522,6 +523,33 @@ world to
 printf '#!/bin/sh\nsleep 6\n' > "$ROOT/cm-slow.sh"; chmod +x "$ROOT/cm-slow.sh"
 OUT="$(CM_CODEMODE_LANE_MAX_S=1 CM_CODEMODE_RECOVER="$ROOT/cm-slow.sh" "$SCRIPT")"
 check "a Code Mode sender that outruns its limit is cut and leaves an unreadable row" "$(printf '%s\n' "$OUT" | grep -c 'w-cm1.*ran past its 1s limit')" "1"
+
+world rc
+mkdir -p "$CM_HOME/cache/codemode-recover.lock"; echo 99999999 > "$CM_HOME/cache/codemode-recover.lock/pid"; touch -d "@$((NOW - 600))" "$CM_HOME/cache/codemode-recover.lock"
+CT="$(direct t_cm1 w-cm1)"
+check "a cap lock left by a dead owner over a minute ago is reclaimed: the recovery goes ahead" "$(printf '%s' "$CT" | cut -f1)/$(esc2 t_cm1)" "recovered/1"
+check "...and neither the lock nor its reclaim lock is left behind" "$(find "$CM_HOME/cache" -mindepth 1 -name '*.lock*' | wc -l | tr -d ' ')" "0"
+world rf
+mkdir -p "$CM_HOME/cache/codemode-recover.lock"; sleep 30 & LH2=$!; echo "$LH2" > "$CM_HOME/cache/codemode-recover.lock/pid"; touch -d "@$((NOW - 600))" "$CM_HOME/cache/codemode-recover.lock"
+CT="$(direct t_cm1 w-cm1)"
+check "a cap lock over a minute old whose owner is ALIVE is not reclaimed: held, no Esc, the lock kept" "$(printf '%s' "$CT" | cut -f1)/$(esc2 t_cm1)/$([ "$(cat "$CM_HOME/cache/codemode-recover.lock/pid" 2>/dev/null)" = "$LH2" ] && echo kept || echo lost)" "held/0/kept"
+kill "$LH2" 2>/dev/null; wait "$LH2" 2>/dev/null
+world hr
+printf '%s' "$CM_HOME/lanes/w-cm1/handle" > "$P2/swap-on-read.t_cm1"   # the lane file names another terminal while the Esc is being reserved
+CT="$(direct t_cm1 w-cm1)"
+check "the lane handle changed between the reservation and the key: held, no Esc, the count given back" "$(printf '%s' "$CT" | cut -f1)/$(esc2 t_cm1)/$(awk -F'\t' '$1 == "local/t_cm1" { print $2 }' "$CM_HOME/cache/codemode-recover.tsv" 2>/dev/null)" "held/0/0"
+world ur
+: > "$P2/seq.t_cm1.2"   # the read after the reservation comes back blank
+CT="$(direct t_cm1 w-cm1)"
+check "a blank read after the reservation: unreadable, no Esc, the count given back" "$(printf '%s' "$CT" | cut -f1)/$(esc2 t_cm1)/$(awk -F'\t' '$1 == "local/t_cm1" { print $2 }' "$CM_HOME/cache/codemode-recover.tsv" 2>/dev/null)" "unreadable/0/0"
+world rn
+after t_rcm 'loading the session'   # the remote dialog closes but no Claude footer shows yet
+OUT="$("$SCRIPT")"
+check "a remote lane whose dialog closed with no footer yet: closed, and the row says to send the nudge by hand" "$(res w-rcm)/$(printf '%s\n' "$OUT" | grep -c 'w-rcm.*by hand')" "closed/1"
+world c142
+printf '#!/bin/sh\nexit 142\n' > "$ROOT/cm-142.sh"; chmod +x "$ROOT/cm-142.sh"
+OUT="$(CM_CODEMODE_RECOVER="$ROOT/cm-142.sh" "$SCRIPT")"
+check "a sender cut by the perl alarm fallback (exit 142) is a cut run, not a setup error" "$(printf '%s\n' "$OUT" | grep -c 'w-cm1.*ran past its')" "1"
 
 # mutants: a copy of the skill with a guard removed must fail the rows above
 mutant() { # <name> <sed script>
