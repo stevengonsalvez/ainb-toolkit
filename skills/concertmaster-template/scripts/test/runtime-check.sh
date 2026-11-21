@@ -529,6 +529,11 @@ mkdir -p "$CM_HOME/cache/codemode-recover.lock"; echo 99999999 > "$CM_HOME/cache
 CT="$(direct t_cm1 w-cm1)"
 check "a cap lock left by a dead owner over a minute ago is reclaimed: the recovery goes ahead" "$(printf '%s' "$CT" | cut -f1)/$(esc2 t_cm1)" "recovered/1"
 check "...and neither the lock nor its reclaim lock is left behind" "$(find "$CM_HOME/cache" -mindepth 1 -name '*.lock*' | wc -l | tr -d ' ')" "0"
+world rs
+mkdir -p "$CM_HOME/cache/codemode-recover.lock" "$CM_HOME/cache/codemode-recover.lock.reclaim"; echo 99999999 > "$CM_HOME/cache/codemode-recover.lock/pid"; echo 99999999 > "$CM_HOME/cache/codemode-recover.lock.reclaim/pid"
+touch -d "@$((NOW - 600))" "$CM_HOME/cache/codemode-recover.lock" "$CM_HOME/cache/codemode-recover.lock.reclaim"   # a killed reclaimer left its reclaim lock too
+CT="$(direct t_cm1 w-cm1)"
+check "a stale cap lock AND a stale reclaim lock (a killed reclaimer) are both cleared: the recovery goes ahead" "$(printf '%s' "$CT" | cut -f1)/$(esc2 t_cm1)/$(find "$CM_HOME/cache" -mindepth 1 -name '*.lock*' | wc -l | tr -d ' ')" "recovered/1/0"
 world rf
 mkdir -p "$CM_HOME/cache/codemode-recover.lock"; sleep 30 & LH2=$!; echo "$LH2" > "$CM_HOME/cache/codemode-recover.lock/pid"; touch -d "@$((NOW - 600))" "$CM_HOME/cache/codemode-recover.lock"
 CT="$(direct t_cm1 w-cm1)"
