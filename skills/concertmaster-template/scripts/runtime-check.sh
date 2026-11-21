@@ -43,7 +43,8 @@
 # not; a remote host through --environment) whose worktree has exactly one Claude terminal, scripts/codemode-recover.sh closes the Claude
 # Code "Code Mode" opt-in dialog a host reboot leaves lanes on (one Esc, then one re-arm nudge; any other menu is never touched). Rows:
 # lane handle - recovered | closed | menu | held | unreadable | send-failed | would-recover (and one `skipped` row when the pass stops at
-# CM_CODEMODE_BUDGET_S, default 300 s, so pass 2 keeps its time). Nothing is sent while resume.lock exists.
+# CM_CODEMODE_BUDGET_S, default 300 s, so pass 2 keeps its time; one recovery is cut at what is left of it, 30 s up to CM_CODEMODE_LANE_MAX_S, default 180 s).
+# Nothing is sent while resume.lock exists.
 # The ledger is written under a mkdir lock (<ledger>.lock), atomically, keeping its file mode.
 # Env: CM_HOME, CM_PATH_MATCH, CM_SELF_PATH_RE (default: the config worktrees.self_name directory),
 #      CM_RUNTIME_SWEEP and CM_CODEMODE_RECOVER (stub scripts, tests, CM_TEST=1 only), CM_CODEMODE_BUDGET_S (300), CM_CLAUDE_PROJECTS,
@@ -129,8 +130,20 @@ rc_ledger_write() {
 # nudge. Every other pane, every other menu included, is left to the existing passes. A lane it handled is listed in $handled and is taken out of the stale plan, so pass 2 does not nudge
 # it again this tick (a fresh lane on the dialog keeps its pass 1 row and gets the recovery row). Remote hosts go through the same fleet CLI with --environment (cm_cli_host_into), a terminal list per host.
 # resume.lock: nothing is sent. Output rows: lane handle - result detail (recovered, closed, menu, held, unreadable, send-failed, would-recover).
+# cm_unreadable_host <host> <why>: a host whose terminal list cannot be read has its in-scope ledger workers reported as unreadable (one row each),
+# not silently dropped: no local pass looks at a remote worker, so without these rows the lanes would vanish from the report. Uses the caller's $rows
+cm_unreadable_host() {
+  local i2 hp2 p2 _s2 n2
+  while IFS="$US" read -r i2 hp2 p2 _s2; do
+    [ "$hp2" = "$1" ] && [ -n "$i2" ] || continue
+    n2="$(printf '%s' "$p2" | norm)"; [ -n "$n2" ] || continue
+    if [ "$i2" = concertmaster ] || grep -qE "$CM_PATH_RE" <<<"$n2"; then continue; fi
+    grep -qE "$CM_PATH_MATCH" <<<"$n2" || continue
+    row "$i2" - - unreadable "$2"
+  done <<<"$rows"
+}
 codemode_pass() {
-  local rows host hosts hsel hl id path h res result detail text hp np standing args cm_started cm_budget cmout cmrc
+  local rows host hosts hsel hl id path h res result detail text hp np standing args cm_started cm_budget cm_to cm_max cmout cmrc
   handled="$US"   # unit-separator joined ids ($US id $US id $US), no newline: portable through awk -v
   cm_started="$(date +%s)"; cm_budget="${CM_CODEMODE_BUDGET_S:-300}"; case "$cm_budget" in ''|*[!0-9]*) cm_budget=300 ;; esac
   [ -e "$CM_HOME/resume.lock" ] && return 0
@@ -145,9 +158,9 @@ codemode_pass() {
     [ -n "$host" ] || continue
     if [ "$host" = local ]; then hl="$tl"
     else
-      cm_cli_host_into hsel "$host" || continue
+      cm_cli_host_into hsel "$host" || { cm_unreadable_host "$host" "host $host has no usable --environment: its Code Mode dialogs were not checked"; continue; }
       hl="$(cm_timeout 60 "$ORCA" terminal list "${hsel[@]}" --json </dev/null 2>/dev/null)"
-      printf '%s' "$hl" | jq -e '.result.terminals | type == "array"' >/dev/null 2>&1 || { cm_warn "runtime-check.sh: terminal list of host $host unreadable: its Code Mode dialogs not checked"; continue; }
+      printf '%s' "$hl" | jq -e '.result.terminals | type == "array"' >/dev/null 2>&1 || { cm_warn "runtime-check.sh: terminal list of host $host unreadable: its Code Mode dialogs not checked"; cm_unreadable_host "$host" "terminal list of host $host unreadable: its Code Mode dialogs were not checked"; continue; }
     fi
     while IFS="$US" read -r id hp path standing; do
       [ "$hp" = "$host" ] && [ -n "$id" ] || continue
@@ -165,10 +178,14 @@ codemode_pass() {
       [ -n "$h" ] || continue   # none, or two Claude terminals in one worktree: pass 1 and resume.sh own that
       if [ "$standing" = 1 ]; then text="$NUDGE_CODEMODE_LANE"; else text="$NUDGE_CODEMODE_WORKER"; fi
       args=(--terminal "$h" --lane "$id" --host "$host" --text "$text"); [ "$DRY" = 1 ] && args+=(--dry-run)
-      cmout="$("$CODEMODE" "${args[@]}" </dev/null 2>/dev/null)"; cmrc=$?
+      # one recovery waits for the pane a few times and sends two keys: it is bounded by what is left of the budget (30 s at least, 180 s at most),
+      # so the pass cannot run on far past its budget and starve pass 2
+      cm_to=$((cm_budget - ($(date +%s) - cm_started))); [ "$cm_to" -lt 30 ] && cm_to=30; cm_max="${CM_CODEMODE_LANE_MAX_S:-180}"; case "$cm_max" in ''|*[!0-9]*|0) cm_max=180 ;; esac; [ "$cm_to" -gt "$cm_max" ] && cm_to="$cm_max"
+      cmout="$(cm_timeout "$cm_to" "$CODEMODE" "${args[@]}" </dev/null 2>/dev/null)"; cmrc=$?
       res="$(printf '%s\n' "$cmout" | tail -n 1)"
       result="${res%%$'\t'*}"; detail="${res#*$'\t'}"
-      [ "$cmrc" = 0 ] || { result=unreadable; detail="codemode-recover.sh exited $cmrc (usage or setup error): nothing was judged, read the pane"; }
+      if [ "$cmrc" = 124 ]; then result=unreadable; detail="codemode-recover.sh ran past its ${cm_to}s limit: an Esc may have been sent, read the pane"
+      elif [ "$cmrc" != 0 ]; then result=unreadable; detail="codemode-recover.sh exited $cmrc (usage or setup error): nothing was judged, read the pane"; fi
       case "$result" in
         none) continue ;;
         '') result=unreadable; detail="codemode-recover.sh printed nothing (exit $cmrc): an Esc may have been sent, read the pane" ;;

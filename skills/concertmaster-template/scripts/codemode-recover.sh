@@ -22,7 +22,8 @@
 #      still-stale, other-terminal or other-host file is "held". This script never writes a lane handle (lane-handles.sh and resume.sh own
 #      that). ONE recovery per terminal runs at a time, from the last read through the nudge (a mkdir lock with the owner pid, released at
 #      exit; a second run for the same terminal is "held");
-#   4. the pane is read once more and the lock checked once more right before the Esc, then the Esc is reserved against the cap: at most 2
+#   4. the Esc is reserved against the cap, THEN the pane is read once more and the lock checked once more right before the key (a dialog
+#      that is gone or a lock that appeared gives the count back and sends nothing). The cap: at most 2
 #      per terminal in 6 hours counted from the last one, kept in cache/codemode-recover.tsv through a recovery, written under a mkdir lock
 #      with a unique temp file and read back. A dialog that survives them is "menu", left to a person. A count that cannot be recorded
 #      (also a state path that is not a regular file) means no Esc ("held"). Then ONE Esc (a single key, text only, no Enter), and the pane
@@ -163,7 +164,11 @@ IFS=$'\t' read -r _lh lane_host _rest < "$(cm_lane_dir "$LANE")/handle" 2>/dev/n
 # locks (mkdir, owner pid inside, released at exit): ONE recovery per terminal from the last read through the nudge (a second run for the
 # same terminal is "held", never a second Esc into whatever the first one opened), and a short lock around the Esc-cap record
 LOCKS_HELD=()
-release_locks() { local d; for d in ${LOCKS_HELD[@]+"${LOCKS_HELD[@]}"}; do rm -f -- "${d:?}/pid" 2>/dev/null; rmdir "$d" 2>/dev/null; done; return 0; }
+# drop_lock <dir>: removes the lock only while THIS process still owns it (its pid is inside); a lock another run took after ours was released, or
+# one this run never acquired, is never touched
+drop_lock() { local d="$1"; [ "$(cat -- "$d/pid" 2>/dev/null || true)" = "$$" ] || return 0; rm -f -- "${d:?}/pid" 2>/dev/null; rmdir "$d" 2>/dev/null; return 0; }
+# shellcheck disable=SC2329
+release_locks() { local d; for d in ${LOCKS_HELD[@]+"${LOCKS_HELD[@]}"}; do drop_lock "$d"; done; return 0; }
 trap release_locks EXIT
 # take_lock <dir> <tries of 0.1 s>: a lock whose owner is gone and that is over a minute old is reclaimed through an atomic rename that
 # checks it moved the lock it judged; anything else fails closed
@@ -187,12 +192,10 @@ take_lock() {
 TERM_LOCK="$CM_HOME/cache/codemode-term.$(printf '%s' "$KEY" | tr -c 'A-Za-z0-9._-' '_').lock"
 take_lock "$TERM_LOCK" 1 || out held "another recovery of this terminal is running (or a killed one left $TERM_LOCK): nothing sent"
 
-# 4. the pane once more and the lock once more, then the Esc is RESERVED against the cap (at most MAXESC per terminal in 6 hours counted from
-# the last one, kept through a recovery) under the cap lock, with a unique temp file, and read back; an Esc that cannot be recorded is
-# never sent (the cap must hold). The resume lock is looked at again right after the reservation (a refused Esc gives the count back)
-screen="$(read_screen)"
-codemode_dialog "$screen" || out none "the Code Mode dialog is gone from the screen: nothing sent"
-if locked; then out held "resume.lock appeared (resume.sh started): nothing sent"; fi
+# 4. the Esc is RESERVED against the cap (at most MAXESC per terminal in 6 hours counted from the last one, kept through a recovery) under the
+# cap lock, with a unique temp file, and read back; an Esc that cannot be recorded is never sent (the cap must hold). Only AFTER the reservation
+# (it can wait for the cap lock) is the pane read once more and the resume lock looked at once more, right before the key; an Esc that finds the
+# dialog gone or the lock present gives its count back
 STATE_LOCK="$CM_HOME/cache/codemode-recover.lock"
 # esc_record reserve|refund: 0 done, 10 cap reached (reserve), 11 cannot be recorded
 esc_record() {
@@ -219,7 +222,7 @@ esc_record() {
   return 11
 }
 # the cap lock is held only inside esc_record
-cap_record() { local rc; esc_record "$1"; rc=$?; rm -f -- "${STATE_LOCK:?}/pid" 2>/dev/null; rmdir "$STATE_LOCK" 2>/dev/null; return "$rc"; }
+cap_record() { local rc; esc_record "$1"; rc=$?; drop_lock "$STATE_LOCK"; return "$rc"; }
 RESERVED_TRIES=0
 cap_record reserve; rc=$?
 case "$rc" in
@@ -227,6 +230,8 @@ case "$rc" in
   10) out menu "$RESERVED_TRIES Esc keys already sent to this terminal in the last 6 h and the Code Mode dialog is on screen again: not sent again, answer it by hand" ;;
   *)  out held "the Esc count could not be recorded in $STATE: not sent (the cap must hold)" ;;
 esac
+screen="$(read_screen)"
+if ! codemode_dialog "$screen"; then cap_record refund || true; out none "the Code Mode dialog is gone from the screen: nothing sent"; fi
 if locked; then cap_record refund || true; out held "resume.lock appeared (resume.sh started): nothing sent"; fi
 ESC=$'\033'
 resp="$(cm_timeout 60 "$ORCA" terminal send --terminal "$send_h" --text "$ESC" ${envargs[@]+"${envargs[@]}"} --json </dev/null 2>/dev/null)" || resp=""
@@ -251,6 +256,8 @@ esac
 screen="$(read_screen)"
 [ "$(pane_state "$screen")" = ready ] || out closed "dialog closed, but the pane changed before the nudge: not sent"
 [ "$(cm_lane_handle "$LANE" 2>/dev/null)" = "$send_h" ] || out held "the lane handle changed before the nudge: not sent"
+lane_host=""; IFS=$'\t' read -r _lh lane_host _rest < "$(cm_lane_dir "$LANE")/handle" 2>/dev/null || true
+[ "${lane_host:-local}" = "$HOSTSEL" ] || out held "the lane handle file names host ${lane_host:-local}, not $HOSTSEL, before the nudge: not sent"
 if locked; then out held "resume.lock appeared (resume.sh started): Esc sent, dialog closed, nudge not sent"; fi
 resp="$(cm_timeout 60 "$ORCA" terminal send --terminal "$send_h" --text "$TEXT" --enter ${envargs[@]+"${envargs[@]}"} --json </dev/null 2>/dev/null)" || resp=""
 [ "$(printf '%s' "$resp" | jq -r '.ok // false | tostring' 2>/dev/null)" = true ] || out send-failed "dialog closed, the nudge to $send_h was not accepted: read the pane"
