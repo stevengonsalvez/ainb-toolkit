@@ -342,7 +342,10 @@ and never writes it again.
 - Addenda add or tighten. One that would loosen a hard rule, the merge gate or a
   guardrail is not applied: surface it to the owner.
 - Engine changes (scripts, config keys, a wrong engine doc, a new hook point) go to
-  the toolkit as a PR, never as a local edit: `references/overlay.md`.
+  the toolkit as a PR, never as a local edit: `references/overlay.md`. A change made in a
+  project copy of this skill is generalised into this template and upstreamed by PR in the
+  same piece of work; project-only values stay in `config.yaml` or `project-local.md`, and
+  no project names, hosts, member data or secrets go upstream (`references/overlay.md`).
 
 ## The tick
 
