@@ -462,6 +462,17 @@ world s2
 mkdir -p "$CM_HOME/cache/codemode-recover.tsv"
 CT="$(direct t_cm1 w-cm1)"
 check "a state path that is a directory: held, no Esc (the cap must hold)" "$(printf '%s' "$CT" | cut -f1)/$(esc2 t_cm1)" "held/0"
+i=0
+for bad in 'local/t_cm1\tabc\t0' 'local/t_cm1\t1' 'local/t_cm1\t\t' 'local/t_cm1\t1\tsoon' 'local/t_cm1\t-1\t5' 'local/t_cm1\t1\t5\textra' 'local/t_cm1\t99999999999999999999\t0'; do
+  i=$((i + 1)); world "cs$i"
+  mkdir -p "$CM_HOME/cache"; printf "$bad\n" > "$CM_HOME/cache/codemode-recover.tsv"; BEFORE="$(cat "$CM_HOME/cache/codemode-recover.tsv")"
+  CT="$(direct t_cm1 w-cm1)"
+  check "a corrupt Esc count record ($bad) fails closed: unreadable, no Esc, the record left as it was" "$(printf '%s' "$CT" | cut -f1)/$(esc2 t_cm1)/$(sends2)/$([ "$(cat "$CM_HOME/cache/codemode-recover.tsv")" = "$BEFORE" ] && echo same || echo changed)" "unreadable/0/0/same"
+done
+world cs0
+mkdir -p "$CM_HOME/cache"; printf 'local/t_other\tabc\t0\n' > "$CM_HOME/cache/codemode-recover.tsv"
+CT="$(direct t_cm1 w-cm1)"
+check "a corrupt record for ANOTHER terminal does not stop this one" "$(printf '%s' "$CT" | cut -f1)/$(esc2 t_cm1)" "recovered/1"
 world r
 mkdir -p "$CM_HOME/cache"; printf 'local/t_cm3\t1\t%s\n' "$(date +%s)" > "$CM_HOME/cache/codemode-recover.tsv"
 ( direct t_cm3 w-cm3 > "$ROOT/par1" & direct t_cm3 w-cm3 > "$ROOT/par2" & wait )
@@ -493,7 +504,10 @@ world xf
 printf '#!/bin/sh\nexit 2\n' > "$ROOT/cm-fail.sh"; chmod +x "$ROOT/cm-fail.sh"
 OUT="$(CM_CODEMODE_RECOVER="$ROOT/cm-fail.sh" "$SCRIPT")"
 check "a Code Mode sender that exits non-zero leaves an unreadable row, not silence" "$(printf '%s\n' "$OUT" | grep -c 'w-cm1.*exited 2')" "1"
-check "no temp file or lock is left behind by the state update" "$(find "$CM_HOME/cache" -mindepth 1 ! -name codemode-recover.tsv | wc -l | tr -d ' ')" "0"
+world cu
+CT="$(direct t_cm1 w-cm1)"
+check "a recovery through the real script records exactly one Esc for the terminal in the state file" "$(printf '%s' "$CT" | cut -f1)/$(esc2 t_cm1)/$(awk -F'\t' '$1 == "local/t_cm1" { print $2 }' "$CM_HOME/cache/codemode-recover.tsv" 2>/dev/null)/$(wc -l < "$CM_HOME/cache/codemode-recover.tsv" | tr -d ' ')" "recovered/1/1/1"
+check "no temp file or lock (terminal, cap or reclaim) is left behind once that state update and its locks are done" "$(find "$CM_HOME/cache" -mindepth 1 ! -name codemode-recover.tsv | wc -l | tr -d ' ')" "0"
 
 # direct: the script refuses a control byte in the nudge text before reading or sending anything
 : > "$STUB_DIR/calls2.log"
@@ -514,7 +528,7 @@ rm -rf "$CM_HOME/cache"
 printf '%s\n' "${IDLE[@]}" > "$P2/seq.t_cm1.2"   # a person answers the dialog while the Esc is being reserved
 CT="$(direct t_cm1 w-cm1)"
 check "the dialog gone on the read after the reservation: none, no Esc, the reserved count is given back" "$(printf '%s' "$CT" | cut -f1)/$(esc2 t_cm1)/$(awk -F'\t' '$1 == "local/t_cm1" { print $2 }' "$CM_HOME/cache/codemode-recover.tsv" 2>/dev/null)" "none/0/0"
-check "...and no lock is left behind" "$(find "$CM_HOME/cache" -mindepth 1 -name '*.lock' | wc -l | tr -d ' ')" "0"
+check "...and no lock or temp file is left behind" "$(find "$CM_HOME/cache" -mindepth 1 ! -name codemode-recover.tsv | wc -l | tr -d ' ')" "0"
 world hs
 printf '%s' "$CM_HOME/lanes/w-cm1/handle" > "$P2/swap-host.t_cm1"   # the lane file names another host (same handle) once the Esc went out
 CT="$(direct t_cm1 w-cm1)"
@@ -539,6 +553,31 @@ mkdir -p "$CM_HOME/cache/codemode-recover.lock"; sleep 30 & LH2=$!; echo "$LH2" 
 CT="$(direct t_cm1 w-cm1)"
 check "a cap lock over a minute old whose owner is ALIVE is not reclaimed: held, no Esc, the lock kept" "$(printf '%s' "$CT" | cut -f1)/$(esc2 t_cm1)/$([ "$(cat "$CM_HOME/cache/codemode-recover.lock/pid" 2>/dev/null)" = "$LH2" ] && echo kept || echo lost)" "held/0/kept"
 kill "$LH2" 2>/dev/null; wait "$LH2" 2>/dev/null
+world rl
+mkdir -p "$CM_HOME/cache/codemode-recover.lock" "$CM_HOME/cache/codemode-recover.lock.reclaim"
+echo 99999999 > "$CM_HOME/cache/codemode-recover.lock/pid"; sleep 30 & LH3=$!; echo "$LH3" > "$CM_HOME/cache/codemode-recover.lock.reclaim/pid"
+touch -d "@$((NOW - 600))" "$CM_HOME/cache/codemode-recover.lock" "$CM_HOME/cache/codemode-recover.lock.reclaim"
+CT="$(direct t_cm1 w-cm1)"
+check "an old reclaim lock whose owner is ALIVE is not cleared: held, no Esc, the reclaim lock kept" "$(printf '%s' "$CT" | cut -f1)/$(esc2 t_cm1)/$([ "$(cat "$CM_HOME/cache/codemode-recover.lock.reclaim/pid" 2>/dev/null)" = "$LH3" ] && echo kept || echo lost)" "held/0/kept"
+kill "$LH3" 2>/dev/null; wait "$LH3" 2>/dev/null
+world rr
+# a stale reclaim lock that another run replaces with a fresh, live one right before the cleanup acts: the replacement must survive
+mkdir -p "$CM_HOME/cache/codemode-recover.lock" "$CM_HOME/cache/codemode-recover.lock.reclaim"
+echo 99999999 > "$CM_HOME/cache/codemode-recover.lock/pid"; echo 99999999 > "$CM_HOME/cache/codemode-recover.lock.reclaim/pid"
+touch -d "@$((NOW - 600))" "$CM_HOME/cache/codemode-recover.lock" "$CM_HOME/cache/codemode-recover.lock.reclaim"
+sleep 30 & LH4=$!; REALMV="$(command -v mv)"; SHIM="$ROOT/shim-mv"; mkdir -p "$SHIM"; rm -f "$ROOT/shim-fired"
+cat > "$SHIM/mv" <<SH
+#!/bin/sh
+case "\$1" in
+  *codemode-recover.lock.reclaim)
+    if [ ! -e "$ROOT/shim-fired" ]; then : > "$ROOT/shim-fired"; rm -f "\$1/pid"; rmdir "\$1"; mkdir "\$1"; echo "$LH4" > "\$1/pid"; fi ;;
+esac
+exec "$REALMV" "\$@"
+SH
+chmod +x "$SHIM/mv"
+CT="$(PATH="$SHIM:$PATH" direct t_cm1 w-cm1)"
+check "a replacement reclaim lock taken between the judgement and the cleanup is NOT deleted: held, no Esc, the live lock kept" "$([ -e "$ROOT/shim-fired" ] && echo fired || echo idle)/$(printf '%s' "$CT" | cut -f1)/$(esc2 t_cm1)/$([ "$(cat "$CM_HOME/cache/codemode-recover.lock.reclaim/pid" 2>/dev/null)" = "$LH4" ] && echo kept || echo lost)" "fired/held/0/kept"
+kill "$LH4" 2>/dev/null; wait "$LH4" 2>/dev/null; rm -rf "${SHIM:?}"
 world hr
 printf '%s' "$CM_HOME/lanes/w-cm1/handle" > "$P2/swap-on-read.t_cm1"   # the lane file names another terminal while the Esc is being reserved
 CT="$(direct t_cm1 w-cm1)"
