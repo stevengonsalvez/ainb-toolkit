@@ -172,6 +172,24 @@ drop_lock() { local d="$1"; [ "$(cat -- "$d/pid" 2>/dev/null || true)" = "$$" ] 
 # shellcheck disable=SC2329
 release_locks() { local d; for d in ${LOCKS_HELD[@]+"${LOCKS_HELD[@]}"}; do drop_lock "$d"; done; return 0; }
 trap release_locks EXIT
+# clear_stale_reclaim <reclaim lock dir>: a reclaim lock is held for milliseconds, so one over a minute old whose owner is gone was left by a killed
+# run. It is cleared only when (1) it is old and its owner pid is dead or unreadable, and (2) what is removed is exactly what was judged: the dir is
+# first renamed away (atomic: it takes whatever sits at the path at that instant) and judged again under the new name, so a fresh lock another run
+# took in the meantime is never deleted; it is put back when the path is still free (it never is overwritten), else left under the private name
+clear_stale_reclaim() {
+  local r="$1" pid g
+  [ -d "$r" ] && [ -n "$(find "$r" -maxdepth 0 -mmin +1 2>/dev/null)" ] || return 0
+  pid="$(cat -- "$r/pid" 2>/dev/null || true)"
+  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then return 0; fi   # the owner is alive: not ours to clear
+  g="$r.clear.$$"
+  mv "$r" "$g" 2>/dev/null || return 0
+  if [ "$(cat -- "$g/pid" 2>/dev/null || true)" = "$pid" ] && [ -n "$(find "$g" -maxdepth 0 -mmin +1 2>/dev/null)" ]; then
+    rm -f -- "${g:?}/pid" 2>/dev/null; rmdir "$g" 2>/dev/null
+  elif [ ! -e "$r" ]; then
+    mv "$g" "$r" 2>/dev/null
+  fi
+  return 0
+}
 # take_lock <dir> <tries of 0.1 s>: a lock whose owner is gone and that is over a minute old is reclaimed under a reclaim lock (see below);
 # anything else fails closed
 take_lock() {
@@ -183,11 +201,12 @@ take_lock() {
     # reclaim: ONE reclaimer at a time (a second mkdir lock, never waited for), and the staleness is judged AGAIN inside it. While it is held nothing
     # else can remove or replace a dead owner's lock (only the owner drops it, and it is dead), so what is removed is exactly what was judged
     # a reclaim lock itself is held for milliseconds: one over a minute old was left by a killed run and is cleared (best effort)
-    if [ -n "$(find "$d.reclaim" -maxdepth 0 -mmin +1 2>/dev/null)" ]; then rm -f -- "${d:?}.reclaim/pid" 2>/dev/null; rmdir "$d.reclaim" 2>/dev/null; fi
+    clear_stale_reclaim "$d.reclaim"
     if mkdir "$d.reclaim" 2>/dev/null; then
       printf '%s\n' "$$" > "$d.reclaim/pid" 2>/dev/null; LOCKS_HELD+=("$d.reclaim")
       pid="$(cat -- "$d/pid" 2>/dev/null || true)"
-      if [ -d "$d" ] && [ -n "$(find "$d" -maxdepth 0 -mmin +1 2>/dev/null)" ] && { [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; } \
+      if [ "$(cat -- "$d.reclaim/pid" 2>/dev/null || true)" = "$$" ] \
+         && [ -d "$d" ] && [ -n "$(find "$d" -maxdepth 0 -mmin +1 2>/dev/null)" ] && { [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; } \
          && [ "$(cat -- "$d/pid" 2>/dev/null || true)" = "$pid" ] && [ -n "$(find "$d" -maxdepth 0 -mmin +1 2>/dev/null)" ]; then   # judged twice, the second time right before the removal
         rm -f -- "${d:?}/pid" 2>/dev/null; rmdir "$d" 2>/dev/null && rcl=1
       fi
