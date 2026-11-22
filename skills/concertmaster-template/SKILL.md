@@ -747,7 +747,11 @@ session the goal as an ordinary instruction under hard rule 21:
 first, so ordering and acks work; the lane then types `/goal` with that same
 text itself as its first act (a leading id would stop a typed slash command
 running, so the bare command is never sent). Read its pane first, never into
-an open picker. Interview the owner only when the criteria can't
+an open picker. On a Claude lane the send is spawn-verified. A lane whose
+runtime has no `/goal` (codex, agy) skips the slash command: the same id'd
+line is its goal, and it posts the goal text as a comment on the issue.
+Either way the goal is confirmed by `cm:ack <id>` in the worktree comment,
+not by a string on screen. Interview the owner only when the criteria can't
 be set from what is known; otherwise set them and go. The issue closes only
 with the evidence posted. Simple asks (a link, a status read, a one-off
 command) need no issue.
