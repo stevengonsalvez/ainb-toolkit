@@ -741,17 +741,24 @@ owner (multi-step, or an outcome to prove or track) gets ONE issue in the
 project's tracker with a "Done means" list of checkable criteria and limits
 (budget, binding or not). Search first and reuse an existing issue. Assign it
 by linking the doing session's worktree
-(`orca worktree set --worktree <selector> --issue <n>`), then send that
-session the goal as an ordinary instruction under hard rule 21:
-`[cm-i<n>] goal: close #n with posted evidence: <criteria>`. The id stays
-first, so ordering and acks work; the lane then types `/goal` with that same
-text itself as its first act (a leading id would stop a typed slash command
-running, so the bare command is never sent). Read its pane first, never into
-an open picker. On a Claude lane the send is spawn-verified. A lane whose
-runtime has no `/goal` (codex, agy) skips the slash command: the same id'd
-line is its goal, and it posts the goal text as a comment on the issue.
-Either way the goal is confirmed by `cm:ack <id>` in the worktree comment,
-not by a string on screen. Interview the owner only when the criteria can't
+(`orca worktree set --worktree <selector> --issue <issue>`), then send that
+session one ordinary instruction under hard rule 21 that names the goal step
+itself: `[cm-i<id>] set this as your session goal with /goal (no /goal on your
+runtime: post it as a comment on #<issue>): close #<issue> with posted
+evidence: <criteria>`. The id stays first, so ordering and acks work, and the
+sent text names `/goal`, which lets a Claude lane set the goal directly. The
+bare command is never sent: a leading id would stop it running. A lane without
+`/goal` (codex, agy) posts the goal text as a comment on the issue instead; a
+lane mid-task does it after its current turn. A goal proposal may need approval
+in the lane's own pane: the concertmaster never types into that open picker
+(hard rule 3), and a lane whose goal stays pending says so in its comment, it
+is not left silently unset. Read the pane first, never into an open picker; on a
+Claude lane check the send with `scripts/spawn-verify.sh check`. `cm:ack <id>`
+shows only that the line was read. The goal counts as set only when it is
+visible in the lane's pane (a bare `/goal` status read on a Claude lane) or the
+issue comment exists (`gh issue view <issue> --comments`); an ack with neither
+is not a pass, and the instruction is re-sent once as a new one (hard rule 21).
+Interview the owner only when the criteria can't
 be set from what is known: unclear acceptance criteria are routed into
 `/interview` (a dedicated interview session, never the concertmaster's own
 picker, per § The tick "No owner question before a deploy is spawned").
