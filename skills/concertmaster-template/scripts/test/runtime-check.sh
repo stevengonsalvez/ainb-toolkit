@@ -604,6 +604,55 @@ echo 99999999 > "$CM_HOME/cache/codemode-recover.lock/pid"; echo 99999999 > "$CM
 touch -d "@$((NOW - 600))" "$CM_HOME/cache/codemode-recover.lock" "$CM_HOME/cache/codemode-recover.lock.reclaim" "$CM_HOME/cache/codemode-recover.lock.reclaim.clean"
 CT="$(direct t_cm1 w-cm1)"
 check "a cleaner mutex left by a killed cleaner expires: the recovery goes ahead and nothing is left behind" "$(printf '%s' "$CT" | cut -f1)/$(esc2 t_cm1)/$(find "$CM_HOME/cache" -mindepth 1 ! -name codemode-recover.tsv | wc -l | tr -d ' ')" "recovered/1/0"
+world ce
+# a dead cleaner's mutex judged stale by two expirers: the first removes it and a fresh cleaner takes the path before this run's own removal acts
+# (forced with an mv shim). The fresh mutex must not be deleted by path; the run still recovers and leaves nothing behind
+mkdir -p "$CM_HOME/cache/codemode-recover.lock" "$CM_HOME/cache/codemode-recover.lock.reclaim" "$CM_HOME/cache/codemode-recover.lock.reclaim.clean"
+echo 99999999 > "$CM_HOME/cache/codemode-recover.lock/pid"; echo 99999999 > "$CM_HOME/cache/codemode-recover.lock.reclaim/pid"; echo 99999998 > "$CM_HOME/cache/codemode-recover.lock.reclaim.clean/pid"
+touch -d "@$((NOW - 600))" "$CM_HOME/cache/codemode-recover.lock" "$CM_HOME/cache/codemode-recover.lock.reclaim" "$CM_HOME/cache/codemode-recover.lock.reclaim.clean"
+sleep 30 & LH6=$!; REALMV="$(command -v mv)"; REALRM="$(command -v rm)"; SHIM="$ROOT/shim-mv2"; mkdir -p "$SHIM"; rm -f "$ROOT/shim-fired"
+cat > "$SHIM/mv" <<SH
+#!/bin/sh
+case "\$1" in
+  *codemode-recover.lock.reclaim.clean)
+    if [ ! -e "$ROOT/shim-fired" ]; then : > "$ROOT/shim-fired"; "$REALRM" -f "\$1/pid"; rmdir "\$1"; mkdir "\$1"; echo "$LH6" > "\$1/pid"; fi ;;
+esac
+exec "$REALMV" "\$@"
+SH
+chmod +x "$SHIM/mv"
+CT="$(PATH="$SHIM:$PATH" direct t_cm1 w-cm1)"
+check "a cleaner mutex replaced by a fresh one while two expirers race: the shim fired, the run still recovers and leaves nothing behind" "$([ -e "$ROOT/shim-fired" ] && echo fired || echo idle)/$(printf '%s' "$CT" | cut -f1)/$(esc2 t_cm1)/$(find "$CM_HOME/cache" -mindepth 1 ! -name codemode-recover.tsv | wc -l | tr -d ' ')" "fired/recovered/1/0"
+kill "$LH6" 2>/dev/null; wait "$LH6" 2>/dev/null; rm -rf "${SHIM:?}"
+world cy
+# a cleaner whose mutex is taken away mid-cleanup (a late expirer deleting it, forced with a stat shim on the second identity read) must abort and
+# remove nothing: the stale reclaim lock may only be removed while the mutex is still the cleaner's own (the next pass takes the mutex afresh)
+mkdir -p "$CM_HOME/cache/codemode-recover.lock" "$CM_HOME/cache/codemode-recover.lock.reclaim" "$CM_HOME/cache/codemode-recover.lock.reclaim.clean"
+echo 99999999 > "$CM_HOME/cache/codemode-recover.lock/pid"; echo 99999999 > "$CM_HOME/cache/codemode-recover.lock.reclaim/pid"; echo 99999998 > "$CM_HOME/cache/codemode-recover.lock.reclaim.clean/pid"
+touch -d "@$((NOW - 600))" "$CM_HOME/cache/codemode-recover.lock" "$CM_HOME/cache/codemode-recover.lock.reclaim" "$CM_HOME/cache/codemode-recover.lock.reclaim.clean"
+REALSTAT="$(command -v stat)"; REALRM="$(command -v rm)"; SHIM="$ROOT/shim-sr"; mkdir -p "$SHIM"; rm -f "$ROOT/shim-fired" "$ROOT/shim-calls" "$ROOT/shim-rmlog"
+MX="$CM_HOME/cache/codemode-recover.lock.reclaim.clean"
+cat > "$SHIM/stat" <<SH
+#!/bin/sh
+case "\$*" in
+  *codemode-recover.lock.reclaim)
+    echo x >> "$ROOT/shim-calls"
+    if [ "\$(wc -l < "$ROOT/shim-calls" | tr -d ' ')" = 2 ]; then : > "$ROOT/shim-fired"; "$REALRM" -f "$MX/pid"; rmdir "$MX"; fi ;;
+esac
+exec "$REALSTAT" "\$@"
+SH
+cat > "$SHIM/rm" <<SH
+#!/bin/sh
+for a in "\$@"; do last="\$a"; done
+case "\$last" in
+  *codemode-recover.lock.reclaim/pid)
+    if [ "\$(cat "\$last" 2>/dev/null)" = 99999999 ] && [ ! -d "$MX" ]; then echo nomutex >> "$ROOT/shim-rmlog"; fi ;;
+esac
+exec "$REALRM" "\$@"
+SH
+chmod +x "$SHIM/stat" "$SHIM/rm"
+CT="$(PATH="$SHIM:$PATH" direct t_cm1 w-cm1)"
+check "a cleaner whose mutex was taken away removes NO stale reclaim lock on that pass (the next pass takes the mutex afresh and the recovery goes ahead)" "$([ -e "$ROOT/shim-fired" ] && echo fired || echo idle)/$([ -f "$ROOT/shim-rmlog" ] && wc -l < "$ROOT/shim-rmlog" | tr -d ' ' || echo 0)/$(printf '%s' "$CT" | cut -f1)/$(esc2 t_cm1)" "fired/0/recovered/1"
+rm -rf "${SHIM:?}"
 world c2
 # two cleaners at once over the same stale locks (different terminals): both recoveries go ahead, both Esc keys are recorded, nothing is left
 mkdir -p "$CM_HOME/cache/codemode-recover.lock" "$CM_HOME/cache/codemode-recover.lock.reclaim"
