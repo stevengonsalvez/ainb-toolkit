@@ -759,12 +759,16 @@ set; it is not left silently unset. Read
 the pane first, never into an open picker; on a Claude lane check the send with
 `scripts/spawn-verify.sh check` (it judges the default spawn model: a lane on
 another model needs `--model` and `--effort`, or it fails as wrong-model). `cm:ack <id>` shows only that the line was
-read. The goal counts as set only when an issue comment posted AFTER the send
-carries the criteria the concertmaster sent (`gh issue view <issue>
---comments`) or, on a Claude lane, the goal line shows in the pane scrollback
-the concertmaster already reads (read-only, never typed). A comment that only
-says the goal is pending approval, or that carries no criteria, does not
-count: the lane stays unset until it posts the criteria. An ack with neither
+read. The goal counts as set only when an issue comment carries the criteria
+the concertmaster sent and its `createdAt` is later than the send's lane-journal
+stamp (hard rule 21 logs each send there, UTC to the second). Read it with
+`gh issue view <issue> --json comments --jq '.comments[] | [.createdAt, .body]'`
+(`--comments` alone prints no exact times). On a Claude lane the goal also counts
+when its goal line shows as set in the pane scrollback the concertmaster already
+reads (read-only, never typed) with no open picker; a goal still waiting for
+approval does not count. A comment that only says the goal is pending approval,
+or that carries no criteria, does not count: otherwise the lane stays unset until
+the criteria comment is posted. An ack with neither
 is not a pass. Check on the tick after the send and re-send once as a new
 instruction only after two ticks with no goal comment (hard rule 21's
 window); if an approval picker is still open, hard rule 3 blocks the re-send
