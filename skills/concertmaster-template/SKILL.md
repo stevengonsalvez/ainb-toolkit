@@ -743,21 +743,24 @@ project's tracker with a "Done means" list of checkable criteria and limits
 by linking the doing session's worktree
 (`orca worktree set --worktree <selector> --issue <issue>`), then send that
 session one ordinary instruction under hard rule 21 that names the goal step
-itself: `[cm-i<id>] set this as your session goal with /goal (no /goal on your
-runtime: post it as a comment on #<issue>): close #<issue> with posted
-evidence: <criteria>`. The id stays first, so ordering and acks work, and the
+itself: `[cm-i<id>] set this as your session goal with /goal (where your
+runtime has it) and post it as a comment on #<issue>: close #<issue> with
+posted evidence: <criteria>`. The id stays first, so ordering and acks work, and the
 sent text names `/goal`, which lets a Claude lane set the goal directly. The
-bare command is never sent: a leading id would stop it running. A lane without
-`/goal` (codex, agy) posts the goal text as a comment on the issue instead; a
-lane mid-task does it after its current turn. A goal proposal may need approval
-in the lane's own pane: the concertmaster never types into that open picker
-(hard rule 3), and a lane whose goal stays pending says so in its comment, it
-is not left silently unset. Read the pane first, never into an open picker; on a
-Claude lane check the send with `scripts/spawn-verify.sh check`. `cm:ack <id>`
-shows only that the line was read. The goal counts as set only when it is
-visible in the lane's pane (a bare `/goal` status read on a Claude lane) or the
-issue comment exists (`gh issue view <issue> --comments`); an ack with neither
-is not a pass, and the instruction is re-sent once as a new one (hard rule 21).
+concertmaster never sends a bare `/goal`, with or without text: a leading id
+would stop it running, and a bare one opens a panel that stays open. On EVERY
+runtime the lane sets the goal (`/goal` where the runtime has it) AND posts the
+goal text as a comment on the issue; a lane mid-task does both after its
+current turn. A goal proposal may need approval in the lane's own pane: the
+concertmaster never types into that open picker (hard rule 3), and a lane whose
+goal stays pending says so in its comment, it is not left silently unset. Read
+the pane first, never into an open picker; on a Claude lane check the send with
+`scripts/spawn-verify.sh check`. `cm:ack <id>` shows only that the line was
+read. The goal counts as set only when the issue comment exists (`gh issue view
+<issue> --comments`) or, on a Claude lane, the goal line shows in the pane
+scrollback the concertmaster already reads (read-only, never typed). An ack
+with neither is not a pass, and the instruction is re-sent once as a new one
+(hard rule 21).
 Interview the owner only when the criteria can't
 be set from what is known: unclear acceptance criteria are routed into
 `/interview` (a dedicated interview session, never the concertmaster's own
