@@ -621,7 +621,7 @@ exec "$REALMV" "\$@"
 SH
 chmod +x "$SHIM/mv"
 CT="$(PATH="$SHIM:$PATH" direct t_cm1 w-cm1)"
-check "a cleaner mutex replaced by a fresh one while two expirers race: the shim fired, the run still recovers and leaves nothing behind" "$([ -e "$ROOT/shim-fired" ] && echo fired || echo idle)/$(printf '%s' "$CT" | cut -f1)/$(esc2 t_cm1)/$(find "$CM_HOME/cache" -mindepth 1 ! -name codemode-recover.tsv | wc -l | tr -d ' ')" "fired/recovered/1/0"
+check "a cleaner mutex replaced by a fresh one while two expirers race: the shim fired, the run still recovers, the fresh mutex is left (not deleted) on its tombstone and nothing else is left behind" "$([ -e "$ROOT/shim-fired" ] && echo fired || echo idle)/$(printf '%s' "$CT" | cut -f1)/$(esc2 t_cm1)/$(cat "$CM_HOME"/cache/codemode-recover.lock.reclaim.clean.dead.*/pid 2>/dev/null | tr -d '\n')/$(find "$CM_HOME/cache" -mindepth 1 ! -name codemode-recover.tsv ! -path '*.clean.dead.*' | wc -l | tr -d ' ')" "fired/recovered/1/$LH6/0"
 kill "$LH6" 2>/dev/null; wait "$LH6" 2>/dev/null; rm -rf "${SHIM:?}"
 world cy
 # a cleaner whose mutex is taken away mid-cleanup (a late expirer deleting it, forced with a stat shim on the second identity read) must abort and
@@ -653,6 +653,61 @@ chmod +x "$SHIM/stat" "$SHIM/rm"
 CT="$(PATH="$SHIM:$PATH" direct t_cm1 w-cm1)"
 check "a cleaner whose mutex was taken away removes NO stale reclaim lock on that pass (the next pass takes the mutex afresh and the recovery goes ahead)" "$([ -e "$ROOT/shim-fired" ] && echo fired || echo idle)/$([ -f "$ROOT/shim-rmlog" ] && wc -l < "$ROOT/shim-rmlog" | tr -d ' ' || echo 0)/$(printf '%s' "$CT" | cut -f1)/$(esc2 t_cm1)" "fired/0/recovered/1"
 rm -rf "${SHIM:?}"
+world cp
+# a cleaner PASSES its mutex ownership check and is then paused; meanwhile the stale reclaim lock goes and a live replacement takes its path
+# (forced by shims on the move and on the old delete-by-path step, whichever the script uses). The live replacement must not be deleted
+mkdir -p "$CM_HOME/cache/codemode-recover.lock" "$CM_HOME/cache/codemode-recover.lock.reclaim" "$CM_HOME/cache/codemode-recover.lock.reclaim.clean"
+echo 99999999 > "$CM_HOME/cache/codemode-recover.lock/pid"; echo 99999999 > "$CM_HOME/cache/codemode-recover.lock.reclaim/pid"; echo 99999998 > "$CM_HOME/cache/codemode-recover.lock.reclaim.clean/pid"
+touch -d "@$((NOW - 600))" "$CM_HOME/cache/codemode-recover.lock" "$CM_HOME/cache/codemode-recover.lock.reclaim" "$CM_HOME/cache/codemode-recover.lock.reclaim.clean"
+sleep 30 & LH7=$!; REALMV="$(command -v mv)"; REALRM="$(command -v rm)"; SHIM="$ROOT/shim-pause"; mkdir -p "$SHIM"; rm -f "$ROOT/shim-fired"
+L1="$CM_HOME/cache/codemode-recover.lock.reclaim"
+cat > "$SHIM/mv" <<SH
+#!/bin/sh
+case "\$1" in
+  *codemode-recover.lock.reclaim)
+    if [ ! -e "$ROOT/shim-fired" ]; then : > "$ROOT/shim-fired"; "$REALRM" -f "$L1/pid"; rmdir "$L1"; mkdir "$L1"; echo "$LH7" > "$L1/pid"; fi ;;
+esac
+exec "$REALMV" "\$@"
+SH
+cat > "$SHIM/rm" <<SH
+#!/bin/sh
+for a in "\$@"; do last="\$a"; done
+case "\$last" in
+  *codemode-recover.lock.reclaim/pid)
+    if [ ! -e "$ROOT/shim-fired" ] && [ "\$(cat "\$last" 2>/dev/null)" = 99999999 ]; then : > "$ROOT/shim-fired"; "$REALRM" -f "$L1/pid"; rmdir "$L1"; mkdir "$L1"; echo "$LH7" > "$L1/pid"; fi ;;
+esac
+exec "$REALRM" "\$@"
+SH
+chmod +x "$SHIM/mv" "$SHIM/rm"
+CT="$(PATH="$SHIM:$PATH" direct t_cm1 w-cm1)"
+kept="$(grep -l "^$LH7\$" "$L1/pid" "$L1".dead.*/pid 2>/dev/null | wc -l | tr -d ' ')"
+check "a live replacement reclaim lock that appears after a paused cleaner's check is NOT deleted (moved away at most, its pid kept): the shim fired, the run recovers" "$([ -e "$ROOT/shim-fired" ] && echo fired || echo idle)/$kept/$(printf '%s' "$CT" | cut -f1)/$(esc2 t_cm1)" "fired/1/recovered/1"
+kill "$LH7" 2>/dev/null; wait "$LH7" 2>/dev/null; rm -rf "${SHIM:?}"
+for mode in tsv lock; do
+  world "ct-$mode"
+  # two holders of the cap lock: this run snapshots the record and is paused; the shim stands in for the other holder (committing rows, or taking
+  # the lock away) at the run's second read of the record, right before its rename. The update must abort: no write, no Esc
+  mkdir -p "$CM_HOME/cache"; printf 'local/t_other\t1\t%s\n' "$(date +%s)" > "$CM_HOME/cache/codemode-recover.tsv"
+  sleep 30 & LH8=$!; REALCAT="$(command -v cat)"; REALRM="$(command -v rm)"; SHIM="$ROOT/shim-cat"; mkdir -p "$SHIM"; rm -f "$ROOT/shim-fired" "$ROOT/shim-calls"
+  TSV="$CM_HOME/cache/codemode-recover.tsv"; CL="$CM_HOME/cache/codemode-recover.lock"
+  if [ "$mode" = tsv ]; then ACT="printf 'local/t_b1\\t1\\t5\\nlocal/t_b2\\t1\\t5\\n' >> \"$TSV\""; else ACT="\"$REALRM\" -f \"$CL/pid\"; rmdir \"$CL\"; mkdir \"$CL\"; echo \"$LH8\" > \"$CL/pid\""; fi
+  cat > "$SHIM/cat" <<SH
+#!/bin/sh
+for a in "\$@"; do last="\$a"; done
+case "\$last" in
+  *codemode-recover.tsv)
+    echo x >> "$ROOT/shim-calls"
+    if [ "\$(wc -l < "$ROOT/shim-calls" | tr -d ' ')" = 2 ]; then : > "$ROOT/shim-fired"; $ACT; fi ;;
+esac
+exec "$REALCAT" "\$@"
+SH
+  chmod +x "$SHIM/cat"
+  CT="$(PATH="$SHIM:$PATH" direct t_cm1 w-cm1)"
+  if [ "$mode" = tsv ]; then WANT_ROWS=3; else WANT_ROWS=1; fi
+  check "cap record update with the record changed or the lock taken away right before the rename ($mode): held, no Esc, this run writes nothing" "$([ -e "$ROOT/shim-fired" ] && echo fired || echo idle)/$(printf '%s' "$CT" | cut -f1)/$(esc2 t_cm1)/$(grep -c 'local/t_cm1' "$TSV")/$(wc -l < "$TSV" | tr -d ' ')" "fired/held/0/0/$WANT_ROWS"
+  if [ "$mode" = lock ]; then check "...and the lock that took its place is left alone" "$(cat "$CL/pid" 2>/dev/null)" "$LH8"; fi
+  kill "$LH8" 2>/dev/null; wait "$LH8" 2>/dev/null; rm -rf "${SHIM:?}"
+done
 world c2
 # two cleaners at once over the same stale locks (different terminals): both recoveries go ahead, both Esc keys are recorded, nothing is left
 mkdir -p "$CM_HOME/cache/codemode-recover.lock" "$CM_HOME/cache/codemode-recover.lock.reclaim"
