@@ -27,7 +27,7 @@
 #      time) and sends nothing; a count whose Esc was never sent because the refund failed or the run was cut stays spent, so the cap errs
 #      toward fewer keys). The cap: at most 2
 #      per terminal in 6 hours counted from the last one, kept in cache/codemode-recover.tsv through a recovery, written under a mkdir lock
-#      with a unique temp file and read back. A dialog that survives them is "menu", left to a person. A count that cannot be recorded
+#      with a unique temp file, the cap lock and the record re-checked right before the rename (a changed one aborts: held, no Esc), and read back. A dialog that survives them is "menu", left to a person. A count that cannot be recorded
 #      (also a state path that is not a regular file) means no Esc ("held"); a record for this terminal that cannot be read (not exactly
 #      ONE row of three tab-separated plain-decimal fields: a second row, a sign or a leading zero all count) is "unreadable": no Esc, never counted as zero. Then ONE Esc (a single key, text only, no Enter), and the pane
 #      is read again up to CM_CODEMODE_POLLS times, CM_CODEMODE_SETTLE_S apart. The dialog still showing after the last read is "menu"
@@ -179,18 +179,40 @@ dir_id() { stat -c '%i:%Y' "$1" 2>/dev/null || stat -f '%i:%m' "$1" 2>/dev/null 
 old_dir() { [ -d "$1" ] && [ -n "$(find "$1" -maxdepth 0 -mmin +1 2>/dev/null)" ]; }
 # dead_owner <dir>: success when the pid inside the lock names no live process (or no pid was ever written)
 dead_owner() { local p; p="$(cat -- "$1/pid" 2>/dev/null || true)"; [ -z "$p" ] || ! kill -0 "$p" 2>/dev/null; }
+# retire_stale <dir> <pid judged> <identity judged>: remove a lock that was judged stale (old, dead owner), WITHOUT deleting by path. The directory
+# is renamed to a private tombstone name (atomic: what is removed is exactly what was moved) and judged there: only when it still holds the pid and
+# the inode and mtime that were judged is it deleted. A move that grabbed something else (a live owner's fresh lock) deletes nothing of it and does
+# not put it back: that owner finds out at its own ownership re-read before its next mutation and aborts (a missing or foreign lock is a skip). Such
+# a tombstone is swept by sweep_dead once it is old and its owner is gone. Returns 0 only when the judged lock was removed.
+retire_stale() {
+  local d="$1" pid="$2" id="$3" t="$1.dead.$$"
+  [ -n "$id" ] && [ ! -e "$t" ] || return 1
+  mv "$d" "$t" 2>/dev/null || return 1
+  if [ "$(cat -- "$t/pid" 2>/dev/null || true)" = "$pid" ] && dead_owner "$t" && old_dir "$t" && [ "$(dir_id "$t")" = "$id" ]; then
+    rm -f -- "${t:?}/pid" 2>/dev/null; rmdir "$t" 2>/dev/null; return 0
+  fi
+  return 1
+}
+# sweep_dead <lock dir>: drop leftover tombstones of that lock whose owner is gone and that are over a minute old (a live one is never touched)
+sweep_dead() {
+  local t
+  for t in "$1".dead.*; do
+    if [ -d "$t" ] && old_dir "$t" && dead_owner "$t"; then rm -f -- "${t:?}/pid" 2>/dev/null; rmdir "$t" 2>/dev/null; fi
+  done
+  return 0
+}
 # clear_stale_reclaim <reclaim lock dir>: a reclaim lock is held for milliseconds, so one over a minute old whose owner is gone was left by a
-# killed run. Stale cleaners are serialized behind their OWN mkdir mutex (<dir>.clean, never waited for): only its holder may judge and remove
-# the stale reclaim lock. Why that is sound: while a dead owner's reclaim lock exists nobody can create another one (mkdir fails on it) and its
-# dead owner cannot drop it, so with one cleaner nothing can replace it between the judgement and the removal. The holder still judges twice and
-# removes it only when the pid inside and the directory identity (inode, mtime) are the ones judged, and only while the mutex is STILL its own
-# (its pid is in it), re-read right before the removal. The mutex is held for milliseconds too: one over a minute old whose owner is dead was
-# left by a killed cleaner and is expired by renaming it to a private tombstone name (atomic: ONE expirer wins; a loser finds nothing to move),
-# judged there, and the tombstone removed. A tombstone that proves not stale grabbed a fresh mutex: it is never put back, the attempt just
-# ends, and the cleaner whose mutex vanished sees that at its own ownership check and removes nothing. So a mutex race can only abort a cleanup.
-# Residual: a cleaner whose mutex was taken away, replaced by a third cleaner AND a fresh reclaim lock all inside the microseconds between its
-# last check and its removal could still remove that fresh lock. Worst consequence: two reclaimers at once, so two runs could both take the same
-# stale main lock (the terminal lock or the cap lock): one extra Esc to a terminal, or one lost cap-count update.
+# killed run. Stale cleaners are serialized behind their OWN mkdir mutex (<dir>.clean, never waited for): only its holder judges and retires the
+# stale reclaim lock, judging twice, comparing the pid and the directory identity (inode, mtime), re-reading its own mutex (its pid is in it)
+# right before the move, and retiring through retire_stale (a rename to a tombstone, judged there, never a delete by path). The mutex is held for
+# milliseconds too: one over a minute old whose owner is dead is expired by the same rename. NO TIMING BOUND IS CLAIMED: a run paused for any
+# length of time between a check and its move can still displace a live lock (every lock here is taken away from its owner, never deleted out
+# from under it, and the move deletes nothing of a live owner's). What that can cost is bounded by CONSEQUENCE, not by time: the displaced
+# owner re-reads its lock before its next mutation and skips (a recovery held this tick, retried the next); the terminal lock holder does not
+# re-read, so two runs can then recover one terminal at once, and a count update can still be lost to a writer paused inside the final rename
+# window. The worst result of either is ONE duplicated Esc into a terminal whose Code Mode dialog was on screen at the last read (it picks "start
+# without it", the default; every Esc is preceded by a fresh read of the pane, so a dialog that is gone gets none), and a cap that errs by the
+# updates lost. Never a lost or extra destructive action.
 clear_stale_reclaim() {
   local r="$1" m="$1.clean" pid id mp t
   old_dir "$r" || return 0
@@ -198,10 +220,8 @@ clear_stale_reclaim() {
   if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then return 0; fi   # the owner is alive: not ours to clear
   if ! mkdir "$m" 2>/dev/null; then
     mp="$(cat -- "$m/pid" 2>/dev/null || true)"
-    t="$m.dead.$$"
-    if old_dir "$m" && dead_owner "$m" && [ "$(cat -- "$m/pid" 2>/dev/null || true)" = "$mp" ] && [ ! -e "$t" ] && mv "$m" "$t" 2>/dev/null; then
-      # the tombstone is private to this run: whatever it turned out to hold is dropped (a fresh mutex grabbed by mistake is not restored)
-      rm -f -- "${t:?}/pid" 2>/dev/null; rmdir "$t" 2>/dev/null
+    if old_dir "$m" && dead_owner "$m" && [ "$(cat -- "$m/pid" 2>/dev/null || true)" = "$mp" ]; then
+      retire_stale "$m" "$mp" "$(dir_id "$m")" || true   # judged on the tombstone: a fresh mutex grabbed by mistake is left, not deleted
     fi
     return 0
   fi
@@ -209,8 +229,8 @@ clear_stale_reclaim() {
   if old_dir "$r" && dead_owner "$r" && [ "$(cat -- "$r/pid" 2>/dev/null || true)" = "$pid" ]; then
     id="$(dir_id "$r")"
     if [ -n "$id" ] && old_dir "$r" && dead_owner "$r" && [ "$(cat -- "$r/pid" 2>/dev/null || true)" = "$pid" ] && [ "$(dir_id "$r")" = "$id" ] \
-       && [ "$(cat -- "$m/pid" 2>/dev/null || true)" = "$$" ]; then   # the mutex is still ours: a missing or foreign one aborts, nothing is removed
-      rm -f -- "${r:?}/pid" 2>/dev/null; rmdir "$r" 2>/dev/null
+       && [ "$(cat -- "$m/pid" 2>/dev/null || true)" = "$$" ]; then   # the mutex is still ours: a missing or foreign one aborts, nothing is moved
+      retire_stale "$r" "$pid" "$id" || true
     fi
   fi
   drop_lock "$m"
@@ -219,22 +239,23 @@ clear_stale_reclaim() {
 # take_lock <dir> <tries of 0.1 s>: a lock whose owner is gone and that is over a minute old is reclaimed under a reclaim lock (see below);
 # anything else fails closed
 take_lock() {
-  local d="$1" n="${2:-1}" i=0 pid rcl
+  local d="$1" n="${2:-1}" i=0 pid rcl id
   mkdir -p "$CM_HOME/cache" 2>/dev/null || return 1
   while :; do
     if mkdir "$d" 2>/dev/null; then printf '%s\n' "$$" > "$d/pid" 2>/dev/null; LOCKS_HELD+=("$d"); return 0; fi
     rcl=0
     # reclaim: ONE reclaimer at a time (a second mkdir lock, never waited for), and the staleness is judged AGAIN inside it. While it is held nothing
-    # else can remove or replace a dead owner's lock (only the owner drops it, and it is dead), so what is removed is exactly what was judged
-    # a reclaim lock itself is held for milliseconds: one over a minute old was left by a killed run and is cleared (best effort)
+    # else can remove or replace a dead owner's lock (only the owner drops it, and it is dead), so what is moved away is what was judged, and
+    # retire_stale judges it once more on the tombstone. A reclaim lock itself is held for milliseconds: one over a minute old was left by a
+    # killed run and is cleared by clear_stale_reclaim (see its comment for what is and is not guaranteed)
+    sweep_dead "$d"; sweep_dead "$d.reclaim"; sweep_dead "$d.reclaim.clean"
     clear_stale_reclaim "$d.reclaim"
     if mkdir "$d.reclaim" 2>/dev/null; then
       printf '%s\n' "$$" > "$d.reclaim/pid" 2>/dev/null; LOCKS_HELD+=("$d.reclaim")
-      pid="$(cat -- "$d/pid" 2>/dev/null || true)"
+      pid="$(cat -- "$d/pid" 2>/dev/null || true)"; id="$(dir_id "$d")"
       if [ "$(cat -- "$d.reclaim/pid" 2>/dev/null || true)" = "$$" ] \
-         && [ -d "$d" ] && [ -n "$(find "$d" -maxdepth 0 -mmin +1 2>/dev/null)" ] && { [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; } \
-         && [ "$(cat -- "$d/pid" 2>/dev/null || true)" = "$pid" ] && [ -n "$(find "$d" -maxdepth 0 -mmin +1 2>/dev/null)" ]; then   # judged twice, the second time right before the removal
-        rm -f -- "${d:?}/pid" 2>/dev/null; rmdir "$d" 2>/dev/null && rcl=1
+         && old_dir "$d" && dead_owner "$d" && [ "$(cat -- "$d/pid" 2>/dev/null || true)" = "$pid" ] && old_dir "$d"; then   # judged twice, then retired by rename and judged again (retire_stale)
+        retire_stale "$d" "$pid" "$id" && rcl=1
       fi
       drop_lock "$d.reclaim"
     fi
@@ -275,7 +296,11 @@ esc_record() {
     new=$((tries > 0 ? tries - 1 : 0)); now="$last"
   fi
   tmp="$(mktemp "$CM_HOME/cache/codemode-recover.XXXXXX" 2>/dev/null)" || return 11
-  if { printf '%s\n' "$rd" | awk -F'\t' -v k="$KEY" 'NF && $1 != k'; printf '%s\t%s\t%s\n' "$KEY" "$new" "$now"; } > "$tmp" 2>/dev/null && mv -f -- "$tmp" "$STATE" 2>/dev/null \
+  # right before the rename: the cap lock must still be ours and the record must be exactly what was read under it (a lock taken away from a
+  # paused holder, or rows another writer committed meanwhile, abort the update: nothing is written and the Esc for this reservation is not sent)
+  if { printf '%s\n' "$rd" | awk -F'\t' -v k="$KEY" 'NF && $1 != k'; printf '%s\t%s\t%s\n' "$KEY" "$new" "$now"; } > "$tmp" 2>/dev/null \
+     && [ "$(cat -- "$STATE" 2>/dev/null || true)" = "$rd" ] && [ "$(cat -- "$STATE_LOCK/pid" 2>/dev/null || true)" = "$$" ] \
+     && mv -f -- "$tmp" "$STATE" 2>/dev/null \
      && [ "$(awk -F'\t' -v k="$KEY" '$1 == k { print $2 }' "$STATE" 2>/dev/null)" = "$new" ]; then
     return 0
   fi
