@@ -173,22 +173,39 @@ drop_lock() { local d="$1"; [ "$(cat -- "$d/pid" 2>/dev/null || true)" = "$$" ] 
 # shellcheck disable=SC2329
 release_locks() { local d; for d in ${LOCKS_HELD[@]+"${LOCKS_HELD[@]}"}; do drop_lock "$d"; done; return 0; }
 trap release_locks EXIT
-# clear_stale_reclaim <reclaim lock dir>: a reclaim lock is held for milliseconds, so one over a minute old whose owner is gone was left by a killed
-# run. It is cleared only when (1) it is old and its owner pid is dead or unreadable, and (2) what is removed is exactly what was judged: the dir is
-# first renamed away (atomic: it takes whatever sits at the path at that instant) and judged again under the new name, so a fresh lock another run
-# took in the meantime is never deleted; it is put back when the path is still free (it never is overwritten), else left under the private name
+# dir_id <dir>: the identity of a directory (inode and mtime), empty when it cannot be read (GNU stat first, then BSD stat)
+dir_id() { stat -c '%i:%Y' "$1" 2>/dev/null || stat -f '%i:%m' "$1" 2>/dev/null || true; }
+# old_dir <dir>: success when the directory exists and was last changed over a minute ago
+old_dir() { [ -d "$1" ] && [ -n "$(find "$1" -maxdepth 0 -mmin +1 2>/dev/null)" ]; }
+# dead_owner <dir>: success when the pid inside the lock names no live process (or no pid was ever written)
+dead_owner() { local p; p="$(cat -- "$1/pid" 2>/dev/null || true)"; [ -z "$p" ] || ! kill -0 "$p" 2>/dev/null; }
+# clear_stale_reclaim <reclaim lock dir>: a reclaim lock is held for milliseconds, so one over a minute old whose owner is gone was left by a
+# killed run. Stale cleaners are serialized behind their OWN mkdir mutex (<dir>.clean, never waited for): only its holder may judge and remove
+# the stale reclaim lock. Why that is sound: while a dead owner's reclaim lock exists nobody can create another one (mkdir fails on it), its dead
+# owner cannot drop it, and only the mutex holder removes it, so between the judgement and the removal nothing can replace it; the holder still
+# judges twice and removes it only when the pid inside and the directory identity (inode, mtime) are the ones judged. No rename-and-restore.
+# The mutex is held for milliseconds too: one over a minute old whose owner is dead was left by a killed cleaner and is expired (judged twice,
+# best effort: the one window left is two runs expiring the same dead mutex at the same instant).
 clear_stale_reclaim() {
-  local r="$1" pid g
-  [ -d "$r" ] && [ -n "$(find "$r" -maxdepth 0 -mmin +1 2>/dev/null)" ] || return 0
+  local r="$1" m="$1.clean" pid id mp
+  old_dir "$r" || return 0
   pid="$(cat -- "$r/pid" 2>/dev/null || true)"
   if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then return 0; fi   # the owner is alive: not ours to clear
-  g="$r.clear.$$"
-  mv "$r" "$g" 2>/dev/null || return 0
-  if [ "$(cat -- "$g/pid" 2>/dev/null || true)" = "$pid" ] && [ -n "$(find "$g" -maxdepth 0 -mmin +1 2>/dev/null)" ]; then
-    rm -f -- "${g:?}/pid" 2>/dev/null; rmdir "$g" 2>/dev/null
-  elif [ ! -e "$r" ]; then
-    mv "$g" "$r" 2>/dev/null
+  if ! mkdir "$m" 2>/dev/null; then
+    mp="$(cat -- "$m/pid" 2>/dev/null || true)"
+    if old_dir "$m" && dead_owner "$m" && [ "$(cat -- "$m/pid" 2>/dev/null || true)" = "$mp" ] && old_dir "$m"; then
+      rm -f -- "${m:?}/pid" 2>/dev/null; rmdir "$m" 2>/dev/null
+    fi
+    return 0
   fi
+  printf '%s\n' "$$" > "$m/pid" 2>/dev/null; LOCKS_HELD+=("$m")
+  if old_dir "$r" && dead_owner "$r" && [ "$(cat -- "$r/pid" 2>/dev/null || true)" = "$pid" ]; then
+    id="$(dir_id "$r")"
+    if [ -n "$id" ] && old_dir "$r" && dead_owner "$r" && [ "$(cat -- "$r/pid" 2>/dev/null || true)" = "$pid" ] && [ "$(dir_id "$r")" = "$id" ]; then
+      rm -f -- "${r:?}/pid" 2>/dev/null; rmdir "$r" 2>/dev/null
+    fi
+  fi
+  drop_lock "$m"
   return 0
 }
 # take_lock <dir> <tries of 0.1 s>: a lock whose owner is gone and that is over a minute old is reclaimed under a reclaim lock (see below);
