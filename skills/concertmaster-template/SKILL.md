@@ -752,7 +752,10 @@ runtime has no `/goal` (codex, agy) skips the slash command: the same id'd
 line is its goal, and it posts the goal text as a comment on the issue.
 Either way the goal is confirmed by `cm:ack <id>` in the worktree comment,
 not by a string on screen. Interview the owner only when the criteria can't
-be set from what is known; otherwise set them and go. "Go" skips only that
+be set from what is known: unclear acceptance criteria are routed into
+`/interview` (a dedicated interview session, never the concertmaster's own
+picker, per § The tick "No owner question before a deploy is spawned").
+Otherwise set them and go. "Go" skips only that
 extra question: routing, the Pair-sort approval and the outward-message gates
 (`cfg.outward_messages`) still apply in full. The issue closes only
 with the evidence posted. Simple asks (a link, a status read, a one-off
