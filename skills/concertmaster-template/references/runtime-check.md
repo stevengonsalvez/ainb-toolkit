@@ -78,7 +78,7 @@ question menu and never type into one, so the lanes stay stale. After it has wri
    other-terminal or other-host file is `held`, and the script never writes a lane handle. One recovery per terminal runs at a time
    (a mkdir lock), from the last read through the nudge;
 4. reserve the Esc against the cap: at most 2 per terminal in 6 h from the last one (kept through recoveries), written under a
-   mkdir lock with a unique temp file and read back; a count that cannot be recorded means no Esc. Then read the pane and check the
+   mkdir lock with a unique temp file, the lock and the record re-checked right before the rename, and read back; a count that cannot be recorded (or a lock or record that changed under the writer) means no Esc. A stale lock is retired by a rename to a private tombstone, never deleted by path; no timing bound is claimed for those races, the bound is by consequence: a recovery skipped this tick, or at worst one duplicated Esc into a terminal whose dialog was on screen at the last read. Then read the pane and check the
    lock once more right before the key (a dialog gone or a lock present gives the count back and sends nothing). Send ONE Esc (a single key, no Enter), read again until the dialog is gone; still showing after
    the last read is `menu` (reported, not retried);
 5. only with the dialog gone, a Claude footer last, no menu and no mid-turn marker on a fresh read, the lane handle unchanged and no
