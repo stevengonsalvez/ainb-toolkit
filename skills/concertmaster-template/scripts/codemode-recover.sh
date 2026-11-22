@@ -209,10 +209,14 @@ sweep_dead() {
 # length of time between a check and its move can still displace a live lock (every lock here is taken away from its owner, never deleted out
 # from under it, and the move deletes nothing of a live owner's). What that can cost is bounded by CONSEQUENCE, not by time: the displaced
 # owner re-reads its lock before its next mutation and skips (a recovery held this tick, retried the next); the terminal lock holder does not
-# re-read, so two runs can then recover one terminal at once, and a count update can still be lost to a writer paused inside the final rename
-# window. The worst result of either is ONE duplicated Esc into a terminal whose Code Mode dialog was on screen at the last read (it picks "start
-# without it", the default; every Esc is preceded by a fresh read of the pane, so a dialog that is gone gets none), and a cap that errs by the
-# updates lost. Never a lost or extra destructive action.
+# re-read, and a count update can be lost to a writer paused inside the final rename window. The bound on the result is by NUMBER OF RUNS, not
+# by the cap: each run sends at most ONE Esc after reserving, and only after a fresh read of a pane that shows the Code Mode dialog. With several
+# overlapping runs that are each paused past the lock age (an empty lock over a minute old is judged stale) at the right points, the persisted
+# count can lag, so the Esc keys into one dialog are bounded by the number of overlapping runs, not by MAXESC. Each Esc goes only to a terminal
+# whose dialog was seen on screen at the last read (it picks "start without it", the default; a dialog that is gone gets none). Never a lost or
+# extra destructive action. OPERATOR: run ONE runtime-check at a time. Nothing in runtime-check.sh or codemode-recover.sh prevents two runs from
+# overlapping (they take only the ledger, terminal, cap and resume locks above, no single-instance lock), and no cron entry is documented that
+# would: the tick that calls it is one session, so overlap needs a second start (a manual run during a tick, two leads, a hung run still going).
 clear_stale_reclaim() {
   local r="$1" m="$1.clean" pid id mp t
   old_dir "$r" || return 0
