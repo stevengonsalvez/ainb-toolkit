@@ -753,15 +753,20 @@ runtime the lane sets the goal (`/goal` where the runtime has it) AND posts the
 goal text as a comment on the issue; a lane mid-task does both after its
 current turn. A goal proposal may need approval in the lane's own pane: the
 concertmaster never types into that open picker (hard rule 3), and a lane whose
-goal stays pending says so in its comment, it is not left silently unset. Read
+goal stays pending says so in its worktree comment (a pending note is not the
+goal comment), and posts the criteria comment once the proposal is approved or
+set; it is not left silently unset. Read
 the pane first, never into an open picker; on a Claude lane check the send with
 `scripts/spawn-verify.sh check` (it judges the default spawn model: a lane on
 another model needs `--model` and `--effort`, or it fails as wrong-model). `cm:ack <id>` shows only that the line was
-read. The goal counts as set only when the issue comment exists (`gh issue view
-<issue> --comments`) or, on a Claude lane, the goal line shows in the pane
-scrollback the concertmaster already reads (read-only, never typed). An ack
-with neither is not a pass. Check on the tick after the send and re-send once
-as a new instruction only after two ticks with no comment (hard rule 21's
+read. The goal counts as set only when an issue comment posted AFTER the send
+carries the criteria the concertmaster sent (`gh issue view <issue>
+--comments`) or, on a Claude lane, the goal line shows in the pane scrollback
+the concertmaster already reads (read-only, never typed). A comment that only
+says the goal is pending approval, or that carries no criteria, does not
+count: the lane stays unset until it posts the criteria. An ack with neither
+is not a pass. Check on the tick after the send and re-send once as a new
+instruction only after two ticks with no goal comment (hard rule 21's
 window); if an approval picker is still open, hard rule 3 blocks the re-send
 and the goal becomes a WAITING row for the owner.
 Interview the owner only when the criteria can't

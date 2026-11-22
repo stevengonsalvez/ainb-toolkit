@@ -234,7 +234,8 @@ host. A lead may run on any agent and may move hosts; the protocol must not chan
   A goal instruction (`set this as your session goal with /goal ...`) needs the goal itself, not
   only the ack: set it with `/goal` where your runtime has it AND post the goal text as a comment
   on the named issue, on every runtime. If the goal waits on approval in your pane, say so in your
-  comment; `cm:ack` alone does not count as the goal set.
+  worktree comment, then post the criteria comment once it is approved or set; a pending note is not
+  the goal comment, and `cm:ack` alone does not count as the goal set.
 
 ### Model
 - Run on `claude-sonnet-5-5` at effort high (`cfg.lanes[].model`). Spawn your workers the same
@@ -410,7 +411,7 @@ its ticker does each tick).
   `cm:ask <one question>` line in your comment. When you fix something that went wrong, post
   `cm:lesson <lane> | <what happened and fix> | root cause: <gap>` and append it to your lane journal. A newer
   concertmaster instruction wins over an older queued one; ack each instruction by id with `cm:ack <id>`. A goal instruction also needs the goal itself
-  (`/goal` where your runtime has it, AND a comment with the goal text on the named issue); an ack alone is not enough.
+  (`/goal` where your runtime has it, AND a comment with the goal text (the criteria) on the named issue); an ack alone is not enough.
 - Review relay: each pass, check every child PR and relay a CHANGES REQUESTED or BLOCK at the current
   head to the worker once per comment id (§ Relaying review verdicts); never fix the finding yourself.
 - Children and follow-ups: for each worker you spawn, add a line `cm:child <worktree-name>`
@@ -919,7 +920,7 @@ Instructions: the {{spawner}} may type instructions into your terminal, each wit
 follow the newer, drop the older. Ack each one you act on by id with a line `cm:ack <id>` in
 your worktree comment, after the first-line `cm:<state>`. A goal instruction (`set this as your
 session goal ...`) also needs the goal itself: `/goal` where your runtime has it, AND a comment with
-the goal text on the named issue; an ack alone is not enough.
+the goal text (the criteria) on the named issue; an ack alone is not enough.
 Boundary: {{boundary, usually "PR at the merge gate"}}. Stop there.
 ```
 
