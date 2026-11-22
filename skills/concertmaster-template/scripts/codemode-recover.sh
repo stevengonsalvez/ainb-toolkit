@@ -29,7 +29,7 @@
 #      per terminal in 6 hours counted from the last one, kept in cache/codemode-recover.tsv through a recovery, written under a mkdir lock
 #      with a unique temp file and read back. A dialog that survives them is "menu", left to a person. A count that cannot be recorded
 #      (also a state path that is not a regular file) means no Esc ("held"); a record for this terminal that cannot be read (not exactly
-#      three tab-separated fields, digits only) is "unreadable": no Esc, never counted as zero. Then ONE Esc (a single key, text only, no Enter), and the pane
+#      ONE row of three tab-separated plain-decimal fields: a second row, a sign or a leading zero all count) is "unreadable": no Esc, never counted as zero. Then ONE Esc (a single key, text only, no Enter), and the pane
 #      is read again up to CM_CODEMODE_POLLS times, CM_CODEMODE_SETTLE_S apart. The dialog still showing after the last read is "menu"
 #      (reported once, not retried, no nudge, no loop);
 #   5. only with the dialog gone AND a Claude footer as the last line AND no menu and no mid-turn marker on a fresh read right before
@@ -250,10 +250,15 @@ esc_record() {
   if [ -e "$STATE" ] && [ ! -f "$STATE" ]; then return 11; fi
   if [ -f "$STATE" ]; then rd="$(cat -- "$STATE" 2>/dev/null)" || return 11; fi
   now="$(date +%s)"
-  # this terminal's row must be exactly KEY, count, epoch (digits only): a missing field, extra field, non-numeric or absurdly long value is a
-  # corrupt record and fails CLOSED (12: no Esc, nothing rewritten), never read as zero keys sent. No row at all is a first Esc (0 0).
-  read -r tries last < <(printf '%s\n' "$rd" | awk -F'\t' -v k="$KEY" '$1 == k { if (NF == 3 && $2 ~ /^[0-9]+$/ && $3 ~ /^[0-9]+$/ && length($2) <= 9 && length($3) <= 12) print $2, $3; else print "bad bad"; f = 1; exit } END { if (!f) print "0 0" }') || return 12
+  # this terminal's record must be ONE row of exactly KEY, count, epoch, each plain decimal (no sign, no leading zero, bounded length): a missing
+  # or extra field, a non-numeric, leading-zero (bash would read it as octal) or absurdly long value, or a SECOND row for the terminal (which
+  # could hide an exhausted count behind an empty one) is a corrupt record and fails CLOSED (12: no Esc, nothing rewritten), never read as zero
+  # keys sent. No row at all is a first Esc (0 0).
+  read -r tries last < <(printf '%s\n' "$rd" | awk -F'\t' -v k="$KEY" '
+    $1 == k { c++; if (NF == 3 && $2 ~ /^(0|[1-9][0-9]*)$/ && $3 ~ /^(0|[1-9][0-9]*)$/ && length($2) <= 9 && length($3) <= 12) { t = $2; l = $3 } else b = 1 }
+    END { if (c == 0) print "0 0"; else if (c > 1 || b) print "bad bad"; else print t, l }') || return 12
   case "${tries:-bad}" in ''|*[!0-9]*) return 12 ;; esac; case "${last:-bad}" in ''|*[!0-9]*) return 12 ;; esac
+  tries=$((10#$tries)); last=$((10#$last))
   if [ "$op" = reserve ]; then
     if [ $((now - last)) -gt 21600 ]; then tries=0; fi
     if [ "$tries" -ge "$MAXESC" ]; then RESERVED_TRIES="$tries"; return 10; fi
