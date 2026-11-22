@@ -742,9 +742,12 @@ project's tracker with a "Done means" list of checkable criteria and limits
 (budget, binding or not). Search first and reuse an existing issue. Assign it
 by linking the doing session's worktree
 (`orca worktree set --worktree <selector> --issue <n>`), then send that
-session `/goal <close #n with posted evidence: criteria>` by a
-spawn-verified send (read its pane first, never into an open picker) and
-confirm "Goal set" on its screen. Interview the owner only when the criteria can't
+session the goal as an ordinary instruction under hard rule 21:
+`[cm-i<n>] goal: close #n with posted evidence: <criteria>`. The id stays
+first, so ordering and acks work; the lane then types `/goal` with that same
+text itself as its first act (a leading id would stop a typed slash command
+running, so the bare command is never sent). Read its pane first, never into
+an open picker. Interview the owner only when the criteria can't
 be set from what is known; otherwise set them and go. The issue closes only
 with the evidence posted. Simple asks (a link, a status read, a one-off
 command) need no issue.
