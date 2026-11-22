@@ -28,7 +28,8 @@
 #      toward fewer keys). The cap: at most 2
 #      per terminal in 6 hours counted from the last one, kept in cache/codemode-recover.tsv through a recovery, written under a mkdir lock
 #      with a unique temp file and read back. A dialog that survives them is "menu", left to a person. A count that cannot be recorded
-#      (also a state path that is not a regular file) means no Esc ("held"). Then ONE Esc (a single key, text only, no Enter), and the pane
+#      (also a state path that is not a regular file) means no Esc ("held"); a record for this terminal that cannot be read (not exactly
+#      three tab-separated fields, digits only) is "unreadable": no Esc, never counted as zero. Then ONE Esc (a single key, text only, no Enter), and the pane
 #      is read again up to CM_CODEMODE_POLLS times, CM_CODEMODE_SETTLE_S apart. The dialog still showing after the last read is "menu"
 #      (reported once, not retried, no nudge, no loop);
 #   5. only with the dialog gone AND a Claude footer as the last line AND no menu and no mid-turn marker on a fresh read right before
@@ -225,15 +226,17 @@ take_lock "$TERM_LOCK" 1 || out held "another recovery of this terminal is runni
 # (it can wait for the cap lock) is the pane read once more and the resume lock looked at once more, right before the key; an Esc that finds the
 # dialog gone or the lock present gives its count back
 STATE_LOCK="$CM_HOME/cache/codemode-recover.lock"
-# esc_record reserve|refund: 0 done, 10 cap reached (reserve), 11 cannot be recorded
+# esc_record reserve|refund: 0 done, 10 cap reached (reserve), 11 cannot be recorded, 12 the record for this terminal is corrupt
 esc_record() {
   local op="$1" rd="" tries last now tmp new
   take_lock "$STATE_LOCK" 50 || return 11
   if [ -e "$STATE" ] && [ ! -f "$STATE" ]; then return 11; fi
   if [ -f "$STATE" ]; then rd="$(cat -- "$STATE" 2>/dev/null)" || return 11; fi
   now="$(date +%s)"
-  read -r tries last < <(printf '%s\n' "$rd" | awk -F'\t' -v k="$KEY" '$1 == k { print $2, $3; f = 1; exit } END { if (!f) print "0 0" }')
-  case "${tries:-0}" in ''|*[!0-9]*) tries=0 ;; esac; case "${last:-0}" in ''|*[!0-9]*) last=0 ;; esac
+  # this terminal's row must be exactly KEY, count, epoch (digits only): a missing field, extra field, non-numeric or absurdly long value is a
+  # corrupt record and fails CLOSED (12: no Esc, nothing rewritten), never read as zero keys sent. No row at all is a first Esc (0 0).
+  read -r tries last < <(printf '%s\n' "$rd" | awk -F'\t' -v k="$KEY" '$1 == k { if (NF == 3 && $2 ~ /^[0-9]+$/ && $3 ~ /^[0-9]+$/ && length($2) <= 9 && length($3) <= 12) print $2, $3; else print "bad bad"; f = 1; exit } END { if (!f) print "0 0" }') || return 12
+  case "${tries:-bad}" in ''|*[!0-9]*) return 12 ;; esac; case "${last:-bad}" in ''|*[!0-9]*) return 12 ;; esac
   if [ "$op" = reserve ]; then
     if [ $((now - last)) -gt 21600 ]; then tries=0; fi
     if [ "$tries" -ge "$MAXESC" ]; then RESERVED_TRIES="$tries"; return 10; fi
@@ -256,6 +259,7 @@ cap_record reserve; rc=$?
 case "$rc" in
   0) ;;
   10) out menu "$RESERVED_TRIES Esc keys already sent to this terminal in the last 6 h and the Code Mode dialog is on screen again: not sent again, answer it by hand" ;;
+  12) out unreadable "the Esc count record for this terminal in $STATE is corrupt (not three tab-separated fields, digits only): not sent (fails closed), repair or remove that row by hand" ;;
   *)  out held "the Esc count could not be recorded in $STATE: not sent (the cap must hold)" ;;
 esac
 screen="$(read_screen)"
