@@ -736,13 +736,15 @@ The owner says "issues #101, #102 to dev" or "sort today's team chat".
    realistic alternative second. Two options is enough. Only when § The tick, "No owner question before a deploy is spawned" allows a picker; otherwise the same routing goes in a WAITING row.
 3. **Spawn** per the answer, record in the ledger, report.
 
-**Owner ask = issue + assignee + goal.** A substantive ask from the owner
-(multi-step, or an outcome to prove or track) gets ONE issue in the
+**Owner ask = issue + linked session + goal.** A substantive ask from the
+owner (multi-step, or an outcome to prove or track) gets ONE issue in the
 project's tracker with a "Done means" list of checkable criteria and limits
-(budget, binding or not). Search first and reuse an existing issue. Link the
-doing session's worktree (`orca worktree set --issue <n>`), then send that
-session `/goal <close #n with posted evidence: criteria>` and confirm
-"Goal set" on its screen. Interview the owner only when the criteria can't
+(budget, binding or not). Search first and reuse an existing issue. Assign it
+by linking the doing session's worktree
+(`orca worktree set --worktree <selector> --issue <n>`), then send that
+session `/goal <close #n with posted evidence: criteria>` by a
+spawn-verified send (read its pane first, never into an open picker) and
+confirm "Goal set" on its screen. Interview the owner only when the criteria can't
 be set from what is known; otherwise set them and go. The issue closes only
 with the evidence posted. Simple asks (a link, a status read, a one-off
 command) need no issue.
