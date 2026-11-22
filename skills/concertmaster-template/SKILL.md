@@ -755,12 +755,15 @@ current turn. A goal proposal may need approval in the lane's own pane: the
 concertmaster never types into that open picker (hard rule 3), and a lane whose
 goal stays pending says so in its comment, it is not left silently unset. Read
 the pane first, never into an open picker; on a Claude lane check the send with
-`scripts/spawn-verify.sh check`. `cm:ack <id>` shows only that the line was
+`scripts/spawn-verify.sh check` (it judges the default spawn model: a lane on
+another model needs `--model` and `--effort`, or it fails as wrong-model). `cm:ack <id>` shows only that the line was
 read. The goal counts as set only when the issue comment exists (`gh issue view
 <issue> --comments`) or, on a Claude lane, the goal line shows in the pane
 scrollback the concertmaster already reads (read-only, never typed). An ack
-with neither is not a pass, and the instruction is re-sent once as a new one
-(hard rule 21).
+with neither is not a pass. Check on the tick after the send and re-send once
+as a new instruction only after two ticks with no comment (hard rule 21's
+window); if an approval picker is still open, hard rule 3 blocks the re-send
+and the goal becomes a WAITING row for the owner.
 Interview the owner only when the criteria can't
 be set from what is known: unclear acceptance criteria are routed into
 `/interview` (a dedicated interview session, never the concertmaster's own
