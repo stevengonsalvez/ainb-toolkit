@@ -181,27 +181,35 @@ old_dir() { [ -d "$1" ] && [ -n "$(find "$1" -maxdepth 0 -mmin +1 2>/dev/null)" 
 dead_owner() { local p; p="$(cat -- "$1/pid" 2>/dev/null || true)"; [ -z "$p" ] || ! kill -0 "$p" 2>/dev/null; }
 # clear_stale_reclaim <reclaim lock dir>: a reclaim lock is held for milliseconds, so one over a minute old whose owner is gone was left by a
 # killed run. Stale cleaners are serialized behind their OWN mkdir mutex (<dir>.clean, never waited for): only its holder may judge and remove
-# the stale reclaim lock. Why that is sound: while a dead owner's reclaim lock exists nobody can create another one (mkdir fails on it), its dead
-# owner cannot drop it, and only the mutex holder removes it, so between the judgement and the removal nothing can replace it; the holder still
-# judges twice and removes it only when the pid inside and the directory identity (inode, mtime) are the ones judged. No rename-and-restore.
-# The mutex is held for milliseconds too: one over a minute old whose owner is dead was left by a killed cleaner and is expired (judged twice,
-# best effort: the one window left is two runs expiring the same dead mutex at the same instant).
+# the stale reclaim lock. Why that is sound: while a dead owner's reclaim lock exists nobody can create another one (mkdir fails on it) and its
+# dead owner cannot drop it, so with one cleaner nothing can replace it between the judgement and the removal. The holder still judges twice and
+# removes it only when the pid inside and the directory identity (inode, mtime) are the ones judged, and only while the mutex is STILL its own
+# (its pid is in it), re-read right before the removal. The mutex is held for milliseconds too: one over a minute old whose owner is dead was
+# left by a killed cleaner and is expired by renaming it to a private tombstone name (atomic: ONE expirer wins; a loser finds nothing to move),
+# judged there, and the tombstone removed. A tombstone that proves not stale grabbed a fresh mutex: it is never put back, the attempt just
+# ends, and the cleaner whose mutex vanished sees that at its own ownership check and removes nothing. So a mutex race can only abort a cleanup.
+# Residual: a cleaner whose mutex was taken away, replaced by a third cleaner AND a fresh reclaim lock all inside the microseconds between its
+# last check and its removal could still remove that fresh lock. Worst consequence: two reclaimers at once, so two runs could both take the same
+# stale main lock (the terminal lock or the cap lock): one extra Esc to a terminal, or one lost cap-count update.
 clear_stale_reclaim() {
-  local r="$1" m="$1.clean" pid id mp
+  local r="$1" m="$1.clean" pid id mp t
   old_dir "$r" || return 0
   pid="$(cat -- "$r/pid" 2>/dev/null || true)"
   if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then return 0; fi   # the owner is alive: not ours to clear
   if ! mkdir "$m" 2>/dev/null; then
     mp="$(cat -- "$m/pid" 2>/dev/null || true)"
-    if old_dir "$m" && dead_owner "$m" && [ "$(cat -- "$m/pid" 2>/dev/null || true)" = "$mp" ] && old_dir "$m"; then
-      rm -f -- "${m:?}/pid" 2>/dev/null; rmdir "$m" 2>/dev/null
+    t="$m.dead.$$"
+    if old_dir "$m" && dead_owner "$m" && [ "$(cat -- "$m/pid" 2>/dev/null || true)" = "$mp" ] && [ ! -e "$t" ] && mv "$m" "$t" 2>/dev/null; then
+      # the tombstone is private to this run: whatever it turned out to hold is dropped (a fresh mutex grabbed by mistake is not restored)
+      rm -f -- "${t:?}/pid" 2>/dev/null; rmdir "$t" 2>/dev/null
     fi
     return 0
   fi
   printf '%s\n' "$$" > "$m/pid" 2>/dev/null; LOCKS_HELD+=("$m")
   if old_dir "$r" && dead_owner "$r" && [ "$(cat -- "$r/pid" 2>/dev/null || true)" = "$pid" ]; then
     id="$(dir_id "$r")"
-    if [ -n "$id" ] && old_dir "$r" && dead_owner "$r" && [ "$(cat -- "$r/pid" 2>/dev/null || true)" = "$pid" ] && [ "$(dir_id "$r")" = "$id" ]; then
+    if [ -n "$id" ] && old_dir "$r" && dead_owner "$r" && [ "$(cat -- "$r/pid" 2>/dev/null || true)" = "$pid" ] && [ "$(dir_id "$r")" = "$id" ] \
+       && [ "$(cat -- "$m/pid" 2>/dev/null || true)" = "$$" ]; then   # the mutex is still ours: a missing or foreign one aborts, nothing is removed
       rm -f -- "${r:?}/pid" 2>/dev/null; rmdir "$r" 2>/dev/null
     fi
   fi
