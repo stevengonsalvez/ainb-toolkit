@@ -282,6 +282,18 @@ The lane set above is the default; `cfg.lanes` is the list in use.
     and `teardown.sh` refuses every `standing: true` row with this rule. Why: a lead holds long
     context (the plan, its children, the review history) that a teardown destroys and no handover
     fully rebuilds; sleep stops the cost and keeps all of it (`references/lane-health.md`).
+28. **Owner questions go through the structured ask, and the tick nudges a session that left one in prose.** A session
+    blocked on input only the owner can give (a decision, an approval, an answer, a credential step, a pick between options)
+    asks through its interview or structured-question tool, batched, recommended option first, so the owner gets a
+    notification. A question left in prose, a PR or issue comment or a table row is not enough. Every tick, after the census,
+    scan the in-scope panes, the `cm:` worktree comments (`cm:blocked`, `cm:waiting`, `cm:ask`) and `asks[]` for anything
+    waiting on the owner. Read the pane with `--screen` first: an open picker is left alone, nothing is typed into a menu. At
+    an empty prompt, or while the session is busy, nudge it once to put the question through the interview, and record the nudge
+    on the ask (`asks[].interviewNudgedAt`) so the next tick does not repeat it; a question found only in a pane or a `cm:` comment gets its `asks[]` row first. While the owner is away
+    (`references/away-timeout.md`) the nudge points at the second-opinion verdict path instead, and the session decides on it.
+    The concertmaster follows the same rule: its own owner decisions use the structured ask only in a turn the owner started;
+    in a tick turn they stay `WAITING` rows and `asks[]` entries. Why: a question in prose raises no notification, so a
+    blocked session waits unseen.
 
 <!-- project-local: hard-rules -->
 
@@ -330,7 +342,10 @@ and never writes it again.
 - Addenda add or tighten. One that would loosen a hard rule, the merge gate or a
   guardrail is not applied: surface it to the owner.
 - Engine changes (scripts, config keys, a wrong engine doc, a new hook point) go to
-  the toolkit as a PR, never as a local edit: `references/overlay.md`.
+  the toolkit as a PR, never as a local edit: `references/overlay.md`. A change made in a
+  project copy of this skill is generalised into this template and upstreamed by PR in the
+  same piece of work; project-only values stay in `config.yaml` or `project-local.md`, and
+  no project names, hosts, member data or secrets go upstream (`references/overlay.md`).
 
 ## The tick
 
@@ -911,7 +926,12 @@ ledger handle by worktree path, and nudges once any lane with no Claude turn for
 its loop interval (1 x after handle churn) through `boot-sweep.sh --since --lanes`,
 with the same safety checks and a per-transcript attempt cap. Nothing is sent while
 `resume.lock` exists. Intervals: `schedule.lane_loop_minutes` (30), per lane
-`lanes[].loop_minutes`. Details: `references/runtime-check.md`.
+`lanes[].loop_minutes`. After a host reboot each resumed lane can also stop on the Claude Code "Code Mode" opt-in
+dialog, which every other pass reads as a question menu and never types into: after it has written the ledger handles and before any nudge, `runtime-check.sh`
+calls `scripts/codemode-recover.sh` for every live ledger worker on every host whose worktree matches `worktrees.path_match`, is not the
+concertmaster's own and has exactly one Claude terminal (one pass, capped at `CM_CODEMODE_BUDGET_S`). Only when the bottom of the pane IS that
+dialog it sends one Esc, reads the pane again and sends one re-arm nudge; any other menu is never touched. Details:
+`references/runtime-check.md`.
 
 ## Autonomy and guardrails
 
@@ -1456,7 +1476,8 @@ shellcheck clean.
 | `scripts/cutover-host.sh <host> [--apply] [--lane <worker-id>]... [--except <worker-id>]... [--wait-idle-s N] [--skip-census]` | the Plugly cutover kit (`references/cutover.md`): moves one host's Claude lanes from Orca terminals to Plugly terminals, one lane at a time, in the same worktree (`claude --continue`, banner checked, handle rewritten, `/loop` nudged). Dry run by default (plan table, `rows:` counts, `look:` list, changes nothing); only the terminal running it is `skip: self`, so leave the concertmaster's own lane out with `--except` (moved by hand last); `--apply` acts, workers first and the pr-sweeper last, a busy lane is skipped, any failure rolls that lane back to an Orca terminal and stops; ends with an orphan check (exit 1 on any). Exit 0 done, 1 refused or failed or orphans, 2 usage (also `--apply` on a remote host), 3 LANE DOWN / STRANDED / interrupted mid-lane (`resume.sh`), 4 a lane skipped or not moved (re-run, read the plan); `resume.sh` stands down while it runs |
 | `scripts/cutover-hold.sh start [--hours N] \| release \| status` | holds `resume.sh` (exit 4) in THIS CM_HOME while a cutover runs on ANOTHER machine (needs util-linux `flock`: Linux only, fails closed without it): a lock whose pid is a `cutover-host-hold` stand-in process; refuses an existing lock, `release` kills only its own stand-in (`references/cutover.md` § Hold the concertmaster's resume) |
 | `scripts/test/cutover-host.sh` | stub `orca` and `plugly` (argv recorded) over a fake `/proc` and the real `live-agent.sh`, `lane-handles.sh`, `lane-journal.sh`, `spawn-verify.sh`, run twice (no CLI on `PATH`, decoy CLIs on `PATH`), stubs in the real reply shapes with a key-list guard: model and effort from the live pane, ssh target rule, real footers; dry run touches nothing; host missing from the plugly list refuses; manual (codex), dead, duplicate and self rows; happy path argv in order with the handover note before each close; busy skipped; rollback on a failed banner, create, close and nudge; LANE DOWN; orphan census; idempotent and half-done reruns; held lock; `--skip-census` guard; `no-bare-orca.sh` |
-| `scripts/runtime-check.sh [--dry-run]` | tick step after an Orca runtime restart: refreshes standing lanes' ledger handles by worktree path and nudges lanes whose `/loop` wake died, via `boot-sweep.sh --since --lanes` (`references/runtime-check.md`) |
+| `scripts/runtime-check.sh [--dry-run]` | tick step after an Orca runtime restart: refreshes standing lanes' ledger handles by worktree path and nudges lanes whose `/loop` wake died, via `boot-sweep.sh --since --lanes` and, after the handles are written, closes the Code Mode dialog a reboot leaves lanes on, through `codemode-recover.sh` (`references/runtime-check.md`) |
+| `scripts/codemode-recover.sh --terminal <h> --lane <id> --text <nudge> [--host <h>] [--dry-run]` | closes the Claude Code Code Mode opt-in dialog a host reboot leaves every resumed lane on: matches ONLY a footer line that BEGINS with "Enter to confirm" or "Esc to start without it" (a sentence that quotes the words does not match) with "Enter to confirm" beside it, "Code Mode" within 8 lines above and not past the dialog top border, nothing but borders below (never a permission prompt or other menu, never old scrollback); sends ONE Esc (the one script that sends an Escape to a Code Mode dialog), reads again, then one nudge only with the dialog gone, a Claude footer last and no menu or mid-turn marker; at most 2 Esc keys per terminal in 6 h from the last one, kept through recoveries, reserved under a lock and read back (a count that cannot be recorded means no Esc); every send goes to the handle `cm_lane_handle` returns for `--lane` (a missing or stale file is re-checked live through `lane-handles.sh --worker` first; a dead, still-stale, other-terminal or other-host file is `held`; this script never writes a lane handle); one recovery per terminal at a time (a mkdir lock); resume.lock is checked before the Esc and before the nudge; `--host` goes out as `--environment`; one line `result<TAB>detail` (`none`, `would-recover`, `recovered`, `closed`, `menu`, `held`, `unreadable`, `send-failed`) |
 | `scripts/tick-emit.sh [--classify <file>] [--status s] [--task t] [--extra <json>]` | tick step 5: fleet summary from classify JSON (stdin or file) plus the `unlinked-prs.json` count, then `mc-emit.sh --tick` (`MC_NO_FLUSH=1`) and the concertmaster `--fleet-upsert` (flushes); `CM_AGENT_ID`, `CM_WORKSPACE`; always exits 0, prints one line about its own two lines (sent, queued, dead, skipped or refused), never the token or tenant |
 | `scripts/backup-offhost.sh [--check\|--dry-run]` | nightly off-host copy of the ledger, its ring and `handovers/` after the secret scan; `--check` tests the config and the ssh BatchMode link to the peer and writes nothing; a finished run writes `$CM_HOME/cache/backup-offhost.json` (`references/recovery.md` § Off-host backup) |
 | `scripts/backup-stale.sh [--dry-run]` | tick step, backup check: alerts once per episode when that stamp is older than `backup.max_age_hours` (default 50), reads one local file, no network |
