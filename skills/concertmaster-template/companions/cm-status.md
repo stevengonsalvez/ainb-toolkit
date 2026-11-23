@@ -31,6 +31,17 @@ host-a (Spot, rebooted 10:27)
     └ task-2          ○ idle           fine, nothing to do
 ```
 
+A host that did not answer is ONE row in the box, with the reason in plain words, and one `host offline` line in the
+tree; its sessions are counted, not listed (`--detail` lists them). Done and retired workers on a host that did not answer are not shown.
+
+```text
+NEEDS A LOOK (1)
+  build-mac    ✗ down           does not resolve: stale name in config, check hosts[]; 2 sessions not checked
+
+build-mac (down)
+  host offline: 2 sessions not checked (lead epic-lead)
+```
+
 | mark | word | means |
 |---|---|---|
 | ● | running | doing work now |

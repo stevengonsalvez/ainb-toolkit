@@ -50,6 +50,11 @@ A worker whose ledger state is `retired`, `done` or `teardown` (or, when it is n
 `retired`, `done` or `teardown` is not asked about in the probe either. A standing lead is never skipped this way, whatever its state. `cm-status.sh` hides such a row only when its host did not answer; on a host that answered it is shown (a headless agent has no pid in the document, and is still an agent that runs). It is
 still judged when a process does run there (`retired work came back`).
 
+In the status document each host carries `kind` (`timeout`, `identity`, `unresolvable`, `hostkey`, `auth`,
+`unreachable`, `other`) and `hint`, one plain line that says what it means. `cm-status.sh` prints a host that did not
+answer ONCE in NEEDS A LOOK (`✗ <host> down <hint>; N sessions not checked`) and, under that host in the tree, one
+`host offline` line that counts its sessions and names its leads; `--detail` lists the sessions too.
+
 | fact | source |
 |---|---|
 | live agents | processes of this user on a terminal whose command is a `respawn.live_agents` name; never a zombie or a tty-less daemon. Read from `/proc` on Linux; on a host with no `/proc` (macOS) from `ps -A` (pid, uid, parent, state, tty, elapsed time, name, argv) with each agent's cwd from `lsof -a -p <pid> -d cwd`. A live agent whose cwd `lsof` cannot read, that is missing from the argv table, or whose command changed by the time its cwd is read makes the scan incomplete; with no `ps` or `lsof` the host is `unknown` and says why |
