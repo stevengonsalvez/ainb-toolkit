@@ -135,6 +135,8 @@ hosts:
   min_free_disk_gb: 8              # under this, spawn nothing on that host
   # Rediscovered every tick with `orca host list`; these are defaults the
   # ledger copies into hosts.<name> on first sight. role: general | native | overflow
+  # maxWorkers is the agent-terminal cap that scripts/capacity-check.sh counts against (a whole number, 1 or more):
+  # per_host entry, else the ledger's host entry, else defaults. A host with none of them is not counted.
   defaults: { role: general, maxWorkers: 4 }
   per_host:
     local: { role: general, maxWorkers: 6 }
@@ -198,6 +200,9 @@ health:
   run_budget_seconds: 540          # a pass starts a resume or a sleep only while its worst case still ends inside this many seconds from the start (the rest waits for the next pass), so it ends inside the tick's 600 s call
   cloud: none                      # gce: ask the GCE metadata server whether the VM was preempted (Spot); none: only the previous boot's power-key line counts
   ignore_hosts: []                 # hosts gone for good: never probed and never counted as unread (their comments)
+  # host_aliases: one machine that the fleet lists under two names, so capacity-check.sh warns when both report the same count
+  # instead of silently counting it twice. A map of name to [other names] (or a list of name lists). Default: none.
+  # host_aliases: { build-box: [build-box-2] }
   daemon_units: []                 # systemd units of the terminal runtime (user units first, then system), e.g. [orca-serve.service]; a restart after boot is a daemon-restart event
   # limit_regex and error_regex (extended, case-insensitive, judged on the pane's bottom 6 lines) replace the defaults when set
   alerts:
