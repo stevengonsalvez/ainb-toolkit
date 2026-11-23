@@ -295,6 +295,16 @@ The lane set above is the default; `cfg.lanes` is the list in use.
     in a tick turn they stay `WAITING` rows and `asks[]` entries. Why: a question in prose raises no notification, so a
     blocked session waits unseen.
 
+29. **Track weekly usage every tick and switch the permitted hosts at 75%.** Each tick records the
+    weekly usage figure per host (an unreadable host is "unread", never "low"). When the active
+    account on any `role: general` host of `hosts.per_host` reaches 75%, move those hosts to an
+    account under 75% with the ONE script of `references/account-switch.md`: switch by account
+    identity (slot numbers differ per host), arm the cleanup before the token export is written,
+    delete the export on the home host and every destination, discard the tool's output (it names
+    accounts), never print an identity, then run the separate check. Never spend usage credits.
+    Why: a host whose account runs out stalls every lane on it; switching at 75% keeps the lanes
+    running (`references/account-switch.md`).
+
 <!-- project-local: hard-rules -->
 
 ## Start: `/concertmaster`
