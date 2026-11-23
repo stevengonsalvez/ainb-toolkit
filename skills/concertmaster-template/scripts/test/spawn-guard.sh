@@ -73,7 +73,7 @@ check "CM_SPAWN_REPO is used when --repo is absent" '[ "$RC" = 0 ] && grep -q "^
 GH_MODE=closed run "$G" --issue 102
 check "a CLOSED issue: REFUSED (exit 1), reason says CLOSED and to reopen or open a new ticket, nothing on stdout" '[ "$RC" = 1 ] && grep -q "issue #102 in AcmeOrg/acme-app is CLOSED: reopen it" <<<"$ERR" && [ -z "$OUT" ]' "rc=$RC out=$OUT err=$ERR"
 # a PR number is not a ticket, and a finished ticket is not one either
-GH_MODE=pullreq run "$G" --issue 6244 --repo acme/acme-app
+GH_MODE=pullreq run "$G" --issue 41 --repo acme/acme-app
 check "a PULL REQUEST number (url holds /pull/): REFUSED (exit 1), says it is a pull request, nothing on stdout" '[ "$RC" = 1 ] && grep -q "is a pull request" <<<"$ERR" && [ -z "$OUT" ]' "rc=$RC out=$OUT err=$ERR"
 GH_MODE=prmerged run "$G" --issue 5 --repo cli/cli
 check "a MERGED number (a merged PR): REFUSED (exit 1), nothing on stdout" '[ "$RC" = 1 ] && [ -z "$OUT" ] && grep -q "REFUSED" <<<"$ERR"' "rc=$RC out=$OUT err=$ERR"
@@ -127,7 +127,7 @@ mutant() { # <label> <sed script> <cmd args> <what must happen: shell test over 
 }
 mutant "missing-issue refusal removed" 's/^\[ "\$HAVE_ISSUE" = 1 \] && \[ -n "\$ISSUE" \] \|\| refuse .*$/:/' open '[ "$RC" = 1 ] && grep -q "no issue number given" <<<"$ERR"' --issue ""
 mutant "number check removed" 's/^\[\[ "\$ISSUE" =~ .*$/:/' open '[ "$RC" = 1 ]' --issue abc
-mutant "PR refusal removed" 's/^    \*\/pull\/\*\) refuse .*$/    *\/pull\/*) : ;;/' pullreq '[ "$RC" = 1 ]' --issue 6244
+mutant "PR refusal removed" 's/^    \*\/pull\/\*\) refuse .*$/    *\/pull\/*) : ;;/' pullreq '[ "$RC" = 1 ]' --issue 41
 mutant "CLOSED/MERGED refusal removed" 's/^    CLOSED\|MERGED\) refuse .*$/    CLOSED|MERGED) : ;;/' closed '[ "$RC" = 1 ]' --issue 102
 mutant "MERGED refusal removed" 's/^    CLOSED\|MERGED\) refuse .*$/    CLOSED) refuse "closed" ;;/' merged '[ "$RC" = 1 ]' --issue 5
 mutant "not-found refusal removed" 's/^  refuse "issue #\$ISSUE does not exist in \$REPO"$/  :/' missing '[ "$RC" = 1 ]' --issue 999999
