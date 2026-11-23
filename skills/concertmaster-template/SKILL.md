@@ -121,8 +121,10 @@ The lane set above is the default; `cfg.lanes` is the list in use.
 14. **Coordination goes through Orca and the ledger only, in both directions,
     for any agent on any host.** A lane reports up only through its Orca worktree
     comment (`cm:<state>`); the concertmaster instructs a lane only with
-    `orca terminal send` (and the ledger). Never `SendMessage` or any
-    agent-specific messaging, lead to concertmaster or concertmaster to lead. A
+    `plugly terminal send` (`orca terminal send` on an Orca host) and the ledger.
+    Never `SendMessage`, a cc-socks socket or any
+    agent-specific messaging, lead to concertmaster or concertmaster to lead
+    (`scripts/hooks/msg-guard-hook.sh` denies it on sight). A
     lane is identified by repo + worktree name + the host Orca reports, never by a
     socket, PID, agent name or terminal handle; re-resolve the terminal handle from
     `orca terminal list --json` by worktree path every time, never cache it. Why:
@@ -1564,6 +1566,7 @@ shellcheck clean.
 | `scripts/unlinked-prs.sh [--json\|--message\|--mark-sent <n>...]` | open PRs with no linked issue (`closingIssuesReferences` or a `Closes`/`Fixes`/`Resolves`/`Part of`/`Refs` link in the body) created at or after `unlinked_prs.since`: ONE `gh pr list --limit 100` per run (retry at `--limit 30` only on failure, backoff after 2 failures, `truncated` set then); drafts and bots skipped; state in `$CM_HOME/unlinked-prs.json`, a failed call keeps the last list marked stale (`FAILING` from the 3rd run); `--message` text for the pr-sweeper, each PR sent once; exit 0 |
 | `scripts/automations-audit.sh` | tick step: Orca automations on every host whose name matches `project.name`, a lane or `automations.names`, flagged `FORBIDDEN` (enabled, runs an agent in `automations.forbidden_agents`) or `DUPLICATE` (enabled lane-recovery timer, not listed in `automations.expected`); TSV, read-only, exit 2 when the config names nothing to match |
 | `scripts/hooks/rm-guard-hook.sh` | PreToolUse hook: denies an unguarded variable path under a recursive `rm` at once, and a raw `orca worktree rm` / `remove` typed in a Bash command, pointing at `scripts/teardown.sh` (`references/prompt-stalls.md`) |
+| `scripts/hooks/msg-guard-hook.sh` | PreToolUse hook (matcher `SendMessage`): denies a SendMessage to a named session, a cc-socks socket or a broadcast, pointing at `plugly terminal send` and the `cm:` worktree comment; an agent id (the caller's own subagent) is allowed (`references/prompt-stalls.md`) |
 | `scripts/handoff.sh` | cross-host handoff: `share <file.md\|file.html> [--environment <sel>] [--allow <ERE>] [--no-check] [--no-secret-scan]` first lints the file (`check` plus `scan-secrets.sh`), then runs `artifacts share --json` through `cm_cli` and prints the link (exit 1 and a clear stderr line when the file is missing or not .md/.html, the CLI fails or refuses, or the reply has no link; the reply body and any token are never printed); `check <file\|-> [--target remote\|local] [--allow <ERE>]` lints a brief for `~/.concertmaster`, `$CM_HOME`, the configured `state_dir`, `/home/<user>/`, `/Users/<user>/` (exit 1 lists each hit with its line number; `--target local` skips) |
 | `scripts/spawn-verify.sh` | guards for a claude session started in a terminal: `resolve [--ssh <target>]` prints an absolute, non-stub claude path (exit 1 with the npm fix otherwise); `read (--terminal <h> [--environment <host>] [--wait <s>] \| --file <screen>)` prints `live: <family>-<n>.<m> <effort>` from the pane (the cutover's source of model and effort); `check (--terminal <h> [--environment <host>] [--wait <s>] \| --file <screen>) [--model <m>] [--effort <e>]` exits 0 only when the bottom of the pane shows the expected model (`cfg.spawn.expected_model` / `expected_effort`) on a Claude footer, else `verify: FAIL <reason>` (send no brief) |
 | `scripts/sync-from-toolkit.sh <project-skill-dir>` | copies this engine into a project's skill directory without touching its `config.yaml` or `references/project-local.md` (README, "Update a project") |

@@ -85,6 +85,40 @@ layer 1, the brief rule. The hook file is trusted code run on every Bash call: k
 `~/.concertmaster/bin` writable only by the agent user and re-run the copy above after each merge.
 Rollback: restore `settings.json.bak-rmguard`.
 
+## The SendMessage guard
+Owner rule: leads and the concertmaster coordinate ONLY through the fleet CLI (`plugly terminal send`,
+the `cm:` worktree comment, the ledger). A written rule alone did not hold: a 14-day log scan of one
+host found thousands of `SendMessage` calls to named sessions and to `uds:/run/user/<uid>/cc-socks/*.sock`
+targets. `scripts/hooks/msg-guard-hook.sh` (PreToolUse, matcher `SendMessage`) denies those with the fix.
+It allows an agent id as recipient (a caller continuing its own subagent), no recipient, any other tool,
+`CM_ALLOW_SENDMESSAGE=1` in the session env, and any session outside this project's checkouts (same
+scope as the rm-guard: `worktrees.path_match` or a git origin in `github.org`). Always exits 0; the
+verdict is the JSON. Claude only (Codex and agy do not read Claude settings, so they keep the brief rule).
+Test: `scripts/test/msg-guard-hook.sh`.
+
+Install, per host. Idempotent; keeps every existing hook (the rm-guard entry too):
+```bash
+command -v jq >/dev/null || { echo "install jq first"; exit 1; }
+SRC="$(git rev-parse --show-toplevel)/.agents/skills/concertmaster/scripts/hooks/msg-guard-hook.sh"
+mkdir -p ~/.concertmaster/bin
+cp "$SRC" "$(dirname "$SRC")/../lib.sh" ~/.concertmaster/bin/ && chmod +x ~/.concertmaster/bin/msg-guard-hook.sh
+[ -f ~/.concertmaster/config.yaml ] || cp "$(dirname "$SRC")/../../config.yaml" ~/.concertmaster/config.yaml
+SETTINGS="$(readlink -f ~/.claude/settings.json 2>/dev/null || echo ~/.claude/settings.json)"
+[ -f "$SETTINGS" ] || echo '{}' > "$SETTINGS"
+[ -f "$SETTINGS.bak-msgguard" ] || cp "$SETTINGS" "$SETTINGS.bak-msgguard"
+HOOK="$HOME/.concertmaster/bin/msg-guard-hook.sh"
+jq --arg h "$HOOK" '
+  .hooks.PreToolUse = ((.hooks.PreToolUse // [])
+    | map(.hooks = ((.hooks // []) | map(select(.command != $h))))
+    | map(select((.hooks | length) > 0))
+    + [{"matcher":"SendMessage","hooks":[{"type":"command","command":$h,"timeout":5}]}])' \
+  "$SETTINGS" > "$SETTINGS.new" && mv "$SETTINGS.new" "$SETTINGS"
+# verify: must print "deny" (use a cwd that matches your worktrees.path_match)
+printf '%s' "{\"tool_name\":\"SendMessage\",\"cwd\":\"$PWD\",\"tool_input\":{\"to\":\"some-lane-4f\"}}" | "$HOOK" | jq -r .hookSpecificOutput.permissionDecision
+```
+It takes effect for sessions started after the change; running standing lanes need a restart to pick
+it up. Rollback: restore `settings.json.bak-msgguard`.
+
 ## The autocompact prompt
 Claude Code's "We recommend compacting earlier" dialog (an "Autocompact at <N> tokens" size
 picker, footer ending "esc not now") blocks an idle session until someone dismisses it, and
