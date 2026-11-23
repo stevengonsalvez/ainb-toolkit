@@ -63,11 +63,13 @@ fleet_state:
 stalls:
   regex: "Do you want to proceed"  # extended regex judged on each pane's last 25 non-empty lines; env CM_STALL_REGEX wins
 
-# scripts/skill-sync.sh (SKILL.md § The tick step 1): how a merged change to the skill reaches the LIVE concertmaster
-# checkout. It fast-forwards that worktree when the remote branch moved the skill directory, and never forces. [script]
-# Each key is optional; a flag or the env var (CM_SKILL_SYNC_REPO, _PATH, _REMOTE, _BRANCH) wins over this block.
+# How a merged change to the skill reaches the LIVE concertmaster checkout. Tick step 1 and boot run scripts/cm-worktree-sync.sh,
+# which fast-forwards that worktree when the remote branch moved the skill directory, and never forces. [script]
+# cm-worktree-sync.sh reads path, remote and branch from this block (a flag wins); the worktree itself comes from
+# worktrees.self_path or CM_SELF_PATH, else the worktree holding the scripts. The older manual preview scripts/skill-sync.sh also
+# reads repo and the CM_SKILL_SYNC_* env vars. Each key is optional. A copy of the scripts outside any git worktree needs path.
 skill_sync:
-  repo: null                       # the git worktree to keep current; default: the worktree holding the scripts
+  repo: null                       # skill-sync.sh only: the git worktree to keep current; default: the worktree holding the scripts
   path: null                       # the skill directory inside that repo, relative (e.g. ".agents/skills/concertmaster"); default: where the scripts sit
   remote: origin
   branch: main
