@@ -97,6 +97,14 @@ Project-only code lives outside the engine directories (`local/` in the skill
 dir, or the project's own scripts tree): sync never looks there and `--prune`
 cannot remove it. It may call an engine script; it never patches or shadows one.
 
+## Upstreaming a change made in a project copy
+
+A change a session makes to a project copy of this skill (a script, a test, a rule in an engine doc) is not finished until it is
+also here. In the same piece of work: generalise it (project names, hosts, tracker numbers and member data out; project-only
+values to `config.example.yaml` or `project-local.md`), port it into `skills/concertmaster-template`, run `scripts/scan-secrets.sh`
+on the diff and the template tests, and open a toolkit PR that links the project PR. The project PR links the toolkit PR back.
+A change that stays project-only makes every later sync a merge by hand.
+
 ## Fixing the engine upstream
 
 A local edit to an engine file is a patch that the next sync deletes, quietly.
