@@ -91,6 +91,29 @@ TOUCH_STALE="$(tdir stale)/s.jsonl"
 TOUCH_CM="$(tdirp "$CMWT")/s.jsonl"; TOUCH_CMROW="$(tdir cmrow)/s.jsonl"
 export ORCA_CLI_COMMAND="$ROOT/orca" TOUCH_STALE TOUCH_CM TOUCH_CMROW
 
+# cm-worktree-sync.sh (run at boot) must never touch the real worktree this test runs from: a stand-in that prints
+# $STUB_SYNC_OUT, exits $STUB_SYNC_RC (default 0) and records its arguments
+FAKE_WS="$ROOT/fake-worktree-sync.sh"
+cat > "$FAKE_WS" <<'FAKE'
+#!/usr/bin/env bash
+echo "$*" >> "$STUB_DIR/sync-calls.log"
+[ -z "${STUB_SYNC_OUT:-}" ] || printf '%s\n' "$STUB_SYNC_OUT"
+exit "${STUB_SYNC_RC:-0}"
+FAKE
+chmod +x "$FAKE_WS"
+export CM_WORKTREE_SYNC="$FAKE_WS"
+# capacity-check.sh (run at boot, counts only) is likewise a stand-in: it prints $STUB_CAP_OUT, exits $STUB_CAP_RC (default 0)
+# and records its arguments
+FAKE_CC="$ROOT/fake-capacity-check.sh"
+cat > "$FAKE_CC" <<'FAKE'
+#!/usr/bin/env bash
+echo "$*" >> "$STUB_DIR/cap-calls.log"
+[ -z "${STUB_CAP_OUT:-}" ] || printf '%s\n' "$STUB_CAP_OUT"
+exit "${STUB_CAP_RC:-0}"
+FAKE
+chmod +x "$FAKE_CC"
+export CM_CAPACITY_CHECK="$FAKE_CC"
+
 fail=0
 check() { if [ "$2" = "$3" ]; then echo "ok   $1"; else echo "FAIL $1: want '$3' got '$2'"; fail=1; fi; }
 sends() { grep -c '^terminal send' "$STUB_DIR/calls.log" 2>/dev/null || true; }
@@ -159,4 +182,74 @@ jq 'del(.result.terminals[] | select(.handle == "t_cm"))' "$LIST" > "$LIST.new" 
 OUT="$("$SCRIPT" --no-wait)"
 check "no ledger, no concertmaster: nothing sent" "$(sends)" "0"
 check "no ledger, no concertmaster: an inbox note says why" "$(grep -l 'No standing local lanes' "$CM_HOME"/inbox/boot-sweep-*.md 2>/dev/null | wc -l | tr -d ' ')" "1"
+# ---- the concertmaster worktree drift check and the capacity count at boot ----
+# a ledger with the concertmaster row only, and one concertmaster terminal, so the sweep reaches its normal report and note
+printf '{"workers":{"concertmaster":{"standing":true,"host":"local","path":"%s"}}}\n' "$CMWT" > "$CM_HOME/ledger.json"
+printf '{"ok":true,"result":{"terminals":[{"handle":"t_cm","worktreePath":"%s","agentIdentity":"claude"}]}}\n' "$CMWT" > "$LIST"
+mkp "$CMWT" 1; : > "$STUB_DIR/calls.log"; : > "$STUB_DIR/sync-calls.log"; rm -f "${CM_HOME:?}/cache/boot-sweep-"*.tsv
+OUT="$("$SCRIPT" --no-wait 2>"$ROOT/err")"
+check "level worktree: the sync script ran once with no arguments" "$(tr -d ' \n' < "$STUB_DIR/sync-calls.log")|$(wc -l < "$STUB_DIR/sync-calls.log" | tr -d ' ')" "|1"
+check "level worktree: silent, no (worktree-sync) row" "$(res '(worktree-sync)')" ""
+OUT="$(STUB_SYNC_OUT='cm-worktree-sync: ff aaaaaaaaaaaa..bbbbbbbbbbbb behind=4' "$SCRIPT" --no-wait 2>"$ROOT/err")"
+check "a fast-forward at boot is a report row with the status line" "$(printf '%s\n' "$OUT" | grep -c '^(worktree-sync).*report.*ff aaaaaaaaaaaa..bbbbbbbbbbbb behind=4' || true)" "1"
+check "...and is not a blocker (no unit-log line, no BLOCKER in the note)" "$(grep -c 'worktree-sync' "$ROOT/err" || true)$(grep -l 'BLOCKER' "$CM_HOME"/inbox/boot-sweep-*.md 2>/dev/null | wc -l | tr -d ' ')" "00"
+BL='cm-worktree-sync: BLOCKED reason=index-lock behind=7 ahead=0 lock=index.lock(age 700000s,size 0,holder=none) | cm:blocked cm-worktree-sync x'
+rm -f "${CM_HOME:?}/cache/boot-sweep-"*.tsv; rm -f "$CM_HOME"/inbox/boot-sweep-*.md
+OUT="$(STUB_SYNC_OUT="$BL" STUB_SYNC_RC=1 "$SCRIPT" --no-wait 2>"$ROOT/err")"
+check "a blocker is a (worktree-sync) report row with the reason and the count behind" "$(printf '%s\n' "$OUT" | grep -c '^(worktree-sync).*report.*reason=index-lock behind=7' || true)" "1"
+check "...the pipe in the line is not left to split the TSV row (still four columns)" "$(printf '%s\n' "$OUT" | awk -F'\t' '$1=="(worktree-sync)"{print NF}')" "4"
+check "...is repeated in the unit log" "$(grep -c 'boot-sweep: cm-worktree-sync: BLOCKED reason=index-lock behind=7' "$ROOT/err" || true)" "1"
+check "...and tops the inbox note as a BLOCKER" "$(grep -l 'BLOCKER: the concertmaster worktree is not level with its remote' "$CM_HOME"/inbox/boot-sweep-*.md 2>/dev/null | wc -l | tr -d ' ')" "1"
+: > "$STUB_DIR/sync-calls.log"; OUT="$(STUB_SYNC_OUT="$BL" STUB_SYNC_RC=1 "$SCRIPT" --dry-run --no-wait 2>/dev/null)"
+check "--dry-run passes --dry-run to the sync script" "$(tr -d ' \n' < "$STUB_DIR/sync-calls.log")" "--dry-run"
+check "a sync script that crashes (exit 7, no status line) is still a row" "$(STUB_SYNC_OUT='' STUB_SYNC_RC=7 "$SCRIPT" --no-wait 2>/dev/null | grep -c '^(worktree-sync).*exited 7' || true)" "1"
+check "a missing sync script is a row, never silent" "$(CM_WORKTREE_SYNC="$ROOT/nope.sh" "$SCRIPT" --no-wait 2>/dev/null | grep -c '^(worktree-sync).*missing or not executable' || true)" "1"
+printf '{"ok":true,"result":{"terminals":[]}}\n' > "$LIST"
+check "the row survives the no-terminals early exit" "$(STUB_SYNC_OUT="$BL" STUB_SYNC_RC=1 "$SCRIPT" --no-wait 2>/dev/null | grep -c '^(worktree-sync)' || true)" "1"
+check "tick mode (--since) does not run the sync script" "$(: > "$STUB_DIR/sync-calls.log"; "$SCRIPT" --since "$(date +%s)" >/dev/null 2>&1; wc -c < "$STUB_DIR/sync-calls.log" | tr -d ' ')" "0"
+check "tick mode (--since) does not run the capacity check" "$(: > "$STUB_DIR/cap-calls.log"; "$SCRIPT" --since "$(date +%s)" >/dev/null 2>&1; wc -c < "$STUB_DIR/cap-calls.log" | tr -d ' ')" "0"
+# capacity (counts only at boot): silent within cap, one row over cap, a row for a crash or an unread host, always --no-candidates
+printf '{"ok":true,"result":{"terminals":[{"handle":"t_cm","worktreePath":"%s","agentIdentity":"claude"}]}}\n' "$CMWT" > "$LIST"
+mkp "$CMWT" 1; : > "$STUB_DIR/cap-calls.log"; rm -f "${CM_HOME:?}/cache/boot-sweep-"*.tsv
+OUT="$(STUB_CAP_OUT='capacity: 0 of 2 hosts over cap (target 0)' "$SCRIPT" --no-wait 2>"$ROOT/err")"
+check "capacity within cap: the check ran once with --no-candidates and the sweep adds no row" "$(tr -d '\n' < "$STUB_DIR/cap-calls.log")|$(printf '%s\n' "$OUT" | grep -c '^(capacity)' || true)" "--no-candidates|0"
+CAPOVER='capacity: 1 of 2 hosts over cap (target 0)
+  HOST local claude=26 cap=11 OVER by 15
+  HOST box2 claude=1 cap=2 ok (none needed)'
+rm -f "${CM_HOME:?}/cache/boot-sweep-"*.tsv
+OUT="$(STUB_CAP_OUT="$CAPOVER" STUB_CAP_RC=1 "$SCRIPT" --no-wait 2>"$ROOT/err")"
+check "an over-cap host is one (capacity) report row naming the host, its count and its cap" "$(printf '%s\n' "$OUT" | grep -c '^(capacity).*report.*local claude=26 cap=11 OVER by 15' || true)" "1"
+check "...the row says the tick lists the candidates and no ok host is named" "$(printf '%s\n' "$OUT" | grep '^(capacity)' | grep -c 'box2' || true)|$(printf '%s\n' "$OUT" | grep '^(capacity)' | grep -c 'listed by the tick' || true)" "0|1"
+check "...and the row keeps four TSV columns" "$(printf '%s\n' "$OUT" | awk -F'\t' '$1=="(capacity)"{print NF}')" "4"
+rm -f "${CM_HOME:?}/cache/boot-sweep-"*.tsv
+OUT="$(STUB_CAP_OUT='capacity: 0 of 1 hosts over cap (target 0) (CHECK INCOMPLETE: box2: rc=1 unreachable)' "$SCRIPT" --no-wait 2>/dev/null)"
+check "an unread host is a (capacity) row with CHECK INCOMPLETE, never silent" "$(printf '%s\n' "$OUT" | grep -c '^(capacity).*CHECK INCOMPLETE: box2' || true)" "1"
+rm -f "${CM_HOME:?}/cache/boot-sweep-"*.tsv
+check "a capacity script that crashes (exit 7, no status line) is still a row" "$(STUB_CAP_OUT='' STUB_CAP_RC=7 "$SCRIPT" --no-wait 2>/dev/null | grep -c '^(capacity).*exited 7' || true)" "1"
+rm -f "${CM_HOME:?}/cache/boot-sweep-"*.tsv
+check "a missing capacity script is a row, never silent" "$(CM_CAPACITY_CHECK="$ROOT/nope.sh" "$SCRIPT" --no-wait 2>/dev/null | grep -c '^(capacity).*missing or not executable' || true)" "1"
+# ---- the INSTALLED copy (the unit runs ~/.concertmaster/bin, not the repo): no stand-ins, the files named by the cp line of
+# references/boot-sweep.md, in a directory that is no git worktree ----
+SKILLDIR="$(cd "$(dirname "$SCRIPT")/.." && pwd)"
+DOC="$SKILLDIR/references/boot-sweep.md"
+doc_cp_files() { awk '/^cp scripts\/boot-sweep.sh/{f=1} f{print} f&&/\.concertmaster\/bin\/ *\\?$/{exit}' "$DOC" | tr ' ' '\n' | grep '^scripts/' | sed 's#^scripts/##'; }
+install_from_doc() { # <dest> <files...>
+  local d="$1" f; shift; rm -rf -- "${d:?}"; mkdir -p "$d"
+  for f in "$@"; do cp "$SKILLDIR/scripts/$f" "$d/" 2>/dev/null; done
+  chmod +x "$d"/*.sh 2>/dev/null
+  cp "$SKILLDIR"/scripts/*.jq "$d/" 2>/dev/null
+}
+DOCFILES="$(doc_cp_files | tr '\n' ' ')"
+check "the doc's install line names the two boot checks" "$(printf '%s\n' "$DOCFILES" | tr ' ' '\n' | grep -cx 'cm-worktree-sync.sh\|capacity-check.sh')" "2"
+# shellcheck disable=SC2086  # the file list is word-split on purpose
+install_from_doc "$ROOT/installed-bin" $DOCFILES
+rm -rf -- "${CM_HOME:?}/cache" "${CM_HOME:?}"/inbox/boot-sweep-*.md
+: > "$STUB_DIR/calls.log"
+OUT="$(env -u CM_WORKTREE_SYNC -u CM_CAPACITY_CHECK "$ROOT/installed-bin/boot-sweep.sh" --dry-run --no-wait 2>"$ROOT/err")"
+check "installed copy: no (worktree-sync) or (capacity) row says missing" "$(printf '%s\n' "$OUT" | grep -c '^(\(worktree-sync\|capacity\)).*missing or not executable' || true)" "0"
+check "installed copy: (worktree-sync) is an INFO 'not configured' row, never a BLOCKED" "$(printf '%s\n' "$OUT" | grep -c '^(worktree-sync).*cm-worktree-sync: INFO not configured' || true)|$(printf '%s\n' "$OUT" | grep -c '^(worktree-sync).*BLOCKED' || true)" "1|0"
+# the doc list dropping a script is what the test must notice: install without the two and the rows say missing
+install_from_doc "$ROOT/installed-bin2" boot-sweep.sh lib.sh
+OUT="$(env -u CM_WORKTREE_SYNC -u CM_CAPACITY_CHECK "$ROOT/installed-bin2/boot-sweep.sh" --dry-run --no-wait 2>/dev/null)"
+check "(the case bites) an install without the two scripts reports both as missing" "$(printf '%s\n' "$OUT" | grep -c '^(\(worktree-sync\|capacity\)).*missing or not executable' || true)" "2"
 exit $fail

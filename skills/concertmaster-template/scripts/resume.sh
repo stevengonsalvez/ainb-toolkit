@@ -16,7 +16,7 @@
 # Per roster row (procedure and safety rules: references/resume.md):
 #   host unreachable            offline    skip, retry next tick
 #   worktree not on the host    missing    leave alone, ask the owner
-#   2+ live agents in the tree  duplicate  send to neither, ask the owner
+#   2+ live agents in the tree  duplicate  send to neither, ask the owner (agents counted as below)
 #   2+ roster rows, one tree    duplicate  same: one decision, no create
 #   1 live agent                live       leave alone
 #   no live agent               dead       claude --continue [--model m] in the
@@ -27,18 +27,25 @@
 #   dead, agent not claude      manual     resume by hand (also when agent is unset)
 #   any input unreadable        unknown    left alone: no live count, no liveTerminalCount
 #                                          and no agent entry, a remote terminal with no
-#                                          agent entry, a truncated census, no host, or no
-#                                          process check
+#                                          agent entry, a truncated census, an unreadable or
+#                                          truncated terminal list, no host, or no process check
 #   resume could not start      failed     re-census, then a handover respawn
 #
-# "Live" needs an agent entry plus a live terminal (liveTerminalCount > 0), or a
-# live-state agent when the count is absent, or, on the local host, a claude
-# process of this user whose cwd is the worktree or inside it. Orca's explicit
-# liveTerminalCount of 0 means dead (agent entries go stale after a restart).
-# Every unreadable input fails closed, never toward a second agent. The process
-# backstop is local only. The roster is rewritten from the ledger on every run
-# (roster.sh) so a row the tick just retired is never resumed; no readable ledger:
-# the roster is used as is. One acting run at a time per CM_HOME (lock dir).
+# "Live": liveness is read from the terminals and from agent STATES, never from how many agents[] entries a
+# worktree has collected (they pile up, one per past session, all `done`). With liveTerminalCount > 0 the count
+# is the larger of (a) terminals of THIS worktree (`terminal list`, matched by worktreeId or by normalised path,
+# one list per host) with a non-empty agentIdentity, the census every other script uses, and (b) distinct
+# top-level agents[] paneKeys in a live state (working, waiting, permission, blocked, running). Larger-of, not a
+# union by paneKey: a terminal row and its agent entry are one agent, and counting both would raise a false
+# duplicate when their keys do not line up. Stale `done` entries and a bare shell (agentIdentity null: claude
+# exited, the shell stayed) count zero, so such a lane is dead and resumed. A live-state entry with no terminal
+# row still counts 1: doubt never respawns. Without liveTerminalCount, a live-state agent is live. On the local
+# host a claude process of this user whose cwd is the worktree or inside it also counts (the larger of the two
+# counts is used). Orca's explicit liveTerminalCount of 0 means dead (agent entries go stale after a restart). A
+# terminal list that cannot be read, is malformed or is cut off makes a row with liveTerminalCount > 0 `unknown`:
+# never dead. Every unreadable input fails closed, never toward a second agent. The process backstop is local
+# only. The roster is rewritten from the ledger on every run (roster.sh) so a row the tick just retired is never
+# resumed; no readable ledger: the roster is used as is. One acting run at a time per CM_HOME (lock dir).
 #
 # Env: CM_HOME, CM_HOST_TIMEOUT (25s), CM_TERM_WAIT_MS (60000), CM_RESUME_BUDGET_S,
 # CM_RESUME_ROW_MAX_S, CM_TEST=1 with CM_TEST_CLAUDE_CWDS_CMD (tests only: replaces the process check).
@@ -62,7 +69,7 @@ while [ $# -gt 0 ]; do
     --path) need "$1" "${2:-}"; F_PATH="$2"; shift ;;
     --host) need "$1" "${2:-}"; F_HOST="$2"; shift ;;
     --worktree-id) need "$1" "${2:-}"; F_WID="$2"; shift ;;
-    -h|--help) sed -n '2,47p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,56p' "$0"; exit 0 ;;
     *) cm_warn "resume.sh: unknown arg: $1"; exit 2 ;;
   esac
   shift
@@ -219,14 +226,30 @@ fetch_ps() {
   rc=$?
   [ "$rc" -eq 0 ] && jq -e '.ok == true and (.result.worktrees | type == "array")' "$2" >/dev/null 2>&1
 }
+# fetch_terms <host> <file>: 0 and a readable terminal list in <file>, else non-zero. Fails closed the way the
+# census above does: a cut-off list (truncated, or totalCount above the rows) or a row that is not an object is
+# unreadable, never "fewer terminals". live_count reads it (one list per host).
+fetch_terms() {
+  local rc
+  local -a hsel
+  cm_cli_host_into hsel "$1"
+  cm_timeout "$HOST_TIMEOUT" "$ORCA" terminal list ${hsel[@]+"${hsel[@]}"} --limit 500 --json </dev/null 2>"$2.err" | "$HERE/jsanitize" > "$2"
+  rc=$?
+  [ "$rc" -eq 0 ] && jq -e '.ok == true and (.result.terminals | type == "array") and (.result.terminals | all(type == "object"))
+      and ((.result.truncated // false) != true) and ((.result.totalCount // 0) <= (.result.terminals | length))' "$2" >/dev/null 2>&1
+}
+echo '{}' > "$TMP/terms-none.json"   # stands in for an unreadable terminal list (live_count is told it is absent)
 : > "$TMP/hosts.tsv"
 i=0
 for host in $(jq -r '[.[].host | select(. != null and . != "")] | unique[]' "$TMP/rows.json"); do
   i=$((i + 1))
-  ps="$TMP/ps-$i.json"
+  ps="$TMP/ps-$i.json"; tf="$TMP/terms-$i.json"
   up=0; why=""
-  if fetch_ps "$host" "$ps"; then up=1; else why="$(head -c 60 "$ps.err" 2>/dev/null | tr '\t\n' '  ')"; fi
-  printf '%s\t%s\t%s\t%s\n' "$host" "$ps" "$up" "$why" >> "$TMP/hosts.tsv"
+  if fetch_ps "$host" "$ps"; then
+    up=1
+    fetch_terms "$host" "$tf" || tf=""   # no list: rows that need it read as unknown, the rest are decided as before
+  else why="$(head -c 60 "$ps.err" 2>/dev/null | tr '\t\n' '  ')"; tf=""; fi
+  printf '%s\t%s\t%s\t%s\t%s\n' "$host" "$ps" "$up" "$why" "$tf" >> "$TMP/hosts.tsv"
 done
 
 # ---- 2b. resolve every roster row to the worktree Orca matched ------------------
@@ -294,21 +317,35 @@ short_current() {
 }
 
 CWDS=""; CWDS_DONE=0; CWDS_OK=1
-# live_count <wt-json> <host> <path> <fresh 0|1>: sets LC_N (a number) or LC_ERR; also
-# LC_TERMS and LC_ENTRIES. Every unreadable input leaves LC_N empty.
+# live_count <wt-json> <host> <path> <fresh 0|1> <terminal-list file or empty>: sets LC_N (a number) or LC_ERR;
+# also LC_TERMS and LC_ENTRIES. Every unreadable input leaves LC_N empty.
+# The agent count with liveTerminalCount > 0 is the larger of (a) the distinct terminals of this worktree
+# (worktreeId equal, or normalised worktreePath equal) with a non-empty agentIdentity and (b) the distinct
+# top-level agents[] paneKeys in a live state. `done` entries and bare shells count zero. Without the terminal
+# list such a row is unreadable. liveTerminalCount 0 is 0; no liveTerminalCount keeps the agents[]-state rule.
 live_count() {
-  local wt="$1" host="$2" path="$3" fresh="$4" verdict n_agents n_pid
+  local wt="$1" host="$2" path="$3" fresh="$4" tf="${5:-}" have=1 verdict n_agents n_pid
   LC_N=""; LC_ERR=""; LC_TERMS=0; LC_ENTRIES=0
-  verdict="$(printf '%s' "$wt" | jq -r '
+  if [ -z "$tf" ] || [ ! -s "$tf" ]; then tf="$TMP/terms-none.json"; have=0; fi
+  verdict="$(printf '%s' "$wt" | jq -r --slurpfile tl "$tf" --argjson have "$have" "$NORMP"'
     def live_states: ["working", "waiting", "permission", "blocked", "running"];
+    def agent_term: ((.agentIdentity // "") | tostring) != "";
+    def mine($wid; $wp): ((.worktreeId // "") | tostring) as $tid | ((.worktreePath // "") | tostring | normp) as $tp
+      | (($tid != "" and $wid != "" and $tid == $wid) or ($wp != "" and $tp == $wp));
     (.agents // []) as $a
     | if ($a | map(select(type != "object")) | length) > 0 then error("agents not objects") else . end
     | ([ $a[] | select(.parentPaneKey == null) ]) as $top
-    | ($top | map(.paneKey) | unique | length) as $panes
     | ([ $top[] | select(.state as $s | live_states | index($s)) ] | map(.paneKey) | unique | length) as $liveSt
+    | ((.worktreeId // "") | tostring) as $wid
+    | ((.path // "") | tostring | normp) as $wp
     | .liveTerminalCount as $ltc
     | if ($ltc != null and ($ltc | type) != "number") then error("bad liveTerminalCount")
-      elif $ltc != null then (if $ltc > 0 and ($a | length) > 0 then ([$panes, 1] | max) else 0 end | "n=\(.)")
+      elif $ltc != null then
+        (if $ltc <= 0 then "n=0"
+         elif $have != 1 then "noterms"
+         else ([ ($tl[0].result.terminals // [])[] | select(mine($wid; $wp)) | select(agent_term)
+                 | (.handle // "\(.tabId // ""):\(.leafId // "")") | tostring ] | unique | length) as $idt
+              | "n=\([$idt, $liveSt] | max)" end)
       elif $liveSt > 0 then "n=\($liveSt)"
       elif ($a | length) > 0 then "unknown"
       else "empty" end' 2>/dev/null)"
@@ -320,7 +357,11 @@ live_count() {
     n=[0-9]*) n_agents="${verdict#n=}" ;;
     empty) if [ "$host" = local ]; then n_agents=0; fi ;;   # remote rows often lack fields: unknown
   esac
-  if [ -z "$n_agents" ]; then LC_ERR="live count unreadable, left alone"; return; fi
+  if [ -z "$n_agents" ]; then
+    LC_ERR="live count unreadable, left alone"
+    [ "$verdict" != noterms ] || LC_ERR="live count unreadable, left alone (terminal list unreadable or cut off)"
+    return
+  fi
   n_pid=0
   if [ "$host" = local ]; then
     if [ "$fresh" = 1 ] || [ "$CWDS_DONE" = 0 ]; then
@@ -348,7 +389,7 @@ CLAUDE_RE='claude code|\? for shortcuts|esc to interrupt|shift\+tab|bypass permi
 
 # resume_dead <row-json> <host> <wt-json>: sets RES_STATUS and RES_ACTION
 resume_dead() {
-  local row="$1" host="$2" wt="$3" path cur state wid sel h out attempt opath wkey wait_ok screen text bottom nudge short ms model cmd cur_s state_s why wt2 ok_chars jname jlane jtail
+  local row="$1" host="$2" wt="$3" rtf path cur state wid sel h out attempt opath wkey wait_ok screen text bottom nudge short ms model cmd cur_s state_s why wt2 ok_chars jname jlane jtail
   local envargs=()
   path="$(normp "$(rf "$row" worktree)")"; cur="$(rf "$row" current)"; state="$(rf "$row" state)"
   wid="$(printf '%s' "$wt" | jq -r '.worktreeId // empty')"; opath="$(printf '%s' "$wt" | jq -r '.path // empty')"
@@ -373,7 +414,8 @@ resume_dead() {
   wt2="$(find_wt "$TMP/recheck.json" "$(rf "$row" worktreeId)" "$path")"
   if [ "$wt2" = null ] || [ -z "$wt2" ]; then RES_STATUS=unknown; RES_ACTION="worktree gone at the re-check, left alone"; return; fi
   opath="$(printf '%s' "$wt2" | jq -r '.path // empty')"; [ -z "$opath" ] || path="$(normp "$opath")"
-  live_count "$wt2" "$host" "$path" 1
+  rtf="$TMP/recheck-terms.json"; fetch_terms "$host" "$rtf" || rtf=""   # fresh list too: a terminal may have appeared since the census
+  live_count "$wt2" "$host" "$path" 1 "$rtf"
   if [ -z "$LC_N" ]; then RES_STATUS=unknown; RES_ACTION="$LC_ERR"; return; fi
   if [ "$LC_N" -ge 1 ]; then RES_STATUS=live; RES_ACTION="live agent appeared since the census, left alone"; return; fi
   why="$(zero_unsafe "$host")"
@@ -488,7 +530,7 @@ while IFS= read -r row <&3; do
   # From here on use the path of the worktree Orca matched: a ledger path can be stale
   # (matched by id), and the process check must look at the real directory.
   opath="$(printf '%s' "$wt" | jq -r '.path // empty')"; [ -z "$opath" ] || path="$(normp "$opath")"
-  live_count "$wt" "$host" "$path" 0
+  live_count "$wt" "$host" "$path" 0 "$(printf '%s' "$line" | cut -f5)"
   if [ -z "$LC_N" ]; then emit "$label" unknown "$LC_ERR"; continue; fi
 
   if [ "$LC_N" -ge 2 ]; then

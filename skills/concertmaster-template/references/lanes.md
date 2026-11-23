@@ -162,11 +162,15 @@ recommended option, and ends its turn. The answer arrives as a typed message.
   host for hours.)
 - Coordinate only through Orca and the ledger, both directions: report up through
   your Orca worktree comment (`cm:<state>`); the concertmaster reaches you with
-  `orca terminal send`. Never `SendMessage` or any agent-specific
+  `plugly terminal send` (`orca terminal send` on an Orca host). Never `SendMessage`, cc-socks or any agent-specific
   messaging. You are identified by repo + worktree name + the host Orca reports;
   re-resolve terminal handles from `orca terminal list --json` by worktree path
   every time, never cache one. (On shared hosts a name can resolve to another
   project's concertmaster; handles go stale on restart.)
+- No ticket, no spawn (hard rule 30): before you spin ANY work, find the existing issue first
+  (Lead charter, Ticket link below), then spawn with its number (`scripts/spawn-guard.sh --issue <n>`
+  and `--issue <n>` on the worktree create). Replacing the dead session of an existing worker in its
+  own worktree is a resume, never a new spawn.
 - Never use AskUserQuestion. To ask, set "cm:blocked <question>", print the
   question with options (recommended first), and end your turn.
 - Stop at your boundary: {{boundary}}. Single-task worker: when you reach it,
@@ -242,8 +246,24 @@ host. A lead may run on any agent and may move hosts; the protocol must not chan
   way unless the concertmaster says otherwise in writing. A stronger model only for an
   independent review pass.
 
+### Ticket link (no ticket, no spawn)
+Before you spin ANY work (a worker, a research session, a fix), look for it first: open AND closed
+issues (`gh issue list --state all --search "<words>"`), the worktree list, and PRs
+(`gh pr list --state all --search "<words>"`). Reuse what exists (resume the worktree, push to the PR,
+reopen the issue); duplicate nothing. Open a new issue only when none exists. Then the spawn path takes
+the number: `scripts/spawn-guard.sh --issue <n>` first (it exits non-zero and spawns nothing without a
+real issue), then `worktree create ... --issue <n>` (SKILL.md § Spawn recipe), and once the PR exists
+`worktree set --worktree <sel> --pr <n>`. Every session and worktree has its issue linked in the fleet CLI;
+`scripts/unlinked-worktrees.sh` lists the ones that do not, every tick.
+Exempt from the link, and only these (the tick check applies exactly this list): the concertmaster's own
+worktree (`worktrees.self_name`); a standing lane's own worktree on positive evidence (a configured lane,
+an ownership lead, or a ledger row with `standing: true`; a name shape alone such as `-lead` exempts
+nothing): it owns many issues, it has none of its own, but every worker it spawns needs one; a main
+checkout and archived worktrees; worktrees outside `worktrees.path_match`, in `worktrees.never_touch`, or
+under another project.
+
 ### What a lead does
-1. Owns one epic or lane end to end: plan, spawn single-task workers, review their output, drive
+1. Owns one epic or lane end to end: plan, spawn single-task workers (no ticket, no spawn: the issue first, Ticket link above), review their output, drive
    each PR to `cm:merge-ready`. pr-sweeper is the only merger; the concertmaster owns prod deploys
    and freezes.
 2. Keeps the plan in its issue (and a bead per PR under its beads epic). Closes a bead only when
@@ -398,7 +418,7 @@ its ticker does each tick).
   host for hours.)
 - Coordinate only through Orca and the ledger, both directions: report up through
   your Orca worktree comment (`cm:<state>`); the concertmaster reaches you with
-  `orca terminal send`. Never `SendMessage` or any agent-specific
+  `plugly terminal send` (`orca terminal send` on an Orca host). Never `SendMessage`, cc-socks or any agent-specific
   messaging. You are identified by repo + worktree name + the host Orca reports;
   re-resolve terminal handles from `orca terminal list --json` by worktree path
   every time, never cache one. (On shared hosts a name can resolve to another
@@ -630,7 +650,7 @@ that came from a GitHub issue gets one short cited summary comment on it.
 
 Report only through your Orca worktree comment: "cm:running <q>",
 "cm:blocked <one question>", "cm:idle <n> open beads, answered: <slugs>".
-Never `SendMessage` or any agent-specific messaging (Orca comment and ledger only). Loop: self-paced /loop, waking every
+Never `SendMessage`, cc-socks or any agent-specific messaging (worktree comment and ledger only). Loop: self-paced /loop, waking every
 30 minutes when idle and 15 when working. Boundary per question: answered,
 or marked unanswerable with what would settle it. An empty queue means idle;
 never cm:done.
@@ -883,6 +903,7 @@ waits until those beads are closed.
 You are a single-task worker, spawned by the {{spawner}} for:
 {{task: one paragraph, with issue/PR link and acceptance criteria}}
 
+Ticket link: this worktree is linked to the task's issue (the spawn passed it). Check it in the worktree list; if the link is missing, set it with the fleet CLI's `worktree set --worktree active --issue <n>` for the issue the task names. When your PR exists, `worktree set --worktree active --pr <n>`. If the task names no issue, do no work: set "cm:blocked no issue for this task" (no ticket, no work).
 Model: `claude-sonnet-5-5`, effort high. Work in this worktree only. For anything non-trivial write a short plan first
 (/plan), then implement, then drive it with .agents/skills/ready-to-ship/SKILL.md
 until {{evidence_cmd}} says {{ready_value}}. Before cm:merge-ready run the in-session

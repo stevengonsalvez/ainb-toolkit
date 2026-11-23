@@ -63,6 +63,17 @@ doctor "an unknown outward_messages value fails"                "$ROOT/bad-outwa
 variant bad-since 's/^  since: .*/  since: "last week"/'
 doctor "unlinked_prs.since that is not a UTC time fails"        "$ROOT/bad-since.yaml" 1 'FAIL unlinked_prs.since'
 
+variant bad-cap 's/^  defaults: { role: general, maxWorkers: 4 }/  defaults: { role: general, maxWorkers: 0 }/'
+doctor "a hosts.defaults.maxWorkers of 0 fails"                 "$ROOT/bad-cap.yaml" 1 'FAIL hosts.defaults.maxWorkers'
+variant frac-cap 's/^    local: { role: general, maxWorkers: 6 }/    local: { role: general, maxWorkers: 2.5 }/'
+doctor "a hosts.per_host maxWorkers that is not whole fails"    "$ROOT/frac-cap.yaml" 1 'FAIL hosts.per_host: every maxWorkers'
+variant str-cap 's/^    local: { role: general, maxWorkers: 6 }/    local: { role: general, maxWorkers: many }/'
+doctor "a hosts.per_host maxWorkers that is a word fails"       "$ROOT/str-cap.yaml" 1 'FAIL hosts.per_host: every maxWorkers'
+variant bad-alias 's/^  ignore_hosts: \[\]/  host_aliases: { a: 7 }\n  ignore_hosts: []/'
+doctor "health.host_aliases with a number in it fails"          "$ROOT/bad-alias.yaml" 1 'FAIL health.host_aliases'
+variant good-alias 's/^  ignore_hosts: \[\]/  host_aliases: { a: [b, c] }\n  ignore_hosts: []/'
+doctor "health.host_aliases as a map of name lists passes"      "$ROOT/good-alias.yaml" 0 'config-check: 0 failed'
+
 variant bad-forbidden 's/^  forbidden_agents: \[\]/  forbidden_agents: codex/'
 doctor "automations.forbidden_agents that is not a list fails"  "$ROOT/bad-forbidden.yaml" 1 'FAIL automations.forbidden_agents'
 variant bad-path-match 's|^  path_match: "[^"]*"|  path_match: "([unclosed"|'

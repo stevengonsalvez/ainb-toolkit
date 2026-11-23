@@ -67,6 +67,9 @@ opt "github.exclude_repo_patterns is a list of strings" '.github.exclude_repo_pa
 opt "worktrees.never_touch is a list of strings"        '.worktrees.never_touch' 'type == "array" and all(.[]; type == "string" and length > 0)'
 opt "worktrees.path_match compiles as a regex"          '.worktrees.path_match' 'type == "string" and (. as $re | try ("" | test($re) | true) catch false)'
 opt "hosts.min_free_disk_gb is a number"                '.hosts.min_free_disk_gb' 'type == "number" and . >= 0'
+opt "hosts.defaults.maxWorkers is a whole number, 1 or more" '.hosts.defaults.maxWorkers' 'type == "number" and . >= 1 and . == floor'
+opt "hosts.per_host: every maxWorkers is a whole number, 1 or more" '.hosts.per_host' 'type == "object" and all(.[]; (.maxWorkers // 1) | type == "number" and . >= 1 and . == floor)'
+opt "health.host_aliases is a map of host names or a list of name lists" '.health.host_aliases' '(type == "object" and all(.[]; (type == "string") or (type == "array" and all(.[]; type == "string")))) or (type == "array" and all(.[]; type == "array" and all(.[]; type == "string")))'
 opt "schedule.deploy_windows are HH:MM"                 '.schedule.deploy_windows' "$hhmm"
 opt "schedule.digest_times are HH:MM"                   '.schedule.digest_times' "$hhmm"
 opt "schedule.tick_delays_s are positive numbers"       '.schedule.tick_delays_s' 'type == "object" and all(.[]; type == "number" and . > 0)'
