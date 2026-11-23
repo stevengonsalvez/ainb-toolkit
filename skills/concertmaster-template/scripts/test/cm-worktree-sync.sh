@@ -225,6 +225,13 @@ upstream a v9
 OLD="$(head_of "$CMW")"
 inst
 check "installed copy, no self_path: the worktree named worktrees.self_name, under the main repo dir, is found and fast-forwarded" '[ "$RC" = 0 ] && ! grep -q "not inside a git worktree" <<<"$OUT" && [ "$(head_of "$CMW")" = "$(head_of "$ROOT/a-up")" ] && [ "$(head_of "$CMW")" != "$OLD" ]' "rc=$RC $OUT"
+# no skill_sync.path in the config: the skill directory inside the repo is unknown for a copy outside a git worktree, so nothing is compared
+printf 'schema: concertmaster.config/v1\nworktrees: { self_name: concertmaster }\n' > "$ROOT/config-nopath.yaml"
+wtrows "$CMW" "$ROOT/wt/acme-app/dev-1"
+upstream a v9b
+OLD2="$(head_of "$CMW")"
+CM_CONFIG="$ROOT/config-nopath.yaml" inst
+check "installed copy, skill_sync.path not set: INFO not configured naming skill_sync.path, exit 0, HEAD unmoved" '[ "$RC" = 0 ] && grep -q "^cm-worktree-sync: INFO not configured.*skill_sync.path" <<<"$OUT" && [ "$(head_of "$CMW")" = "$OLD2" ]' "rc=$RC $OUT"
 wtrows "$ROOT/wt/acme-app/dev-1"
 inst
 check "installed copy, no worktree of that name: 'cm-worktree-sync: INFO not configured', exit 0, never BLOCKED" '[ "$RC" = 0 ] && grep -q "^cm-worktree-sync: INFO not configured" <<<"$OUT" && ! grep -q BLOCKED <<<"$OUT"' "rc=$RC $OUT"

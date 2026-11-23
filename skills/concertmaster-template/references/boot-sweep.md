@@ -51,7 +51,8 @@ Scope comes from config `worktrees.path_match`: only terminals whose worktree pa
 read. Unset, the script does nothing.
 ```bash
 mkdir -p ~/.concertmaster/bin ~/.local/state
-cp scripts/boot-sweep.sh scripts/lib.sh ~/.concertmaster/bin/ && chmod +x ~/.concertmaster/bin/boot-sweep.sh
+cp scripts/boot-sweep.sh scripts/lib.sh scripts/cm-worktree-sync.sh scripts/capacity-check.sh ~/.concertmaster/bin/ \
+  && chmod +x ~/.concertmaster/bin/boot-sweep.sh ~/.concertmaster/bin/cm-worktree-sync.sh ~/.concertmaster/bin/capacity-check.sh
 cp config.yaml ~/.concertmaster/config.yaml          # lib.sh finds it there (CM_HOME/config.yaml)
 # fill the @USER@ and @HOME@ tokens of the unit for this host, and check the PATH line: it must
 # reach the Orca CLI (orca-ide lives in ~/.local/bin, which systemd's default PATH lacks)

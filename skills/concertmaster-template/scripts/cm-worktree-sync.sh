@@ -105,7 +105,7 @@ if [ -z "$REPO" ]; then
       exit 0
     fi
     [ -n "$SPATH" ] || SPATH="$(cm_cfg .skill_sync.path "")"
-    [ -n "$SPATH" ] || { cm_warn "cm-worktree-sync.sh: an installed copy needs skill_sync.path (the skill directory inside the repo) or --path"; exit 2; }
+    [ -n "$SPATH" ] || { echo "cm-worktree-sync: INFO not configured: this copy is in no git worktree, so the skill directory inside the repo is unknown (set skill_sync.path): nothing compared"; exit 0; }
   fi
 fi
 [ -d "$REPO" ] || { cm_warn "cm-worktree-sync.sh: no such directory: $REPO"; exit 2; }

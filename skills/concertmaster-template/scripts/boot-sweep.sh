@@ -31,6 +31,12 @@
 #   unit log and the top of the inbox note say so for a human
 #   at most TWO nudges per lane per boot; a nudge counts as done only when the transcript advances
 #   within CM_BOOT_CONFIRM_S (60 s); otherwise it is reported `unconfirmed` and retried once later
+# Boot also runs scripts/cm-worktree-sync.sh (the concertmaster worktree level with its remote, hard rule 30; CM_WORKTREE_SYNC replaces
+# the script, tests): its one status line becomes a `(worktree-sync)` report row, and a blocker (exit 1) is repeated in the unit log
+# and at the top of the inbox note. Silent when the worktree is level. Not run in tick mode (the tick runs it as step 1b).
+# Boot also runs scripts/capacity-check.sh --no-candidates (agent terminals per host against the host cap; CM_CAPACITY_CHECK
+# replaces the script, tests): one `(capacity)` row when a host is over its cap or unread, silent otherwise. Not run in tick mode
+# (the tick runs it as step 3c and lists the teardown candidates; nothing is ever removed here).
 # Output: TSV on stdout and $CM_HOME/inbox/boot-sweep-<UTC with seconds>.md. Exit 0 always except
 # bad usage (2): a failed sweep must never fail the boot. Install: references/boot-sweep.md.
 # Env: CM_HOME, CM_TICK_NUDGE (tick mode text), CM_BOOT_SETTLE_S (45), CM_BOOT_ORCA_WAIT_S (300), CM_BOOT_CONFIRM_S (60),
@@ -115,6 +121,42 @@ set_attempts() { # $1 handle $2 n [$3 mtime] (awk, not grep: the handle is data,
 out=""; sent=0; kept=0; CM_HANDLES=""
 add() { out="$out$1|$2|$3|$4"$'\n'; } # session | handle | result | detail
 
+# Boot: the concertmaster worktree must not drift from its remote (a stale index.lock once left it far behind for days with nothing
+# said). One status line, silent when level; a fast-forward done here applies from the next tick.
+WS_BLOCK=""
+if [ "$TICK" = 0 ]; then
+  WS_SH="${CM_WORKTREE_SYNC:-$HERE/cm-worktree-sync.sh}"
+  if [ -x "$WS_SH" ]; then
+    ws_args=(); [ "$DRY" = 1 ] && ws_args=(--dry-run)
+    ws_out="$(cm_timeout 90 "$WS_SH" ${ws_args[@]+"${ws_args[@]}"} </dev/null 2>&1)"; ws_rc=$?
+    ws_line="$(printf '%s\n' "$ws_out" | grep -m1 '^cm-worktree-sync: ' | tr '\t\n|' '   ')"
+    if [ "$ws_rc" -ne 0 ] || [ -n "$ws_line" ]; then
+      [ -n "$ws_line" ] || ws_line="cm-worktree-sync: exited $ws_rc: $(printf '%s' "$ws_out" | head -c 160 | tr '\t\n|' '   ')"
+      add "(worktree-sync)" - report "$ws_line"
+      if [ "$ws_rc" -ne 0 ]; then WS_BLOCK="$ws_line"; printf 'boot-sweep: %s\n' "$ws_line" >&2; fi
+    fi
+  else
+    add "(worktree-sync)" - report "$WS_SH is missing or not executable: the concertmaster worktree was not compared with its remote"
+  fi
+fi
+
+# Boot: the agent terminals per host against the host cap (counts only; the tick lists the teardown candidates, SKILL.md tick step 3c).
+# Silent when every host is within its cap and read; an over-cap host is one `(capacity)` row naming it. Exit 1 is "over cap", not a failure.
+if [ "$TICK" = 0 ]; then
+  CC_SH="${CM_CAPACITY_CHECK:-$HERE/capacity-check.sh}"
+  if [ -x "$CC_SH" ]; then
+    cc_out="$(cm_timeout 90 "$CC_SH" --no-candidates </dev/null 2>&1)"; cc_rc=$?
+    cc_line="$(printf '%s\n' "$cc_out" | grep -m1 '^capacity: ' | tr '\t\n|' '   ')"
+    cc_over="$(printf '%s\n' "$cc_out" | grep '^  HOST .* OVER by ' | sed 's/^  HOST //' | tr '\t\n|' '   ;' | head -c 300)"
+    if [ "$cc_rc" -gt 1 ] || [ -z "$cc_line" ] || [ "$cc_rc" = 1 ] || printf '%s' "$cc_line" | grep -q 'CHECK INCOMPLETE'; then
+      [ -n "$cc_line" ] || cc_line="capacity-check: exited $cc_rc: $(printf '%s' "$cc_out" | head -c 160 | tr '\t\n|' '   ')"
+      add "(capacity)" - report "$cc_line${cc_over:+: $cc_over}; teardown candidates are listed by the tick (step 3c), never removed here"
+    fi
+  else
+    add "(capacity)" - report "$CC_SH is missing or not executable: the agent terminals were not compared with the host caps"
+  fi
+fi
+
 terms="$(cm_timeout 60 "$ORCA" terminal list --json </dev/null 2>/dev/null | jq -r --arg re "$CM_PATH_MATCH" '.result.terminals[]? | select((.worktreePath // "") | test($re)) | select((.agentIdentity // "") == "claude") | "\(.handle)|\(.worktreePath)"' 2>/dev/null)"
 if [ -n "$LANES" ] && [ -n "$terms" ]; then
   # keep only the named worktrees (comma-separated, compared after the same path normalisation)
@@ -127,6 +169,7 @@ if [ -n "$LANES" ] && [ -n "$terms" ]; then
 fi
 if [ -z "$terms" ]; then
   [ "$DRY" = 1 ] || [ "$TICK" = 1 ] || printf '# boot-sweep %s (boot %s): no Claude terminals found for this project (or Orca did not answer)\n' "$(date -u +%FT%TZ)" "$boot" > "$CM_HOME/inbox/boot-sweep-$(date -u +%Y%m%dT%H%M%SZ)-$$.md" 2>/dev/null
+  [ -z "$out" ] || printf '%s' "$out" | awk -F'|' '{printf "%s\t%s\t%s\t%s\n",$1,$2,$3,$4}'
   echo "boot-sweep: no Claude terminals found for this project"; exit 0
 fi
 
@@ -208,6 +251,7 @@ if [ "$DRY" = 0 ] && [ "$TICK" = 0 ]; then
   note="$CM_HOME/inbox/boot-sweep-$(date -u +%Y%m%dT%H%M%SZ)-$$.md"
   {
     printf '# boot-sweep %s (boot %s): %s nudged, %s not nudged\n\n' "$(date -u +%FT%TZ)" "$boot" "$sent" "$kept"
+    [ -n "$WS_BLOCK" ] && printf '**BLOCKER: the concertmaster worktree is not level with its remote: %s**\n\n' "$WS_BLOCK"
     # shellcheck disable=SC2016  # the backticks are markdown, not command substitution
     [ -n "$cm_bad" ] && printf '**NEEDS A HUMAN: the concertmaster loop was not re-armed (%s). Run `/loop /concertmaster tick` in the concertmaster session.**\n\n' "${cm_bad# }"
     # shellcheck disable=SC2016
