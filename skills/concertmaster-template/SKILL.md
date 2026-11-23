@@ -830,6 +830,8 @@ ORCA="$(cm_cli)" || exit 2                  # never a bare orca or plugly
 H=build-host                                # host chosen from capacity
 ENV="$(cm_cli_host "$H")"                   # --environment <H> for a remote host; local: empty
 ID=w-dev-101                                # worker id, also the brief name
+ISSUE=101                                   # the ticket of this work: found (open and closed issues, worktrees, PRs) or, only if none exists, opened BEFORE this block (hard rule 30)
+scripts/spawn-guard.sh --issue "$ISSUE" || exit 1   # no ticket, no spawn: a missing, malformed or non-existent issue stops the recipe here, before any worktree, terminal or brief exists
 cat > $CM_HOME/briefs/$ID.md                # filled brief from references/lanes.md, common footer included (it carries the commit rule)
 # Remote host ($ENV set): files the brief points at go as links, never as paths on this host:
 #   link="$(scripts/handoff.sh share <file.md>)" || exit 1                    # put the link in the brief
@@ -837,11 +839,12 @@ cat > $CM_HOME/briefs/$ID.md                # filled brief from references/lanes
 # (in an interactive shell read "exit 1" as "stop, send nothing"; a local target skips both lines)
 
 $ORCA worktree create $ENV --repo name:<cfg.worktrees.orca_repo> \
-  --name dev-101-calendar-export --no-parent \
+  --name dev-101-calendar-export --no-parent --issue "$ISSUE" \
   --agent claude --prompt "$(cat $CM_HOME/briefs/$ID.md)" \
   --comment "cm:spawning issue #101 calendar export" --json
 ```
 
+- Ticket first (hard rule 30): no ticket, no spawn. Before the recipe, look for existing work (`gh issue list --state all --search "<words>"`, the worktree list, `gh pr list --state all`), reuse what is there, and open an issue only when none exists. `scripts/spawn-guard.sh --issue <n>` is the first line of the recipe and exits non-zero (1: missing, malformed, nonexistent, finished or pull-request number; 2: bad usage) with the reason: spawn nothing. `worktree create --issue <n>` links it in the fleet CLI at creation; once the worker's PR exists the worker runs `worktree set --worktree active --pr <n>`. A worktree that ended up with no linked issue is listed every tick by `scripts/unlinked-worktrees.sh` (tick step 3b).
 - Brief text: the common footer of `references/lanes.md` ends every brief, and the commit rule in it is never cut or reworded. Commit ONLY through the /commit skill (named-path staging, pre-commit cleanup, signed); never a raw `git commit`, `git add -A` or `git add .`. `scripts/test/brief-commit-rule.sh` fails when a brief template or the checklist loses it.
 - Cross-host handoff: the inbox and `$CM_HOME` are local to this host by design, so a lane on
   another host can never read them and must never be told to. For a remote target the brief
