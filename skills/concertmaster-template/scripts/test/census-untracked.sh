@@ -2,7 +2,8 @@
 # shellcheck disable=SC2016,SC2034,SC2119  # check bodies are single-quoted on purpose: they are eval-ed later
 # census-untracked.sh (test): rule 2 of the census-to-zero work. Untracked tool scratch
 # (census.ignore_untracked) is not dirt; tracked changes and untracked source files still are.
-# Fixture git repos, stubbed orca, synthetic names (lane-a, lane-b ...). Touches only a mktemp dir.
+# Also: discover.sh prs.open carries each open PR's label names (stall.sh exempts a do-not-merge PR on them).
+# Fixture git repos, stubbed orca and gh, synthetic names (lane-a, lane-b ...). Touches only a mktemp dir.
 #
 #   scripts/test/census-untracked.sh     # exit 0 when every case passes
 set -uo pipefail
@@ -95,6 +96,24 @@ D2="$(CM_CONFIG="$ROOT/none.yaml" census_discover 2>/dev/null | jq -r '.worktree
 check "empty list ignores nothing (all 7 untracked files are dirt)" '[ "$D2" = "7 0" ]'
 D3="$(CM_IGNORE_UNTRACKED='*.tmp' census_discover 2>/dev/null | jq -r '.worktrees[] | select(.path | endswith("/lane-a")) | .git.dirty')"
 check "env CM_IGNORE_UNTRACKED beats the config" '[ "$D3" = 6 ]'
+
+# discover.sh with PRs: prs.open keeps the label names. The gh stub answers `pr list --state open` with one PR and only
+# the --json fields asked for, as gh does, so a field missing from discover's --json list is missing here too.
+cat > "$BIN/gh" <<'GH'
+#!/usr/bin/env bash
+f=""; open=0; prev=""
+for a in "$@"; do [ "$prev" = --json ] && f="$a"; [ "$prev" = --state ] && [ "$a" = open ] && open=1; prev="$a"; done
+if [ "$1 $2" = "pr list" ] && [ "$open" = 1 ]; then
+  jq -nc --arg f "$f" '{number: 31, title: "t", author: {login: "author-1"}, headRefName: "b31", headRefOid: "abc", isDraft: false,
+    createdAt: "2026-11-16T10:00:00Z", updatedAt: "2026-11-16T10:00:00Z", url: "u",
+    labels: [{id: "L1", name: "do-not-merge", color: "red"}, {id: "L2", name: "ready", color: "green"}]} as $p
+    | [$p | with_entries(select(.key as $k | $f | split(",") | index($k)))]'
+else echo '[]'; fi
+GH
+chmod +x "$BIN/gh"
+PRDOC="$ROOT/doc-prs.json"
+"$SCRIPTS/discover.sh" > "$PRDOC" 2>"$ROOT/err-prs" || { echo "discover.sh (with PRs) failed"; cat "$ROOT/err-prs"; }
+check "discover prs.open: label names only, in order" '[ "$(jq -c ".prs.open[0].labels" "$PRDOC")" = "[\"do-not-merge\",\"ready\"]" ]'
 
 echo "passed=$PASS failed=$FAIL"
 [ "$FAIL" = 0 ]
