@@ -294,6 +294,17 @@ upstream fo v3; FOOLD="$(head_of "$FOW")"
 printf 'schema: concertmaster.config/v1\nworktrees: { self_name: concertmaster, self_path: "%s" }\n' "$FOW" > "$ROOT/config-selfpath.yaml"
 CM_CONFIG="$ROOT/config-selfpath.yaml" inst
 check "worktrees.self_path (config) at another repo's checkout: INFO, HEAD unmoved" '[ "$RC" = 0 ] && grep -q "INFO not configured" <<<"$OUT" && [ "$(head_of "$FOW")" = "$FOOLD" ]' "rc=$RC $OUT"
+# an installed copy (no git worktree) whose worktree is known (CM_SELF_PATH or worktrees.self_path) but with no skill directory
+# (skill_sync.path unset or empty): INFO not configured, exit 0, nothing moved, never the usage error a boot would turn into a BLOCKER
+printf 'schema: concertmaster.config/v1\nworktrees: { self_name: concertmaster }\nskill_sync: { path: "" }\n' > "$ROOT/config-emptypath.yaml"
+upstream a v12; NP_OLD="$(head_of "$CMW")"
+for cfg in config-nopath config-emptypath; do
+  CM_CONFIG="$ROOT/$cfg.yaml" CM_SELF_PATH="$CMW" inst
+  check "installed copy + CM_SELF_PATH + skill_sync.path ($cfg): INFO not configured naming skill_sync.path, exit 0, HEAD unmoved" '[ "$RC" = 0 ] && grep -q "^cm-worktree-sync: INFO not configured.*skill_sync.path" <<<"$OUT" && ! grep -q "must be a relative" <<<"$OUT" && [ "$(head_of "$CMW")" = "$NP_OLD" ]' "rc=$RC $OUT"
+done
+printf 'schema: concertmaster.config/v1\nworktrees: { self_name: concertmaster, self_path: "%s" }\n' "$CMW" > "$ROOT/config-selfpath-nopath.yaml"
+CM_CONFIG="$ROOT/config-selfpath-nopath.yaml" inst
+check "installed copy + worktrees.self_path + no skill_sync.path: INFO not configured, exit 0, HEAD unmoved" '[ "$RC" = 0 ] && grep -q "^cm-worktree-sync: INFO not configured.*skill_sync.path" <<<"$OUT" && [ "$(head_of "$CMW")" = "$NP_OLD" ]' "rc=$RC $OUT"
 # the script run from a worktree of ANOTHER repo (a copy of the skill checked out there): that worktree is not synced either
 mkdir -p "$FOW/$SK/scripts-copy"; cp "$S"/lib.sh "$S"/cm-worktree-sync.sh "$FOW/$SK/scripts-copy/"; cp "$S"/*.jq "$FOW/$SK/scripts-copy/" 2>/dev/null
 OUT="$(env CM_ORG="$(basename "$ROOT")" CM_REPO=a "$FOW/$SK/scripts-copy/cm-worktree-sync.sh" 2>&1)"; RC=$?
@@ -397,6 +408,12 @@ if cmp -s "$X" "$M"; then fail "mutant resolved-path check" "the edit changed no
   mkrepo fm; upstream fm v2; FMOLD="$(head_of "$ROOT/fm-cm")"
   CM_SELF_PATH="$ROOT/fm-cm" INST_BIN="$ROOT/mut" inst
   if [ "$(head_of "$ROOT/fm-cm")" != "$FMOLD" ]; then pass "mutant resolved-path check removed is caught (the other repo's checkout was moved)"; else fail "mutant resolved-path check" "the mutated script still left it alone: $OUT"; fi
+fi
+# the no-skill-directory guard removed: the same installed copy now fails with the usage error (exit 2)
+cp "$X" "$M"; perl -0pi -e 's/if \[ -z "\$SPATH" \] && \[ "\$REPO_SRC" != explicit \] && ! git/if false \&\& ! git/' "$M"
+if cmp -s "$X" "$M"; then fail "mutant no-skill-directory guard" "the edit changed nothing"; else
+  CM_CONFIG="$ROOT/config-nopath.yaml" CM_SELF_PATH="$CMW" INST_BIN="$ROOT/mut" inst
+  if [ "$RC" = 2 ] && grep -q "must be a relative" <<<"$OUT"; then pass "mutant no-skill-directory guard removed is caught (usage error, exit 2)"; else fail "mutant no-skill-directory guard" "rc=$RC $OUT"; fi
 fi
 # the budget mutants
 cp "$X" "$M"; perl -0pi -e 's/if \[ "\$\(left\)" -lt "\$\{CM_SYNC_MIN_FF:-20\}" \]; then/if false; then/' "$M"

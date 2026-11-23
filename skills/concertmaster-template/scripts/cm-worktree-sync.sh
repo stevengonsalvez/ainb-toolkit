@@ -120,6 +120,10 @@ if [ "$REPO_SRC" != explicit ]; then
   fi
 fi
 if [ -z "$SPATH" ] && ! git -C "$HERE" rev-parse --show-toplevel >/dev/null 2>&1; then SPATH="$(cm_cfg .skill_sync.path "")"; fi
+if [ -z "$SPATH" ] && [ "$REPO_SRC" != explicit ] && ! git -C "$HERE" rev-parse --show-toplevel >/dev/null 2>&1; then
+  echo "cm-worktree-sync: INFO not configured: this copy is in no git worktree, so the skill directory inside the repo is unknown (set skill_sync.path or pass --path): nothing compared"
+  exit 0
+fi
 if [ -z "$SPATH" ]; then
   top="$(git -C "$HERE" rev-parse --show-toplevel 2>/dev/null || true)"
   SPATH="$(cd "$HERE/.." && pwd -P)"; [ -n "$top" ] && SPATH="${SPATH#"$(cd "$top" && pwd -P)"/}"
