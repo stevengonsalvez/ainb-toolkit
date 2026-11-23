@@ -229,6 +229,18 @@ Same shape for `gh run watch "$RUN_ID" --exit-status` (single run) and for merge
 Enforced mechanically in Claude Code by the `ainb-hooks` plugin (`hooks/stall_guard.py`, a Stop hook): if a turn ends with in-flight work and no wake armed, the stop is blocked once with a pointer back to this rule.
 </never_idle_while_waiting>
 
+# Cross-Session Messaging
+
+<cross_session_messaging>
+Sessions talk to each other ONLY through the Plugly CLI, never through Claude's native cross-session messaging.
+
+- Send text to another session: `plugly terminal send --terminal <handle> --text "<message>" --enter` (add `--environment <name>` for a remote host). Read a reply with `plugly terminal read --terminal <handle> --screen`.
+- Report up or broadcast state: a worktree comment, `plugly worktree set --worktree active --comment "cm:<state> <detail>"`.
+- NEVER use `SendMessage` to a named session, a `uds:` / cc-socks socket (`/run/user/<uid>/cc-socks/*.sock`) or a broadcast. `SendMessage` to an agent id (continuing your own subagent) is fine.
+- Why: Plugly send/comment is logged, survives a reboot or resume, and is what the concertmaster and `plugly terminal read` can see. A `SendMessage` leaves no trace, and a resumed session loses it.
+- Owner rule, 31 Oct 2026: leads and the concertmaster coordinate ONLY through the fleet CLI. Enforced mechanically by `skills/concertmaster-template/scripts/hooks/msg-guard-hook.sh` (a PreToolUse hook on `SendMessage`) on hosts where it is installed.
+</cross_session_messaging>
+
 # Screenshot & Image Manipulation
 
 <image_manipulation_protocol>
