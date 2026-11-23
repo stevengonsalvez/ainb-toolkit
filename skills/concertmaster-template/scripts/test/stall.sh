@@ -1460,6 +1460,19 @@ check "F23b ask-timeout.sh no longer reports the closed ask VERDICT DUE" "$(CM_H
 act "$W" "$(ago 20)" ask d-twin close-ask "closed"
 check "F23b a duplicate open id is ambiguous: the action is recorded, the ledger asks stay open" "$(jq -r '[.asks[1:][] | .state] | join(",")' "$W/led.json")" "open,open"
 
+# F24 an ask whose verdict is claimed is held while the claim lasts; a long kebab lane name is not a credential
+reset; W="$ROOT/f24"
+LONG="feature-long-kebab-lane-name-for-the-epic-x"
+ITEMS="$(arr "$(item "$LONG" idle 500)")"
+LED="$(jq -nc --arg f "$(ago 120)" --arg c "$(ago 1)" --arg o "$(ago 45)" '{workers: {}, asks: [
+    {id: "d-claim", kind: "code", issue: 5, lane: "lc", askedAt: $f, verdictStartedAt: $c, question: "split it?", noCode: true, state: "open"},
+    {id: "d-old", kind: "code", issue: 6, lane: "lo2", askedAt: $f, verdictStartedAt: $o, question: "split it?", noCode: true, state: "open"}]}')"
+gen "$W"; runj "$W"
+check "F24 a long kebab lane name is shown, not withheld" "$(field "$LONG" name)" "$LONG"
+check "F24 an ask with a fresh verdict claim is held, not laddered" "$(exr d-claim)$(field d-claim rung)" "heldabsent"
+check "F24 an ask whose claim expired ladders again" "$(exr d-old)$(field d-old rung)" "absent1"
+check "F24 the held ask reason names the claim" "$(jq -r '.exempt[] | select(.name == "d-claim") | .reason | contains("verdict claimed")' <<<"$OUT")" "true"
+
 # ---- 14. no fleet CLI, no gh --------------------------------------------------------------------------------------------
 check "orca, plugly, gh and ssh were never called" "$(wc -l < "$CALLS" | tr -d ' ')" "0"
 

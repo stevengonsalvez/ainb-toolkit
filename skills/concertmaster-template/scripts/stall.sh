@@ -559,6 +559,7 @@ def s_mark($m): if s_ok then . else $m end;
        elif askSelf then ex("ask"; .id; null; "held"; "ledger ask from the own worktree of the concertmaster: a held item, the owner decides (Blocked, not stalled)")
        elif $ow != null then ex("ask"; .id; null; "owner"; "ledger ask \($ow): owner-only, the owner decides (Blocked)")
        elif $p == null then ex("ask"; .id; null; "unverified"; "askedAt missing or unreadable")
+       elif ((.verdictStartedAt | ts) as $vc | $vc != null and $now < $vc + $claimMin * 60) then ex("ask"; .id; null; "held"; "verdict claimed (verdictStartedAt) less than \($claimMin) minutes ago: the claimed verdict is running, no second verdict, relay or close")
        else judge("ask"; .id; null; $p; {worker: (.worker // null | if . == null then null else tostring end),
                                           text: (.question | if type == "string" then .[0:120] else "" end),
                                           _full: {text: (.question | if type == "string" then . else null end), worker: (.worker // null | if . == null then null else tostring end)}}) end
@@ -672,11 +673,15 @@ def s_mark($m): if s_ok then . else $m end;
 # the state words: lib.sh's cm_state_dead, and a cm_state_norm that leaves a state as it is when lib.sh has none
 STATE_DEFS="$CM_JQ_STATE_DEFS"
 case "$STATE_DEFS" in *cm_state_norm*) ;; *) STATE_DEFS='def cm_state_norm: .; '"$STATE_DEFS" ;; esac
+# an ask whose verdict is claimed (asks[].verdictStartedAt, scripts/ask-timeout.sh --claim) less than this many minutes ago is
+# held while the claimed verdict runs: no second verdict, relay or close. Same default and variable as ask-timeout.sh
+CLAIM_MIN="${CM_VERDICT_CLAIM_MIN:-30}"
+case "$CLAIM_MIN" in ''|*[!0-9]*) cm_warn "stall.sh: CM_VERDICT_CLAIM_MIN must be whole minutes; using 30"; CLAIM_MIN=30 ;; esac
 ASK_OWNER="${CM_OWNER_NAME:-}"
 if [ -z "$ASK_OWNER" ] || [ "$ASK_OWNER" = owner ]; then ASK_OWNER="the owner"; fi
 if ! jq -n -L "$HERE" --slurpfile cls "$CLS" --slurpfile disc "$DISC" --slurpfile asksDoc "$ASKS" --slurpfile led "$LEDGER" \
      --slurpfile acts "$TMP/acts.ndjson" --slurpfile seen "$TMP/seen.json" \
-     --argjson now "$NOW" --arg nowIso "$NOW_ISO" --argjson since "$SINCE_S" --argjson rungs "$RUNGS" --argjson held "$HELD" \
+     --argjson claimMin "$CLAIM_MIN" --argjson now "$NOW" --arg nowIso "$NOW_ISO" --argjson since "$SINCE_S" --argjson rungs "$RUNGS" --argjson held "$HELD" \
      --argjson never "$NEVER" --argjson collab "$COLLAB" --arg selfName "${CM_SELF_WORKTREE:-}" \
      --arg askDeny "$CM_ASK_DENY" --arg askCred "$CM_ASK_DENY_CRED" --arg askAsk "$CM_ASK_DELEGATED_ASK" --arg askSquash "$CM_ASK_SQUASH" --arg askAllow "$CM_ASK_ALLOW" --arg askNever "$CM_ASK_NEVER_PATHS" --arg askOwner "$ASK_OWNER" \
      -f <(printf 'include "comment-segs";\n%s\n%s\n%s\n' "$STATE_DEFS" "$CM_ASK_DENY_DEFS" "$PROG") > "$TMP/out.json" 2>"$TMP/jq.err"; then
@@ -688,7 +693,8 @@ fi
 # untrusted text copied into the output (a ledger ask id, question and worker, a PR title and its lanes, a lane or
 # worktree name, path or owner, a host, an exempt reason), in rows[] and exempt[]: each field (name, text, title,
 # worker, reason, path, owner, host, class, and each element of lanes) whose FULL value (row._full holds the text before it was cut to 120 or 80 characters) looks like a
-# credential (scripts/secret-shape.sh, as --act checks its text) is withheld; _full never reaches the output. Fail
+# credential (scripts/secret-shape.sh, as --act checks it: the name predicate for an identifier, so a long kebab lane name
+# stays readable, the text predicate for free text) is withheld; _full never reaches the output. Fail
 # closed: when the scan itself fails, every one of those fields is withheld (CM_TEST=1 with CM_TEST_FAIL_WITHHOLD=1
 # forces that path, for tests)
 WH='[withheld: looks like a credential]'
@@ -701,7 +707,14 @@ scan_withheld() {
         | [$a, ($i | tostring), "lanes", ($j | tostring)] + [.])
     | (.[4] |= gsub("[\t\n\r]"; " ")) | join("\t")' "$TMP/out.json" \
   | while IFS="$(printf '\t')" read -r a i f j v; do
-      if [ -n "$v" ] && looks_secret_text "$v"; then printf '%s\t%s\t%s\t%s\n' "$a" "$i" "$f" "$j"; fi
+      [ -n "$v" ] || continue
+      # an identifier (a lane, host, path, owner, class, worker or lane element) may be a long kebab name: the name
+      # predicate, as --act applies it; free text (text, title, reason) keeps the stricter text predicate
+      case "$f" in
+        name|path|host|owner|class|worker|lanes) looks_secret_name "$v" || continue ;;
+        *) looks_secret_text "$v" || continue ;;
+      esac
+      printf '%s\t%s\t%s\t%s\n' "$a" "$i" "$f" "$j"
     done | sort -u \
   | jq -R -s -c 'split("\n") | map(select(length > 0) | split("\t") | {a: .[0], i: (.[1] | tonumber), f: .[2], j: (.[3] | if . == "-" then null else tonumber end)})'
 }
