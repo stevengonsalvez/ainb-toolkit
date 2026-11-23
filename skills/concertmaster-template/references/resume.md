@@ -83,17 +83,35 @@ or briefs.
    or the same normalised Orca path, so `/w/./dev` and a stale ledger path count):
    **duplicate**, one decision for the group, none acted on. At most one terminal is
    created per worktree per run, even if a group were missed.
-4. **Count live agents.** Orca's `liveTerminalCount` is the evidence, as in the
-   `standing-dead` test of `classify.jq` (`0`, or no agent entry, is dead; an
-   agent's `state` goes stale after a restart, so it is not trusted over an
-   explicit `0`). Unlike classify, a row with no `liveTerminalCount` at all is not
-   read as zero: a live-state agent counts as live, an agent entry in any other
-   state is **unknown**. The count is the number of top-level panes (no
-   `parentPaneKey`). On the local host also count `claude` processes of this user
-   whose cwd is the worktree or inside it (canonical paths; `cm_claude_pids` in `scripts/lib.sh`, which is `pgrep -u` plus an argv[0] check so Claude Code's embedded `ugrep` / `bfs` helper is not counted, then
-   `/proc/<pid>/cwd` or `lsof`): a shell tab can sit beside a live agent tab, and
-   a process Orca does not track still counts. The count is the larger of the two.
-   Any input that cannot be read is **unknown**, left alone. The local process
+4. **Count live agents.** Liveness is read from the terminals and from agent
+   states, never from how many `agents[]` entries the worktree has collected:
+   Orca keeps one entry per past session, so a worktree can hold 12 `done` entries
+   beside 2 open terminals. Orca's `liveTerminalCount` still gates the count, as in
+   the `standing-dead` test of `classify.jq` (an explicit `0` is dead; an agent's
+   `state` goes stale after a restart, so it is not trusted over it). With
+   `liveTerminalCount` above 0 the count is the **larger of** (a) the distinct
+   terminals of this worktree with a non-empty `agentIdentity` (one
+   `terminal list --limit 500` per host, fetched once and fetched again at the
+   re-check; matched by `worktreeId` or by normalised path; the census
+   `discover.sh`, `classify.jq`, `boot-sweep.sh` and `abrupt.sh` use) and (b) the
+   distinct top-level panes (no `parentPaneKey`) whose state is live (working,
+   waiting, permission, blocked, running). The larger, not a union by `paneKey`: a
+   terminal row and its agent entry are one agent, and adding the two would raise
+   a false duplicate whenever their keys differ. A bare shell (`agentIdentity`
+   null: Claude exited, the shell stayed) and `done` entries count zero, so that
+   lane is **dead** and is resumed. A live-state entry with no terminal row still
+   counts 1: never respawn on doubt. A row with no `liveTerminalCount` at all is
+   not read as zero: a live-state agent counts as live, an agent entry in any other
+   state is **unknown**. On the local host also count `claude` processes of this
+   user whose cwd is the worktree or inside it (canonical paths; `cm_claude_pids`
+   in `scripts/lib.sh`, which is `pgrep -u` plus an argv[0] check so Claude Code's
+   embedded `ugrep` / `bfs` helper is not counted, then `/proc/<pid>/cwd` or
+   `lsof`): a process Orca does not track still counts. The count is the larger of
+   the two. Any input that cannot be read is **unknown**, left alone. That
+   includes the terminal list when the row needs it (`liveTerminalCount` above 0):
+   a failed call, malformed JSON, a row that is not an object, `truncated`, or a
+   `totalCount` above the rows returned reads "live count unreadable", never "no
+   agents". An explicit `liveTerminalCount` of 0 needs no list. The local process
    check must have run: if `pgrep`, `/proc` or `lsof` fails, a local row with no
    live agent is **unknown**, not dead. There is no process backstop on a remote
    host, so a remote terminal that is open but has no agent entry, or a remote row
@@ -184,9 +202,11 @@ Moving a host's lanes from Orca terminals to Plugly terminals is a separate kit:
   last messages are about another repo, or a headless `claude -p` run was the
   latest, it is the wrong conversation: treat it as stuck and ask before reusing
   it (resume does not check this).
-- Unconfirmed against a real restart: if Orca restores tabs as shells but keeps
-  old agent entries, `liveTerminalCount` above 0 with a stale entry reads as one
-  live agent and resume does nothing; the tick's stuck rule catches it.
+- Orca restores tabs as shells and keeps old agent entries after a restart: that
+  reads as dead (a shell has no `agentIdentity`, an old `done` entry is not a live
+  state) and is resumed. Only a live-state entry with a terminal count above 0
+  still reads as live when the terminal row is missing; the tick's stuck rule
+  catches a lane that is in fact idle.
 - `CM_TEST_CLAUDE_CWDS_CMD` replaces the process check and exists for the test
   only; resume warns when it is set. Never set it in a real environment.
 - Terminology rules from `cfg.terminology.rules` apply. No em-dashes.
@@ -196,5 +216,6 @@ Moving a host's lanes from Orca terminals to Plugly terminals is a separate kit:
 `scripts/test/resume-flow.sh` runs `roster.sh` and `resume.sh` against a stubbed
 orca (plus one real process named claude for the real process check) with live,
 dead, offline, duplicate, shared-path, missing, failed, held, manual and unknown
-rows, and asserts the orca calls made and not made, plus the table and exit
+rows, plus the live-count cases (bare shell, history of `done` entries, two identified
+terminals, unreadable or cut-off terminal list), and asserts the orca calls made and not made, plus the table and exit
 codes. Run it after any change.

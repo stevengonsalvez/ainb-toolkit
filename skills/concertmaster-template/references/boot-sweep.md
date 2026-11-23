@@ -51,7 +51,8 @@ Scope comes from config `worktrees.path_match`: only terminals whose worktree pa
 read. Unset, the script does nothing.
 ```bash
 mkdir -p ~/.concertmaster/bin ~/.local/state
-cp scripts/boot-sweep.sh scripts/lib.sh ~/.concertmaster/bin/ && chmod +x ~/.concertmaster/bin/boot-sweep.sh
+cp scripts/boot-sweep.sh scripts/lib.sh scripts/cm-worktree-sync.sh scripts/capacity-check.sh ~/.concertmaster/bin/ \
+  && chmod +x ~/.concertmaster/bin/boot-sweep.sh ~/.concertmaster/bin/cm-worktree-sync.sh ~/.concertmaster/bin/capacity-check.sh
 cp config.yaml ~/.concertmaster/config.yaml          # lib.sh finds it there (CM_HOME/config.yaml)
 # fill the @USER@ and @HOME@ tokens of the unit for this host, and check the PATH line: it must
 # reach the Orca CLI (orca-ide lives in ~/.local/bin, which systemd's default PATH lacks)
@@ -66,6 +67,37 @@ The resume unit is not touched. macOS hosts have no systemd unit: not covered, i
 `systemctl cat orca-resume.service` (or your equivalent) works. Test without rebooting:
 `sudo systemctl start concertmaster-boot-sweep.service` (acts for real on lanes with no turn since the
 real boot; run the dry run first).
+
+## The concertmaster worktree at boot
+`scripts/boot-sweep.sh` also runs `scripts/cm-worktree-sync.sh` (not in tick mode: the tick runs it in step 1). A
+concertmaster worktree can fall far behind its remote while a stale, empty `index.lock` blocks the fast-forward and
+nothing notices, so merged fixes never run. The script prints nothing when the worktree is level; a fast-forward or a
+blocker is one row `(worktree-sync)` in the sweep output, and a blocker is also written to the unit log and at the top
+of the inbox note (`**BLOCKER: the concertmaster worktree is not level with its remote: ...**`). Stale-lock rule:
+removed only when empty, older than 10 minutes and no live process holds it; otherwise reported with age and holder
+and left alone (SKILL.md hard rule 30). A copy in no git worktree finds the concertmaster worktree by its name
+(`worktrees.self_name`) through the fleet CLI, but only a worktree of the MAIN repo: its path sits under a
+`/<worktrees.orca_repo>/` directory (never an extra managed repo, which `worktrees.path_match` may also cover), a row
+that names its repo names that one, and its `origin` url is `github.org/github.main_repo`. The skill directory inside
+the repo is `skill_sync.path`. Otherwise (none, several, another repo, repo or path not configured) the row is
+`cm-worktree-sync: INFO not configured` (an info row, never a blocker) and nothing is fetched or moved.
+Time budget: boot-sweep kills `cm-worktree-sync.sh` at 90 s, so the script keeps its own `CM_SYNC_BUDGET` (80 s) over
+the lookup (`CM_SYNC_LOOKUP_TIMEOUT`, 15 s), the fetch (`CM_SYNC_FETCH_TIMEOUT`, 50 s, cut to what is left) and the
+merge (`CM_SYNC_MERGE_TIMEOUT`, 30 s, cut to what is left). With under `CM_SYNC_MIN_FF` (20 s) left it does not start
+the fast-forward: `cm-worktree-sync: DEFERRED time budget ...` (exit 0, nothing moved, the next tick retries), so a
+kill never cuts a checkout in half.
+
+## Capacity at boot
+`scripts/boot-sweep.sh` also runs `scripts/capacity-check.sh --no-candidates` (not in tick mode: the tick runs it in
+step 2 with the teardown candidates). It counts the agent terminals per host against the host cap and is silent when
+every host is within its cap and read. A host over its cap, an unread host or a crashed check is one row `(capacity)`
+in the sweep output naming the host, its count and its cap. Boot never removes anything and never lists candidates:
+`scripts/teardown.sh` is the only remover. `capacity-check.sh --no-candidates` keeps an 80 s budget the same way
+(`CM_CAPACITY_BUDGET`: one host list, then every host read in parallel). The two boot checks run one after the other,
+so they add at most about 170 s before the first nudge; the unit has no start timeout (`Type=exec`).
+Both scripts must sit in `~/.concertmaster/bin/` next to `boot-sweep.sh` and `lib.sh` (the cp line above); after any
+change to them, re-run it on every host, or the fix never runs (`scripts/test/boot-sweep.sh` runs the installed copy
+from exactly that list).
 
 ## Tick mode
 `boot-sweep.sh --since <epoch> [--lanes <path,path>]` runs the same decision and nudge core with "since" =

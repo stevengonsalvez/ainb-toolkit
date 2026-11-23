@@ -48,6 +48,12 @@ health:
   stuck_minutes: 30
   cloud: gce
   daemon_units: [orca-serve.service]
+  host_aliases:
+    host-f: [vm-0-12]
+    host-b: [ip-b-1]
+hosts:
+  per_host:
+    host-e: { hostname: Alpha-Laptop-5 }
 EOF
 export CM_CONFIG="$ROOT/config.yaml"
 
@@ -154,11 +160,17 @@ cat > "$BIN/ssh" <<'EOF'
 while [ $# -gt 0 ]; do case "$1" in -o) shift 2 ;; --) shift; break ;; *) break ;; esac; done
 t="$1"; shift
 echo "ssh $t $*" >> "$STUB/calls.log"
-[ ! -f "$STUB/ssh-down-$t" ] || { echo "ssh: connect to host $t: Connection refused" >&2; exit 255; }
-FAKE_HOST="$t" exec bash -s
+# an ssh-down file may hold the message ssh prints (a stale name does not resolve, a stale host key fails)
+[ ! -f "$STUB/ssh-down-$t" ] || { m="$(cat "$STUB/ssh-down-$t")"; echo "${m:-ssh: connect to host $t: Connection refused}" >&2; exit 255; }
+# an answers file is what `hostname -s` prints there when that is not the ssh name
+FAKE_HOST="$t" FAKE_ANSWER="$(cat "$STUB/answers-$t" 2>/dev/null)" exec bash -s
 EOF
-printf '#!/usr/bin/env bash\necho "${FAKE_HOST:-testbox}"\n' > "$BIN/hostname"
-printf '#!/usr/bin/env bash\necho "2026-11-11 10:27:00"\n' > "$BIN/uptime"
+printf '#!/usr/bin/env bash\necho "${FAKE_ANSWER:-${FAKE_HOST:-testbox}}"\n' > "$BIN/hostname"
+# uptime sleeps as long as $STUB/slow says (a probe on a loaded machine)
+printf '#!/usr/bin/env bash\n[ ! -f "$STUB/slow" ] || { [ ! -f "$STUB/slow.log" ] || echo "$(date +%%s) start ${FAKE_HOST:-local}" >> "$STUB/slow.log"; sleep "$(cat "$STUB/slow")"; [ ! -f "$STUB/slow.log" ] || echo "$(date +%%s) end ${FAKE_HOST:-local}" >> "$STUB/slow.log"; }\necho "2026-11-11 10:27:00"\n' > "$BIN/uptime"
+# timeout: the real one, unless $STUB/fake-142 asks for what the perl alarm fallback of cm_timeout exits with (SIGALRM)
+REAL_TIMEOUT="$(command -v timeout || command -v gtimeout || true)"; export REAL_TIMEOUT
+printf '#!/usr/bin/env bash\nif [ -f "$STUB/fake-142" ]; then cat >/dev/null 2>&1; exit 142; fi\nexec "$REAL_TIMEOUT" "$@"\n' > "$BIN/timeout"
 printf '#!/usr/bin/env bash\necho "reboot   system boot  6.8.0 Wed Nov 11 10:27   still running"\necho "shutdown system down  6.8.0 Wed Nov 11 10:20"\n' > "$BIN/last"
 printf '#!/usr/bin/env bash\ncat "$STUB/powerkey-${FAKE_HOST:-local}" 2>/dev/null; exit 0\n' > "$BIN/journalctl"
 printf '#!/usr/bin/env bash\ncase "$*" in *preempted*) cat "$STUB/preempted-${FAKE_HOST:-local}" 2>/dev/null || echo FALSE ;; *provisioning-model*) echo SPOT ;; esac\n' > "$BIN/curl"
@@ -182,6 +194,221 @@ creates() { grep -c 'terminal create' "$STUB/calls.log"; }
 mkdir -p "$W/lead-a" "$W/task-1" "$W/task-2" "$W/task-3" "$W/task-4"
 LEAD_A="$W/lead-a"; T1="$W/task-1"; T2="$W/task-2"; T3="$W/task-3"; T4="$W/task-4"
 SID_A=aaaaaaaa-0000-4000-8000-000000000001; SID_1=11111111-0000-4000-8000-000000000001
+
+echo "--- /cm-status must not cry wolf (probe timeout, host aliases, stale hosts, retired workers)"
+wlrow() { jq -n --arg p "$1" --arg c "$2" '{ok: true, result: {worktrees: [{path: $p, comment: $c}]}}'; }   # $2 holds a literal \n
+box() { printf '%s\n' "$1" | awk 'NR > 1 { if ($0 == "") exit; print }'; }   # the NEEDS A LOOK rows of a cm-status view
+# (a) the local probe runs out: ONE host row, never one row per session. A loaded machine needs far more than 40 s
+reset_world
+ledger "{\"w-lead-a\":$(row "$LEAD_A" '{"standing":true,"lane":"lead-a"}'),
+         \"w-task-1\":$(row "$T1" '{"parent":"w-lead-a"}'),
+         \"w-task-2\":$(row "$T2" '{"parent":"w-lead-a"}')}"
+mkproc "$P" 101 1000 "$LEAD_A" "ORCA_TERMINAL_HANDLE=term_a" claude --resume "$SID_A"; printf 'working\n  esc to interrupt\n' > "$STUB/pane-term_a.txt"
+mkproc "$P" 102 1000 "$T1" "ORCA_TERMINAL_HANDLE=term_1" claude; printf '> \n  ? for shortcuts\n' > "$STUB/pane-term_1.txt"
+mkproc "$P" 103 1000 "$T2" "ORCA_TERMINAL_HANDLE=term_2" claude; printf '> \n  ? for shortcuts\n' > "$STUB/pane-term_2.txt"
+transcript "$LEAD_A" "$SID_A" "$NOW"; transcript "$T1" "$SID_1" $((NOW - 3600)); transcript "$T2" bbbbbbbb-0000-4000-8000-000000000002 $((NOW - 3600))
+echo 3 > "$STUB/slow"
+OUT="$(CM_HEALTH_PROBE_S=1 lhj --all --no-write)"
+check "(a) a probe that runs out marks the host timeout, with a plain hint" \
+  '[ "$(jq -r ".hosts[] | select(.host == \"local\") | [.ok, .kind] | @tsv" <<<"$OUT")" = "$(printf "false\ttimeout")" ] && jq -r ".hosts[0].hint" <<<"$OUT" | grep -q "probe timed out: the machine is busy"' "$OUT"
+V="$(CM_HEALTH_PROBE_S=1 "$SCRIPTS/cm-status.sh" 2>&1)"; VRC=$?
+check "(a) cm-status: a timed-out local probe is ONE row in NEEDS A LOOK (3 sessions, 1 row), exit 3" \
+  '[ "$VRC" = 3 ] && printf "%s\n" "$V" | head -n 1 | grep -q "^NEEDS A LOOK (1)$" && [ "$(box "$V" | wc -l)" = 1 ] && box "$V" | grep -q "^  local .*✗ down .*probe timed out.*; 3 sessions not checked" && ! box "$V" | grep -q "task-"' "$V"
+check "(a) the timed-out sessions are counted under the host line, not listed" \
+  'printf "%s\n" "$V" | grep -q "^  host offline: 3 sessions not checked (lead lead-a)" && ! printf "%s\n" "$V" | grep -qE "^ +(task-1|task-2) "' "$V"
+# the same probe, the old 40 s ssh bound shrunk to 1 s: the probe has its own, longer bound, so it still answers
+echo 2 > "$STUB/slow"
+OUT="$(CM_HEALTH_SSH_S=1 lhj --all --no-write)"
+check "(a) the probe is bounded by health.probe_seconds, not by the ssh bound: a slow probe still answers" \
+  '[ "$(jq -r ".hosts[0].ok" <<<"$OUT")" = true ] && [ "$(word "$OUT" w-lead-a)" = running ] && [ "$(word "$OUT" w-task-1)" = idle ]' "$(jq -c '[.hosts[] | [.host, .ok, .error]], [.sessions[] | [.name, .word, .meaning]]' <<<"$OUT")"
+rm -f "$STUB/slow"
+
+# (c) + (d) + (4): stale hosts, done and retired workers
+reset_world
+mkdir -p "$W/lead-c" "$W/k1" "$W/k2" "$W/lead-d" "$W/lead-g" "$W/done-1" "$W/retired-1" "$W/wt-A" "$W/retired-2"
+ledger "{\"w-lead-a\":$(row "$LEAD_A" '{"standing":true,"lane":"lead-a"}'),
+         \"w-lead-c\":$(row "$W/lead-c" '{"host":"host-m","standing":true,"lane":"lead-c"}'),
+         \"w-k1\":$(row "$W/k1" '{"host":"host-m","parent":"w-lead-c"}'),
+         \"w-k2\":$(row "$W/k2" '{"host":"host-m","parent":"w-lead-c"}'),
+         \"w-lead-d\":$(row "$W/lead-d" '{"host":"host-m","standing":true,"lane":"lead-d","lastComment":"cm:done old report"}'),
+         \"w-lead-g\":$(row "$W/lead-g" '{"host":"host-g","standing":true,"lane":"lead-g"}'),
+         \"w-done-1\":$(row "$W/done-1" '{"host":"host-m","state":"done"}'),
+         \"w-retired-1\":$(row "$W/retired-1" '{"host":"host-g","state":"retired"}'),
+         \"w-wt-A\":$(row "$W/wt-A" '{"host":"host-m","lastComment":"cm:done shipped"}'),
+         \"w-retired-2\":$(row "$W/retired-2" '{"state":"retired"}')}"
+mkproc "$P" 101 1000 "$LEAD_A" "ORCA_TERMINAL_HANDLE=term_a" claude --resume "$SID_A"; printf 'working\n  esc to interrupt\n' > "$STUB/pane-term_a.txt"; transcript "$LEAD_A" "$SID_A" "$NOW"
+mkproc "$P" 106 1000 "$W/retired-2" "ORCA_TERMINAL_HANDLE=term_x" claude; printf '> \n  ? for shortcuts\n' > "$STUB/pane-term_x.txt"; transcript "$W/retired-2" "$SID_1" $((NOW - 3600))
+echo "ssh: Could not resolve hostname host-m: Name or service not known" > "$STUB/ssh-down-host-m"
+echo "Host key verification failed." > "$STUB/ssh-down-host-g"
+OUT="$(lhj --all --no-write)"
+check "(c) a name that does not resolve and a failing host key are told apart, each in plain words" \
+  '[ "$(jq -r ".hosts[] | select(.host == \"host-m\") | .kind" <<<"$OUT")" = unresolvable ] && jq -r ".hosts[] | select(.host == \"host-m\") | .hint" <<<"$OUT" | grep -q "does not resolve: stale name in config, check hosts" && [ "$(jq -r ".hosts[] | select(.host == \"host-g\") | .kind" <<<"$OUT")" = hostkey ] && jq -r ".hosts[] | select(.host == \"host-g\") | .hint" <<<"$OUT" | grep -q "host key verification failed"' "$OUT"
+check "(d) done, retired and cm:done workers on a host that did not answer are not reported; a standing lead with a cm:done comment is" \
+  '[ "$(jq -r "[.sessions[] | select(.host == \"host-m\" or .host == \"host-g\") | .name] | sort | join(\",\")" <<<"$OUT")" = "k1,k2,lead-c,lead-d,lead-g" ]' "$(jq -c '[.sessions[] | [.name, .host, .word]]' <<<"$OUT")"
+check "(d) retired work that is running again is still reported (it is not expected to run, but it does)" \
+  '[ "$(word "$OUT" w-retired-2)" = unknown ] && meaning "$OUT" w-retired-2 | grep -q "retired work came back"'
+V="$("$SCRIPTS/cm-status.sh" 2>&1)"; VRC=$?
+check "(4) cm-status: each stale host is ONE row (2 rows for 5 sessions), exit 3" \
+  '[ "$VRC" = 3 ] && printf "%s\n" "$V" | head -n 1 | grep -q "^NEEDS A LOOK (3)$" && [ "$(box "$V" | wc -l)" = 3 ]' "$V"
+check "(4) the rows say what is wrong and how many sessions were not checked" \
+  'box "$V" | grep -q "^  host-m .*✗ down .*does not resolve: stale name in config, check hosts.*; 4 sessions not checked" && box "$V" | grep -q "^  host-g .*✗ down .*host key verification failed.*; 1 session not checked"' "$V"
+check "(4) the host row names the leads it could not check" \
+  'box "$V" | grep -q "^  host-m .*; 4 sessions not checked (leads lead-c, lead-d)" && box "$V" | grep -q "^  host-g .*; 1 session not checked (lead lead-g)"' "$V"
+check "(4) none of the sessions on those hosts is a row of its own; the tree counts them under the host" \
+  '! box "$V" | grep -qE "^  [^ ]+ +(lead-c|k1|k2|lead-d|lead-g) " && printf "%s\n" "$V" | grep -q "^  host offline: 4 sessions not checked (leads lead-c, lead-d)" && printf "%s\n" "$V" | grep -q "^  host offline: 1 session not checked (lead lead-g)"' "$V"
+check "(d) done and retired workers are not shown anywhere in the view" \
+  '! printf "%s\n" "$V" | grep -qE "(done-1|retired-1|wt-A)"' "$V"
+check "(4) the retired worker that came back is still a row of its own" 'box "$V" | grep -q "retired-2"' "$V"
+V="$("$SCRIPTS/cm-status.sh" --detail 2>&1)"
+check "(4) --detail lists the sessions of an offline host" 'printf "%s\n" "$V" | grep -qE "^ +k1 +· unknown"' "$V"
+# a status document saved before lane-health skipped them: cm-status hides a done or retired row that runs nothing
+jq -n '{generatedAt: "2026-11-19T10:00:00Z", mode: "all", hosts: [{host: "local", ok: true}],
+        sessions: [{key: "a", name: "deploy-20261001", host: "host-m", isLead: false, state: "done", word: "unknown", mark: "·", pids: [], meaning: "host did not answer"},
+                   {key: "b", name: "lead-a", host: "local", isLead: true, state: "running", word: "running", mark: "●", pids: [1], task: "ok"}]}' > "$ROOT/old-doc.json"
+V="$("$SCRIPTS/cm-status.sh" --from "$ROOT/old-doc.json" 2>&1)"; VRC=$?
+check "(d) cm-status --from: a done worker on a host that did not answer, in an older document, is hidden: all clear, exit 0" \
+  '[ "$VRC" = 0 ] && printf "%s\n" "$V" | head -n 1 | grep -q "^NEEDS A LOOK (0): all clear" && ! printf "%s\n" "$V" | grep -q deploy-2026' "$V"
+rm -f "$STUB/ssh-down-host-m" "$STUB/ssh-down-host-g"
+
+# (b) host identity: the name a host answers as is not always its Orca name
+reset_world
+ledger "{\"w-f\":$(row "$T1" '{"host":"host-f"}'),\"w-d\":$(row "$T3" '{"host":"host-d"}')}"
+echo vm-0-12 > "$STUB/answers-host-f"; echo ip-d-1 > "$STUB/answers-host-d"
+mkproc "$PR" 301 1000 "$T1" "ORCA_TERMINAL_HANDLE=term_r" claude --resume "$SID_1"; transcript "$T1" "$SID_1" "$NOW"; printf '  esc to interrupt\n' > "$STUB/pane-term_r.txt"
+OUT="$(lhj --all --no-write)"
+INFO="$(jq -c '[.hosts[] | [.host, .ok, .error]], [.sessions[] | [.name, .word, .meaning]]' <<<"$OUT")"
+check "(b) a host that answers as a health.host_aliases name is the host asked about (host-f answers vm-0-12)" \
+  '[ "$(word "$OUT" w-f)" = running ] && [ "$(jq -r ".hosts[] | select(.host == \"host-f\") | .ok" <<<"$OUT")" = true ]' "$INFO"
+check "(b) a name that is neither the expected one nor an alias is a wrong machine: not read, and the hint says how to fix it" \
+  '[ "$(word "$OUT" w-d)" = unknown ] && [ "$(jq -r ".hosts[] | select(.host == \"host-d\") | .kind" <<<"$OUT")" = identity ] && jq -r ".hosts[] | select(.host == \"host-d\") | .hint" <<<"$OUT" | grep -q "answered as ip-d-1, expected host-d: add that name to health.host_aliases"' "$INFO"
+V="$("$SCRIPTS/cm-status.sh" 2>&1)"
+check "(b) cm-status: only the wrong machine is a row, once" \
+  'printf "%s\n" "$V" | head -n 1 | grep -q "^NEEDS A LOOK (1)$" && box "$V" | grep -q "^  host-d .*✗ down .*health.host_aliases.*; 1 session not checked"' "$V"
+# no ledger hostname: hosts.per_host.<h>.hostname is expected (the same file teardown.sh reads), case ignored
+reset_world
+ledger "{\"w-e\":$(row "$T2" '{"host":"host-e"}')}"
+echo alpha-laptop-5 > "$STUB/answers-host-e"
+mkproc "$PR" 302 1000 "$T2" "ORCA_TERMINAL_HANDLE=term_s" claude --resume "$SID_1"; transcript "$T2" "$SID_1" "$NOW"; printf '  esc to interrupt\n' > "$STUB/pane-term_s.txt"
+OUT="$(lhj --all --no-write)"
+check "(b) hosts.per_host.<h>.hostname is expected when the ledger holds none, case ignored (host-e answers alpha-laptop-5)" \
+  '[ "$(word "$OUT" w-e)" = running ]' "$(jq -c '[.hosts[] | [.host, .ok, .error]]' <<<"$OUT")"
+rm -f "$STUB"/answers-*
+
+# (b) the stop check before a sleep honours the aliases too: a merged, clean, idle worker on a host that answers as an alias
+reset_world
+ledger '{}'
+git init -q --bare -b main "$ROOT/origin-r.git"
+git clone -q "$ROOT/origin-r.git" "$ROOT/acme/main-r" 2>/dev/null
+( cd "$ROOT/acme/main-r" && git checkout -q -b main 2>/dev/null; echo one > a.txt && git add a.txt && git commit -q -m init && git push -q origin main 2>/dev/null )
+git -C "$ROOT/acme/main-r" worktree add -q -b done-r "$W/done-r" main 2>/dev/null
+( cd "$W/done-r" && echo two > b.txt && git add b.txt && git commit -q -m work )
+( cd "$ROOT/acme/main-r" && git merge -q --no-ff -m merge done-r && git push -q origin main 2>/dev/null && git fetch -q origin )
+git -C "$ROOT/acme/main-r" remote set-head origin main >/dev/null 2>&1
+mkproc "$PR" 401 1000 "$W/done-r" "ORCA_TERMINAL_HANDLE=term_dr" claude --resume "$SID_1"
+transcript "$W/done-r" "$SID_1" $((NOW - 7200)); printf '> \n  ? for shortcuts\n' > "$STUB/pane-term_dr.txt"
+wlrow "$W/done-r" 'cm:done shipped' > "$STUB/wl-host-b.json"
+printf '{"ok":true,"result":{"hosts":[{"kind":"local","name":"this machine"},{"name":"host-b"}]}}\n' > "$STUB/hosts.json"
+echo ip-b-1 > "$STUB/answers-host-b"
+OUT="$(CM_HEALTH_ACTION_PROBE_S=100 CM_HEALTH_RUN_BUDGET_S=250 lhj --all --act)"
+check "a sleep is DEFERRED when its probe bound puts the worst case (probe, pane, comment, stop, close, comment back) past the run budget" \
+  '! grep -q "^kill 401$" "$STUB/calls.log" && jq -r ".actions[0].detail" <<<"$OUT" | grep -q "its worst case 310s would pass the 250s run budget"' "$(jq -c '.actions' <<<"$OUT")"
+OUT="$(lhj --all --act)"
+check "(b) --act: the worker on host-b (answers as its alias ip-b-1) is stopped by exact pid over ssh, terminal closed" \
+  'grep -q "^kill 401$" "$STUB/calls.log" && grep -q "terminal close .*host=host-b.*handle=term_dr" "$STUB/calls.log"' "$OUT$(cat "$ROOT/lh.err")"
+rm -f "$STUB"/answers-*
+printf '{"ok":true,"result":{"hosts":[{"kind":"local","name":"this machine"}]}}\n' > "$STUB/hosts.json"
+
+# review round, headless agents: the quiet rule is about an unreachable HOST, never about a missing pid
+reset_world
+mkdir -p "$W/retired-h"
+ledger "{\"w-lead-a\":$(row "$LEAD_A" '{"standing":true,"lane":"lead-a"}'),\"w-retired-h\":$(row "$W/retired-h" '{"state":"retired"}')}"
+mkproc "$P" 101 1000 "$LEAD_A" "ORCA_TERMINAL_HANDLE=term_a" claude --resume "$SID_A"; printf 'working\n  esc to interrupt\n' > "$STUB/pane-term_a.txt"; transcript "$LEAD_A" "$SID_A" "$NOW"
+FAKE_TTY=0 mkproc "$P" 107 1000 "$W/retired-h" "" claude -p hi
+OUT="$(lhj --all --no-write)"
+V="$("$SCRIPTS/cm-status.sh" 2>&1)"; VRC=$?
+check "a live HEADLESS agent in a retired worktree (host answered, no pid in the document) is reported by lane-health and by cm-status, exit 3" \
+  '[ "$(word "$OUT" w-retired-h)" = unknown ] && meaning "$OUT" w-retired-h | grep -q "no terminal" && [ "$VRC" = 3 ] && printf "%s\n" "$V" | head -n 1 | grep -q "^NEEDS A LOOK (1)$" && box "$V" | grep -q "retired-h"' "$V"
+jq -n '{generatedAt: "2026-11-19T16:00:00Z", mode: "all", hosts: [{host: "local", ok: true}],
+        sessions: [{key: "w1", name: "w1", host: "local", isLead: false, state: "retired", word: "unknown", mark: "·", pids: [], meaning: "an agent with no terminal runs in this worktree: not judged, never resumed beside it"},
+                   {key: "L", name: "lead1", host: "local", isLead: true, state: "done", word: "unknown", mark: "·", pids: [], meaning: "an agent with no terminal runs in this worktree"}]}' > "$ROOT/doc-headless.json"
+V="$("$SCRIPTS/cm-status.sh" --from "$ROOT/doc-headless.json" 2>&1)"
+# shellcheck disable=SC2034  # VRC is read inside the eval of check()
+VRC=$?
+check "cm-status --from: retired and done rows on a host that answered are shown, the exit code counts them (NEED uses the same rule)" \
+  '[ "$VRC" = 3 ] && printf "%s\n" "$V" | head -n 1 | grep -q "^NEEDS A LOOK (2)$" && box "$V" | grep -q " w1 " && box "$V" | grep -q " lead1 "' "$V"
+jq -n '{generatedAt: "2026-11-19T16:00:00Z", mode: "all", hosts: [{host: "host-m", ok: false, hint: "does not resolve"}],
+        sessions: [{key: "w1", name: "w1", host: "host-m", isLead: false, state: "retired", word: "unknown", mark: "·", pids: [], meaning: "host did not answer"},
+                   {key: "L", name: "lead1", host: "host-m", isLead: true, state: "done", word: "unknown", mark: "·", pids: [], meaning: "host did not answer"}]}' > "$ROOT/doc-lead-down.json"
+V="$("$SCRIPTS/cm-status.sh" --from "$ROOT/doc-lead-down.json" 2>&1)"
+check "cm-status --from: on a host that did not answer a retired worker is quiet but a lead is never (1 session not checked, lead lead1)" \
+  'printf "%s\n" "$V" | grep -q "^  host offline: 1 session not checked (lead lead1)" && box "$V" | grep -q "; 1 session not checked"' "$V"
+
+# a standing lead is never skipped, whatever its state, on a host that did not answer
+reset_world
+mkdir -p "$W/lead-z" "$W/done-z"
+ledger "{\"w-lead-z\":$(row "$W/lead-z" '{"host":"host-z","standing":true,"lane":"lead-z","state":"done"}'),\"w-done-z\":$(row "$W/done-z" '{"host":"host-z","state":"done"}')}"
+touch "$STUB/ssh-down-host-z"
+OUT="$(lhj --all --no-write)"
+check "a standing lead whose state is done on a host that did not answer is still reported; a done worker beside it is not" \
+  '[ "$(jq -r "[.sessions[] | select(.host == \"host-z\") | .name] | join(\",\")" <<<"$OUT")" = lead-z ]' "$(jq -c '[.sessions[] | [.name, .state, .word]]' <<<"$OUT")"
+rm -f "$STUB/ssh-down-host-z"
+
+# the probes run at the same time and the bound has a ceiling
+reset_world
+ledger "{\"w-b\":$(row "$T1" '{"host":"host-b"}'),\"w-c\":$(row "$T2" '{"host":"host-c"}'),\"w-d\":$(row "$T3" '{"host":"host-d"}')}"
+echo 3 > "$STUB/slow"; : > "$STUB/slow.log"
+OUT="$(lhj --all --no-write)"
+check "four hosts (this one and three remote) are probed at the same time (the last probe starts before the first one ends)" \
+  '[ "$(grep -c " start " "$STUB/slow.log")" = 4 ] && [ "$(grep " start " "$STUB/slow.log" | cut -d" " -f1 | sort -n | tail -n 1)" -lt "$(grep " end " "$STUB/slow.log" | cut -d" " -f1 | sort -n | head -n 1)" ]' "$(cat "$STUB/slow.log")"
+rm -f "$STUB/slow" "$STUB/slow.log"
+OUT="$(CM_HEALTH_PROBE_S=99999 lhj --all --no-write)"
+check "CM_HEALTH_PROBE_S above the ceiling is cut to 300 with a warning" 'grep -q "probe_seconds 99999 is above 300: using 300" "$ROOT/lh.err"' "$(cat "$ROOT/lh.err")"
+OUT="$(CM_HEALTH_PROBE_S=300 lhj --all --no-write)"
+check "300 itself is allowed, silently" '! grep -q "above 300" "$ROOT/lh.err"' "$(cat "$ROOT/lh.err")"
+
+# no timeout(1): cm_timeout falls back to a perl alarm, which exits 142, not 124
+reset_world
+ledger "{\"w-lead-a\":$(row "$LEAD_A" '{"standing":true,"lane":"lead-a"}')}"
+mkproc "$P" 101 1000 "$LEAD_A" "ORCA_TERMINAL_HANDLE=term_a" claude --resume "$SID_A"; transcript "$LEAD_A" "$SID_A" "$NOW"
+touch "$STUB/fake-142"
+OUT="$(lhj --all --no-write)"
+check "a probe that ends with the perl alarm's 142 is a timeout, not 'other'" \
+  '[ "$(jq -r ".hosts[] | select(.host == \"local\") | .kind" <<<"$OUT")" = timeout ]' "$(jq -c '.hosts' <<<"$OUT")"
+rm -f "$STUB/fake-142"
+
+# review round, action bounds: the worst case of an action is built from the bound of the probes it makes, and a lead-shaped row is never skipped
+reset_world
+ledger "{\"w-lead-a\":$(row "$LEAD_A" '{"standing":true,"lane":"lead-a","health":{"word":"running","healthySince":"2026-11-11T00:00:00Z"},"live":{"sessionId":"'"$SID_A"'","runtime":"orca","bypass":false}}')}"
+transcript "$LEAD_A" "$SID_A" $((NOW - 1200))
+OUT="$(CM_HEALTH_ACTION_PROBE_S=100 CM_HEALTH_RUN_BUDGET_S=300 lhj --all --act)"
+check "a resume is DEFERRED when its probes (2 x the action probe bound) put the worst case past the run budget; the message gives the exact figure" \
+  '[ "$(creates)" = 0 ] && jq -r ".actions[0].detail" <<<"$OUT" | grep -q "its worst case 365s would pass the 300s run budget"' "$(jq -c '.actions' <<<"$OUT")"
+reset_world
+ledger "{\"w-lead-a\":$(row "$LEAD_A" '{"standing":true,"lane":"lead-a","health":{"word":"running","healthySince":"2026-11-11T00:00:00Z"},"live":{"sessionId":"'"$SID_A"'","runtime":"orca","bypass":false}}')}"
+transcript "$LEAD_A" "$SID_A" $((NOW - 1200))
+OUT="$(CM_HEALTH_ACTION_PROBE_S=10 CM_HEALTH_RUN_BUDGET_S=300 lhj --all --act)"
+check "the same resume with a small action probe bound fits the budget and starts" '[ "$(creates)" = 1 ]' "$(jq -c '.actions' <<<"$OUT")"
+reset_world
+ledger "{\"w-lead-a\":$(row "$LEAD_A" '{"standing":true,"lane":"lead-a","health":{"word":"running","healthySince":"2026-11-11T00:00:00Z"},"live":{"sessionId":"'"$SID_A"'","runtime":"orca","bypass":false}}')}"
+transcript "$LEAD_A" "$SID_A" $((NOW - 1200))
+echo 3 > "$STUB/slow"
+OUT="$(CM_HEALTH_ACTION_PROBE_S=1 lhj --all --act)"
+check "the probe an action makes before the create runs under the action bound (1 s): a slow probe stops the resume, nothing is created" \
+  '[ "$(creates)" = 0 ] && jq -r ".actions[0].detail" <<<"$OUT" | grep -q "stopped answering"' "$(jq -c '.actions' <<<"$OUT")"
+rm -f "$STUB/slow"
+
+# a lead-shaped row (pr-sweeper) with no standing flag and a stale cm:done comment, on a host that did not answer, stays listed
+reset_world
+mkdir -p "$W/pr-sweeper" "$W/task-q"
+ledger "{\"w-sweeper\":$(row "$W/pr-sweeper" '{"host":"host-z","standing":false,"lastComment":"cm:done old sweep"}'),\"w-task-q\":$(row "$W/task-q" '{"host":"host-z","lastComment":"cm:done shipped"}')}"
+touch "$STUB/ssh-down-host-z"
+OUT="$(lhj --all --no-write)"
+check "a lead-shaped name (pr-sweeper) with no standing flag and a stale cm:done comment stays listed on a down host; a plain done worker beside it does not" \
+  '[ "$(jq -r "[.sessions[] | select(.host == \"host-z\") | .name] | join(\",\")" <<<"$OUT")" = pr-sweeper ]' "$(jq -c '[.sessions[] | [.name, .state, .word]]' <<<"$OUT")"
+rm -f "$STUB/ssh-down-host-z"
+
+# CM_LH_ONLY=false-rows runs this section alone (a mutation check does not need the other 400 cases)
+if [ "${CM_LH_ONLY:-}" = false-rows ]; then printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"; [ "$FAIL" = 0 ]; exit $?; fi
 
 echo "--- the seven words"
 reset_world
@@ -953,6 +1180,12 @@ check "no /proc on a remote host: read over ssh with ps and lsof there" \
 OUT="$(mac "$LH" sleep w-b --apply 2>&1)"
 check "no /proc on a remote host: sleep --apply checks the cwd there with lsof and stops the exact pid" \
   'grep -q "^kill 301$" "$STUB/calls.log" && [ ! -d "$PR/301" ] && [ "$(jq -r ".workers[\"w-b\"].state" "$CM_HOME/ledger.json")" = asleep ]' "$OUT"
+
+echo "--- cm-status skill entry"
+# shellcheck disable=SC2034  # read inside the eval of check()
+CMS="$SCRIPTS/../companions/cm-status.md"
+check "the cm-status companion is installable as a skill: it names itself cm-status and carries a description" \
+  '[ "$(sed -n "s/^name: //p" "$CMS" | head -1)" = cm-status ] && sed -n "1,6p" "$CMS" | grep -q "^description: ."'
 
 echo "--- cm-status view"
 reset_world

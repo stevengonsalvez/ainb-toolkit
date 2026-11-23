@@ -9,13 +9,16 @@
 #   scripts/cm-status.sh --from <file>    # render a saved `lane-health.sh --json` document instead of a fresh pass
 #
 # Layout (companions/cm-status.md):
-#   NEEDS A LOOK (n)        every session that is not running, idle or asleep: mark, name, word, one-line meaning
+#   NEEDS A LOOK (n)        every session that is not running, idle or asleep: mark, name, word, one-line meaning;
+#                           a host that did not answer is ONE row here (its sessions are counted on it, never listed)
 #   <host> (Spot, rebooted HH:MM)
 #     <lead>   ● running    <last task line>
 #       ├ <worker>  ○ idle  <meaning or task>
 #       └ <worker>  ✗ stopped <meaning>
 #     (no lead)             sessions no lead owns
 #   not in the ledger       unknown sessions, per host
+# A done or retired worker on a host that did not answer is not shown (nothing is expected of it); one on a host that
+# answered is, whenever lane-health lists it (an agent runs there). A lead is always shown.
 # Marks: ● running, ○ idle, ? waiting on you, ⚠ stuck, ✗ stopped, z asleep, · unknown. Times in schedule.timezone.
 # Exit 0 nothing needs a look; 3 something does; 1 the pass could not run; 2 usage.
 set -uo pipefail
@@ -36,6 +39,11 @@ while [ $# -gt 0 ]; do
 done
 command -v jq >/dev/null 2>&1 || { cm_warn "cm-status.sh: missing dependency: jq"; exit 1; }
 
+# a done, retired or torn-down worker is quiet only when its HOST did not answer (nothing is known of it, and nothing is
+# expected of it). A host that answered and still lists it means an agent runs there (a headless one has no pid in the
+# document): that is reported. A lead is never quiet. Needs $ok0, the hosts that answered. One rule for the view and the count.
+# shellcheck disable=SC2016  # a jq expression, spliced into the jq programs below
+RETIRED_QUIET='((.state // "") | IN("retired", "done", "teardown")) and (.isLead | not) and ((.unknown // false) | not) and (.host as $qh | $ok0 | index($qh) == null)'
 if [ -n "$FROM" ]; then DOC="$(cat "$FROM")"
 elif [ -n "$LEAD" ]; then DOC="$("$HERE/lane-health.sh" --lead "$LEAD" --no-write --json)"
 else DOC="$("$HERE/lane-health.sh" --all --no-write --json)"; fi
@@ -51,26 +59,48 @@ printf '%s' "$DOC" | TZ="$CM_TZ" jq -r --argjson detail "$DETAIL" --arg tzl "$CM
       "\($ind)pid \(.live.pid // "-") · session \(.live.sessionId // "-") · handle \(.live.handle // "-") · \(.live.runtime // "runtime ?") · model \(.live.model // "-") · effort \(.live.effort // "-") · last write \(.live.lastTranscriptAt | ago)"
     else empty end;
   def line($ind; $w): "\($ind)\(.name | pad($w)) \(.mark) \(.word | pad(15))\(say)", det(($ind | gsub("├"; "│") | gsub("└"; " ")) + "    ");
-  . as $d
-  | ($d.sessions | map(select(.unknown | not))) as $known
-  | ($d.sessions | map(select(.unknown // false))) as $unk
+  # a done or retired worker with no process is not expected to run: never shown (a saved document from before
+  # lane-health skipped them may still hold them)
+  . as $d0
+  | ([$d0.hosts[] | select(.ok) | .host]) as $ok0
+  | ($d0 + {sessions: ($d0.sessions | map(select(('"$RETIRED_QUIET"') | not)))}) as $d
+  # a host that did not answer is ONE row, said once; the sessions on it were not checked, so they are counted, not listed
+  | ([$d.hosts[] | select(.ok | not)] ) as $downHosts
+  | ([$d.hosts[] | select(.ok) | .host]) as $okHosts
+  | ($d.sessions | map(select((.unknown // false | not) and .word == "unknown" and (.host as $h | $okHosts | index($h) == null)))) as $offline
+  | ($d.sessions | map(select(. as $s | $offline | any(.key == $s.key) | not))) as $shown
+  | ($shown | map(select(.unknown | not))) as $known
+  | ($shown | map(select(.unknown // false))) as $unk
   | ($known | map(select(.isLead)) | map(.key)) as $leadKeys
-  | ([$d.sessions[] | .name | length] + [10] | max + 2) as $w
-  | ($d.sessions | map(select(.word | IN("running", "idle", "asleep") | not))) as $att
-  | "NEEDS A LOOK (\($att | length))\(if ($att | length) == 0 then ": all clear" else "" end)",
+  | ([$d.sessions[] | .name | length] + [$d.hosts[].host | length] + [10] | max + 2) as $w
+  | ($shown | map(select(.word | IN("running", "idle", "asleep") | not))) as $att
+  | ([ ($offline | map(.host)), ($downHosts | map(.host)) ] | add | unique) as $offHosts
+  | (($att | length) + ($offHosts | length)) as $nAtt
+  | def hostrow($h): ($d.hosts | map(select(.host == $h)) | first) as $hi
+      | ($offline | map(select(.host == $h))) as $oh | ($oh | length) as $n
+      | ($oh | map(select(.isLead)) | map(.name)) as $ol
+      | "\($h | pad($w)) ✗ \("down" | pad(15))\($hi.hint // ($hi.error | if . == null then null else "did not answer: " + (tostring | .[0:80]) end) // "not checked this pass")\(if $n > 0 then "; \($n) session\(if $n == 1 then "" else "s" end) not checked\(if ($ol | length) > 0 then " (lead\(if ($ol | length) == 1 then "" else "s" end) \($ol | join(", ")))" else "" end)" else "" end)" | .[0:260];
+  "NEEDS A LOOK (\($nAtt))\(if $nAtt == 0 then ": all clear" else "" end)",
+    ($offHosts[] | "  " + hostrow(.)),
     ($att[] | "  \(.mark) \(.name | pad($w)) \(.word | pad(15))\(.meaning // "" | tostring | .[0:110])"),
     "",
     ( ([$d.hosts[].host] + [$d.sessions[].host] | unique | sort_by(if . == "local" then "" else . end))[] as $h
       | ($d.hosts | map(select(.host == $h)) | first) as $hi
+      | ($offline | map(select(.host == $h))) as $off
       | ($known | map(select(.host == $h and .isLead))) as $leads
       | ($known | map(select(.host == $h and (.isLead | not) and (.parent as $pp | $pp == null or ($leadKeys | index($pp)) == null)))) as $loose
       | ($unk | map(select(.host == $h))) as $hu
-      | select(($leads | length) + ($loose | length) + ($hu | length) > 0)
-      | "\($h)\([ (if $hi == null then empty elif ($hi.ok | not) then "down: " + ($hi.error // "no answer" | tostring | .[0:60]) else empty end),
+      | select(($leads | length) + ($loose | length) + ($hu | length) + ($off | length) > 0)
+      | "\($h)\([ (if $hi == null then (if ($off | length) > 0 then "not checked" else empty end) elif ($hi.ok | not) then "down" else empty end),
                   (if $hi.spot then "Spot" else empty end),
                   (if $hi.bootAt != null and ((now - ($hi.bootAt | ep)) < 86400) then "rebooted \($hi.bootAt | hhmm)" else empty end),
                   (if $hi.daemonAt != null and ((now - ($hi.daemonAt | ep)) < 86400) then "daemon restarted \($hi.daemonAt | hhmm)" else empty end) ]
                 | if length > 0 then " (" + join(", ") + ")" else "" end)",
+        ( if ($off | length) > 0 then
+            ($off | map(select(.isLead)) | map(.name)) as $ol
+            | "  host offline: \($off | length) session\(if ($off | length) == 1 then "" else "s" end) not checked\(if ($ol | length) > 0 then " (lead\(if ($ol | length) == 1 then "" else "s" end) \($ol | join(", ")))" else "" end)",
+              (if $detail == 1 then ($off[] | line("    "; $w - 2)) else empty end)
+          else empty end ),
         ( $leads[] | . as $l | line("  "; $w),
           ( ($known | map(select(.parent == $l.key))) as $kids
             | $kids | to_entries[] | .key as $i | .value
@@ -87,6 +117,13 @@ printf '%s' "$DOC" | TZ="$CM_TZ" jq -r --argjson detail "$DETAIL" --arg tzl "$CM
         ""
       else empty end ),
     "checked \($d.generatedAt | hhmm) \($tzl)\(if $d.mode == "lead" then ", lead " + ($d.lead // "?") else "" end); scripts/cm-status.sh --detail for pids, sessions and host events"'
-NEED="$(printf '%s' "$DOC" | jq -r '[.sessions[] | select(.word | IN("running", "idle", "asleep") | not)] | length')"
+# the same count the NEEDS A LOOK header prints: one row per host that did not answer, plus each session judged on a host that did
+NEED="$(printf '%s' "$DOC" | jq -r '
+  ([.hosts[] | select(.ok) | .host]) as $ok
+  | ([.hosts[] | select(.ok) | .host]) as $ok0
+  | ([.sessions[] | select(('"$RETIRED_QUIET"') | not)]) as $s
+  | ($s | map(select((.unknown // false | not) and .word == "unknown" and (.host as $h | $ok | index($h) == null)))) as $off
+  | ($s | map(select(. as $x | $off | any(.key == $x.key) | not) | select(.word | IN("running", "idle", "asleep") | not))) as $att
+  | ([($off | map(.host)), ([.hosts[] | select(.ok | not) | .host])] | add | unique | length) + ($att | length)')"
 [ "$NEED" = 0 ] || exit 3
 exit 0
