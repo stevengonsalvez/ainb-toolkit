@@ -257,6 +257,7 @@ echo "--- dry run"
 OUT="$("$SCRIPTS/resume.sh" --dry-run 2>/dev/null)"; CALLS="$(cat "$STUB/calls.log")"
 check "dry run: no create, no send"                '[ "$(creates)" = 0 ] && [ "$(sends)" = 0 ]'
 check "dry run: dead row reported as would resume" 'has_line "dev-sweeper +dead +would claude --continue --model sonnet, nudge \(#4612\)"'
+check "terminal list read once per reachable host (local, remote-1), not once per row" '[ "$(printf "%s\n" "$CALLS" | grep -c "^terminal list")" = 2 ] && printf "%s\n" "$CALLS" | grep "^terminal list" | grep -q -- "--environment remote-1 --limit 500" && printf "%s\n" "$CALLS" | grep "^terminal list" | grep -vq -- "--environment"'
 
 echo "--- roster.sh"
 FAKE_TOK="ghp""_abcdefghijkl1234"   # built at run time from two pieces: no token-shaped literal in this file
@@ -421,6 +422,87 @@ mkdir "$CM_HOME/resume.lock"; echo "$$" > "$CM_HOME/resume.lock/pid"
 check "live lock holder: exit 4, no orca call"       '"$SCRIPTS/resume.sh" >/dev/null 2>&1; [ $? = 4 ] && [ ! -s "$STUB/calls.log" ]'
 echo 999999 > "$CM_HOME/resume.lock/pid"
 check "stale lock reclaimed, run proceeds, lock released" '"$SCRIPTS/resume.sh" >/dev/null 2>&1; [ ! -d "$CM_HOME/resume.lock" ]'
+
+echo "--- live count from terminal identity and live states, not from agents[] history"
+# agents[] keeps every past session of a worktree (a real one held 12, all `done`, with 2 terminals open). A terminal counts as an
+# agent only with a non-empty agentIdentity; a bare shell (claude exited) is dead. Counted: the larger of identified terminals of the
+# worktree and live-state top-level agents[] paneKeys. Each lane below has its own worktree, ledger row and terminal list.
+hist() { jq -cn --argjson n "$1" --arg s "$2" '[range(0; $n) | {paneKey: "hist\(.)", parentPaneKey: null, state: $s}]'; }
+lps() { # lps <path> <liveTerminalCount> <agents-json>
+  jq -cn --arg p "$1" --argjson t "$2" --argjson a "$3" '{worktreeId: "wt-\($p | split("/") | last)", path: $p, liveTerminalCount: $t, agents: $a}'; }
+trow() { # trow <worktree-path> <handle> <agentIdentity or null>
+  jq -cn --arg p "$1" --arg h "$2" --arg i "$3" '{handle: $h, worktreeId: "wt-\($p | split("/") | last)", worktreePath: $p, tabId: "tab-\($h)", leafId: "leaf0", agentIdentity: (if $i == "null" then null else $i end)}'; }
+{
+  lps /z/shell-only 1 "$(hist 12 'done')"          # claude exited: old done entries + one open bare shell
+  lps /z/hist-one 2 "$(hist 12 'done')"            # 12 done entries, one real agent terminal and one shell
+  lps /z/two-term 2 "$(hist 12 'done')"            # 12 done entries, two real agent terminals
+  lps /z/nolist 1 "$(hist 3 'done')"               # shell only, but the terminal list cannot be read
+  lps /z/ent-only 1 "$(hist 1 working)"            # a working entry, no terminal row for it at all
+  lps /z/other-tree 1 "$(hist 3 'done')"           # bare shell here; the identified terminal belongs to another worktree
+  lps /z/by-path 1 "$(hist 3 'done')"              # identified terminal has no worktreeId, only an un-normalised path
+  lps /z/zero-ltc 0 "$(hist 4 'done')"             # Orca says no terminal is open: dead without needing the list
+} | jq -s '{ok: true, result: {worktrees: ., totalCount: length}}' > "$STUB/ps-local.json"
+rm -f "$STUB/ps-local.late.json"
+{
+  trow /z/shell-only s1 null
+  trow /z/hist-one a1 claude; trow /z/hist-one s1 null
+  trow /z/two-term a1 claude; trow /z/two-term a2 claude
+  trow /z/nolist s1 null
+  trow /z/other-tree s1 null; trow /z/elsewhere a-elsewhere claude
+  jq -cn '{handle: "p1", worktreePath: "/z/./by-path/", tabId: "tab-p1", leafId: "leaf0", agentIdentity: "claude"}'
+} | jq -s '{ok: true, result: {totalCount: length, terminals: .}}' > "$STUB/terms-local.json"
+: > "$STUB/cwds.txt"
+cat > "$CM_HOME/ledger.json" <<'J'
+{"updatedAt": "2026-11-19T06:00:00Z",
+ "workers": {
+  "w-shell":  {"lane": "shell-only", "host": "local", "agent": "claude", "model": "sonnet", "path": "/z/shell-only", "task": "#9001 shell only", "lastComment": "cm:running"},
+  "w-hist":   {"lane": "hist-one",   "host": "local", "agent": "claude", "model": "sonnet", "path": "/z/hist-one",   "task": "#9002 history", "lastComment": "cm:running"},
+  "w-two":    {"lane": "two-term",   "host": "local", "agent": "claude", "model": "sonnet", "path": "/z/two-term",   "task": "#9003 two", "lastComment": "cm:running"},
+  "w-nolist": {"lane": "nolist",     "host": "local", "agent": "claude", "model": "sonnet", "path": "/z/nolist",     "task": "#9004 nolist", "lastComment": "cm:running"},
+  "w-ent":    {"lane": "ent-only",   "host": "local", "agent": "claude", "model": "sonnet", "path": "/z/ent-only",   "task": "#9005 entry", "lastComment": "cm:running"},
+  "w-other":  {"lane": "other-tree", "host": "local", "agent": "claude", "model": "sonnet", "path": "/z/other-tree", "task": "#9006 other", "lastComment": "cm:running"},
+  "w-path":   {"lane": "by-path",    "host": "local", "agent": "claude", "model": "sonnet", "path": "/z/by-path",    "task": "#9007 path", "lastComment": "cm:running"},
+  "w-zero":   {"lane": "zero-ltc",   "host": "local", "agent": "claude", "model": "sonnet", "path": "/z/zero-ltc",   "task": "#9008 zero", "lastComment": "cm:running"}}}
+J
+rm -f "$CM_HOME/roster.yaml"
+lrun() { # lrun <lane>: one resume run for that lane, clean stub state
+  : > "$STUB/calls.log"; rm -f -- "${STUB:?}"/handle-* "${STUB:?}/n" "${STUB:?}"/pscount-*; rm -rf -- "${CM_HOME:?}/resume.attempts" "${CM_HOME:?}/resume.lock"
+  OUT="$("$SCRIPTS/resume.sh" --lane "$1" 2>/dev/null)"; RC=$?; CALLS="$(cat "$STUB/calls.log")"
+}
+lrun shell-only
+check "(1) shell-only: terminal agentIdentity null, 3+ old done entries: dead, resumed, nudged, no ask" 'has_line "shell-only +dead +claude --continue --model sonnet, nudged \(#9001\)" && [ "$(creates)" = 1 ] && [ "$(sends)" = 1 ] && ! has_line "^ask Owner" && [ "$RC" = 0 ]'
+lrun hist-one
+check "(2) 12 done entries + one identified terminal (+ a shell): exactly 1 live agent, left alone, no ask" 'has_line "hist-one +live +left alone" && ! has_line "duplicate" && ! has_line "^ask Owner" && [ "$(creates)" = 0 ] && [ "$(sends)" = 0 ]'
+lrun two-term
+check "(3) two identified terminals: 2 live agents, duplicate, ask raised, nothing sent" 'has_line "two-term +duplicate +sent to neither" && has_line "^ask Owner: two-term: 2 live agents" && [ "$(creates)" = 0 ] && [ "$(sends)" = 0 ] && [ "$RC" = 3 ]'
+mv "$STUB/terms-local.json" "$STUB/terms-local.keep"
+lrun nolist
+check "(4a) terminal list cannot be read (CLI fails): unknown, left alone, nothing created or sent" 'has_line "nolist +unknown +live count unreadable, left alone" && [ "$(creates)" = 0 ] && [ "$(sends)" = 0 ] && [ "$RC" = 3 ]'
+lrun zero-ltc
+check "(4b) unreadable list, liveTerminalCount 0 (Orca: nothing open): still dead and resumed, the list is not needed" 'has_line "zero-ltc +dead +claude --continue --model sonnet, nudged \(#9008\)" && [ "$(creates)" = 1 ]'
+echo 'this is not json' > "$STUB/terms-local.json"
+lrun nolist
+check "(4c) malformed terminal list: unknown, left alone" 'has_line "nolist +unknown +live count unreadable, left alone" && [ "$(creates)" = 0 ] && [ "$(sends)" = 0 ]'
+echo '{"ok":true,"result":{"terminals":[],"truncated":true}}' > "$STUB/terms-local.json"
+lrun nolist
+check "(4d) terminal list cut off (truncated): unknown, not 'fewer terminals'" 'has_line "nolist +unknown +live count unreadable, left alone" && [ "$(creates)" = 0 ]'
+echo '{"ok":true,"result":{"terminals":[],"totalCount":9}}' > "$STUB/terms-local.json"
+lrun nolist
+check "(4e) terminal list with totalCount above its rows: unknown" 'has_line "nolist +unknown +live count unreadable, left alone" && [ "$(creates)" = 0 ]'
+echo '{"ok":true,"result":{"terminals":["not-an-object"]}}' > "$STUB/terms-local.json"
+lrun nolist
+check "(4f) terminal list holding a row that is not an object: unknown" 'has_line "nolist +unknown +live count unreadable, left alone" && [ "$(creates)" = 0 ]'
+mv "$STUB/terms-local.keep" "$STUB/terms-local.json"
+lrun ent-only
+check "(5) live-state (working) entry with no terminal row: still 1 live agent, never respawned on doubt" 'has_line "ent-only +live +left alone" && [ "$(creates)" = 0 ] && [ "$(sends)" = 0 ]'
+lrun other-tree
+check "(6) an identified terminal of ANOTHER worktree does not make this bare-shell lane live" 'has_line "other-tree +dead +claude --continue --model sonnet, nudged \(#9006\)" && [ "$(creates)" = 1 ]'
+lrun by-path
+check "(7) terminal row with no worktreeId is matched by normalised path (/z/./by-path/): live" 'has_line "by-path +live +left alone" && [ "$(creates)" = 0 ]'
+# the fetch is once per host even over a many-row run
+: > "$STUB/calls.log"; rm -rf -- "${CM_HOME:?}/resume.attempts" "${CM_HOME:?}/resume.lock"
+OUT="$("$SCRIPTS/resume.sh" --dry-run 2>/dev/null)"; CALLS="$(cat "$STUB/calls.log")"
+check "(8) 8 rows on one host: one terminal list call in the census" '[ "$(printf "%s\n" "$CALLS" | grep -c "^terminal list")" = 1 ]'
 
 echo "passed=$PASS failed=$FAIL"
 [ "$FAIL" = 0 ]
