@@ -1181,6 +1181,12 @@ OUT="$(mac "$LH" sleep w-b --apply 2>&1)"
 check "no /proc on a remote host: sleep --apply checks the cwd there with lsof and stops the exact pid" \
   'grep -q "^kill 301$" "$STUB/calls.log" && [ ! -d "$PR/301" ] && [ "$(jq -r ".workers[\"w-b\"].state" "$CM_HOME/ledger.json")" = asleep ]' "$OUT"
 
+echo "--- cm-status skill entry"
+# shellcheck disable=SC2034  # read inside the eval of check()
+CMS="$SCRIPTS/../companions/cm-status.md"
+check "the cm-status companion is installable as a skill: it names itself cm-status and carries a description" \
+  '[ "$(sed -n "s/^name: //p" "$CMS" | head -1)" = cm-status ] && sed -n "1,6p" "$CMS" | grep -q "^description: ."'
+
 echo "--- cm-status view"
 reset_world
 ledger "{\"w-lead-a\":$(row "$LEAD_A" '{"standing":true,"lane":"lead-a"}'),
