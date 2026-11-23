@@ -208,6 +208,76 @@ cm_cli_host_into() {
   if [ "$_cm_h" = local ]; then eval "$1=()"; else eval "$1=(--environment \"\$_cm_h\")"; fi
 }
 
+# cm_wt_dedupe: filter a `worktree list` or `worktree ps` JSON reply on stdin to stdout, keeping ONE row per worktree.
+# Why: the fleet CLI can return duplicate rows for one worktree, one of them with `comment` null. A reader that
+# takes `[0]` or `first` of a per-worktree match then reads a live worker as MISSING / unowned, so EVERY reader of those
+# replies runs this filter on the reply before it looks at a row. The rule, in one place:
+#   - rows are the same worktree when they share `path` (else `worktreeId`; a row with neither is never merged);
+#   - among duplicates the first row with a non-empty `comment` (not null, not "") wins, the first row when none has one;
+#   - the survivor keeps the place of the first duplicate (order is stable), and keeps its other fields, but the fields that
+#     say what is RUNNING are merged over every duplicate of that worktree (without it the survivor would drop the
+#     other copy's live agent): `agents` concatenated without repeats, `liveTerminalCount` the largest, `childWorktreeIds`
+#     the union. A field no duplicate has is not added. `cm_wt_dedupe --no-merge` keeps the pick-one behaviour, for a caller that reads
+#     what is running from the raw rows itself;
+#   - `result.totalCount`, when it counts rows (is at least the raw row count), drops by the rows removed, so the
+#     "totalCount > rows" truncation test does not fire on a list that was whole (a count already below the
+#     raw row count counted worktrees and is left alone).
+# A valid JSON reply that has no `result.worktrees` array (an `ok:false` error object, say) passes through unchanged, so the
+# caller's own checks say why it is unusable. A reply the filter cannot process (not JSON, empty, or the jq program fails)
+# FAILS CLOSED: exit 1 and NOTHING on stdout, never the raw input, so a caller cannot read an
+# unfiltered duplicate-row list as if it were clean. Every caller treats the failure as an unreadable reply.
+# shellcheck disable=SC2016  # the jq program is single-quoted on purpose
+CM_WT_DEDUPE_JQ='
+  def wtkey($i): if type == "object" and (.path | type) == "string" and .path != "" then "p:" + .path
+                 elif type == "object" and (.worktreeId | type) == "string" and .worktreeId != "" then "i:" + .worktreeId
+                 else "n:" + ($i | tostring) end;
+  def nocomment: ((try .comment catch null) // "") == "";
+  def uniqs: reduce .[] as $x ([]; if any(.[]; . == $x) then . else . + [$x] end);
+  def arr($f): if (.[$f] | type) == "array" then .[$f] else [] end;
+  def has_f($rows; $f): any($rows[]; type == "object" and has($f));
+  def busy: . == "working" or . == "permission" or . == "waiting";
+  # two snapshots of the same pane (same paneKey and parentPaneKey) are one agent: the newer updatedAt wins
+  def agentkey: if type == "object" and (.paneKey | type) == "string" then "k:" + .paneKey + "|" + ((.parentPaneKey // "") | tostring) else "o:" + tojson end;
+  def uniqagents: (reduce .[] as $x ({keys: [], items: []};
+      ($x | agentkey) as $k | (.keys | index($k)) as $i
+      | if $i == null then .keys += [$k] | .items += [$x]
+        elif ($x | type) == "object" and ((.items[$i].updatedAt // "") < ($x.updatedAt // "")) then .items[$i] = $x
+        else . end)) | .items;
+  def mergeruns($rows):
+    if type != "object" then . else
+      (if has_f($rows; "agents") then .agents = ([$rows[] | select(type == "object") | arr("agents")[]] | uniqagents) else . end)
+      | (if has_f($rows; "childWorktreeIds") then .childWorktreeIds = ([$rows[] | select(type == "object") | arr("childWorktreeIds")[]] | uniqs) else . end)
+      | ([$rows[] | select(type == "object") | .liveTerminalCount | numbers]) as $c
+      | (if ($c | length) > 0 then .liveTerminalCount = ($c | max) else . end)
+      # a busy copy makes the merged row busy, so the status agrees with the merged agents
+      | ([$rows[] | select(type == "object") | .status | select(busy)] | first) as $b
+      | (if $b != null then .status = $b else . end)
+    end;
+  if (.result | type) == "object" and (.result.worktrees | type) == "array" then
+    .result.worktrees as $w | ($w | length) as $n
+    | (reduce range(0; $n) as $i ({order: [], by: {}, all: {}};
+        $w[$i] as $r
+        | ($r | wtkey($i)) as $k
+        | if .by[$k] == null then .order += [$k] | .by[$k] = $r
+          else .all[$k] = ((.all[$k] // [.by[$k]]) + [$r])
+            | if (.by[$k] | nocomment) and ($r | nocomment | not) then .by[$k] = $r else . end end)) as $g
+    | ($g.order | map(. as $k | $g.by[$k] as $s | if $merge and ($g.all[$k] != null) then ($s | mergeruns($g.all[$k])) else $s end)) as $rows
+    | .result.worktrees = $rows
+    | if (.result.totalCount | type) == "number" and .result.totalCount >= $n
+      then .result.totalCount -= ($n - ($rows | length)) else . end
+  else . end'
+cm_wt_dedupe() {
+  local in out merge=true
+  [ "${1:-}" != --no-merge ] || merge=false
+  in="$(cat)"
+  if out="$(printf '%s' "$in" | jq -c --argjson merge "$merge" "$CM_WT_DEDUPE_JQ" 2>/dev/null)" && [ -n "$out" ]; then
+    printf '%s\n' "$out"
+  else
+    cm_warn "cm_wt_dedupe: the reply could not be filtered (not JSON, empty, or the filter failed): not passing it on"
+    return 1
+  fi
+}
+
 # cm_ssh_target <host>: what to give `ssh` to reach a non-local host. ONE rule for every script that opens an ssh session
 # to a fleet host (cutover-host.sh, live-agent.sh, discover.sh). In order:
 #   1. $CM_SSH_TARGET (one host's alias, given per run);
