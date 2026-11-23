@@ -31,10 +31,16 @@ want deny SendMessage '*'
 want allow SendMessage 'af1bdeb37428c11e6'
 want allow SendMessage 'a28db5b89b29c8c21'
 want allow SendMessage '3f2a9c10b7e4'
+want allow SendMessage 'acode-reviewer-0123456789abcdef'
+want deny SendMessage 'a-lead-concertmaster'
 # allow: other tools, no recipient, a session outside the project
 want allow Bash 'rs-lead-g-4f'
 want allow SendMessage 'rs-lead-g-4f' /home/user/other-project
 [ -z "$(jq -n --arg w "$CWD" '{tool_name:"SendMessage",cwd:$w,tool_input:{message:"hi"}}' | "$HOOK")" ] && echo "ok   allow: no recipient" || { echo "FAIL no recipient"; fail=1; }
+# a broadcast payload has type "broadcast" and no recipient: denied in scope, allowed outside
+bc() { jq -n --arg w "$1" '{tool_name:"SendMessage",cwd:$w,tool_input:{type:"broadcast",message:"hi"}}' | "$HOOK"; }
+[ "$(bc "$CWD" | jq -r '.hookSpecificOutput.permissionDecision' 2>/dev/null)" = deny ] && echo "ok   deny: type broadcast, no recipient" || { echo "FAIL broadcast type"; fail=1; }
+[ -z "$(bc /home/user/other-project)" ] && echo "ok   allow: broadcast outside the project" || { echo "FAIL broadcast outside"; fail=1; }
 # the env escape hatch
 [ -z "$(CM_ALLOW_SENDMESSAGE=1 bash -c 'jq -n --arg w "$1" "{tool_name:\"SendMessage\",cwd:\$w,tool_input:{to:\"rs-lead-g-4f\"}}" | "$2"' _ "$CWD" "$HOOK")" ] && echo "ok   allow: CM_ALLOW_SENDMESSAGE=1" || { echo "FAIL env escape"; fail=1; }
 # a malformed payload never blocks

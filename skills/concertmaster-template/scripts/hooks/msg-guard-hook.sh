@@ -7,7 +7,7 @@
 # rebooted session loses it. A denial with the fix costs the agent one turn.
 #
 # Denies SendMessage when the recipient is anything but an agent id: a named session
-# (rs-lead-g-4f), a uds:/run/user/<uid>/cc-socks/<pid>.sock target, or a broadcast (*).
+# (rs-lead-g-4f), a uds:/run/user/<uid>/cc-socks/<pid>.sock target, or a broadcast (to "*", or type "broadcast" with no recipient).
 # Allowed: an agent id (continuing one's own subagent), no recipient, any other tool, any parse
 # doubt, a missing jq, a session outside this project's checkouts (same scope as rm-guard-hook.sh:
 # worktrees.path_match, or a git origin in github.org), and CM_ALLOW_SENDMESSAGE=1 in the env.
@@ -20,10 +20,14 @@ command -v jq >/dev/null 2>&1 || exit 0
 [ "$(printf '%s' "$input" | jq -r '.tool_name // empty' 2>/dev/null)" = SendMessage ] || exit 0
 [ "${CM_ALLOW_SENDMESSAGE:-0}" = 1 ] && exit 0
 to="$(printf '%s' "$input" | jq -r '(.tool_input.to // .tool_input.recipient // .tool_input.target // empty) | tostring' 2>/dev/null)"
+if [ -z "$to" ]; then
+  # a broadcast carries type "broadcast" and no recipient: it reaches every session
+  [ "$(printf '%s' "$input" | jq -r '.tool_input.type // empty' 2>/dev/null)" = broadcast ] && to='*'
+fi
 [ -n "$to" ] || exit 0
 case "$to" in
   uds:*|*cc-socks*) ;;
-  *) printf '%s' "$to" | grep -qE '^a?[0-9a-f]{8,}$' && exit 0 ;;   # an agent id: the caller's own subagent
+  *) printf '%s' "$to" | grep -qE '^(a?[0-9a-f]{8,}|a([A-Za-z0-9_-]{1,63}-)?[0-9a-f]{16})$' && exit 0 ;;   # an agent id (plain or named): the caller's own subagent
 esac
 
 # Scope: this project's checkouts only (a global hook must not change other projects).
