@@ -1,6 +1,6 @@
 # Weekly usage and the account switch
 
-Hard rule 28 in `SKILL.md` points here. Agent plans carry a weekly usage allowance. When the
+Hard rule 29 in `SKILL.md` points here. Agent plans carry a weekly usage allowance. When the
 account a host is signed in to runs out, every lane on that host stalls. This page is how the
 concertmaster watches the figure and moves the fleet to a fresh account BEFORE that happens.
 

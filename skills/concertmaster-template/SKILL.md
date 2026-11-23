@@ -295,7 +295,7 @@ The lane set above is the default; `cfg.lanes` is the list in use.
     in a tick turn they stay `WAITING` rows and `asks[]` entries. Why: a question in prose raises no notification, so a
     blocked session waits unseen.
 
-28. **Track weekly usage every tick and switch the permitted hosts at 75%.** Each tick records the
+29. **Track weekly usage every tick and switch the permitted hosts at 75%.** Each tick records the
     weekly usage figure per host (an unreadable host is "unread", never "low"). When the active
     account on any `role: general` host of `hosts.per_host` reaches 75%, move those hosts to an
     account under 75% with the ONE script of `references/account-switch.md`: switch by account
