@@ -200,10 +200,10 @@ This skill and `/security-audit` serve different purposes and are complementary:
 | | `/security-scan` | `/security-audit` |
 |--|------------------|-------------------|
 | **Speed** | Fast (seconds) | Slow (minutes) |
-| **Scope** | `.claude/` config files only | Full codebase |
-| **Method** | Static pattern matching | Three-agent adversarial AI |
+| **Scope** | `.claude/` config files only | Full codebase (Cloudflare security-audit skill) |
+| **Method** | Static pattern matching | Multi-phase agent audit, each finding independently verified |
 | **Best for** | Quick hygiene checks, CI/CD | Pre-deployment deep review |
-| **Requires API key** | No (except --opus) | Yes |
+| **Requires API key** | No (except --opus) | No extra key; runs on the host agent |
 
 **Recommended workflow**: Run `/security-scan` frequently (before commits, after config
 changes). Run `/security-audit` before major deployments or after touching sensitive areas

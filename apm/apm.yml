@@ -23,6 +23,8 @@ dependencies:
     - pbakaus/impeccable#8644175285360c166e57b1e35ecadfbc85ff5209
     - tt-a1i/archify/archify#25cf37080fc8b1dbe758a4efc3935b55f3327083
     - citrolabs/ego-lite/skills/ego-browser#aecc5831fc5a9ea01a078b632185992a3a7ac448
+    # Cloudflare multi-phase security audit (replaced the bundled ECC-derived security-audit, 2026-11-19)
+    - cloudflare/security-audit-skill/skills/security-audit#c1c8a8c1471069fb0e188eeaff69b8e8db6564a8
     # cua-driver skill; the CLI itself comes from cua.ai/driver/install.sh (see external-dependencies.yaml)
     - trycua/cua/libs/cua-driver/rust/Skills/cua-driver#3d6be5173e4feb3e0b2f5c303e3196216d33d216
 
@@ -86,7 +88,6 @@ dependencies:
     - stevengonsalvez/ainb-toolkit/skills/resume-formatter
     - stevengonsalvez/ainb-toolkit/skills/retro-pdf
     - stevengonsalvez/ainb-toolkit/skills/scrapling-official
-    - stevengonsalvez/ainb-toolkit/skills/security-audit
     - stevengonsalvez/ainb-toolkit/skills/security-scan
     - stevengonsalvez/ainb-toolkit/skills/sentry-cli
     - stevengonsalvez/ainb-toolkit/skills/session-info
