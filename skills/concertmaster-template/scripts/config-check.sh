@@ -104,6 +104,35 @@ opt "health minutes, seconds and hours are whole numbers" '.health' \
   'type == "object" and all(to_entries[] | select(.key | test("_(minutes|seconds|hours)$")); .value == null or (.value | type == "number" and . >= 0 and . == floor))'
 opt "health.cloud is gce or none"                       '.health.cloud' 'IN("gce", "none")'
 opt "health.ignore_hosts is a list of host names"         '.health.ignore_hosts' 'type == "array" and all(.[]; type == "string" and test("^[A-Za-z0-9._-]+$"))'
+opt "health.host_aliases maps a host name to a list of host names" '.health.host_aliases' \
+  'type == "object" and all(to_entries[]; (.key | test("^[A-Za-z0-9._-]+$")) and (.value | type == "array" and all(.[]; type == "string" and test("^[A-Za-z0-9._-]+$"))))'
+# One identity set across every host: its key, its per_host hostname, its health.host_aliases, and its ledger
+# hosts.<h>.hostname (read first by lane-health.sh). The probe and the stop check before a sleep trust a host that answers
+# as any of its names, so a name that belongs to two hosts would let one machine pass for the other, and a sleep could
+# stop a session on the wrong host. Names are compared as the probe does: lowercase, cut at the first dot. A name equal to
+# its OWN host's key or hostname is only redundant, so it passes. The ledger is read when it exists in $CM_HOME.
+LEDGER_IDS='{}'
+if [ -r "$(cm_ledger_path)" ] && jq -e '.hosts | type == "object"' "$(cm_ledger_path)" >/dev/null 2>&1; then
+  LEDGER_IDS="$(jq -c '{hosts: (.hosts | map_values({hostname: (.hostname // null)}))}' "$(cm_ledger_path)" 2>/dev/null || echo '{}')"
+  ok "host identity set includes the ledger hosts.<h>.hostname values"
+else
+  printf 'INFO host identity set: no ledger at %s, its hostnames are not compared\n' "$(cm_ledger_path)"
+fi
+# shellcheck disable=SC2016  # jq program
+IDENT_JQ='def sn: ascii_downcase | split(".")[0];
+   def arr: if type == "array" then .[] else empty end;
+   (.hosts.per_host // {}) as $ph | (.health.host_aliases // {}) as $al | ($led.hosts // {}) as $lh
+   | (([$ph | keys[]] + [$al | keys[]] + [$lh | keys[]]) | unique) as $hs
+   | [ $hs[] | . as $h
+       | ([$h] + [(($ph[$h] // {}).hostname // empty) | strings] + [($al[$h] // null) | arr | strings] + [(($lh[$h] // {}).hostname // empty) | strings])
+       | map(sn) | unique | map({n: ., h: $h})[] ]
+   | group_by(.n) | map(select((map(.h) | unique | length) > 1) | .[0].n) | .[]'
+COLL="$(printf '%s' "$JSON" | jq -r --argjson led "$LEDGER_IDS" "$IDENT_JQ" 2>/dev/null | tr '\n' ' ')"
+if [ -z "${COLL// /}" ] && printf '%s' "$JSON" | jq -e --argjson led "$LEDGER_IDS" "[$IDENT_JQ] | length == 0" >/dev/null 2>&1; then
+  ok "no host name (key, hostname, alias, ledger hostname) belongs to two hosts"
+else
+  bad "no host name (key, hostname, alias, ledger hostname) belongs to two hosts: ${COLL:-unreadable}"
+fi
 opt "health.daemon_units is a list of unit names"       '.health.daemon_units' 'type == "array" and all(.[]; type == "string" and test("^[A-Za-z0-9@._:-]+$"))'
 opt "health.alerts.send is a command (or empty: inbox note only)" '.health.alerts.send' 'type == "string"'
 

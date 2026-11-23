@@ -1,6 +1,6 @@
 ---
 name: cm-status
-description: Plain-words status of the whole agent fleet the concertmaster runs. Shows a NEEDS A LOOK box first, then every host, every lead on it and the sessions each lead owns, each with a mark and one word (running, idle, waiting on you, stuck, stopped, asleep, unknown) and a one-line meaning for anything not running, such as "stopped: the server restarted at 10:27 and this one did not come back; I will retry once". Use when the owner asks what is running, what stopped, whether a lead is alive, or after a reboot. Read-only. Template copy: place at .agents/skills/cm-status/SKILL.md next to the concertmaster skill.
+description: Plain-words status of the whole agent fleet the concertmaster runs. Shows a NEEDS A LOOK box first, then every host, every lead on it and the sessions each lead owns, each with a mark and one word (running, idle, waiting on you, stuck, stopped, asleep, unknown) and a one-line meaning for anything not running, such as "stopped: the server restarted at 10:27 and this one did not come back; I will retry once". Use when the owner asks what is running, what stopped, whether a lead is alive, or after a reboot. Read-only. Install at .agents/skills/cm-status/SKILL.md next to the concertmaster skill: a relative link to this file (one text, no copy to keep in step) or a copy.
 argument-hint: "[--detail] [--lead <worker-id>]"
 ---
 
@@ -29,6 +29,17 @@ host-a (Spot, rebooted 10:27)
   epic-lead           ● running        cm:running route guard PR #10
     ├ task-1          ● running        cm:running review of PR #12
     └ task-2          ○ idle           fine, nothing to do
+```
+
+A host that did not answer is ONE row in the box, with the reason in plain words, and one `host offline` line in the
+tree; its sessions are counted, not listed (`--detail` lists them). Done and retired workers on a host that did not answer are not shown.
+
+```text
+NEEDS A LOOK (1)
+  build-mac    ✗ down           does not resolve: stale name in config, check hosts[]; 2 sessions not checked
+
+build-mac (down)
+  host offline: 2 sessions not checked (lead epic-lead)
 ```
 
 | mark | word | means |

@@ -133,6 +133,36 @@ if [ "$got" = "$ROOT/home/config.yaml" ]; then pass "\$CM_HOME/config.yaml is th
 printf 'schema: z\n' > "$ROOT/skill/config.yaml"
 got="$(pick CM_HOME="$ROOT/home")"
 if [ "$got" = "$ROOT/skill/scripts/../config.yaml" ]; then pass "config.yaml next to SKILL.md beats config.example.yaml and CM_HOME"; else fail "skill config preferred" "$got"; fi
+# health.host_aliases: a name must not be another host's key, hostname or alias (the probe's identity check and the stop
+# check before a sleep would take that machine for this host). Base: two hosts with a hostname each.
+yq '.hosts.per_host.host-a = {"role": "general", "hostname": "alpha"} | .hosts.per_host.host-b = {"role": "general", "hostname": "beta"}' "$EXAMPLE" > "$ROOT/ident-base.yaml"
+doctor "the base config with two distinct hostnames passes"      "$ROOT/ident-base.yaml" 0 'config-check: 0 failed'
+yq '.health.host_aliases.host-b = ["beta-alt"]' "$ROOT/ident-base.yaml" > "$ROOT/alias-ok.yaml"
+doctor "a host alias nobody else owns passes"                   "$ROOT/alias-ok.yaml" 0 'config-check: 0 failed'
+yq '.health.host_aliases.host-b = ["alpha"]' "$ROOT/ident-base.yaml" > "$ROOT/alias-hostname.yaml"
+doctor "an alias equal to another host's hostname fails"        "$ROOT/alias-hostname.yaml" 1 "FAIL no host name"
+yq '.health.host_aliases.host-b = ["HOST-A"]' "$ROOT/ident-base.yaml" > "$ROOT/alias-key.yaml"
+doctor "an alias equal to another host's key fails (case ignored)" "$ROOT/alias-key.yaml" 1 "FAIL no host name"
+yq '.health.host_aliases.host-a = ["vm-0-12"] | .health.host_aliases.host-b = ["vm-0-12"]' "$ROOT/ident-base.yaml" > "$ROOT/alias-twice.yaml"
+doctor "a name listed under two hosts fails"                    "$ROOT/alias-twice.yaml" 1 "FAIL no host name"
+yq '.health.host_aliases.host-b = ["host-b", "Host-B.example.net"]' "$ROOT/ident-base.yaml" > "$ROOT/alias-own.yaml"
+doctor "an alias equal to its own host's key is only redundant, it passes" "$ROOT/alias-own.yaml" 0 'config-check: 0 failed'
+yq '.hosts.per_host.host-a.hostname = "beta"' "$ROOT/ident-base.yaml" > "$ROOT/ident-hostnames.yaml"
+doctor "host-a.hostname equal to host-b's hostname fails"        "$ROOT/ident-hostnames.yaml" 1 "FAIL no host name .*beta"
+yq '.hosts.per_host.local.hostname = "box-main" | .health.host_aliases.host-b = ["box-main"]' "$ROOT/ident-base.yaml" > "$ROOT/ident-local.yaml"
+doctor "an alias equal to local's hostname fails"                "$ROOT/ident-local.yaml" 1 "FAIL no host name .*box-main"
+yq '.hosts.per_host.local.hostname = "box-main"' "$ROOT/ident-base.yaml" > "$ROOT/ident-local-ok.yaml"
+doctor "local's own hostname alone passes"                       "$ROOT/ident-local-ok.yaml" 0 'config-check: 0 failed'
+yq '.health.host_aliases.host-b = "beta-alt"' "$ROOT/ident-base.yaml" > "$ROOT/alias-notlist.yaml"
+doctor "an alias value that is not a list fails"                 "$ROOT/alias-notlist.yaml" 1 'FAIL health.host_aliases'
+mkdir -p "$CM_HOME"
+printf '{"schema":"concertmaster.ledger/v1","workers":{},"hosts":{"host-b":{"hostname":"alpha"}}}\n' > "$CM_HOME/ledger.json"
+doctor "a ledger hosts.<h>.hostname equal to another host's hostname fails" "$ROOT/ident-base.yaml" 1 "FAIL no host name .*alpha"
+printf '{"schema":"concertmaster.ledger/v1","workers":{},"hosts":{"host-b":{"hostname":"beta"}}}\n' > "$CM_HOME/ledger.json"
+doctor "a ledger hostname that is its own host's name passes, with the ledger read" "$ROOT/ident-base.yaml" 0 'ledger hosts'
+rm -f "$CM_HOME/ledger.json"
+doctor "with no ledger the check says INFO and the config still passes" "$ROOT/ident-base.yaml" 0 'INFO host identity set: no ledger'
+
 printf 'schema: w\n' > "$ROOT/override.yaml"
 # shellcheck disable=SC2016
 got="$(env CM_CONFIG="$ROOT/override.yaml" CM_HOME="$ROOT/home" bash -c '. "$1"; cm_config_file' _ "$ROOT/skill/scripts/lib.sh" 2>/dev/null)"
