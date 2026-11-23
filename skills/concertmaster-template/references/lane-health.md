@@ -45,6 +45,11 @@ Three things decide whether a host "answered", and each is a host fact, never a 
 | timeout | the probe (one scan of every process, a git status per worktree, a few bounded reads of the journal and systemd) outran `health.probe_seconds` (150, env `CM_HEALTH_PROBE_S`, never more than 300: a larger value is cut to 300 with a warning; `timeout(1)` exit 124 and the perl-alarm fallback's 142 both mean timeout). All hosts are probed at the same time, so the probe phase costs the slowest bound, never the sum, and stays inside the tick's 600 s call. On a loaded machine (load average 30 to 85) the old 40 s bound ran out on this machine itself and every local session read as unknown | raise `health.probe_seconds` if it keeps happening; a timeout still costs one host row, not one row per session |
 | ssh | the name does not resolve (a stale name in `hosts[]`), the host key fails verification, the key is refused, or the network is down | fix the stale name or key; a host gone for good goes in `health.ignore_hosts` |
 
+A worker whose ledger state is `retired`, `done` or `teardown` (or, when it is not a lead, whose worktree comment starts
+`cm:done` or `cm:retire`) is not expected to run: it is never reported for a host that did not answer. A row in state
+`retired`, `done` or `teardown` is not asked about in the probe either. A standing lead is never skipped this way, whatever its state. `cm-status.sh` hides such a row only when its host did not answer; on a host that answered it is shown (a headless agent has no pid in the document, and is still an agent that runs). It is
+still judged when a process does run there (`retired work came back`).
+
 | fact | source |
 |---|---|
 | live agents | processes of this user on a terminal whose command is a `respawn.live_agents` name; never a zombie or a tty-less daemon. Read from `/proc` on Linux; on a host with no `/proc` (macOS) from `ps -A` (pid, uid, parent, state, tty, elapsed time, name, argv) with each agent's cwd from `lsof -a -p <pid> -d cwd`. A live agent whose cwd `lsof` cannot read, that is missing from the argv table, or whose command changed by the time its cwd is read makes the scan incomplete; with no `ps` or `lsof` the host is `unknown` and says why |

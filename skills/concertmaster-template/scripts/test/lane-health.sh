@@ -238,6 +238,10 @@ echo "Host key verification failed." > "$STUB/ssh-down-host-g"
 OUT="$(lhj --all --no-write)"
 check "(c) a name that does not resolve and a failing host key are told apart, each in plain words" \
   '[ "$(jq -r ".hosts[] | select(.host == \"host-m\") | .kind" <<<"$OUT")" = unresolvable ] && jq -r ".hosts[] | select(.host == \"host-m\") | .hint" <<<"$OUT" | grep -q "does not resolve: stale name in config, check hosts" && [ "$(jq -r ".hosts[] | select(.host == \"host-g\") | .kind" <<<"$OUT")" = hostkey ] && jq -r ".hosts[] | select(.host == \"host-g\") | .hint" <<<"$OUT" | grep -q "host key verification failed"' "$OUT"
+check "(d) done, retired and cm:done workers on a host that did not answer are not reported; a standing lead with a cm:done comment is" \
+  '[ "$(jq -r "[.sessions[] | select(.host == \"host-m\" or .host == \"host-g\") | .name] | sort | join(\",\")" <<<"$OUT")" = "k1,k2,lead-c,lead-d,lead-g" ]' "$(jq -c '[.sessions[] | [.name, .host, .word]]' <<<"$OUT")"
+check "(d) retired work that is running again is still reported (it is not expected to run, but it does)" \
+  '[ "$(word "$OUT" w-retired-2)" = unknown ] && meaning "$OUT" w-retired-2 | grep -q "retired work came back"'
 rm -f "$STUB/ssh-down-host-m" "$STUB/ssh-down-host-g"
 
 # (b) host identity: the name a host answers as is not always its Orca name
@@ -284,6 +288,16 @@ check "(b) --act: the worker on host-b (answers as its alias ip-b-1) is stopped 
   'grep -q "^kill 401$" "$STUB/calls.log" && grep -q "terminal close .*host=host-b.*handle=term_dr" "$STUB/calls.log"' "$OUT$(cat "$ROOT/lh.err")"
 rm -f "$STUB"/answers-*
 printf '{"ok":true,"result":{"hosts":[{"kind":"local","name":"this machine"}]}}\n' > "$STUB/hosts.json"
+# a standing lead is never skipped, whatever its state, on a host that did not answer
+reset_world
+mkdir -p "$W/lead-z" "$W/done-z"
+ledger "{\"w-lead-z\":$(row "$W/lead-z" '{"host":"host-z","standing":true,"lane":"lead-z","state":"done"}'),\"w-done-z\":$(row "$W/done-z" '{"host":"host-z","state":"done"}')}"
+touch "$STUB/ssh-down-host-z"
+OUT="$(lhj --all --no-write)"
+check "a standing lead whose state is done on a host that did not answer is still reported; a done worker beside it is not" \
+  '[ "$(jq -r "[.sessions[] | select(.host == \"host-z\") | .name] | join(\",\")" <<<"$OUT")" = lead-z ]' "$(jq -c '[.sessions[] | [.name, .state, .word]]' <<<"$OUT")"
+rm -f "$STUB/ssh-down-host-z"
+
 # the probes run at the same time and the bound has a ceiling
 reset_world
 ledger "{\"w-b\":$(row "$T1" '{"host":"host-b"}'),\"w-c\":$(row "$T2" '{"host":"host-c"}'),\"w-d\":$(row "$T3" '{"host":"host-d"}')}"
@@ -327,6 +341,16 @@ OUT="$(CM_HEALTH_ACTION_PROBE_S=1 lhj --all --act)"
 check "the probe an action makes before the create runs under the action bound (1 s): a slow probe stops the resume, nothing is created" \
   '[ "$(creates)" = 0 ] && jq -r ".actions[0].detail" <<<"$OUT" | grep -q "stopped answering"' "$(jq -c '.actions' <<<"$OUT")"
 rm -f "$STUB/slow"
+
+# a lead-shaped row (pr-sweeper) with no standing flag and a stale cm:done comment, on a host that did not answer, stays listed
+reset_world
+mkdir -p "$W/pr-sweeper" "$W/task-q"
+ledger "{\"w-sweeper\":$(row "$W/pr-sweeper" '{"host":"host-z","standing":false,"lastComment":"cm:done old sweep"}'),\"w-task-q\":$(row "$W/task-q" '{"host":"host-z","lastComment":"cm:done shipped"}')}"
+touch "$STUB/ssh-down-host-z"
+OUT="$(lhj --all --no-write)"
+check "a lead-shaped name (pr-sweeper) with no standing flag and a stale cm:done comment stays listed on a down host; a plain done worker beside it does not" \
+  '[ "$(jq -r "[.sessions[] | select(.host == \"host-z\") | .name] | join(\",\")" <<<"$OUT")" = pr-sweeper ]' "$(jq -c '[.sessions[] | [.name, .state, .word]]' <<<"$OUT")"
+rm -f "$STUB/ssh-down-host-z"
 
 # CM_LH_ONLY=false-rows runs this section alone (a mutation check does not need the other 400 cases)
 if [ "${CM_LH_ONLY:-}" = false-rows ]; then printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"; [ "$FAIL" = 0 ]; exit $?; fi

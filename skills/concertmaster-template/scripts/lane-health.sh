@@ -764,7 +764,7 @@ i=0; : > "$TMP/hostfiles"; PROBE_PIDS=()
 while IFS= read -r h; do
   i=$((i + 1))
   paths=()
-  while IFS= read -r p; do [ -n "$p" ] && paths+=("$p"); done < <(jq -r --arg h "$h" '.[] | select(.host == $h and .path != "") | .path' "$TMP/rows.json")
+  while IFS= read -r p; do [ -n "$p" ] && paths+=("$p"); done < <(jq -r --arg h "$h" '.[] | select(.host == $h and .path != "" and (.state | IN("retired", "done", "teardown") | not)) | .path' "$TMP/rows.json")
   # one probe per host, all at once: a slow or dead host costs its own bound, never the sum of the bounds
   probe_host "$h" "$TMP/probe-$i" ${paths[@]+"${paths[@]}"} </dev/null &
   PROBE_PIDS+=("$!")
@@ -949,7 +949,11 @@ $ST[0].names as $standingNames | $ST[0].sids as $standingSids
   | (($now - ($paneSince | ep)) // 0) as $paneAge
   | ((($task // "") | tostring | test("^cm:(blocked|waiting-owner|ask)\\b")) or $st == "blocked-on-owner") as $asks
   | (($st | shouldrun) and ((($task // "") | tostring | test("^cm:(done|retire)\\b")) | not)) as $should
-  | (if ($h.ok | not) then {w: "unknown", keep: true, m: "host \($r.host) did not answer\(if $h.error then " (" + ($h.error | tostring | .[0:80]) + ")" else "" end): not checked, and nothing is moved to another host"}
+  # a row that is a lead (standing or lane-shaped) is never skipped as done or retired
+  | (if $r.path == "" then ($r.id | split("@")[0]) else ($r.path | base) end) as $rname
+  | ($r.standing or leadlike($rname)) as $leadish
+  | (if (($leadish | not) and ($h.ok | not) and (($st | IN("retired", "done", "teardown")) or (($task // "") | tostring | test("^cm:(done|retire)\\b")))) then null   # not expected to run: a host that did not answer says nothing about it
+     elif ($h.ok | not) then {w: "unknown", keep: true, m: "host \($r.host) did not answer\(if $h.error then " (" + ($h.error | tostring | .[0:80]) + ")" else "" end): not checked, and nothing is moved to another host"}
      elif ($r.missing // false) then {w: "unknown", keep: true, m: "listed as a child, but no worktree of that name answers on \($r.host)"}
      elif $n >= 2 then {w: "waiting on you", dup: true, m: "two copies are running here (pids \($mine | map(.pid | tostring) | join(", "))): pick the one that keeps going; nothing was touched"}
      elif $n == 0 and $hcount > 0 and ($st | IN("asleep") | not) then {w: "unknown", keep: true, m: "an agent with no terminal runs in this worktree: not judged, never resumed beside it"}
