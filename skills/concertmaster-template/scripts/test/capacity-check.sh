@@ -312,6 +312,14 @@ hosts:
 CFG
 CM_CONFIG="$ROOT/alias.yaml" run "$S" --no-candidates
 check "one name in the other's health.host_aliases: the same WARN (health.host_aliases)" 'grep -q "ONE machine (health.host_aliases)" <<<"$OUT"' "$OUT"
+# the other accepted shapes of health.host_aliases (config-check accepts them): a plain string value, and a list of name lists
+sed 's/host_aliases: { host-a: \[host-b\] }/host_aliases: { host-a: host-b }/' "$ROOT/alias.yaml" > "$ROOT/alias-str.yaml"
+sed 's/host_aliases: { host-a: \[host-b\] }/host_aliases: [[host-a, host-b]]/' "$ROOT/alias.yaml" > "$ROOT/alias-list.yaml"
+grep -q 'host-a: host-b' "$ROOT/alias-str.yaml" && grep -q '\[\[host-a, host-b\]\]' "$ROOT/alias-list.yaml" || fail "alias fixtures" "the sed edits changed nothing"
+CM_CONFIG="$ROOT/alias-str.yaml" run "$S" --no-candidates
+check "health.host_aliases with a plain string value ({ host-a: host-b }): the same WARN" 'grep -q "ONE machine (health.host_aliases)" <<<"$OUT"' "$OUT"
+CM_CONFIG="$ROOT/alias-list.yaml" run "$S" --no-candidates
+check "health.host_aliases as a list of name lists: the same WARN" 'grep -q "ONE machine (health.host_aliases)" <<<"$OUT"' "$OUT"
 cat > "$ROOT/two.yaml" <<'CFG'
 schema: concertmaster.config/v1
 worktrees: { path_match: "/acme/", self_name: concertmaster }
