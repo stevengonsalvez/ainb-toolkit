@@ -117,6 +117,9 @@ if [ "$PROBE_S" -gt 300 ]; then cm_warn "lane-health.sh: health.probe_seconds $P
 # The worst-case formulas of the run budget below are built from it.
 ACT_PROBE_S="$(cfgint "${CM_HEALTH_ACTION_PROBE_S:-}" .health.action_probe_seconds 60)"; [ "$ACT_PROBE_S" -ge 1 ] || ACT_PROBE_S=60
 [ "$ACT_PROBE_S" -le "$PROBE_S" ] || ACT_PROBE_S="$PROBE_S"
+# health.host_aliases: configured host name -> the other names `hostname -s` may answer as there
+HOST_ALIASES_CFG="$(cm_cfg_json .health.host_aliases '{}')"
+printf '%s' "$HOST_ALIASES_CFG" | jq -e 'type == "object"' >/dev/null 2>&1 || { cm_warn "lane-health.sh: health.host_aliases must be a map of host name to a list of names: ignored"; HOST_ALIASES_CFG='{}'; }
 CLOUD="${CM_HEALTH_CLOUD:-$(cm_cfg .health.cloud none)}"
 case "$CLOUD" in gce|none) ;; *) cm_warn "lane-health.sh: health.cloud must be gce or none (got '$CLOUD'): using none"; CLOUD=none ;; esac
 UNITS="${CM_HEALTH_DAEMON_UNITS-$(cm_cfg .health.daemon_units)}"
@@ -241,12 +244,19 @@ lh_probe() {
   }
   local now got boot up lastx pk pm sp u t e d pid stat rest state ppid tty argv arg comm agent cwd sid src model eff byp
   local headless i n kv hp ho sph sho h rt anc depth acomm acmd a1 a1d st2 r2 top br dirty ref merged onmain head s tdir tm p stt pst hz
-  local scan et a psnow cmd2 nsf cut
+  local scan et a psnow cmd2 nsf cut okh xh
   local -a items lps_pids lps_ppid lps_comm lps_args lps_stat lps_tty lps_et lps_adup
   now="$(date +%s)"
   got="$(hostname -s 2>/dev/null || hostname 2>/dev/null)"; got="$(printf '%s' "${got%%.*}" | tr '[:upper:]' '[:lower:]')"
-  if [ -n "$expect" ] && [ "$got" != "$(printf '%s' "${expect%%.*}" | tr '[:upper:]' '[:lower:]')" ]; then
-    printf 'E\twrong-host\tthis host answered as %s, expected %s\n' "$(_lhf "$got")" "$(_lhf "$expect")"; return 3
+  # expect is a list: the configured name first, then health.host_aliases for it; any one of them is this host
+  if [ -n "$expect" ]; then
+    okh=0
+    for xh in $expect; do
+      [ "$got" = "$(printf '%s' "${xh%%.*}" | tr '[:upper:]' '[:lower:]')" ] && okh=1
+    done
+    if [ "$okh" = 0 ]; then
+      printf 'E\twrong-host\tthis host answered as %s, expected %s\n' "$(_lhf "$got")" "$(_lhf "${expect// / or }")"; return 3
+    fi
   fi
   # the scan: /proc where the host has one; with none (macOS) the process table from ps and each cwd from lsof
   scan=proc
@@ -490,9 +500,25 @@ isnum_lh() { case "${1:-}" in ''|*[!0-9]*) return 1 ;; *) return 0 ;; esac; }
 expect_hostname() {
   local e="${CM_SSH_EXPECT_HOSTNAME:-}"
   if [ -z "$e" ] && [ -s "$LEDGER" ]; then e="$(jq -r --arg h "$1" '.hosts[$h].hostname // empty' "$LEDGER" 2>/dev/null)"; fi
+  # the configured hostname (hosts.per_host.<h>.hostname) is the next source, as teardown.sh reads it: a ledger that
+  # never copied it would otherwise expect the host's own alias, which a real machine name never matches
+  if [ -z "$e" ]; then e="$(printf '%s' "$CM_CFG_JSON" | jq -r --arg h "$1" '.hosts.per_host[$h].hostname // empty | tostring' 2>/dev/null)"; fi
   e="${e:-$1}"
   case "$e" in *[!A-Za-z0-9._-]*|'') return 1 ;; esac
   printf '%s\n' "$e"
+}
+# expect_hostnames <host>: the name above, then every health.host_aliases name for that host, space separated: a host
+# that answers as any one of them is the host asked about (a cloud VM answers as its internal name, a laptop as its
+# owner's name). A name outside [A-Za-z0-9._-] is dropped with a warning; status 1 when the first name is invalid.
+expect_hostnames() {
+  local out n
+  out="$(expect_hostname "$1")" || return 1
+  while IFS= read -r n; do
+    [ -n "$n" ] || continue
+    case "$n" in *[!A-Za-z0-9._-]*) cm_warn "lane-health.sh: health.host_aliases.$1 holds an invalid name ($n): ignored"; continue ;; esac
+    out="$out $n"
+  done < <(printf '%s' "$HOST_ALIASES_CFG" | jq -r --arg h "$1" '(.[$h] // []) | if type == "array" then .[] elif type == "string" then . else empty end | strings' 2>/dev/null)
+  printf '%s\n' "$out"
 }
 # probe_host <host> <out-file> [path...]: the probe's lines in <out-file>, a JSON host document in <out-file>.json.
 # The bound is $PROBE_BOUND when the caller sets it for this call (PROBE_BOUND=n probe_host ...), else $PROBE_S.
@@ -509,7 +535,7 @@ probe_host() {
     target="$(cm_ssh_target "$host")"
     case "$target" in -*|*[[:space:]]*|'') printf 'E\tbad-target\tinvalid ssh target for %s\n' "$host" > "$out"; rc=3 ;; esac
     if [ "$rc" = 0 ]; then
-      expect="$(expect_hostname "$host")" || { printf 'E\tbad-hostname\tinvalid expected hostname for %s\n' "$host" > "$out"; rc=3; }
+      expect="$(expect_hostnames "$host")" || { printf 'E\tbad-hostname\tinvalid expected hostname for %s\n' "$host" > "$out"; rc=3; }
     fi
     if [ "$rc" = 0 ]; then
       remote_proc=/proc
@@ -1205,7 +1231,8 @@ pid_alive() { if [ "$1" = proc ]; then [ -d "$2/$3" ]; else ps -p "$3" -o pid= >
 # cannot be checked (its cwd unreadable while it runs, or no ps or lsof).
 # shellcheck disable=SC2016  # the remote side expands these
 STOP_REMOTE_SH='g="$(hostname -s 2>/dev/null || hostname)"; g="$(printf "%s" "${g%%.*}" | tr "[:upper:]" "[:lower:]")"
-[ "$g" = "$(printf "%s" "${e%%.*}" | tr "[:upper:]" "[:lower:]")" ] || exit 7
+okh=0; for x in $e; do [ "$g" = "$(printf "%s" "${x%%.*}" | tr "[:upper:]" "[:lower:]")" ] && okh=1; done
+[ "$okh" = 1 ] || exit 7
 r=/proc; [ -z "$m" ] || [ "$m" = ps ] || r="$m"
 if [ "$m" != ps ] && { [ "$r" != /proc ] || [ -d /proc/self ]; }; then
   alive() { [ -d "$r/$p" ]; }
@@ -1249,7 +1276,7 @@ stop_session() {
     fi
   else
     local ex tg rm_ rk_
-    ex="$(expect_hostname "$host")" || { SS_WHY="no valid expected hostname for $host: left alone"; return; }
+    ex="$(expect_hostnames "$host")" || { SS_WHY="no valid expected hostname for $host: left alone"; return; }
     tg="$(cm_ssh_target "$host")"
     case "$tg" in -*|*[[:space:]]*|'') SS_WHY="invalid ssh target for $host: left alone"; return ;; esac
     rm_=""; rk_=""

@@ -37,10 +37,11 @@ This machine is read directly; any other host over ssh to `cm_ssh_target` (the p
 remote `hostname -s` must match, as `live-agent.sh` does). A host that does not answer is `unknown (host down)` for
 every session on it, and nothing is resumed anywhere else (hard rule 6).
 
-Two things decide whether a host "answered", and each is a host fact, never a per-session one:
+Three things decide whether a host "answered", and each is a host fact, never a per-session one:
 
 | cause | what is read | what to do |
 |---|---|---|
+| identity | the host answers `hostname -s` as a name other than the one expected. Expected is, in order, `CM_SSH_EXPECT_HOSTNAME`, the ledger `hosts.<h>.hostname`, `hosts.per_host.<h>.hostname` in config, the host's own name; any name in `health.host_aliases.<h>` (a list) is accepted too, case and a FQDN tail ignored. No name may belong to two hosts, whether as a host key, a `per_host` hostname, an alias or a ledger `hosts.<h>.hostname` (compared lowercase, cut at the first dot; the ledger is read when `$CM_HOME/ledger.json` exists): `scripts/config-check.sh` fails it, because the probe and the stop check would take one machine for the other. A name equal to its own host's key or hostname is only redundant and passes. `lane-health.sh` reads the alias map in the probe and in the stop check before a sleep, so a name here is trusted for both | a cloud VM that answers its internal name, or a laptop that answers a name other than its Orca name, gets that name under `health.host_aliases` in the repo's own `config.yaml` (never hardcoded in a script) |
 | timeout | the probe (one scan of every process, a git status per worktree, a few bounded reads of the journal and systemd) outran `health.probe_seconds` (150, env `CM_HEALTH_PROBE_S`, never more than 300: a larger value is cut to 300 with a warning; `timeout(1)` exit 124 and the perl-alarm fallback's 142 both mean timeout). All hosts are probed at the same time, so the probe phase costs the slowest bound, never the sum, and stays inside the tick's 600 s call. On a loaded machine (load average 30 to 85) the old 40 s bound ran out on this machine itself and every local session read as unknown | raise `health.probe_seconds` if it keeps happening; a timeout still costs one host row, not one row per session |
 | ssh | the name does not resolve (a stale name in `hosts[]`), the host key fails verification, the key is refused, or the network is down | fix the stale name or key; a host gone for good goes in `health.ignore_hosts` |
 

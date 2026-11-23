@@ -48,6 +48,12 @@ health:
   stuck_minutes: 30
   cloud: gce
   daemon_units: [orca-serve.service]
+  host_aliases:
+    host-f: [vm-0-12]
+    host-b: [ip-b-1]
+hosts:
+  per_host:
+    host-e: { hostname: Alpha-Laptop-5 }
 EOF
 export CM_CONFIG="$ROOT/config.yaml"
 
@@ -156,9 +162,10 @@ t="$1"; shift
 echo "ssh $t $*" >> "$STUB/calls.log"
 # an ssh-down file may hold the message ssh prints (a stale name does not resolve, a stale host key fails)
 [ ! -f "$STUB/ssh-down-$t" ] || { m="$(cat "$STUB/ssh-down-$t")"; echo "${m:-ssh: connect to host $t: Connection refused}" >&2; exit 255; }
-FAKE_HOST="$t" exec bash -s
+# an answers file is what `hostname -s` prints there when that is not the ssh name
+FAKE_HOST="$t" FAKE_ANSWER="$(cat "$STUB/answers-$t" 2>/dev/null)" exec bash -s
 EOF
-printf '#!/usr/bin/env bash\necho "${FAKE_HOST:-testbox}"\n' > "$BIN/hostname"
+printf '#!/usr/bin/env bash\necho "${FAKE_ANSWER:-${FAKE_HOST:-testbox}}"\n' > "$BIN/hostname"
 # uptime sleeps as long as $STUB/slow says (a probe on a loaded machine)
 printf '#!/usr/bin/env bash\n[ ! -f "$STUB/slow" ] || { [ ! -f "$STUB/slow.log" ] || echo "$(date +%%s) start ${FAKE_HOST:-local}" >> "$STUB/slow.log"; sleep "$(cat "$STUB/slow")"; [ ! -f "$STUB/slow.log" ] || echo "$(date +%%s) end ${FAKE_HOST:-local}" >> "$STUB/slow.log"; }\necho "2026-11-11 10:27:00"\n' > "$BIN/uptime"
 # timeout: the real one, unless $STUB/fake-142 asks for what the perl alarm fallback of cm_timeout exits with (SIGALRM)
@@ -232,6 +239,51 @@ OUT="$(lhj --all --no-write)"
 check "(c) a name that does not resolve and a failing host key are told apart, each in plain words" \
   '[ "$(jq -r ".hosts[] | select(.host == \"host-m\") | .kind" <<<"$OUT")" = unresolvable ] && jq -r ".hosts[] | select(.host == \"host-m\") | .hint" <<<"$OUT" | grep -q "does not resolve: stale name in config, check hosts" && [ "$(jq -r ".hosts[] | select(.host == \"host-g\") | .kind" <<<"$OUT")" = hostkey ] && jq -r ".hosts[] | select(.host == \"host-g\") | .hint" <<<"$OUT" | grep -q "host key verification failed"' "$OUT"
 rm -f "$STUB/ssh-down-host-m" "$STUB/ssh-down-host-g"
+
+# (b) host identity: the name a host answers as is not always its Orca name
+reset_world
+ledger "{\"w-f\":$(row "$T1" '{"host":"host-f"}'),\"w-d\":$(row "$T3" '{"host":"host-d"}')}"
+echo vm-0-12 > "$STUB/answers-host-f"; echo ip-d-1 > "$STUB/answers-host-d"
+mkproc "$PR" 301 1000 "$T1" "ORCA_TERMINAL_HANDLE=term_r" claude --resume "$SID_1"; transcript "$T1" "$SID_1" "$NOW"; printf '  esc to interrupt\n' > "$STUB/pane-term_r.txt"
+OUT="$(lhj --all --no-write)"
+INFO="$(jq -c '[.hosts[] | [.host, .ok, .error]], [.sessions[] | [.name, .word, .meaning]]' <<<"$OUT")"
+check "(b) a host that answers as a health.host_aliases name is the host asked about (host-f answers vm-0-12)" \
+  '[ "$(word "$OUT" w-f)" = running ] && [ "$(jq -r ".hosts[] | select(.host == \"host-f\") | .ok" <<<"$OUT")" = true ]' "$INFO"
+check "(b) a name that is neither the expected one nor an alias is a wrong machine: not read, and the hint says how to fix it" \
+  '[ "$(word "$OUT" w-d)" = unknown ] && [ "$(jq -r ".hosts[] | select(.host == \"host-d\") | .kind" <<<"$OUT")" = identity ] && jq -r ".hosts[] | select(.host == \"host-d\") | .hint" <<<"$OUT" | grep -q "answered as ip-d-1, expected host-d: add that name to health.host_aliases"' "$INFO"
+# no ledger hostname: hosts.per_host.<h>.hostname is expected (the same file teardown.sh reads), case ignored
+reset_world
+ledger "{\"w-e\":$(row "$T2" '{"host":"host-e"}')}"
+echo alpha-laptop-5 > "$STUB/answers-host-e"
+mkproc "$PR" 302 1000 "$T2" "ORCA_TERMINAL_HANDLE=term_s" claude --resume "$SID_1"; transcript "$T2" "$SID_1" "$NOW"; printf '  esc to interrupt\n' > "$STUB/pane-term_s.txt"
+OUT="$(lhj --all --no-write)"
+check "(b) hosts.per_host.<h>.hostname is expected when the ledger holds none, case ignored (host-e answers alpha-laptop-5)" \
+  '[ "$(word "$OUT" w-e)" = running ]' "$(jq -c '[.hosts[] | [.host, .ok, .error]]' <<<"$OUT")"
+rm -f "$STUB"/answers-*
+
+# (b) the stop check before a sleep honours the aliases too: a merged, clean, idle worker on a host that answers as an alias
+reset_world
+ledger '{}'
+git init -q --bare -b main "$ROOT/origin-r.git"
+git clone -q "$ROOT/origin-r.git" "$ROOT/acme/main-r" 2>/dev/null
+( cd "$ROOT/acme/main-r" && git checkout -q -b main 2>/dev/null; echo one > a.txt && git add a.txt && git commit -q -m init && git push -q origin main 2>/dev/null )
+git -C "$ROOT/acme/main-r" worktree add -q -b done-r "$W/done-r" main 2>/dev/null
+( cd "$W/done-r" && echo two > b.txt && git add b.txt && git commit -q -m work )
+( cd "$ROOT/acme/main-r" && git merge -q --no-ff -m merge done-r && git push -q origin main 2>/dev/null && git fetch -q origin )
+git -C "$ROOT/acme/main-r" remote set-head origin main >/dev/null 2>&1
+mkproc "$PR" 401 1000 "$W/done-r" "ORCA_TERMINAL_HANDLE=term_dr" claude --resume "$SID_1"
+transcript "$W/done-r" "$SID_1" $((NOW - 7200)); printf '> \n  ? for shortcuts\n' > "$STUB/pane-term_dr.txt"
+wlrow "$W/done-r" 'cm:done shipped' > "$STUB/wl-host-b.json"
+printf '{"ok":true,"result":{"hosts":[{"kind":"local","name":"this machine"},{"name":"host-b"}]}}\n' > "$STUB/hosts.json"
+echo ip-b-1 > "$STUB/answers-host-b"
+OUT="$(CM_HEALTH_ACTION_PROBE_S=100 CM_HEALTH_RUN_BUDGET_S=250 lhj --all --act)"
+check "a sleep is DEFERRED when its probe bound puts the worst case (probe, pane, comment, stop, close, comment back) past the run budget" \
+  '! grep -q "^kill 401$" "$STUB/calls.log" && jq -r ".actions[0].detail" <<<"$OUT" | grep -q "its worst case 310s would pass the 250s run budget"' "$(jq -c '.actions' <<<"$OUT")"
+OUT="$(lhj --all --act)"
+check "(b) --act: the worker on host-b (answers as its alias ip-b-1) is stopped by exact pid over ssh, terminal closed" \
+  'grep -q "^kill 401$" "$STUB/calls.log" && grep -q "terminal close .*host=host-b.*handle=term_dr" "$STUB/calls.log"' "$OUT$(cat "$ROOT/lh.err")"
+rm -f "$STUB"/answers-*
+printf '{"ok":true,"result":{"hosts":[{"kind":"local","name":"this machine"}]}}\n' > "$STUB/hosts.json"
 # the probes run at the same time and the bound has a ceiling
 reset_world
 ledger "{\"w-b\":$(row "$T1" '{"host":"host-b"}'),\"w-c\":$(row "$T2" '{"host":"host-c"}'),\"w-d\":$(row "$T3" '{"host":"host-d"}')}"
