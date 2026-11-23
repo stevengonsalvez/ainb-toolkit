@@ -175,6 +175,23 @@ check "name maps epic:Widget-Two to epic-widget-two" '[ "$("$J" name "epic:Widge
 "$J" name 'has space' >/dev/null 2>&1; RC2=$?
 check "name refuses a label that does not fit" '[ "$RC" = 2 ] && [ "$RC2" = 2 ]'
 
+echo "--- ordinary text about logins, paths and bearer words is not a secret"
+EM1="user-1""@""mail.test"; EM2="user-2""@""mail.test"
+for t in "E2E: login as $EM1 fails on preview" "login with $EM2 works now" "fixed sign-in as User1 on staging" \
+         "signin via Totp2FA flow" "pwd: /w/wt/lane2 is dirty" 'lesson: use pwd=$PWD/lane1 before cd' \
+         "Bearer tokens-are-validated-at-the-gateway now" "password is required on staging, login page 2 fixed"; do
+  "$J" append lane-plain "$t" >/dev/null 2>&1; RC=$?
+  check "plain text accepted: ${t:0:48}" '[ "$RC" = 0 ]'
+done
+echo "--- credential phrases are refused (words and values built at run time)"
+PWW="pass""word"; PWD2="pass""wd"
+V1="$(printf 'p@ss%s' "wrd1")"; V2="$(printf 'P@ss%s' "Wrd2x")"; V3="$(printf 'Xy%s' "7Ab9cd")"; V4="$(printf 'Sw0rd%s' "fish")"
+BT="$(printf 'ab1%.0s' 1 2 3 4 5 6 7 8)"; PT="0.1111111""1-2222-3333-4444-5555555""55555.$(printf 'Ab3%.0s' 1 2 3):$(printf 'Cd4%.0s' 1 2 3)"
+for t in "the $PWW is $V1" "$PWW is $V2" "send Bear""er $BT to the API" "the vault token is $PT" \
+         "login admin $V3" "$PWD2=$V4"; do
+  "$J" append lane-plain "$t" >/dev/null 2>&1; RC=$?
+  check "a credential phrase is refused: ${t:0:12}" '[ "$RC" = 3 ]'
+done
 echo "--- nothing is sent to a group"
 others="$(cd "$SCRIPTS" && grep -lE 'journal\.md|lane-journal' ./*.sh ./*.py ./hooks/* 2>/dev/null | grep -vE '^\./(lane-journal|resume|lessons-recon|fleet-state|skill-sync|cutover-host)\.sh$' || true)"
 check "no script but lane-journal.sh, resume.sh, lessons-recon.sh, fleet-state.sh, skill-sync.sh and cutover-host.sh (which only appends) touches a journal (digest, mc-emit, intake, tick-emit and the rest do not)" '[ -z "$others" ]'

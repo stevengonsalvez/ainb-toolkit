@@ -475,7 +475,7 @@ MAIN_SLUG="$CM_ORG/$(jq -r --arg r "$CM_REPO" '[.[] | select(ascii_downcase == (
 printf '[]\n' > "$TMP/open.json"
 if [ "$WITH_PRS" -eq 1 ] && command -v gh >/dev/null 2>&1; then
   cm_timeout 60 gh pr list -R "$MAIN_SLUG" --state open --limit 300 \
-    --json number,title,author,headRefName,headRefOid,isDraft,createdAt,updatedAt,url \
+    --json number,title,author,headRefName,headRefOid,isDraft,createdAt,updatedAt,url,labels \
     > "$TMP/open.json" 2>"$TMP/open.err" || { err "gh pr list open" "$(head -c 200 "$TMP/open.err")"; printf '[]\n' > "$TMP/open.json"; }
 
   # Branch -> PR state, one bulk query per GitHub repo that has non-main
@@ -537,7 +537,8 @@ jq -n \
         | .pr = (if $r.branch == null or $r.isMainWorktree then null
                  else ($pr[$r.repo + "\u0000" + $r.branch] // null) end) ],
       prs: { open: [ $open[0][] | {number, title, isDraft, createdAt, updatedAt, url,
-                                   headRefName, headRefOid, author: (.author.login // null)} ] },
+                                   headRefName, headRefOid, author: (.author.login // null),
+                                   labels: [ (.labels // [])[]? | if type == "object" then (.name // empty) else tostring end ]} ] },
       terminals: $terms,
       gitScope: {hosts: $gitScope, ignoreUntracked: $ignoreUntracked},
       terminalScope: {enabled: ($forbidden != ""),

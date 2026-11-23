@@ -17,7 +17,7 @@ export HOME="$ROOT/home" CM_HOME="$ROOT/cm" CM_NOW="2026-10-17T19:00:00Z" CM_CON
 mkdir -p "$HOME" "$CM_HOME"
 cat > "$CM_CONFIG" <<'EOF2'
 schema: concertmaster.config/v1
-project: { name: Acme, owner: { name: Alex, id: alex } }
+project: { name: Project One, owner: { name: Owner One, id: owner-1 } }
 github: { org: AcmeOrg, main_repo: acme-app }
 away:
   deny_extra: ["warehouse", "invoice", "customers? (data|records?)"]
@@ -188,59 +188,82 @@ jq -n '{asks: ([
   {id: "b-rls",     kind: "code",   issue: 1, question: "Turn off R.L.S checks for this page?"},
   {id: "b-claude",  kind: "code",   issue: 1, files: ["CLAUDE.md"], question: "reword the intro?"},
   {id: "b-nocodepr",kind: "code",   issue: 1, lane: null, worker: "w-devpr", question: "rename it?"},
+  {id: "b-nocodepr-pad",kind: "code", issue: 1, lane: "dev-sweeper", worker: " w-devpr ", question: "rename it?"},
+  {id: "b-wops-pad", kind: "code",  issue: 1, lane: null, worker: " w-ops ", question: "rename it?"},
   {id: "b-legacy",  kind: "code",   issue: 1, files: ["src/legacy/old.ts"], question: "tidy the helper?"},
   {id: "b-wh",      kind: "code",   issue: 1, question: "Which warehouse table first?"},
-  {id: "b-owner",   kind: "code",   issue: 1, question: "Ask Alex which helper to keep?"},
+  {id: "b-owner",   kind: "code",   issue: 1, question: "Ask Owner One which helper to keep?"},
   {id: "b-docs",    kind: "code",   issue: 1, files: ["docs/guide.md"], question: "reorder the guide?"}
   ] | map({askedAt: "2026-10-17T17:00:00Z", timeoutAt: "2026-10-17T17:30:00Z", state: "open", lane: "dev-sweeper"}
           + (if .files == null and .pr == null and .id != "b-nocode-missing" then {noCode: true} else {} end) + .))}' > "$L2"
 jq '.workers = {"w-ops": {lane: "ops-sweeper"}, "w-dev": {lane: "dev-sweeper"}, "w-devpr": {lane: "dev-sweeper", pr: 77}}' "$L2" > "$L2.tmp" && mv "$L2.tmp" "$L2"
+# a malformed or over-long ask never times out, and is judged fast: a separate ledger, one bounded run
+L5="$ROOT/ledger5.json"
+SP80="$(printf '%80000s' '')"; DOTS80="$(printf '%80000s' '' | tr ' ' '.')"; RQ40="$(printf '\xe2\x80\x99%.0s' $(seq 40000))"
+jq -n --arg sp "$SP80" --arg dots "$DOTS80" --arg rq "$RQ40" '{schema: "concertmaster.ledger/v1", workers: {}, asks: ([
+    {id: "g-qarr", kind: "code", question: [$sp], files: ["src/a.ts"]},
+    {id: "g-tobj", kind: "code", topic: {a: $dots}, question: "q", noCode: true},
+    {id: "g-qsmall", kind: "code", question: ["split the card?"], noCode: true},
+    {id: "g-lane", kind: "code", lane: ["x"], question: "split the card?", noCode: true},
+    {id: "g-files", kind: "code", question: "split the card?", files: "src/a.ts"},
+    {id: "g-rq", kind: "code", question: $rq, noCode: true},
+    {id: "g-ok", kind: "code", question: "split the card?", noCode: true}]
+  | map({issue: 1, askedAt: "2026-10-17T17:00:00Z", timeoutAt: "2026-10-17T17:30:00Z", state: "open", lane: "dev-sweeper"} + .))}' > "$L5"
+G0=$(date +%s); G3="$(timeout 60 "$SCRIPT" --ledger "$L5" --all 2>/dev/null)"; G1=$(date +%s)
+why3() { awk -v id="$1" '$1 == id { $1 = $2 = $3 = $4 = $5 = ""; sub(/^ +/, ""); print; exit }' <<<"$G3"; }
+for g in g-qarr g-tobj g-qsmall g-lane; do check "malformed ask ($g): never, a non-text field" "$(why3 "$g")" "non-text field: stays with Owner One"; done
+check "files as a string: never, files[] invalid" "$(why3 g-files)" "files[] invalid: stays with Owner One"
+check "40000 typographic apostrophes in the question: never, over-long" "$(why3 g-rq)" "over-long ask text: stays with Owner One"
+check "a plain own-scope ask next to them: due" "$(awk '$1 == "g-ok" { print $2 }' <<<"$G3")" "verdict-due"
+check "and the run is fast (under 10 seconds)" "$([ $((G1 - G0)) -lt 10 ] && echo yes || echo "no ($((G1 - G0))s)")" "yes"
 row2() { "$SCRIPT" --ledger "$L2" --all | awk -v id="$1" '$1 == id { print $2; exit }'; }
 why2() { "$SCRIPT" --ledger "$L2" --all | awk -v id="$1" '$1 == id { $1 = $2 = $3 = $4 = $5 = ""; sub(/^ +/, ""); print; exit }'; }
 check "plain own-scope ask: due" "$(row2 b-ok)" "verdict-due"
 check "pr with benign files: due" "$(row2 b-files)" "verdict-due"
 check "pr without files[]: never" "$(why2 b-nofiles)" "files[] missing: list the changed paths, or set noCode"
-check "pr touching a migration: never" "$(why2 b-mig)" "touches db/migrations/20261017_x.sql: stays with Alex"
+check "pr touching a migration: never" "$(why2 b-mig)" "touches db/migrations/20261017_x.sql: stays with Owner One"
 check "pr touching .env: never" "$(row2 b-env)" "never"
 check "no issue: never" "$(why2 b-noissue)" "no issue to record a verdict on"
-check "ops-sweeper lane: never" "$(why2 b-ops)" "ops-sweeper asks stay with Alex"
+check "ops-sweeper lane: never" "$(why2 b-ops)" "ops-sweeper asks stay with Owner One"
 check "epic lane: never" "$(row2 b-epic)" "never"
-check "plan ready approval: never" "$(why2 b-plan)" "epic plan approval stays with Alex"
-check "Cyrillic homoglyph: never" "$(why2 b-glyph)" "non-ASCII text: stays with Alex"
+check "plan ready approval: never" "$(why2 b-plan)" "epic plan approval stays with Owner One"
+check "Cyrillic homoglyph: never" "$(why2 b-glyph)" "non-ASCII text: stays with Owner One"
 check "SECURITY DEFINER: never" "$(row2 b-sd)" "never"
 check "GRANT SELECT: never" "$(row2 b-grant)" "never"
 check "users' DOB (product kind): never" "$(row2 b-dob)" "never"
 check "ship via OTA: never" "$(row2 b-ota)" "never"
 check "OAuth (substring auth): never" "$(row2 b-oauth)" "never"
 check "duplicate ask id: never" "$(why2 b-dup)" "duplicate ask id: fix the ledger"
-check "no lane, unknown worker: never" "$(why2 b-nolane)" "no lane (ask or ledger worker): unknown asker stays with Alex"
-check "no lane, ledger worker is ops-sweeper: never" "$(why2 b-wops)" "ops-sweeper asks stay with Alex"
+check "no lane, unknown worker: never" "$(why2 b-nolane)" "no lane (ask or ledger worker): unknown asker stays with Owner One"
+check "no lane, ledger worker is ops-sweeper: never" "$(why2 b-wops)" "ops-sweeper asks stay with Owner One"
 check "no lane, ledger worker is dev-sweeper: due" "$(row2 b-wdev)" "verdict-due"
 check "suffixed ops lane: never" "$(row2 b-ops2)" "never"
-check "files \"\": invalid, never" "$(why2 b-fempty)" "files[] invalid: stays with Alex"
-check "files {}: invalid, never" "$(why2 b-fobj)" "files[] invalid: stays with Alex"
-check "files [\"\"]: invalid, never" "$(why2 b-fblank)" "files[] invalid: stays with Alex"
-check "path outside the allowlist (package.json): never" "$(why2 b-pkg)" "touches package.json: stays with Alex"
+check "files \"\": invalid, never" "$(why2 b-fempty)" "files[] invalid: stays with Owner One"
+check "files {}: invalid, never" "$(why2 b-fobj)" "files[] invalid: stays with Owner One"
+check "files [\"\"]: invalid, never" "$(why2 b-fblank)" "files[] invalid: stays with Owner One"
+check "path outside the allowlist (package.json): never" "$(why2 b-pkg)" "touches package.json: stays with Owner One"
 check "src/ + README, 'product' in prose: due (no prod false hit)" "$(row2 b-srcok)" "verdict-due"
 check "dropdown / author: due (no drop or auth false hit)" "$(row2 b-dropdown)" "verdict-due"
 check "curly quotes, em dash, ellipsis normalised: due" "$(row2 b-curly)" "verdict-due"
-check "split word se-cret: never" "$(why2 b-split)" "names secret: stays with Alex"
+check "split word se-cret: never" "$(why2 b-split)" "names secret: stays with Owner One"
 check "plain own-scope question from a dev lane: due" "$(row2 b-waive)" "verdict-due"
 check "waive a finding: never" "$(row2 b-waive2)" "never"
-check "pr-sweeper lane: never (merge-gate waivers stay with Alex)" "$(why2 b-psweep)" "pr-sweeper asks stay with Alex"
+check "pr-sweeper lane: never (merge-gate waivers stay with Owner One)" "$(why2 b-psweep)" "pr-sweeper asks stay with Owner One"
 check "R.L.S split word: never" "$(row2 b-rls)" "never"
-check "root CLAUDE.md: never" "$(why2 b-claude)" "touches CLAUDE.md: stays with Alex"
+check "root CLAUDE.md: never" "$(why2 b-claude)" "touches CLAUDE.md: stays with Owner One"
 check "noCode but the ledger worker has a PR: never" "$(why2 b-nocodepr)" "noCode but the worker has a PR: list its files"
-check "never_paths from config: never" "$(why2 b-legacy)" "touches src/legacy/old.ts: stays with Alex"
-check "deny_extra from config: never" "$(why2 b-wh)" "names warehouse: stays with Alex"
-check "the owner's name in a question: never" "$(why2 b-owner)" "names alex: stays with Alex"
+check "the same with a padded worker id: never, same reason" "$(why2 b-nocodepr-pad)" "noCode but the worker has a PR: list its files"
+check "no lane, padded ledger worker id of an ops-sweeper: never" "$(why2 b-wops-pad)" "ops-sweeper asks stay with Owner One"
+check "never_paths from config: never" "$(why2 b-legacy)" "touches src/legacy/old.ts: stays with Owner One"
+check "deny_extra from config: never" "$(why2 b-wh)" "names warehouse: stays with Owner One"
+check "the owner's name in a question: never" "$(why2 b-owner)" "names owner one: stays with Owner One"
 check "docs file on the default allowlist: due" "$(row2 b-docs)" "verdict-due"
 for r in b-r1 b-r2 b-r3 b-r4 b-r5 b-r6 b-r8; do check "reviewer example $r: never" "$(row2 "$r")" "never"; done
 
 # config: allow_paths replaces the default allowlist, away.repo and away.verdict_by are read
 cat > "$ROOT/config2.yaml" <<'EOF2'
 schema: concertmaster.config/v1
-project: { name: Acme, owner: { name: Alex, id: alex } }
+project: { name: Project One, owner: { name: Owner One, id: owner-1 } }
 github: { org: AcmeOrg, main_repo: acme-app }
 away: { allow_paths: ["^lib/"], repo: "AcmeOrg/other-repo", verdict_by: "reviewer-bot", own_scope_kinds: ["code"] }
 EOF2
@@ -286,7 +309,7 @@ check "lock released after the write" "$([ -d "$L2.lock" ] && echo held || echo 
 
 # the write modes refuse with a clear message when lib.sh has no guarded writer (list still works)
 mkdir -p "$ROOT/nolib"
-cp "$SCRIPT" "$ROOT/nolib/ask-timeout.sh"
+cp "$SCRIPT" "$ROOT/nolib/ask-timeout.sh"; cp "$HERE/../ask-deny.sh" "$ROOT/nolib/ask-deny.sh"
 cat > "$ROOT/nolib/lib.sh" <<'EOF2'
 cm_warn() { printf 'concertmaster: %s\n' "$*" >&2; }
 cm_cfg() { printf '%s' "${2:-}"; }

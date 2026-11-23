@@ -23,19 +23,20 @@
 #     the allowlist (default: src/, tests, e2e, docs, public and root *.md; config
 #     away.allow_paths) and not on the never-list (CLAUDE.md, AGENTS.md, .env,
 #     any auth/rls/stripe/payment path, plus config away.never_paths).
-# Every failed condition says why. Fail closed: no kind, an unknown kind, or a
-# pr without files is never. The concertmaster runs ONE independent subagent
-# verdict for a verdict-due ask and records it on the issue; this script never
-# calls an LLM and makes no network call.
+# Every failed condition says why. Fail closed: no kind, an unknown kind, a pr
+# without files, a non-text question, topic, lane, worker or path, or those fields
+# over 4000 characters as JSON, is never. The concertmaster runs ONE independent
+# subagent verdict for a verdict-due ask and records it on the issue; this script
+# never calls an LLM and makes no network call.
 #   in-progress  verdict-due, but claimed (verdictStartedAt) less than
 #                CM_VERDICT_CLAIM_MIN (default 30) minutes ago: not listed again.
 #   waiting      timeoutAt still ahead.
-# Deny scan: case-insensitive whole words for migrations and schema, RLS and
-# grants, auth, sessions and tokens, secrets and keys, payments, releases and
-# deploys (OTA, stores, ship, publish, revert, rollback), merges and teardowns,
-# deletes, prod, and personal data (PII, GDPR, consent, DOB). The owner's name
-# and config away.deny_extra (a list of regex fragments) are added. False hits
-# fail safe (never).
+# Deny scan (scripts/ask-deny.sh, shared with stall.sh): case-insensitive whole
+# words for migrations and schema, RLS and grants, auth, sessions and tokens,
+# secrets and keys, payments, releases and deploys (OTA, stores, ship, publish,
+# revert, rollback), merges and teardowns, deletes, prod, and personal data (PII,
+# GDPR, consent, DOB). The owner's name and config away.deny_extra (a list of
+# regex fragments) are added. False hits fail safe (never).
 #
 # --stamp sets timeoutAt on every ask with a usable askedAt and no timeoutAt.
 # --claim stamps verdictStartedAt on a verdict-due ask before the verdict runs.
@@ -60,6 +61,8 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=SCRIPTDIR/lib.sh
 . "$HERE/lib.sh"
+# shellcheck source=SCRIPTDIR/ask-deny.sh
+. "$HERE/ask-deny.sh"
 
 LEDGER="$CM_HOME/ledger.json"
 MODE=list; ALL=false; ID=""; REF=""
@@ -71,7 +74,7 @@ while [ $# -gt 0 ]; do
     --claim) [ $# -ge 2 ] || { cm_warn "--claim needs <ask-id>"; exit 2; }; MODE=claim; ID="$2"; shift 2 ;;
     --record) [ $# -ge 3 ] || { cm_warn "--record needs <ask-id> <comment-url>"; exit 2; }
               MODE=record; ID="$2"; REF="$3"; shift 3 ;;
-    -h|--help) sed -n '2,57p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,59p' "$0"; exit 0 ;;
     *) cm_warn "unknown arg: $1"; exit 2 ;;
   esac
 done
@@ -90,31 +93,14 @@ VERDICT_BY="${CM_VERDICT_BY:-$(cm_cfg .away.verdict_by verdict-agent)}"
 # How messages name the human: the configured owner name, else "the owner".
 OWNER="$CM_OWNER_NAME"
 if [ -z "$OWNER" ] || [ "$OWNER" = owner ]; then OWNER="the owner"; fi
-# Config fragments (lists of regex alternatives, joined with |). Empty list: nothing added.
-cfg_alt() { cm_cfg_json "$1" '[]' | jq -r 'map(select(type == "string" and length > 0)) | join("|")' 2>/dev/null || true; }
 FRESH_MIN="${CM_FILES_FRESH_MIN:-10}"
 case "$FRESH_MIN" in ''|*[!0-9]*) cm_warn "CM_FILES_FRESH_MIN must be whole minutes"; exit 2 ;; esac
-# Word-boundary deny scan over the normalised text (lowercase, ASCII punctuation).
-DENY_BODY='migrat\w*|schema|alter|truncat\w*|rls|row level|polic(y|ies)|grant\w*|privilege\w*|security definer|auth(entic\w*|ori[sz]\w*|n|z)?|oauth|unauthenticated|login|jwt|magic link|secrets?|credentials?|passwords?|api ?keys?|service.?role|env vars?|(access|refresh|api|auth|bearer)[ _-]?tokens?|stripe|payments?|billing|subscriptions?|paywall|checkout|webhooks?|deploy\w*|merg(e|es|ed|ing)|prod|production|teardown|delet\w*|drop (table|column|index)|ota|app store|play store|testflight|force.?push|revert\w*|rollback|pii|coppa|gdpr|consent|minors?|dob|date of birth|sql|database|triggers?|constraints?|index(es)?|rpc|access|permissions?|roles?|admin\w*|visib\w*|vault|package\.json|ios|android|codeowners|kill\w*|(send|email|message|dm|notify|ping) (the |a |an )?(users?|customers?|members?|admins?|owner|maintainers?|author)|wipe|purge|destroy|rebase|release (build|to|cut)|publish (to|the app)|ship (to|it|this)|waiv\w*|overrid\w*|bypass\w*|--admin|skip\w* (the )?(gate|review|checks?|ci|tests?)'
-# The configured owner's name is an owner-only subject too; away.deny_extra adds project terms.
-_x="$(cm_lower "$OWNER" | tr -c 'a-z0-9 \n' ' ' | sed 's/^ *//; s/ *$//')"
-if [ -n "$_x" ] && [ "$_x" != "the owner" ]; then DENY_BODY="$DENY_BODY|$_x"; fi
-_x="$(cfg_alt .away.deny_extra)"
-if [ -n "$_x" ]; then DENY_BODY="$DENY_BODY|$_x"; fi
-DENY="\\b($DENY_BODY)\\b"
-# The same text with every non-alphanumeric removed, for split words ("se-cret").
-SQUASH='secret|password|migration|rls|rowlevel|servicerole|apikey|stripe|coppa|securitydefiner|accesstoken|refreshtoken'
-# Changed paths a verdict may cover: an allowlist, closed by default.
-ALLOW="$(cfg_alt .away.allow_paths)"
-if [ -z "$ALLOW" ]; then ALLOW='^(src/|tests?/|e2e/|docs/|public/)|^[^/]*\.md$'; fi
-NEVER_PATHS='(^|/)(CLAUDE|AGENTS)\.md$|auth|rls|stripe|payment|\.env'
-_x="$(cfg_alt .away.never_paths)"
-if [ -n "$_x" ]; then NEVER_PATHS="$NEVER_PATHS|$_x"; fi
+# The deny scan, its squash list and the changed-path allowlist: scripts/ask-deny.sh (CM_ASK_*).
 REPO="${CM_ASK_REPO:-$(cm_cfg .away.repo "$CM_ORG/$CM_REPO")}"
 
 # jq helpers shared by every mode. ts: epoch seconds, or null when unparseable.
 # shellcheck disable=SC2016  # jq program, not shell
-DEFS='def ts: if . == null then null else (tostring
+DEFS="$CM_ASK_DENY_DEFS"'def ts: if . == null then null else (tostring
         | (capture("^(?<b>[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})(\\.[0-9]+)?(?<z>Z|[+-][0-9]{2}:?[0-9]{2})$") // null)
         | if . == null then null else
             ((.b + "Z") | fromdateiso8601) as $base
@@ -126,25 +112,33 @@ DEFS='def ts: if . == null then null else (tostring
       def iso: todate;
       def isopen: (.state // "") == "open" and (.verdictRef // null) == null;
       def due($min): (.timeoutAt | ts) // (if (.askedAt | ts) == null then null else (.askedAt | ts) + $min * 60 end);
-      def norm: gsub("[\u2018\u2019\u201a\u2032]"; "'"'"'") | gsub("[\u201c\u201d\u201e\u2033]"; "\"")
-                | gsub("[\u2010-\u2015\u2212]"; "-") | gsub("\u2026"; "...") | gsub("[\u2190-\u21ff]"; "->")
-                | gsub("[\u00a0\u2000-\u200b\u202f]"; " ");
       def classify($now; $min; $claimMin; $own; $c):
+        # a malformed or over-long ask never times out, and nothing that normalises or scans its text runs on it:
+        # question, topic, lane, worker and path must be text, files a list of text, and those fields as JSON at
+        # most 4000 characters (a gsub over tens of thousands of characters stalls the run)
+        (if ([.question, .topic, .lane, .worker, .path] | any(. != null and type != "string")) then "non-text field: stays with \($c.owner)"
+         elif (.files // null) != null and ((.files | type) != "array" or any(.files[]; type != "string")) then "files[] invalid: stays with \($c.owner)"
+         elif ([.question, .topic, .lane, .worker, .path, .files] | tojson | length) > 4000 then "over-long ask text: stays with \($c.owner)"
+         else null end) as $bad
+        | if $bad != null then
+            ((.kind // .scope // "") | if type == "string" then ascii_downcase else "" end) as $bk
+            | {id: (.id // "?"), kind: (if $bk == "" then "-" else $bk end), issue: (.issue // null), question: "",
+               overdue: null, class: "never", why: $bad}
+          else
         due($min) as $due
         | ((.kind // .scope // "") | tostring | ascii_downcase) as $k
-        | (($c.ws[(.worker // "") | tostring]) // null) as $w
+        # the worker id is trimmed before the lookup, so a padded " wc " is the worker wc (its lane, its PR)
+        | (($c.ws[(.worker // "") | tostring | gsub("^\\s+|\\s+$"; "")]) // null) as $w
         | ((.lane // ($w | if . == null then null else .lane end) // "") | tostring | ascii_downcase | gsub("^\\s+|\\s+$"; "")) as $lane
         | (.files // null) as $files
         | (($files | type) == "array" and all($files[]; type == "string" and length > 0)) as $filesOk
-        | (if $filesOk then $files else [] end) as $fs
-        | ([.question, .topic, .lane, .worker, .path] + $fs | map(select(. != null) | tostring) | join(" ") | norm) as $text
-        | ($text | ascii_downcase) as $low
-        | ([$low | match($c.deny; "g") | .string] | unique) as $hits
-        | ([$low | gsub("[^a-z0-9]"; "") | match($c.squash; "g") | .string] | unique) as $squashHits
-        | ([$fs[] | select((test($c.allow) | not) or test($c.neverPaths; "i"))]) as $badFiles
+        | ask_files as $fs
+        | ask_text as $text
+        | ask_hits($c.deny; $c.squash) as $hits
+        | ask_bad_files($c.allow; $c.neverPaths) as $badFiles
         | (.verdictStartedAt | ts) as $claimed
         | {id: (.id // "?"), kind: (if $k == "" then "-" else $k end),
-           issue: (.issue // null), question: ((.question // "") | tostring | norm),
+           issue: (.issue // null), question: ((.question // "") | tostring | ask_norm),
            overdue: (if $due == null then null else (($now - $due) / 60 | floor) end)}
         + (if $due == null then
              {class: "never", why: (if .askedAt == null then "no askedAt: never times out"
@@ -153,12 +147,7 @@ DEFS='def ts: if . == null then null else (tostring
            elif ($own | index($k)) == null then
              {class: "never", why: (if $k == "" then "no kind: stays with \($c.owner)" else "\($k): stays with \($c.owner)" end)}
            elif ((.id // "?") as $me | $c.dups | index($me)) != null then {class: "never", why: "duplicate ask id: fix the ledger"}
-           elif ((.issue // null) | type) != "number" then {class: "never", why: "no issue to record a verdict on"}
-           elif $lane == "" then {class: "never", why: "no lane (ask or ledger worker): unknown asker stays with \($c.owner)"}
-           elif ($lane | startswith("ops")) or ($lane | startswith("epic")) or ($lane | startswith("pr-sweep")) then
-             {class: "never", why: "\($lane) asks stay with \($c.owner)"}
-           elif ((.question // "") | tostring | test("^\\s*(cm:blocked\\s+)?plan ready"; "i")) then
-             {class: "never", why: "epic plan approval stays with \($c.owner)"}
+           elif ask_scope_why($lane; $c.owner) != null then {class: "never", why: ask_scope_why($lane; $c.owner)}
            elif ($text | explode | any(. > 127)) then {class: "never", why: "non-ASCII text: stays with \($c.owner)"}
            elif $files != null and ($filesOk | not) then {class: "never", why: "files[] invalid: stays with \($c.owner)"}
            elif ($fs | length) == 0 and .noCode != true then
@@ -167,13 +156,13 @@ DEFS='def ts: if . == null then null else (tostring
              {class: "never", why: "noCode but the worker has a PR: list its files"}
            elif ($badFiles | length) > 0 then
              {class: "never", why: "touches \($badFiles[0]): stays with \($c.owner)"}
-           elif ($hits + $squashHits | length) > 0 then
-             {class: "never", why: "names \($hits + $squashHits | unique | join(",")): stays with \($c.owner)"}
+           elif ($hits | length) > 0 then
+             {class: "never", why: "names \($hits | join(",")): stays with \($c.owner)"}
            elif $claimed != null and $now < $claimed + $claimMin * 60 then
              {class: "in-progress", why: "verdict claimed \($claimed | iso)"}
            elif $claimed != null then
              {class: "verdict-due", why: "claim expired: check the issue for a verdict first"}
-           else {class: "verdict-due", why: "own-scope, past timeoutAt"} end);'
+           else {class: "verdict-due", why: "own-scope, past timeoutAt"} end) end;'
 
 NOW="${CM_NOW:-$(date +%s)}"
 case "$NOW" in
@@ -182,7 +171,7 @@ case "$NOW" in
 esac
 NOW_ISO="$(jq -rn --argjson n "$NOW" '$n | todate')"
 CARGS=(--argjson now "$NOW" --argjson min "$MIN" --argjson claimMin "$CLAIM_MIN" --arg kinds "$KINDS"
-       --arg deny "$DENY" --arg squash "$SQUASH" --arg allow "$ALLOW" --arg neverPaths "$NEVER_PATHS"
+       --arg deny "$CM_ASK_DENY" --arg squash "$CM_ASK_SQUASH" --arg allow "$CM_ASK_ALLOW" --arg neverPaths "$CM_ASK_NEVER_PATHS"
        --arg owner "$OWNER")
 # shellcheck disable=SC2016  # jq program, not shell
 OWN='($kinds | split(" ") | map(select(. != ""))) as $own

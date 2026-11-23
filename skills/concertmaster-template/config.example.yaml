@@ -168,6 +168,7 @@ schedule:
   stuck_minutes: 45                # CM_STUCK_MIN
   stuck_respawn_hours: 2
   max_nudges: 2
+  stall_rungs_min: [30, 60, 90]    # [script] scripts/stall.sh drive ladder: minutes with no progress for rung 1 (nudge), 2 (restart or re-place), 3 (independent verdict, then act)
   lane_loop_minutes: 30            # [script] default /loop interval of a standing lane; stale = no Claude turn for 2 x this (scripts/runtime-check.sh)
 
 deploy:
@@ -356,6 +357,16 @@ away:
   deny_extra: []                   # [script] regex fragments added to the owner-only subject scan, e.g. ["warehouse"]
   allow_paths: []                  # [script] regex fragments; non-empty replaces the default allowlist (src/ tests e2e docs public root *.md)
   never_paths: []                  # [script] regex fragments added to the never-list of changed paths
+
+# The drive ladder (scripts/stall.sh, references/drive-ladder.md): how a stalled lane, PR or ask is driven forward.
+drive:
+  # Release or deploy asks the concertmaster may decide itself once they stall: regex fragments, each matched as
+  # a whole phrase in the ask's question and topic (lowercased). The ask must be ONE such phrase and nothing else:
+  # `[verb] [the] <class> [build|release|bundle|update] [version] [to|on|in <track>] [today|tonight|now]`. Default
+  # [] (or unset): every release or deploy ask goes to the owner. Never list a secret, a migration or a data change.
+  # A fragment holds no wildcard (`.*`, `\w+`) and never matches the empty text (config-check refuses both); an invalid
+  # fragment is dropped. Example: ["store build", "store submission", "deploy window", "ota (release|bundle)"]
+  delegated_classes: []            # [script] scripts/stall.sh, scripts/ask-deny.sh
 
 # Read-only production test after each release (lane release-tester in references/lanes.md).
 # Only used when the lane is listed under lanes. Holds names and routes, never a credential.
