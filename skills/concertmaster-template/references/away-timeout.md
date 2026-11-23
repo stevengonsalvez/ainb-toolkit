@@ -18,10 +18,14 @@ ask (open) ──▶ past timeoutAt? ──▶ every gate below ──▶ verdic
   `askedAt` + `away.timeout_minutes`);
 - `kind` is in `away.own_scope_kinds` (default `code design test scope product`);
 - it has a numeric `issue` (the verdict is recorded there) and a unique `id`;
-- its lane is not an ops lane, an epic lead or the pr-sweeper, and it is not a "plan ready" approval;
+- its lane is not an ops lane, an epic lead or the pr-sweeper, and it is not a "plan ready" approval (the issue,
+  lane and plan-ready gates are one definition in `scripts/ask-deny.sh`, which `scripts/stall.sh` applies too);
 - question, topic, lane, worker, path and files are plain ASCII and contain no owner-only subject
   (migrations, auth, secrets, payments, deploys, merges, deletes, personal data, the owner's name,
-  plus `away.deny_extra`);
+  plus `away.deny_extra`). The scan lives in `scripts/ask-deny.sh`, which `scripts/stall.sh` reads too
+  (`references/drive-ladder.md`), so both judge an ask the same way. Question, topic, lane, worker and
+  path must be text, `files` a list of text, and those fields at most 4000 characters as JSON, else the
+  ask never times out; a padded worker id is trimmed before the ledger lookup;
 - it lists `files[]` (the changed paths, re-read within 10 minutes before a claim) or sets
   `noCode: true`; every path is on the allowlist (`away.allow_paths`, default `src/`, tests, `e2e/`,
   `docs/`, `public/`, root `*.md`) and none is on the never-list (`CLAUDE.md`, `AGENTS.md`, `.env`,
