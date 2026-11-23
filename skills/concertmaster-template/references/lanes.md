@@ -162,7 +162,7 @@ recommended option, and ends its turn. The answer arrives as a typed message.
   host for hours.)
 - Coordinate only through Orca and the ledger, both directions: report up through
   your Orca worktree comment (`cm:<state>`); the concertmaster reaches you with
-  `orca terminal send`. Never `SendMessage` or any agent-specific
+  `plugly terminal send` (`orca terminal send` on an Orca host). Never `SendMessage`, cc-socks or any agent-specific
   messaging. You are identified by repo + worktree name + the host Orca reports;
   re-resolve terminal handles from `orca terminal list --json` by worktree path
   every time, never cache one. (On shared hosts a name can resolve to another
@@ -393,7 +393,7 @@ its ticker does each tick).
   host for hours.)
 - Coordinate only through Orca and the ledger, both directions: report up through
   your Orca worktree comment (`cm:<state>`); the concertmaster reaches you with
-  `orca terminal send`. Never `SendMessage` or any agent-specific
+  `plugly terminal send` (`orca terminal send` on an Orca host). Never `SendMessage`, cc-socks or any agent-specific
   messaging. You are identified by repo + worktree name + the host Orca reports;
   re-resolve terminal handles from `orca terminal list --json` by worktree path
   every time, never cache one. (On shared hosts a name can resolve to another
@@ -624,7 +624,7 @@ that came from a GitHub issue gets one short cited summary comment on it.
 
 Report only through your Orca worktree comment: "cm:running <q>",
 "cm:blocked <one question>", "cm:idle <n> open beads, answered: <slugs>".
-Never `SendMessage` or any agent-specific messaging (Orca comment and ledger only). Loop: self-paced /loop, waking every
+Never `SendMessage`, cc-socks or any agent-specific messaging (worktree comment and ledger only). Loop: self-paced /loop, waking every
 30 minutes when idle and 15 when working. Boundary per question: answered,
 or marked unanswerable with what would settle it. An empty queue means idle;
 never cm:done.

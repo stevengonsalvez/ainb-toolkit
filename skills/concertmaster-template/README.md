@@ -38,7 +38,7 @@ those keys; nothing in them names an org, repo, host, person or chat.
 | `references/ci-capacity.md` | CI queue alert, the GitHub API budget rule and the shared-token budget |
 | `references/recovery.md` | off-host backup of the control plane (`scripts/backup-offhost.sh`), the stale-backup alarm, the nightly cron line and the restore onto a fresh host |
 | `references/credentials.md`, `references/credentials-index.seed.json` | credential index (names only) and the weekly validity check |
-| `references/prompt-stalls.md` | the never-run-`rm` rule, the pane scan (`pane-stalls.sh`), the rm-guard hook and an optional allowlist |
+| `references/prompt-stalls.md` | the never-run-`rm` rule, the pane scan (`pane-stalls.sh`), the rm-guard hook, the SendMessage guard hook and an optional allowlist |
 | `references/lessons-log.md`, `references/lessons-rejected.md` | empty SEEDS of the lessons loop's merged log and blocklist; copy them to the project-owned paths (`lessons.log_file`, `lessons.rejected_file`, default `local/`) because a sync overwrites `references/` |
 | `references/away-timeout.md` | the away timeout (hard rule 16) and `scripts/ask-timeout.sh`: which asks may get an independent verdict |
 | `references/queue.md` | the work queue: add, grant under caps, mark, audit (`scripts/queue.sh`, `scripts/queue-audit.sh`) |
