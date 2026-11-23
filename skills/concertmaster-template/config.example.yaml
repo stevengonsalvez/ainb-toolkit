@@ -196,6 +196,8 @@ health:
   resume_reset_hours: 6            # a session healthy this long after its one auto-resume gets one try again at its next stop
   verify_seconds: 90               # how long a resume has to show one process on the id, the bypass footer and the same transcript
   run_budget_seconds: 540          # a pass starts a resume or a sleep only while its worst case still ends inside this many seconds from the start (the rest waits for the next pass), so it ends inside the tick's 600 s call
+  probe_seconds: 150               # (at most 300; every host is probed at the same time, so the probe phase costs one bound, not their sum) the bound on one host probe (the scan of every process and a git status per worktree, local or over ssh). A loaded machine (load average 30 to 85) needs far more than a plain ssh call; a probe that still runs out marks that HOST as not checked, once, never every session on it. Env CM_HEALTH_PROBE_S
+  action_probe_seconds: 60         # (never more than probe_seconds) the bound of the probes an ACTION makes while the run budget ticks: the re-check before a resume or a sleep and each poll of a resume's verify loop. The worst-case figure a resume or a sleep is deferred by is built from it, so a larger value defers actions sooner. Env CM_HEALTH_ACTION_PROBE_S
   cloud: none                      # gce: ask the GCE metadata server whether the VM was preempted (Spot); none: only the previous boot's power-key line counts
   ignore_hosts: []                 # hosts gone for good: never probed and never counted as unread (their comments)
   daemon_units: []                 # systemd units of the terminal runtime (user units first, then system), e.g. [orca-serve.service]; a restart after boot is a daemon-restart event

@@ -106,6 +106,17 @@ RESET_H="$(cfgint "${CM_HEALTH_RESET_H:-}" .health.resume_reset_hours 6)"
 VERIFY_S="$(cfgint "${CM_HEALTH_VERIFY_S:-}" .health.verify_seconds 90)"
 POLL_S="$(cfgint "${CM_HEALTH_POLL_S:-}" .health.verify_poll_seconds 3)"; [ "$POLL_S" -ge 1 ] || POLL_S=1
 SSH_S="$(cfgint "${CM_HEALTH_SSH_S:-}" .health.ssh_seconds 40)"; [ "$SSH_S" -ge 1 ] || SSH_S=40
+# the host probe (one scan of every process, git status per worktree) is far heavier than one ssh call: on a loaded
+# machine (load average 30 to 85) 40 s is not enough and the whole host reads as "did not answer"
+PROBE_S="$(cfgint "${CM_HEALTH_PROBE_S:-}" .health.probe_seconds 150)"; [ "$PROBE_S" -ge 1 ] || PROBE_S=150
+# the hosts are probed in parallel (below), so the probe phase costs at most one probe: a hard ceiling keeps that
+# inside the tick's 600 s call whatever the config or env says
+if [ "$PROBE_S" -gt 300 ]; then cm_warn "lane-health.sh: health.probe_seconds $PROBE_S is above 300: using 300"; PROBE_S=300; fi
+# the probes an action makes (the re-check before a resume or a sleep, and each poll of a resume's verify loop) run while
+# the run budget is ticking and their count is known, so each gets this tighter bound; it never exceeds the full one.
+# The worst-case formulas of the run budget below are built from it.
+ACT_PROBE_S="$(cfgint "${CM_HEALTH_ACTION_PROBE_S:-}" .health.action_probe_seconds 60)"; [ "$ACT_PROBE_S" -ge 1 ] || ACT_PROBE_S=60
+[ "$ACT_PROBE_S" -le "$PROBE_S" ] || ACT_PROBE_S="$PROBE_S"
 CLOUD="${CM_HEALTH_CLOUD:-$(cm_cfg .health.cloud none)}"
 case "$CLOUD" in gce|none) ;; *) cm_warn "lane-health.sh: health.cloud must be gce or none (got '$CLOUD'): using none"; CLOUD=none ;; esac
 UNITS="${CM_HEALTH_DAEMON_UNITS-$(cm_cfg .health.daemon_units)}"
@@ -147,6 +158,8 @@ lh_probe() {
   shift 7
   [ -n "$projects" ] || projects="$HOME/.claude/projects"
   _lhf() { printf '%s' "$1" | tr '\t\r\n' '   ' | cut -c1-400; }
+  # a read that can stall on a busy host (the journal, the login log, systemd) is bounded: a slow answer is no answer
+  _lhto() { if command -v timeout >/dev/null 2>&1; then timeout 10 "$@"; elif command -v gtimeout >/dev/null 2>&1; then gtimeout 10 "$@"; else "$@"; fi; }
   _lhmt() { stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null || echo 0; }
   _lhdir() { printf '%s/%s' "$projects" "$(printf '%s' "$1" | sed 's#[^A-Za-z0-9]#-#g')"; }
   _lhtinfo() {
@@ -256,11 +269,11 @@ lh_probe() {
     boot="$(sysctl -n kern.boottime 2>/dev/null | sed -n 's/^{ *sec = \([0-9][0-9]*\),.*/\1/p' | head -n 1)"
   fi
   printf 'H\tboot\t%s\nH\tuptime_s\t%s\n' "$(_lhf "$boot")" "$(_lhf "$up")"
-  lastx="$(last -x reboot shutdown 2>/dev/null | grep -Ev '^(wtmp|[[:space:]]*$)' | head -n 4 | tr -s ' ' | tr '\n' ';' || true)"
+  lastx="$(_lhto last -x reboot shutdown 2>/dev/null | grep -Ev '^(wtmp|[[:space:]]*$)' | head -n 4 | tr -s ' ' | tr '\n' ';' || true)"
   printf 'H\tlastx\t%s\n' "$(_lhf "$lastx")"
   pk=""
   if command -v journalctl >/dev/null 2>&1; then
-    pk="$(journalctl -b -1 -q --no-pager -t systemd-logind 2>/dev/null | grep -i -m1 'power key' || true)"
+    pk="$(_lhto journalctl -b -1 -q --no-pager -t systemd-logind 2>/dev/null | grep -i -m1 'power key' || true)"
   fi
   printf 'H\tpowerkey\t%s\n' "$(_lhf "$pk")"
   pm=""; sp=""
@@ -274,8 +287,8 @@ lh_probe() {
   for u in $units; do
     t=""
     if command -v systemctl >/dev/null 2>&1; then
-      t="$(systemctl --user show -p ActiveEnterTimestamp --value "$u" 2>/dev/null || true)"
-      case "$t" in ''|n/a) t="$(systemctl show -p ActiveEnterTimestamp --value "$u" 2>/dev/null || true)" ;; esac
+      t="$(_lhto systemctl --user show -p ActiveEnterTimestamp --value "$u" 2>/dev/null || true)"
+      case "$t" in ''|n/a) t="$(_lhto systemctl show -p ActiveEnterTimestamp --value "$u" 2>/dev/null || true)" ;; esac
     fi
     case "$t" in ''|n/a) continue ;; esac
     e="$(date -d "$t" +%s 2>/dev/null || true)"
@@ -482,15 +495,16 @@ expect_hostname() {
   printf '%s\n' "$e"
 }
 # probe_host <host> <out-file> [path...]: the probe's lines in <out-file>, a JSON host document in <out-file>.json.
+# The bound is $PROBE_BOUND when the caller sets it for this call (PROBE_BOUND=n probe_host ...), else $PROBE_S.
 probe_host() {
-  local host="$1" out="$2" rc=0 target expect remote_proc err ecode
+  local host="$1" out="$2" rc=0 target expect remote_proc err ecode bound="${PROBE_BOUND:-$PROBE_S}"
   shift 2
   if [ "$host" = local ]; then
     {
       declare -f cm_status_dirt lh_probe isnum_lh
       printf 'CM_IGNORE_UNTRACKED=%q\n' "$CM_IGNORE_UNTRACKED"
       printf 'lh_probe'; printf ' %q' "$(cm_proc_root)" "${CM_CLAUDE_PROJECTS:-}" "$AGENTS" "" "$UNITS" "$CLOUD" "$CM_PATH_MATCH" "$@"; printf '\n'
-    } | cm_timeout "$SSH_S" bash -s > "$out" 2>"$out.err" || rc=$?
+    } | cm_timeout "$bound" bash -s > "$out" 2>"$out.err" || rc=$?
   else
     target="$(cm_ssh_target "$host")"
     case "$target" in -*|*[[:space:]]*|'') printf 'E\tbad-target\tinvalid ssh target for %s\n' "$host" > "$out"; rc=3 ;; esac
@@ -504,17 +518,37 @@ probe_host() {
         declare -f cm_status_dirt lh_probe isnum_lh
         printf 'CM_IGNORE_UNTRACKED=%q\n' "$CM_IGNORE_UNTRACKED"
         printf 'lh_probe'; printf ' %q' "$remote_proc" "${CM_HEALTH_REMOTE_PROJECTS:-}" "$AGENTS" "$expect" "$UNITS" "$CLOUD" "$CM_PATH_MATCH" "$@"; printf '\n'
-      } | cm_timeout "$SSH_S" ssh -o BatchMode=yes -o ConnectTimeout=8 -- "$target" bash -s > "$out" 2>"$out.err" || rc=$?
+      } | cm_timeout "$bound" ssh -o BatchMode=yes -o ConnectTimeout=8 -- "$target" bash -s > "$out" 2>"$out.err" || rc=$?
     fi
   fi
   err="$(awk -F'\t' '$1 == "E" { print $3; exit }' "$out" 2>/dev/null)"
   ecode="$(awk -F'\t' '$1 == "E" { print $2; exit }' "$out" 2>/dev/null)"
-  if [ -z "$err" ] && [ "$rc" != 0 ]; then err="$(head -c 120 "$out.err" 2>/dev/null | tr '\t\n' '  ')"; err="probe exit $rc${err:+: $err}"; fi
+  if [ -z "$err" ] && [ "$rc" != 0 ]; then
+    # 124 is timeout(1); 142 is what the perl alarm fallback of cm_timeout exits with (SIGALRM)
+    if [ "$rc" = 124 ] || [ "$rc" = 142 ]; then err="probe timed out after ${bound}s"; ecode=timeout
+    else err="$(head -c 120 "$out.err" 2>/dev/null | tr '\t\n' '  ')"; err="probe exit $rc${err:+: $err}"; fi
+  fi
   jq -R -s --arg host "$host" --arg err "$err" --arg ecode "$ecode" '
     def nn: if . == null or . == "" then null else . end;
     def num: if . == null or . == "" then null else (tonumber? // null) end;
+    # why a host did not answer, in plain words: one host row says it once, never one row per session on it
+    def kind: if $ecode == "timeout" then "timeout"
+      elif $ecode == "wrong-host" then "identity"
+      elif ($err | test("Could not resolve|Name or service not known|nodename nor servname|Temporary failure in name resolution"; "i")) then "unresolvable"
+      elif ($err | test("Host key verification failed|REMOTE HOST IDENTIFICATION HAS CHANGED"; "i")) then "hostkey"
+      elif ($err | test("Permission denied"; "i")) then "auth"
+      elif ($err | test("Connection (refused|timed out|reset|closed)|No route to host|Network is unreachable|timed out"; "i")) then "unreachable"
+      else "other" end;
+    def hint: kind as $k
+      | if $k == "timeout" then "probe timed out: the machine is busy, not checked this pass (raise health.probe_seconds if it keeps happening)"
+        elif $k == "unresolvable" then "does not resolve: stale name in config, check hosts[] (hosts.per_host and the ssh alias)"
+        elif $k == "hostkey" then "host key verification failed: stale name or a changed key, check hosts[] and known_hosts"
+        elif $k == "identity" then "\($err | sub("^this host "; "")): add that name to health.host_aliases, or set hosts.per_host.<host>.hostname"
+        elif $k == "auth" then "ssh was refused (permission denied): check the key for this host"
+        elif $k == "unreachable" then "unreachable over ssh: the host is down or the network is"
+        else ("did not answer: " + ($err | .[0:80])) end;
     split("\n") | map(select(length > 0) | split("\t")) as $l
-    | if $err != "" then {host: $host, ok: false, error: $err, noScan: ($ecode == "no-proc")}
+    | if $err != "" then {host: $host, ok: false, error: $err, kind: kind, hint: hint, noScan: ($ecode == "no-proc")}
       else {host: $host, ok: true, error: null,
             incomplete: ([$l[] | select(.[0] == "W")] | length > 0),
             facts: ([$l[] | select(.[0] == "H") | {(.[1]): (.[2] | nn)}] | add // {}),
@@ -700,14 +734,17 @@ sort -u "$TMP/hosts.txt" | grep -v '^$' | while IFS= read -r h; do
 done > "$TMP/hosts.u" || true
 
 # ---- probe every host ----------------------------------------------------------------------------
-i=0; : > "$TMP/hostfiles"
+i=0; : > "$TMP/hostfiles"; PROBE_PIDS=()
 while IFS= read -r h; do
   i=$((i + 1))
   paths=()
   while IFS= read -r p; do [ -n "$p" ] && paths+=("$p"); done < <(jq -r --arg h "$h" '.[] | select(.host == $h and .path != "") | .path' "$TMP/rows.json")
-  probe_host "$h" "$TMP/probe-$i" ${paths[@]+"${paths[@]}"}
+  # one probe per host, all at once: a slow or dead host costs its own bound, never the sum of the bounds
+  probe_host "$h" "$TMP/probe-$i" ${paths[@]+"${paths[@]}"} </dev/null &
+  PROBE_PIDS+=("$!")
   printf '%s\n' "$TMP/probe-$i.json" >> "$TMP/hostfiles"
 done < "$TMP/hosts.u"
+[ "${#PROBE_PIDS[@]}" -eq 0 ] || wait "${PROBE_PIDS[@]}"
 if [ -s "$TMP/hostfiles" ]; then xargs jq -s '.' < "$TMP/hostfiles" > "$TMP/hosts.json"; else echo '[]' > "$TMP/hosts.json"; fi
 
 # ---- panes: every agent we judge (a matched session, or an in-scope unknown in --all) -------------
@@ -1037,7 +1074,7 @@ $ST[0].names as $standingNames | $ST[0].sids as $standingSids
                 and (((.at | ep) - ($e.at | ep)) | absv) <= 120) | not)
     | . + {seenAt: ($now | iso)} ] as $newEv
 | { generatedAt: ($now | iso), mode: $mode, lead: (if $mode == "lead" then $lead else null end),
-    hosts: [ $H[] | {host, ok, error, incomplete: (.incomplete // false), bootAt: (.boot | iso), settled, spot, preempted: (.preempted // false),
+    hosts: [ $H[] | {host, ok, error, kind: (.kind // null), hint: (.hint // null), incomplete: (.incomplete // false), bootAt: (.boot | iso), settled, spot, preempted: (.preempted // false),
                      daemonAt: (.daemonAt | iso)} ],
     sessions: ($rowS + $unk), newEvents: $newEv, hostEvents: (($prevEv + $newEv) | .[-200:]), alertedPrev: $alerted }'
 
@@ -1078,7 +1115,7 @@ resume_session() {
   RS_OK=0; RS_WHY=""; RS_HANDLE=""
   if why="$(others_acting)"; then RS_WHY="$why: not resumed this pass"; return; fi
   case "$sid" in ''|-*|*[!A-Za-z0-9._-]*) RS_WHY="session id \"$sid\" is not a plain id"; return ;; esac
-  probe_host "$host" "$TMP/re-$$" "$path"
+  PROBE_BOUND="$ACT_PROBE_S" probe_host "$host" "$TMP/re-$$" "$path"
   n="$(procs_on "$TMP/re-$$.json" "$path" "$sid")"
   case "$n" in 0) ;; x) RS_WHY="host stopped answering, or its process scan was incomplete, before the resume: left alone"; return ;; *) RS_WHY="a process appeared here since the check: left alone"; RS_OK=2; return ;; esac
   bin="$(agent_bin "$host" | head -n 1)"
@@ -1102,7 +1139,7 @@ resume_session() {
   local t0=$SECONDS
   while :; do
     sleep "$POLL_S"; waited=$((SECONDS - t0))
-    probe_host "$host" "$TMP/rv-$$" "$path"
+    PROBE_BOUND="$ACT_PROBE_S" probe_host "$host" "$TMP/rv-$$" "$path"
     n="$(jq -r --arg s "$sid" 'if .ok and ((.incomplete // false) | not) then [(.procs[], (.headless // [])[]) | select(.sid == $s)] | length else "x" end' "$TMP/rv-$$.json" 2>/dev/null)"
     tsid="$(jq -r --arg p "$path" 'if .ok then (.trans[$p].newest // "") else "" end' "$TMP/rv-$$.json" 2>/dev/null)"
     bottom="$(pane_bottom "$host" "$rt" "$h" 2>/dev/null || true)"
@@ -1241,8 +1278,15 @@ if [ "$ACT" = 1 ] && jq -e 'any(.sessions[]; .resume or .sleep)' "$TMP/doc.json"
   take_resume_lock || NOACT="resume.sh holds $RESUME_LOCK: no resume and no sleep this pass"
 fi
 RUN_BUDGET="$(cfgint "${CM_HEALTH_RUN_BUDGET_S:-}" .health.run_budget_seconds 540)"
-RESUME_WORST=$((VERIFY_S + POLL_S + 60 + 3 * SSH_S + 30 + 30))   # re-probe, binary lookup, create, verify (one more poll and pane read)
-SLEEP_WORST=$((2 * SSH_S + 30 + 30 + 30))                # re-probe, comment, kill, close
+# The worst case of one action, from the calls its path makes (each is bounded):
+#   resume: one probe before the create (ACT_PROBE_S), the binary lookup (the larger of its 30 s and SSH_S), the create (60),
+#           the verify loop (its last round STARTS before VERIFY_S has passed: POLL_S, one probe, one pane read of 30 s),
+#           and a 30 s margin
+#   sleep:  one probe, a pane read (30), the comment marked (show and set, 30 each), the stop (ssh 30 or 10 s of waiting,
+#           then the terminal close, 30), and the comment put back when the stop failed (60)
+AB_S="$SSH_S"; [ "$AB_S" -ge 30 ] || AB_S=30
+RESUME_WORST=$((ACT_PROBE_S + AB_S + 60 + VERIFY_S + POLL_S + ACT_PROBE_S + 30 + 30))
+SLEEP_WORST=$((ACT_PROBE_S + 30 + 60 + 30 + 30 + 60))
 if [ "$ACT" = 1 ]; then
   while IFS= read -r s; do
     [ -n "$s" ] || continue
@@ -1266,7 +1310,7 @@ if [ "$ACT" = 1 ]; then
       if why="$(others_acting)"; then action "$k" sleep skipped "$why"; continue; fi
       # judged minutes ago (resumes ran since): probe again, and sleep only if nothing moved in the meantime
       sh_="$(jq -r '.host' <<<"$s")"; sp_="$(jq -r '.live.pid' <<<"$s")"
-      probe_host "$sh_" "$TMP/sl-$$" "$(jq -r '.path' <<<"$s")"
+      PROBE_BOUND="$ACT_PROBE_S" probe_host "$sh_" "$TMP/sl-$$" "$(jq -r '.path' <<<"$s")"
       now_t="$(jq -r --argjson p "$sp_" 'if .ok and ((.incomplete // false) | not) then ([.procs[] | select(.pid == $p)] | first | .tmtime // "gone") else "x" end' "$TMP/sl-$$.json" 2>/dev/null)"
       was_t="$(jq -r '.live.lastTranscriptAt // "" | if . == "" then "" else (sub("\\.[0-9]+"; "") | fromdateiso8601 | tostring) end' <<<"$s" 2>/dev/null)"
       if [ "$now_t" != "$was_t" ]; then action "$k" sleep skipped "it changed since the check (transcript ${now_t:-?} vs ${was_t:-?}): not slept"; continue; fi

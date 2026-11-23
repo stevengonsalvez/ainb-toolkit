@@ -37,6 +37,13 @@ This machine is read directly; any other host over ssh to `cm_ssh_target` (the p
 remote `hostname -s` must match, as `live-agent.sh` does). A host that does not answer is `unknown (host down)` for
 every session on it, and nothing is resumed anywhere else (hard rule 6).
 
+Two things decide whether a host "answered", and each is a host fact, never a per-session one:
+
+| cause | what is read | what to do |
+|---|---|---|
+| timeout | the probe (one scan of every process, a git status per worktree, a few bounded reads of the journal and systemd) outran `health.probe_seconds` (150, env `CM_HEALTH_PROBE_S`, never more than 300: a larger value is cut to 300 with a warning; `timeout(1)` exit 124 and the perl-alarm fallback's 142 both mean timeout). All hosts are probed at the same time, so the probe phase costs the slowest bound, never the sum, and stays inside the tick's 600 s call. On a loaded machine (load average 30 to 85) the old 40 s bound ran out on this machine itself and every local session read as unknown | raise `health.probe_seconds` if it keeps happening; a timeout still costs one host row, not one row per session |
+| ssh | the name does not resolve (a stale name in `hosts[]`), the host key fails verification, the key is refused, or the network is down | fix the stale name or key; a host gone for good goes in `health.ignore_hosts` |
+
 | fact | source |
 |---|---|
 | live agents | processes of this user on a terminal whose command is a `respawn.live_agents` name; never a zombie or a tty-less daemon. Read from `/proc` on Linux; on a host with no `/proc` (macOS) from `ps -A` (pid, uid, parent, state, tty, elapsed time, name, argv) with each agent's cwd from `lsof -a -p <pid> -d cwd`. A live agent whose cwd `lsof` cannot read, that is missing from the argv table, or whose command changed by the time its cwd is read makes the scan incomplete; with no `ps` or `lsof` the host is `unknown` and says why |
@@ -86,7 +93,7 @@ above); a daemon restart after it is `daemon restart`; a pane last seen on a lim
 | duplicate | alert; nothing touched (hard rule 4) |
 | stuck | alert at `health.stuck_minutes`; a usage-credits or limit menu is never answered |
 | `resume.lock` or a cutover lock held | no create and no kill this pass. While it acts, lane-health holds `resume.lock` itself (`resume.sh` and the cutover scripts accept a `lane-health` holder and stand down; no lock, no action), and every writing run holds a lock on its own record from before it reads it to after it writes it (`$CM_HOME/lane-health.lock` for `--all`, `<cache file>.lock` for each lead; a second run on the same record exits 4) |
-| a long pass | a resume or a sleep starts only while its worst case (verify, create, probes) still ends inside `health.run_budget_seconds` (540) from the start of the run; the rest, and any alert past it, waits for the next pass |
+| a long pass | a resume or a sleep starts only while its worst case still ends inside `health.run_budget_seconds` (540) from the start of the run; the rest, and any alert past it, waits for the next pass. The probes an action makes (one before the create or the kill, and one per poll of a resume's verify loop) run under `health.action_probe_seconds` (60, env `CM_HEALTH_ACTION_PROBE_S`, never above `probe_seconds`), and the worst case is built from it: resume = probe + binary lookup (the larger of 30 and `ssh_seconds`) + create (60) + verify (`verify_seconds`, plus the last round: poll, probe, a 30 s pane read) + 30; sleep = probe + pane read (30) + comment marked (60) + stop and close (60) + comment put back (60). A probe over that bound stops the action (fail closed: left alone, said in the meaning line) |
 | a host whose worktree comments could not be read (or `CM_HEALTH_NO_COMMENTS=1`) | a `cm:child` claim there may be unread, so a parentless worker (never a lead) is not resumed and no unknown is slept this pass; it says which host. Only a host that holds a live ledger worker or a lead counts, and the comments are read through the CLI even when ssh fails; a host gone for good goes in `health.ignore_hosts` |
 | an agent with no terminal (a headless `claude -p`) in the worktree, or on the session id | counted as a copy: the session is `unknown`, never resumed beside it, and it blocks a `wake` |
 | a host that did not answer, a process scan that was incomplete | `unknown`; nothing resumed or slept there, and the session keeps its last verdict, so a healthy session that stopped while its host was down is still resumed once the host is back. An incomplete scan of any host, or a host that answered but could not scan its processes at all (no `ps` or `lsof`), also stops every automatic resume and every `wake` this pass: a copy there cannot be ruled out. A host that did not answer does not (it is `unknown`, and `wake` notes it) |
@@ -143,5 +150,5 @@ own record of its children lives in `$CM_HOME/cache/lane-health-lead-<id>.json` 
 ## Env and tests
 
 `CM_NOW`, `CM_HEALTH_SETTLE_MIN`, `_STUCK_MIN`, `_RUNNING_S`, `_UNKNOWN_IDLE_MIN`, `_RESET_H`, `_VERIFY_S`, `_POLL_S`,
-`_SSH_S`, `_RUN_BUDGET_S`, `_CLOUD`, `_DAEMON_UNITS`, `CM_HEALTH_SEND`, `CM_HEALTH_AGENT_BIN`, `CM_HEALTH_NO_COMMENTS=1` (skip the
+`_SSH_S`, `_PROBE_S`, `_ACTION_PROBE_S`, `_RUN_BUDGET_S`, `_CLOUD`, `_DAEMON_UNITS`, `CM_HEALTH_SEND`, `CM_HEALTH_AGENT_BIN`, `CM_HEALTH_NO_COMMENTS=1` (skip the
 comment read). Tests: `scripts/test/lane-health.sh` (stubbed orca, plugly, ssh and host tools over a fake `/proc`, and stubbed `ps`, `lsof` and `sysctl` over the same processes for a host with no `/proc`).
