@@ -7,7 +7,7 @@
 #
 # Reads `<cli> worktree list --limit 500 --json` once per host of `host list` (the same hosts discover.sh reads; a failed host
 # list reads the local host only) and keeps the rows of THIS project (path matches worktrees.path_match). A worktree is
-# LINKED when the row's `linkedIssue` is a positive number, or `linkedItems` holds an item of type `issue`, or a Linear or GitLab
+# LINKED when the row's `linkedIssue` is a positive number, or `linkedItems` holds an item of type `issue`, or another issue tracker's
 # issue is linked. A linked PR alone is NOT an issue link: the row is listed with its PR number (link the issue it closes).
 #
 # Exempt, and only these (stated in references/lanes.md Lead charter, Ticket link):
