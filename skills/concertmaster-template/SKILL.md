@@ -751,6 +751,53 @@ The owner says "issues #101, #102 to dev" or "sort today's team chat".
    realistic alternative second. Two options is enough. Only when § The tick, "No owner question before a deploy is spawned" allows a picker; otherwise the same routing goes in a WAITING row.
 3. **Spawn** per the answer, record in the ledger, report.
 
+**Owner ask = issue + linked session + goal.** A substantive ask from the
+owner (multi-step, or an outcome to prove or track) gets ONE issue in the
+project's tracker with a "Done means" list of checkable criteria and limits
+(budget, binding or not). Search first and reuse an existing issue. Assign it
+by linking the doing session's worktree
+(`orca worktree set --worktree <selector> --issue <issue>`), then send that
+session one ordinary instruction under hard rule 21 that names the goal step
+itself: `[cm-i<id>] set this as your session goal with /goal (where your
+runtime has it) and post it as a comment on #<issue>: close #<issue> with
+posted evidence: <criteria>`. The id stays first, so ordering and acks work, and the
+sent text names `/goal`, which lets a Claude lane set the goal directly. The
+concertmaster never sends a bare `/goal`, with or without text: a leading id
+would stop it running, and a bare one opens a panel that stays open. On EVERY
+runtime the lane sets the goal (`/goal` where the runtime has it) AND posts the
+goal text as a comment on the issue; a lane mid-task does both after its
+current turn. A goal proposal may need approval in the lane's own pane: the
+concertmaster never types into that open picker (hard rule 3), and a lane whose
+goal stays pending says so in its worktree comment (a pending note is not the
+goal comment), and posts the criteria comment once the proposal is approved or
+set; it is not left silently unset. Read
+the pane first, never into an open picker; on a Claude lane check the send with
+`scripts/spawn-verify.sh check` (it judges the default spawn model: a lane on
+another model needs `--model` and `--effort`, or it fails as wrong-model). `cm:ack <id>` shows only that the line was
+read. The goal counts as set only when an issue comment carries the criteria
+the concertmaster sent and its `createdAt` is later than the send's lane-journal
+stamp (hard rule 21 logs each send there, UTC to the second). Read it with
+`gh issue view <issue> --json comments --jq '.comments[] | [.createdAt, .body]'`
+(`--comments` alone prints no exact times). On a Claude lane the goal also counts
+when its goal line shows as set in the pane scrollback the concertmaster already
+reads (read-only, never typed) with no open picker; a goal still waiting for
+approval does not count. A comment that only says the goal is pending approval,
+or that carries no criteria, does not count: otherwise the lane stays unset until
+the criteria comment is posted. An ack with neither
+is not a pass. Check on the tick after the send and re-send once as a new
+instruction only after two ticks with no goal comment (hard rule 21's
+window); if an approval picker is still open, hard rule 3 blocks the re-send
+and the goal becomes a WAITING row for the owner.
+Interview the owner only when the criteria can't
+be set from what is known: unclear acceptance criteria are routed into
+`/interview` (a dedicated interview session, never the concertmaster's own
+picker, per § The tick "No owner question before a deploy is spawned").
+Otherwise set them and go. "Go" skips only that
+extra question: routing, the Pair-sort approval and the outward-message gates
+(`cfg.outward_messages`) still apply in full. The issue closes only
+with the evidence posted. Simple asks (a link, a status read, a one-off
+command) need no issue.
+
 ## Intake
 
 `/concertmaster intake <chat> [--since <time>]` turns a chat (aliases in
