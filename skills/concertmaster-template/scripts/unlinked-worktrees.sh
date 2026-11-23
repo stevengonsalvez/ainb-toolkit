@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# unlinked-worktrees.sh: tick step 3b. Lists the live worktrees that have NO linked issue in the fleet CLI, so an unlinked
+# unlinked-worktrees.sh: tick step 2, unlinked worktrees. Lists the live worktrees that have NO linked issue in the fleet CLI, so an unlinked
 # worktree is visible in the tick report (hard rule 30, "no ticket, no spawn").
 #
 #   scripts/unlinked-worktrees.sh            # the census-style lines below, every host
@@ -26,7 +26,7 @@
 # row too: the rows that were returned are still judged and listed, but the count is a lower bound, never "fewer worktrees".
 # Time: ONE host list (CM_UNLINKED_LIST_TIMEOUT, 20 s) and then every host read IN PARALLEL, each cut to what is left of
 # CM_UNLINKED_BUDGET (80 s), so the worst case is the list plus ONE read; a host that does not answer in time is a CHECK INCOMPLETE
-# row ("not checked: time budget"), never silent. The tick calls it with a 600000 ms Bash timeout (SKILL.md step 3b).
+# row ("not checked: time budget"), never silent. The tick calls it with a 600000 ms Bash timeout (SKILL.md, tick step 2, unlinked worktrees).
 # Env: CM_HOST_TIMEOUT (default 60 s per call). Exit 0 always on the default and --json paths (a tick never fails here); 2 usage.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"

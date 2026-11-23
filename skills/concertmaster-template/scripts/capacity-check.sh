@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# capacity-check.sh: tick step 3c. Counts the agent terminals on every host against the host's cap and, for a host over its cap,
+# capacity-check.sh: tick step 2, capacity. Counts the agent terminals on every host against the host's cap and, for a host over its cap,
 # LISTS the terminals that are safe to tear down. It never removes anything: scripts/teardown.sh does the removal.
 #
 #   scripts/capacity-check.sh                          # text report, every host

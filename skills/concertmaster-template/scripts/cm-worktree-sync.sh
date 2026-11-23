@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # cm-worktree-sync.sh: keep the concertmaster's OWN worktree level with origin/main (hard rule 30).
-# Runs at boot (scripts/boot-sweep.sh) and at tick step 1b. The failure it exists for: a worktree ran hundreds of skill
+# Runs at boot (scripts/boot-sweep.sh) and at tick step 1. The failure it exists for: a worktree ran hundreds of skill
 # commits behind main for days because a stale, empty `.git/.../index.lock` blocked the fast-forward and nothing noticed.
 #
 #   scripts/cm-worktree-sync.sh [--dry-run] [--repo <dir>] [--path <skill dir in the repo>] [--remote origin] [--branch main]

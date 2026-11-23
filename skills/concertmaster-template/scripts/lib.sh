@@ -210,7 +210,7 @@ cm_cli_host_into() {
 
 # cm_wt_dedupe: filter a `worktree list` or `worktree ps` JSON reply on stdin to stdout, keeping ONE row per worktree.
 # Why: the fleet CLI can return duplicate rows for one worktree, one of them with `comment` null. A reader that
-# takes `[0]` or `first` of a per-worktree match then reads a live worker as MISSING / unowned, so EVERY reader of those
+# takes `[0]` or `first` of a per-worktree match then reads a live worker as MISSING / unowned, so a reader of those
 # replies runs this filter on the reply before it looks at a row. The rule, in one place:
 #   - rows are the same worktree when they share `path` (else `worktreeId`; a row with neither is never merged);
 #   - among duplicates the first row with a non-empty `comment` (not null, not "") wins, the first row when none has one;

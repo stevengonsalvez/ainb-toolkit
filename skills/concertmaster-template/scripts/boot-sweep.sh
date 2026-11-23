@@ -33,10 +33,10 @@
 #   within CM_BOOT_CONFIRM_S (60 s); otherwise it is reported `unconfirmed` and retried once later
 # Boot also runs scripts/cm-worktree-sync.sh (the concertmaster worktree level with its remote, hard rule 30; CM_WORKTREE_SYNC replaces
 # the script, tests): its one status line becomes a `(worktree-sync)` report row, and a blocker (exit 1) is repeated in the unit log
-# and at the top of the inbox note. Silent when the worktree is level. Not run in tick mode (the tick runs it as step 1b).
+# and at the top of the inbox note. Silent when the worktree is level. Not run in tick mode (the tick runs it in step 1).
 # Boot also runs scripts/capacity-check.sh --no-candidates (agent terminals per host against the host cap; CM_CAPACITY_CHECK
 # replaces the script, tests): one `(capacity)` row when a host is over its cap or unread, silent otherwise. Not run in tick mode
-# (the tick runs it as step 3c and lists the teardown candidates; nothing is ever removed here).
+# (the tick runs it in step 2 and lists the teardown candidates; nothing is ever removed here).
 # Output: TSV on stdout and $CM_HOME/inbox/boot-sweep-<UTC with seconds>.md. Exit 0 always except
 # bad usage (2): a failed sweep must never fail the boot. Install: references/boot-sweep.md.
 # Env: CM_HOME, CM_TICK_NUDGE (tick mode text), CM_BOOT_SETTLE_S (45), CM_BOOT_ORCA_WAIT_S (300), CM_BOOT_CONFIRM_S (60),
@@ -140,7 +140,7 @@ if [ "$TICK" = 0 ]; then
   fi
 fi
 
-# Boot: the agent terminals per host against the host cap (counts only; the tick lists the teardown candidates, SKILL.md tick step 3c).
+# Boot: the agent terminals per host against the host cap (counts only; the tick lists the teardown candidates, SKILL.md tick step 2).
 # Silent when every host is within its cap and read; an over-cap host is one `(capacity)` row naming it. Exit 1 is "over cap", not a failure.
 if [ "$TICK" = 0 ]; then
   CC_SH="${CM_CAPACITY_CHECK:-$HERE/capacity-check.sh}"
@@ -150,7 +150,7 @@ if [ "$TICK" = 0 ]; then
     cc_over="$(printf '%s\n' "$cc_out" | grep '^  HOST .* OVER by ' | sed 's/^  HOST //' | tr '\t\n|' '   ;' | head -c 300)"
     if [ "$cc_rc" -gt 1 ] || [ -z "$cc_line" ] || [ "$cc_rc" = 1 ] || printf '%s' "$cc_line" | grep -q 'CHECK INCOMPLETE'; then
       [ -n "$cc_line" ] || cc_line="capacity-check: exited $cc_rc: $(printf '%s' "$cc_out" | head -c 160 | tr '\t\n|' '   ')"
-      add "(capacity)" - report "$cc_line${cc_over:+: $cc_over}; teardown candidates are listed by the tick (step 3c), never removed here"
+      add "(capacity)" - report "$cc_line${cc_over:+: $cc_over}; teardown candidates are listed by the tick (step 2), never removed here"
     fi
   else
     add "(capacity)" - report "$CC_SH is missing or not executable: the agent terminals were not compared with the host caps"
