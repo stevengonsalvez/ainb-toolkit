@@ -8,8 +8,8 @@ already taken. The concertmaster takes the action and records it with `--act`.
 ```text
 no progress ──▶ 30 min: rung 1 ──▶ 60 min: rung 2 ──▶ 90 min: rung 3
                 nudge (an ask:     restart or re-place   independent verdict,
-                relay or reply)    (an ask: relay or     then act
-                                   close it)
+                relay or reply)    (an ask: escalate     then act
+                                   or close it)
 ```
 
 A ladder never skips a rung: the rung is the lower of the age rung and the last rung acted plus one. A due
@@ -71,11 +71,12 @@ question, topic, lane, worker or path that is not text, a `files` that is not a 
 scripts/stall.sh --act <lane|pr|ask> <name> <verb> "<what was done>" [--host H] [--path P]
 ```
 
-Verbs: `nudge`, `relay` (rung 1), `restart`, `replace`, `close-ask` (rung 2), `verdict`, `blocked` (rung 3).
+Verbs: `nudge`, `relay` (rung 1), `restart`, `replace`, `escalate` (an ask only, does not close it), `close-ask` (rung 2), `verdict`, `blocked` (rung 3).
 One JSON line goes to `$CM_HOME/stall-actions.ndjson`. A text, name, host or path that looks like a
 credential is refused (`scripts/secret-shape.sh`), so say what was done without the value. A `verdict` also
 appends a `decisions[]` row to the ledger first (`references/ledger.md`); nothing is recorded when that write
-is refused.
+is refused. On a ledger ask, `close-ask` sets the ask `state` to `closed` and `verdict` sets it to `decided` in the
+same write, so `ask-timeout.sh` and `stall.sh` read one state (an ask with a duplicate open id is left as it is).
 
 ## Output and exit codes
 

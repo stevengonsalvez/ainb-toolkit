@@ -990,7 +990,7 @@ check "F16 an owner-only ask holds its lane" "$(exr lsec)" "ask"
 act "$W" "$(ago 60)" ask d-rel relay "relayed"
 act "$W" "$(ago 30)" ask d-rel close-ask "closed: decided no-go"
 runj "$W"
-check "F16 after close-ask the ask is recorded" "$(exr d-rel)" "recorded"
+check "F16 after close-ask the ledger ask is closed, so it is no longer a row" "$(exr d-rel)$(jq -r '.asks[0].state' "$W/led.json")" "absentclosed"
 check "F16 after close-ask its lane ladders again" "$(exr lr)$(field lr rung)" "absent1"
 check "F16 after close-ask its PR ladders again" "$(exr '#91')$(field '#91' rung)" "absent1"
 check "F16 after close-ask the freed lane is due: NO-ACTION, exit 4" "$RC" "4"
@@ -1425,6 +1425,40 @@ check "F22 an invalid fragment is dropped, the valid class still counts: laddere
 check "F22 an invalid fragment is dropped: a deploy ask of the valid class ladders" "$(exr e-dep)$(field e-dep rung)" "absent1"
 check "F22 an invalid fragment is dropped: free wording is still the owner's" "$(exr e-any)$(field e-any rung)" "ownerabsent"
 check "F22 an invalid fragment does not stop the run (rows are listed)" "$(jq -r '.rows | length > 0' <<<"$OUT")" "true"
+
+# ---- 13b. an ask climbs the ladder and its resolution reaches the ledger ----------------------------------------------
+# F23 rung 2 of an ask has a non-closing action (escalate), so the ladder reaches the rung 3 verdict; close-ask and verdict
+# set the ledger ask's state in the same write, so ask-timeout.sh stops reporting the ask VERDICT DUE
+ASKT="$(dirname "$SCRIPT")/ask-timeout.sh"
+due() { CM_HOME="$1/cm" CM_CONFIG=/nonexistent CM_NOW="$T0" bash "$ASKT" --ledger "$1/led.json" 2>/dev/null | grep -o '^due=[0-9]*'; }
+reset; W="$ROOT/f23"
+LED="$(jq -nc --arg f "$(ago 95)" --arg t "$(ago 65)" '{workers: {}, asks: [
+    {id: "d-esc", kind: "code", issue: 5, lane: "lx", askedAt: $f, timeoutAt: $t, question: "split it?", noCode: true, state: "open"}]}')"
+gen "$W"; runj "$W"
+check "F23 a delegated ask starts on rung 1: relay" "$(field d-esc rung)$(field d-esc action)" "1relay"
+check "F23 it is verdict-due for the away timeout" "$(due "$W")" "due=1"
+act "$W" "$(ago 40)" ask d-esc relay "relayed"; runj "$W"
+check "F23 after the relay: rung 2 offers escalate or close-ask" "$(field d-esc rung)$(field d-esc action)" "2escalate|close-ask"
+act "$W" "$(ago 20)" ask d-esc escalate "escalated to the owner again"; check "F23 --act escalate on an ask: accepted" "$?" "0"
+runj "$W"
+check "F23 after escalate: rung 3 offers the verdict, the ask is still open" "$(field d-esc rung)$(field d-esc action)$(jq -r '.asks[0].state' "$W/led.json")" "3verdictopen"
+act "$W" "$T0" lane lx escalate "no"; check "F23 escalate on a lane is refused, exit 2" "$?" "2"
+act "$W" "$(ago 5)" ask d-esc verdict "independent verdict: go"; check "F23 --act verdict on an ask: accepted" "$?" "0"
+check "F23 the verdict resolves the ledger ask: state decided" "$(jq -r '.asks[0] | "\(.state) \(.decidedBy)"' "$W/led.json")" "decided concertmaster"
+check "F23 the ledger ask names the decision it was decided by" "$(jq -r '.asks[0].decisionRef == .decisions[0].id' "$W/led.json")" "true"
+check "F23 ask-timeout.sh no longer reports it VERDICT DUE" "$(due "$W")" "due=0"
+reset; W="$ROOT/f23b"
+LED="$(jq -nc --arg f "$(ago 95)" --arg t "$(ago 65)" '{workers: {}, asks: [
+    {id: "d-cls", kind: "code", issue: 6, lane: "ly", askedAt: $f, timeoutAt: $t, question: "split it?", noCode: true, state: "open"},
+    {id: "d-twin", kind: "code", issue: 7, lane: "lz", askedAt: $f, timeoutAt: $t, question: "q", noCode: true, state: "open"},
+    {id: "d-twin", kind: "code", issue: 8, lane: "lz", askedAt: $f, timeoutAt: $t, question: "q", noCode: true, state: "open"}]}')"
+gen "$W"; runj "$W"
+act "$W" "$(ago 40)" ask d-cls relay "relayed"
+act "$W" "$(ago 20)" ask d-cls close-ask "closed: decided no-go"; check "F23b --act close-ask on an ask: accepted" "$?" "0"
+check "F23b close-ask closes the ledger ask" "$(jq -r '.asks[0] | "\(.state) \(.closedBy) \(.closeReason)"' "$W/led.json")" "closed concertmaster closed: decided no-go"
+check "F23b ask-timeout.sh no longer reports the closed ask VERDICT DUE" "$(CM_HOME="$W/cm" CM_CONFIG=/nonexistent CM_NOW="$T0" bash "$ASKT" --ledger "$W/led.json" 2>/dev/null | grep -c 'VERDICT DUE d-cls')" "0"
+act "$W" "$(ago 20)" ask d-twin close-ask "closed"
+check "F23b a duplicate open id is ambiguous: the action is recorded, the ledger asks stay open" "$(jq -r '[.asks[1:][] | .state] | join(",")' "$W/led.json")" "open,open"
 
 # ---- 14. no fleet CLI, no gh --------------------------------------------------------------------------------------------
 check "orca, plugly, gh and ssh were never called" "$(wc -l < "$CALLS" | tr -d ' ')" "0"

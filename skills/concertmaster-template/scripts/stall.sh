@@ -19,7 +19,7 @@
 #         it; a PR seen for the first time starts at its updatedAt), and updatedAt
 #   ask   asks.sh firstSeen, or a ledger ask's askedAt (state open)
 # Rungs (config schedule.stall_rungs_min, default [30, 60, 90]): age >= 30 rung 1 (nudge; an ask: relay or reply),
-# >= 60 rung 2 (restart through scripts/resume.sh or lane-health.sh, or re-place; an ask: relay or close it),
+# >= 60 rung 2 (restart through scripts/resume.sh or lane-health.sh, or re-place; an ask: escalate or close it),
 # >= 90 rung 3 (an independent verdict, then act). rung = min(age rung, last rung acted in this episode + 1), so a
 # ladder never skips a rung; an episode is the actions recorded since the row last made progress, and in time order an
 # action counts at most one rung above the one before it (a verdict recorded first counts as rung 1). While
@@ -74,10 +74,14 @@
 # --act records what was done for a row: one JSON line appended to $CM_HOME/stall-actions.ndjson under a lock
 # (flock, or a mkdir lock where flock is missing), with the row's HOST column as --host (a lane name can repeat across
 # hosts) and optionally its worktree --path. kind: lane, pr, ask. verb: nudge, relay (rung 1), restart, replace,
-# close-ask (rung 2), verdict, blocked (rung 3). A text, name, host or path that looks like a credential is refused
+# escalate (an ask only), close-ask (rung 2), verdict, blocked (rung 3). A text, name, host or path that looks like a credential is refused
 # (scripts/secret-shape.sh on the text as written and with dashes read as spaces: token prefixes, a long run, Bearer, a
 # password manager access token, a password or login phrase). A verdict also appends a decisions[] record to the ledger through
-# cm_ledger_write (references/ledger.md), first; nothing is recorded when that write is refused. restart and replace are
+# cm_ledger_write (references/ledger.md), first; nothing is recorded when that write is refused. On a ledger ask, a
+# close-ask sets the ask state closed (closedBy, closedAt, closeReason) and a verdict sets it decided (decidedBy,
+# decidedAt, decisionRef = the decisions[] id), in that same write, so ask-timeout.sh stops reporting it VERDICT DUE.
+# Only an ask with exactly one open ledger row of that id is changed. escalate is the non-closing rung 2 action of an
+# ask: it relays the ask up again, so the ladder reaches rung 3 (the verdict) at the third rung's age. restart and replace are
 # refused while resume.lock is held. A bad kind, verb or extra argument is refused without repeating the value given.
 #
 # Output: the table KIND NAME HOST AGE RUNG DUE ACTED (stalled rows only), one summary line, then a NO-ACTION line
@@ -126,8 +130,8 @@ mkdir -p -- "$CM_HOME" 2>/dev/null || true
 ACTIONS="$CM_HOME/stall-actions.ndjson"
 SEEN="$CM_HOME/stall-seen.json"
 
-VERBS="nudge relay restart replace close-ask verdict blocked"
-verb_rung() { case "$1" in nudge|relay) echo 1 ;; restart|replace|close-ask) echo 2 ;; verdict|blocked) echo 3 ;; *) return 1 ;; esac; }
+VERBS="nudge relay escalate restart replace close-ask verdict blocked"
+verb_rung() { case "$1" in nudge|relay) echo 1 ;; escalate|restart|replace|close-ask) echo 2 ;; verdict|blocked) echo 3 ;; *) return 1 ;; esac; }
 # looks_secret_text <text>: secret_shaped on the text as written AND with dashes read as spaces (a token split by a dash is
 # caught as written; scripts/secret-shape.sh also holds the phrase shapes: Bearer, a password manager access token, password, login)
 looks_secret_text() { secret_shaped "$1" || secret_shaped "${1//-/ }"; }
@@ -165,6 +169,7 @@ do_act() { # <kind> <name> <verb> <text> <host|""> <path|"">
   local kind="$1" name="$2" verb="$3" text="$4" host="$5" path="$6" rung rec
   case "$kind" in lane|pr|ask) ;; *) usage "--act: kind must be lane, pr or ask (the value given is not repeated)" ;; esac
   case " $VERBS " in *" $verb "*) ;; *) usage "--act: verb must be one of: $VERBS (the value given is not repeated)" ;; esac
+  { [ "$verb" != escalate ] || [ "$kind" = ask ]; } || usage "--act: escalate is an ask verb (a lane or PR restarts or is re-placed at rung 2)"
   [[ "$name" =~ ^[A-Za-z0-9._#:@/+-]{1,160}$ ]] || usage "--act: name must be one plain token (letters, digits, . _ # : @ / + -)"
   if [ -n "$host" ]; then
     [[ "$host" =~ ^[A-Za-z0-9._:@+-][A-Za-z0-9._:@+\ -]{0,99}$ ]] || usage "--act: --host must be a host name (letters, digits, space, . _ : @ + -)"
@@ -189,13 +194,33 @@ do_act() { # <kind> <name> <verb> <text> <host|""> <path|"">
     --arg h "$host" --arg p "$path" \
     '{at: $at, kind: $k, name: $n, host: (if $h == "" then null else $h end), path: (if $p == "" then null else $p end),
       verb: $v, rung: $r, text: $t, by: "concertmaster"}')" || exit 1
-  if [ "$verb" = verdict ]; then
+  # a close-ask or a verdict on a ledger ask resolves that ask in the ledger in the same write, so ask-timeout.sh
+  # (VERDICT DUE) and this script read one state: the ask is no longer open. Only an ask with exactly one open ledger row
+  # of that id is touched (a duplicate id is ambiguous: the action is recorded, the ledger is left alone).
+  if [ "$verb" = verdict ] || { [ "$verb" = close-ask ] && [ "$kind" = ask ]; }; then
     if [ -n "${LEDGER:-}" ]; then export CM_LEDGER="$LEDGER"; fi
-    local d
-    d="$(jq -c --arg id "d-$NOW-$$-$RANDOM" '{id: $id, at, subject: ({kind, name} + (if .host == null then {} else {host} end)), rung, text, source: "stall.sh", by}' <<<"$rec")" || exit 1
+    local d="" did="" ast="" prog
+    if [ "$verb" = verdict ]; then
+      did="d-$NOW-$$-$RANDOM"
+      d="$(jq -c --arg id "$did" '{id: $id, at, subject: ({kind, name} + (if .host == null then {} else {host} end)), rung, text, source: "stall.sh", by}' <<<"$rec")" || exit 1
+      ast=decided
+    else
+      ast=closed
+    fi
     # shellcheck disable=SC2016  # jq program
-    if ! cm_ledger_write '.decisions = (((.decisions // []) | if type == "array" then . else error("decisions is not a list") end) + [$d])' --argjson d "$d"; then
-      cm_warn "REFUSED: the verdict could not be written to the ledger decisions[]; nothing recorded"
+    prog='(if $kind == "ask" and (.asks | type) == "array" and ([.asks[] | select(type == "object" and .id == $aid and .state == "open")] | length) == 1
+           then .asks |= map(if type == "object" and .id == $aid and .state == "open"
+                             then . + {state: $ast} + (if $ast == "decided" then {decidedBy: "concertmaster", decidedAt: $at, decisionRef: $did} else {closedBy: "concertmaster", closedAt: $at, closeReason: $text} end)
+                             else . end)
+           else . end)'
+    if [ -n "$d" ]; then
+      # shellcheck disable=SC2016  # jq program
+      prog='.decisions = (((.decisions // []) | if type == "array" then . else error("decisions is not a list") end) + [$d]) | '"$prog"
+    else
+      d='null'
+    fi
+    if ! cm_ledger_write "$prog" --argjson d "$d" --arg kind "$kind" --arg aid "$name" --arg ast "$ast" --arg at "$NOW_ISO" --arg did "$did" --arg text "$text"; then
+      cm_warn "REFUSED: the $verb could not be written to the ledger; nothing recorded"
       exit 1
     fi
   fi
@@ -509,7 +534,7 @@ def s_mark($m): if s_ok then . else $m end;
     | {kind: $kind, name: $name, host: $host, ageMinutes: $age, progressAt: ($p | todate), ageRung: $ageRung, rung: $rung,
        due: $due,
        action: (if $rung == 0 then "-" elif $isHeld then "held:resume.lock" elif $due | not then "acted"
-                elif $kind == "ask" then ({"1": "relay", "2": "relay|close-ask", "3": "verdict"}[$rung | tostring])
+                elif $kind == "ask" then ({"1": "relay", "2": "escalate|close-ask", "3": "verdict"}[$rung | tostring])
                 else ({"1": "nudge", "2": "restart|replace", "3": "verdict"}[$rung | tostring]) end),
        acted: (if $la == null then null else {verb: $la.verb, at: $la.at, rung: $la.rung} end),
        actedThisTick: $tick, noAction: ($due and ($tickDue | not)),
