@@ -40,6 +40,11 @@ case "$1 $2" in
     c=$(( $(cat "$STUB_DIR/pscount-$env" 2>/dev/null || echo 0) + 1 )); echo "$c" > "$STUB_DIR/pscount-$env"
     if [ "$c" -gt 1 ] && [ -f "$STUB_DIR/steal-lock" ]; then echo 99999 > "$CM_HOME/resume.lock/pid"; fi
     if [ "$c" -gt 1 ] && [ -f "$STUB_DIR/ps-$env.late.json" ]; then cat "$STUB_DIR/ps-$env.late.json"; else cat "$STUB_DIR/ps-$env.json"; fi ;;
+  "terminal list")
+    # the per-host terminal census resume.sh reads; no terms-<env>.json means the list cannot be read
+    env=local; K=--environment; v="$(arg "$@")"; [ -n "$v" ] && env="$v"
+    [ -f "$STUB_DIR/terms-$env.json" ] || { echo "terminal list unavailable" >&2; exit 1; }
+    cat "$STUB_DIR/terms-$env.json" ;;
   "terminal create")
     K=--worktree; sel="$(arg "$@")"
     case "$sel" in *fail-lane*) echo '{"ok":false}'; exit 1 ;; esac
@@ -117,6 +122,17 @@ jq '.result.worktrees |= map(if .path == "/x/late-lane" then .liveTerminalCount 
   jq -cn '{worktreeId: "wt-rn", path: "/y/remote-nocount", agents: [{paneKey: "p0", parentPaneKey: null, state: "working"}]}'
   jq -cn '{worktreeId: "wt-rf", path: "/y/remote-nofield"}'; } | jq -s '{ok: true, result: {worktrees: ., totalCount: length}}' > "$STUB/ps-remote-1.json"
 printf '%s\n' /x/epic-pid /x/epic-pid /x/research /x/sub-lane/inner /x/byid-live > "$STUB/cwds.txt"
+# terms_from_ps <ps.json>: the terminal list that goes with a worktree ps fixture. Per worktree: one identified (claude)
+# terminal for each agent entry, up to liveTerminalCount, and a bare shell (agentIdentity null) for every terminal left over.
+terms_from_ps() {
+  jq -c '{ok: true, result: {terminals: [ .result.worktrees[] | select((.liveTerminalCount // 0) > 0) as $w
+      | ($w.agents // [] | length) as $na | ($w.liveTerminalCount) as $n | ([$na, $n] | min) as $k
+      | ( [range(0; $k)] | map({handle: "t-\($w.worktreeId)-a\(.)", worktreeId: $w.worktreeId, worktreePath: $w.path, tabId: "tab\(.)", leafId: "leaf0", agentIdentity: "claude"}) )
+        + ( [range(0; $n - $k)] | map({handle: "t-\($w.worktreeId)-s\(.)", worktreeId: $w.worktreeId, worktreePath: $w.path, tabId: "sh\(.)", leafId: "leaf0", agentIdentity: null}) ) | .[] ]}}
+    | .result.totalCount = (.result.terminals | length)' "$1"
+}
+terms_from_ps "$STUB/ps-local.json" > "$STUB/terms-local.json"
+terms_from_ps "$STUB/ps-remote-1.json" > "$STUB/terms-remote-1.json"
 
 row() { # row <lane> <host> <path> <current> [agent] [state] [worktreeId]
   local agent='"claude"' wid=null; [ -n "${5:-}" ] && agent="\"$5\""; [ "${5:-}" = NONE ] && agent=null
