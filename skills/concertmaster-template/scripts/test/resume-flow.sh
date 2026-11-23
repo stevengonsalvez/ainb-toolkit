@@ -259,12 +259,13 @@ check "dry run: no create, no send"                '[ "$(creates)" = 0 ] && [ "$
 check "dry run: dead row reported as would resume" 'has_line "dev-sweeper +dead +would claude --continue --model sonnet, nudge \(#4612\)"'
 
 echo "--- roster.sh"
-cat > "$CM_HOME/ledger.json" <<'J'
+FAKE_TOK="ghp""_abcdefghijkl1234"   # built at run time from two pieces: no token-shaped literal in this file
+cat > "$CM_HOME/ledger.json" <<J
 {"updatedAt": "2026-10-13T08:00:00Z",
  "prs": {"r#4612": {"number": 4612, "driver": "w-dev"}, "r#4637": {"number": 4637, "driver": "w-dev"}, "r#1": {"number": 1, "driver": "w-other"}},
  "workers": {
   "w-dev":  {"lane": "dev-sweeper", "host": "local", "agent": "claude", "model": "sonnet", "path": "/x/dev-sweeper", "terminal": "term_4535d409",
-             "model": "sonnet", "beadsEpic": "acme-dev", "task": "#4612 calendar export ghp_abcdefghijkl1234",
+             "model": "sonnet", "beadsEpic": "acme-dev", "task": "#4612 calendar export $FAKE_TOK",
              "lastComment": "cm:idle 8 open beads", "updatedAt": "2026-10-13T08:00:00Z", "secret": "must-not-appear"},
   "w-gone": {"lane": "x", "host": "local", "path": "/x/gone", "state": "gone"},
   "w-done": {"lane": "y", "host": "local", "path": "/x/done", "state": "retired"}}}
@@ -275,7 +276,7 @@ check "roster written with mode 600"               '[ "$(stat -c %a "$R" 2>/dev/
 check "roster holds the active row only"           '[ "$(grep -c "^- lane:" "$R")" = 1 ] && grep -q "lane: \"dev-sweeper\"" "$R"'
 check "roster carries the spec fields"             'for k in lane host worktree terminal model beadsEpic current prs state updatedAt; do grep -Eq "^(- |  )$k:" "$R" || { echo "missing $k" >&2; exit 1; }; done'
 check "prs come from the PRs this worker drives"   'grep -q "prs: \[4612,4637\]" "$R"'
-check "token-shaped text redacted, no extra fields" '! grep -q "ghp_abcdefghijkl1234\|must-not-appear" "$R" && grep -q "\[redacted\]" "$R"'
+check "token-shaped text redacted, no extra fields" '! grep -q "$FAKE_TOK\|must-not-appear" "$R" && grep -q "\[redacted\]" "$R"'
 check "no temp file left behind"                   '[ -z "$(ls -A "$CM_HOME" | grep "^\.roster")" ]'
 cp "$R" "$ROOT/roster.before"
 echo not-json > "$CM_HOME/ledger.json"
