@@ -503,6 +503,13 @@ dv "view file: an empty file refuses with rc 2" "$ROOT/v-empty.json" 2 false
 printf '[1]\n' > "$ROOT/v-arr.json"
 dv "view file: a document that is not an object refuses with rc 2" "$ROOT/v-arr.json" 2 false
 dv "view file: a file that does not exist refuses with rc 2" "$ROOT/v-none.json" 2 false
+# a NUL byte: a command substitution drops it, so text that jq rejects would read as a valid view if the file were read that way
+{ cat "$GV"; printf '\0'; } > "$ROOT/v-nul.json"
+dv "view file: a valid view followed by a NUL byte refuses with rc 2" "$ROOT/v-nul.json" 2 false
+{ printf '\0'; cat "$GV"; } > "$ROOT/v-nul-head.json"
+dv "view file: a NUL byte before a valid view refuses with rc 2" "$ROOT/v-nul-head.json" 2 false
+sed 's/"host"/"ho@st"/' "$GV" | tr '@' '\0' > "$ROOT/v-nul-key2.json"
+dv "view file: a NUL byte inside a key refuses with rc 2" "$ROOT/v-nul-key2.json" 2 false
 # the producer branch: a stand-in for cm_input_view (a subshell, so the real one is back afterwards)
 dp() { # <label> <want rc> <want permit> <producer body>
   local out rc got body="$4"
@@ -516,6 +523,10 @@ dp "producer: two valid views refuse with rc 2" 2 false 'cat "$GV"; cat "$GV"'
 dp "producer: no output at all refuses with rc 2" 2 false ':'
 dp "producer: a valid readable view but a failing status refuses with rc 2" 2 false 'cat "$GV"; return 1'
 dp "producer: a failing status with no view refuses with rc 2" 2 false 'return 3'
+jq -c '.readable = "false"' "$GV" > "$ROOT/v-str-false.json"
+dp "producer: a failing status with a view that says readable:\"false\" (a string) refuses with rc 2" 2 false 'cat "$ROOT/v-str-false.json"; return 1'
+jq -c '.readable = false' "$GV" > "$ROOT/v-bool-false.json"
+dp "producer: a failing status with a view that says readable:false (the unreadable-ledger shape) refuses" 1 false 'cat "$ROOT/v-bool-false.json"; return 1'
 # the real producer on an unreadable ledger still ends in a refusal with the reason (rc 1, not a crash)
 out="$(cm_input_decide teardown a "$ROOT/vanished.json" 2>/dev/null)"; rc=$?
 [ "$rc" = 1 ] && [ "$(printf '%s' "$out" | jq -r '.permit')" = false ] && ok "producer: an unreadable ledger refuses with rc 1 and a reason" || no "unreadable ledger" "rc=$rc $out"
@@ -533,6 +544,10 @@ $prior" "$L" 2>/dev/null)"; rc=$?
 { cat "$GV"; echo BROKEN; } > "$ROOT/v-tail.json"
 out="$(cm_input_revalidate "$prior" --view-file "$ROOT/v-tail.json" 2>/dev/null)"; rc=$?
 [ "$rc" != 0 ] && [ "$(printf '%s' "$out" | jq -r '.permit')" = false ] && ok "revalidate: a view file with a malformed tail refuses" || no "revalidate view tail" "rc=$rc $out"
+out="$(cm_input_revalidate "$prior" --view-file "$ROOT/v-nul.json" 2>/dev/null)"; rc=$?
+[ "$rc" != 0 ] && [ "$(printf '%s' "$out" | jq -r '.permit')" = false ] && ok "revalidate: a view file with a NUL byte after the view refuses" || no "revalidate view NUL" "rc=$rc $out"
+out="$(cm_input_revalidate "$prior" --view-file "$GV" 2>/dev/null)"; rc=$?
+[ "$rc" = 0 ] && [ "$(printf '%s' "$out" | jq -r '.permit')" = true ] && ok "revalidate: a clean view file is still permitted (control)" || no "revalidate view control" "rc=$rc $out"
 DT_FILL=
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]
