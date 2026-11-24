@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# input-migrate-manifest.sh: the DRY-RUN migration manifest of the typed input boundary (references/input-contract.md, section 5).
+# input-migrate-manifest.sh: the DRY-RUN migration manifest of the typed input boundary (references/input-contract.md, section 8).
 # For the ledger it lists what must be settled before a later stamp verb may set schemaVersion 2: per worker the keys missing (state, standing,
 # host), a path alias (worktree, worktreePath) to move to `path`, a legacy state spelling, invalid fields and unreadable rows; the follow-ups whose
 # `issue` is text ("#12", "12"); the asks with no usable id (blank, missing, duplicate); the rows that have a terminal and no path; a repeated key;
