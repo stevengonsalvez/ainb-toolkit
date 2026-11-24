@@ -87,8 +87,7 @@ jq -n --arg d "$D" '
              "w-lane-a-sweeper": w("lane-a-sweeper"; "local"; "lane-a-sweeper"; "running"; true),
              "w-fix-x": (w("fix-x"; "local"; "lane-a-sweeper"; "running"; false) + {parent: "w-lane-a-sweeper"}),
              "w-lane-b-sweeper": w("lane-b-sweeper"; "host-b"; "lane-b-sweeper"; "asleep"; true),
-             "w-task-42": w("task-42"; "host-b"; "lane-b-sweeper"; "blocked-on-owner"; false),
-             "w-stray-1": w("stray-1"; "host-b"; null; null; null)},
+             "w-task-42": w("task-42"; "host-b"; "lane-b-sweeper"; "blocked-on-owner"; false)},
    prs: {"acme-app#341": {number: 341, state: "OPEN"}}, asks: [{id: "ask-1", state: "open"}]}' > "$CM_HOME/ledger.json"
 
 lr() { bash "$S/lane-record.sh" "$@" >/dev/null 2>&1 || bad "lane-record.sh $*" "rc=$?"; }
@@ -103,7 +102,7 @@ rb() { OUT="$(bash "$S/ledger-rebuild.sh" "$@" 2>"$ROOT/err")"; RC=$?; ERR="$(ca
 has() { case "$2" in *"$3"*) ok "$1" ;; *) bad "$1" "$2" ;; esac; }
 rb
 [ "$RC" = 0 ] && [ -z "$OUT" ] && [ ! -e "$STUB/cli.log" ] && ok "a ledger that has every record: current, the fleet is not even read" || bad "current" "rc=$RC $ERR"
-has "...and it says so" "$ERR" "ledger current (updatedAt"
+has "...and it says so" "$ERR" "ledger current: no lane record newer than the ledger's"
 
 # the host is lost: the ledger and its ring go with it
 mv "$CM_HOME/ledger.json" "$CM_HOME/ledger.bak" "$ROOT/lost/"
@@ -113,6 +112,7 @@ rb
 has "...says the ledger is missing" "$ERR" "no ledger at $CM_HOME/ledger.json"
 has "...reports the unreachable host" "$ERR" "host host-c:"
 has "...and the lane with no issue" "$ERR" "lane lane-c-sweeper: no lanes[].issue, not rebuilt"
+has "...and an orphan worktree, left to the tick" "$ERR" "worktree stray-1 @ host-b: no owner (ORPHAN), not rebuilt"
 rb --apply
 [ "$RC" = 0 ] && [ -s "$CM_HOME/ledger.json" ] && ok "--apply writes the ledger" || bad "apply" "rc=$RC $ERR"
 R="$CM_HOME/ledger.json"
@@ -125,12 +125,12 @@ if diff <(jq -S "$norm" "$ROOT/saved.json") <(jq -S "$norm" "$R") > "$ROOT/diff"
 else bad "drill diff (saved < > rebuilt)" "$(cat "$ROOT/diff")"; fi
 got="$(jq -c '[.lanes["lane-a-sweeper"] | .state, .issue, .lead, .recordedState]' "$R")"
 [ "$got" = '["running",11,"w-lane-a-sweeper","running lead=w-lane-a-sweeper"]' ] && ok "lane-a: state from the NEWEST record, its issue, its lead" || bad "lane-a" "$got"
-got="$(jq -c '[.workers["w-fix-x"].lane, .workers["w-fix-x"].standing, .workers["w-task-42"].lane, .workers["w-task-42"].state, .workers["w-stray-1"].lane]' "$R")"
-[ "$got" = '["lane-a-sweeper",false,"lane-b-sweeper","blocked-on-owner",null]' ] && ok "classify rules: a cm:child claim, a name prefix, an orphan with no lane" || bad "mapping" "$got"
+got="$(jq -c '[.workers["w-fix-x"].lane, .workers["w-fix-x"].standing, .workers["w-task-42"].lane, .workers["w-task-42"].state, .workers["w-task-42"].standing, .workers["w-stray-1"]]' "$R")"
+[ "$got" = '["lane-a-sweeper",false,"lane-b-sweeper","blocked-on-owner",null,null]' ] && ok "classify rules: a cm:child claim (standing false), a name prefix (standing unknown), no row for an orphan" || bad "mapping" "$got"
 got="$(jq -c '[.workers["w-lane-b-sweeper"].state, .workers["w-lane-b-sweeper"].standing, .workers.concertmaster.lane]' "$R")"
 [ "$got" = '["asleep",true,"concertmaster"]' ] && ok "a lead asleep before the loss stays asleep; the concertmaster is its own row" || bad "asleep" "$got"
 got="$(jq -c '[(.workers | length), ([.workers[].path] | index("/srv/work/acme-app/acme-app")), .hosts["host-c"].reachable, .project]' "$R")"
-[ "$got" = '[6,null,false,"acme"]' ] && ok "no main checkout, host-c offline, the ledger stamped with the project" || bad "shape" "$got"
+[ "$got" = '[5,null,false,"acme"]' ] && ok "no main checkout, host-c offline, the ledger stamped with the project" || bad "shape" "$got"
 grep -vE '^(host list|worktree list) ' "$STUB/cli.log" > "$ROOT/other-calls" && bad "fleet calls" "$(cat "$ROOT/other-calls")" \
   || ok "only host and worktree lists are read: no other host's files are fetched"
 rb
@@ -145,23 +145,53 @@ rb
 has "an older ledger: the dry run says it merges" "$ERR" "ledger older than the lane record"
 rb --apply
 got="$(jq -c '[.lanes["lane-b-sweeper"].state, .lanes["lane-b-sweeper"].lead, .workers["w-task-42"].beadsEpic, .workers["w-task-77"].lane, (.workers | length), .prs == null]' "$R")"
-[ "$RC" = 0 ] && [ "$got" = '["running","w-lane-b-sweeper","acme-e1","lane-b-sweeper",7,true]' ] \
+[ "$RC" = 0 ] && [ "$got" = '["running","w-lane-b-sweeper","acme-e1","lane-b-sweeper",6,true]' ] \
   && ok "merge: GitHub's newer state wins, a field it never knew is kept, the new worktree is added" || bad "merge" "rc=$RC $got $ERR"
 cp "$ROOT/lost/ledger.json" "$R"   # the restored copy, older than every record
 rb --apply
 got="$(jq -c '[.lanes["lane-b-sweeper"].state, .prs["acme-app#341"].number, (.asks | length), .tick.count, (.workers | length)]' "$R")"
-[ "$RC" = 0 ] && [ "$got" = '["running",341,1,420,7]' ] && ok "a restored copy keeps its prs, asks and tick; the newer lane state and worktree are laid over it" || bad "restored" "rc=$RC $got $ERR"
+[ "$RC" = 0 ] && [ "$got" = '["running",341,1,420,6]' ] && ok "a restored copy keeps its prs, asks and tick; the newer lane state and worktree are laid over it" || bad "restored" "rc=$RC $got $ERR"
+
+# merge keeps what the ledger knows better: a lane whose record is not newer, a successor lead, and asleep only tightens
+rec() { jq --arg at "$2" --arg l "$3" --arg s "$4" '. + [{id: (length + 100), created_at: $at, body: "cm:state \($l) \($s)", author_association: "OWNER"}]' \
+  "$STUB/issue-$1.json" > "$STUB/x" && mv "$STUB/x" "$STUB/issue-$1.json"; }
+jq --arg d "$D" '.lanes["lane-a-sweeper"].state = "spawning" | .lanes["lane-a-sweeper"].lead = "w-lane-a-sweeper-2"
+  | .workers["w-lane-a-sweeper-2"] = {host: "local", path: ($d + "/lane-a-sweeper-2"), lane: "lane-a-sweeper", state: "running", standing: true}
+  | .workers["w-lane-b-sweeper"].state = "running"' "$R" > "$ROOT/x" && mv "$ROOT/x" "$R"
+rec 12 2099-01-02T00:00:00Z lane-b-sweeper "idle lead=w-lane-b-sweeper"
+rb --apply
+got="$(jq -c '[.lanes["lane-a-sweeper"].state, .lanes["lane-a-sweeper"].lead, .lanes["lane-b-sweeper"].state, .workers["w-lane-b-sweeper"].state, .workers["w-lane-b-sweeper"].asleepFrom]' "$R")"
+[ "$RC" = 0 ] && [ "$got" = '["spawning","w-lane-a-sweeper-2","idle","asleep","running"]' ] \
+  && ok "merge: a lane with no newer record keeps its state, a live successor lead is kept, a restored row asleep on its comment goes back to sleep" \
+  || bad "merge keeps" "rc=$RC $got $ERR"
+
+# a lead that claims a configured lane with cm:child: the claimed row is never written standing false (teardown would take it)
+{ jq -c '.result.worktrees[] | if .displayName == "lane-a-sweeper" then .comment += "\\ncm:child lane-c-sweeper" else . end' "$STUB/wl-local.json"
+  wt lane-c-sweeper "cm:running"; } | wl > "$STUB/x" && mv "$STUB/x" "$STUB/wl-local.json"
+rec 11 2099-01-03T00:00:00Z lane-a-sweeper "running lead=w-lane-a-sweeper"
+rb
+got="$(printf '%s' "$OUT" | jq -c '[.workers["w-lane-c-sweeper"].lane, .workers["w-lane-c-sweeper"].standing]')"
+[ "$RC" = 0 ] && [ "$got" = '["lane-a-sweeper",null]' ] && ok "a cm:child claim on a lane-shaped name: standing unknown, not false" || bad "laneish" "rc=$RC $got $ERR"
+
+touch "$STUB/gh-fail"
+rb
+[ "$RC" = 1 ] && [ -z "$OUT" ] && has "gh down with a present ledger: even the dry run judges nothing (never 'current')" "$ERR" "nothing judged or written" || bad "gh fail dry" "rc=$RC $ERR"
+mv "$STUB/gh-fail" "$STUB/gh-fail.off"
 
 # a lost ledger whose ring is still here (the merges above filled it): --init is refused, restore first
 mv "$R" "$ROOT/lost/ledger-2.json"
 rb --apply
-[ "$RC" = 1 ] && [ ! -e "$R" ] && has "ring present: --apply refused, nothing written" "$ERR" "ledger write was refused" || bad "ring" "rc=$RC $ERR"
+[ "$RC" = 1 ] && [ ! -e "$R" ] && has "ring present: refused before anything is read from the fleet, with the restore command" "$ERR" "holds copies: restore the newest first" || bad "ring" "rc=$RC $ERR"
 mv "$CM_HOME/ledger.bak" "$ROOT/lost/ledger.bak-2"
 
 touch "$STUB/gh-fail"
 rb --apply
-[ "$RC" = 1 ] && [ ! -e "$R" ] && has "a lane issue gh cannot read: --apply writes nothing" "$ERR" "nothing written" || bad "gh fail" "rc=$RC $ERR"
+[ "$RC" = 1 ] && [ ! -e "$R" ] && has "a lane issue gh cannot read: --apply writes nothing" "$ERR" "nothing judged or written" || bad "gh fail" "rc=$RC $ERR"
 mv "$STUB/gh-fail" "$STUB/gh-fail.off"
+
+yq 'del(.lanes[].issue)' "$CM_CONFIG" > "$ROOT/noissue.yaml"
+CM_CONFIG="$ROOT/noissue.yaml" rb --apply
+[ "$RC" = 4 ] && [ ! -e "$R" ] && has "no ledger and no lane record: exit 4, first boot, nothing written" "$ERR" "this is first boot" || bad "first boot" "rc=$RC $ERR"
 
 jq '.project = "other"' "$ROOT/lost/ledger-2.json" > "$R"
 rb

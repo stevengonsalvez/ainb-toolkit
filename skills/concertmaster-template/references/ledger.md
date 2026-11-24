@@ -117,14 +117,17 @@ state). `scripts/ledger-rebuild.sh` turns them back into a ledger (SKILL.md § S
 |---|---|
 | `lanes.<lane>` | `issue` from the config; `state` = first word of the newest trusted `cm:state` comment, `recordedState`, `recordedAt`; `lead` = the one standing worker classify names that lane's lead |
 | `hosts.<name>` | the fleet CLI host list; `reachable` = the worktree list answered; `role`, `maxWorkers`, `hostname` seeded from `cfg.hosts` |
-| `workers.<id>` | each in-scope worktree on a reachable host: `lane` from classify's owner, `state` from its own first comment line (`cm:asleep` stays `asleep`, so a lead put to sleep is never revived; then the `followups.sh` table), `standing` true for a lead, false for a `cm:child` claim, else null, `adopted: true`, `rebuiltAt`. The id is `w-<worktree name>` (`-<host>` on a clash), the concertmaster's own row `worktrees.self_name`, and a worktree a present ledger already holds keeps its key |
+| `workers.<id>` | each in-scope worktree on a reachable host that classify gives an owner (an orphan is left to the tick's census and adoption): `lane` from that owner, `state` from its own first comment line (`cm:asleep` stays `asleep`, so a lead put to sleep is never revived; then the `followups.sh` table), `standing` true for a lead, false for a `cm:child` claim on a name that is not lane-shaped (the `followups.sh` adoption rule, so teardown never takes a lane), else null, `adopted: true`, `rebuiltAt`. The id is `w-<worktree name>` (`-<host>` on a clash), the concertmaster's own row `worktrees.self_name`, and a worktree a present ledger already holds (by path or worktree id) keeps its key |
 | not rebuilt | `prs`, `asks`, `followUps`, `deployWindows`, `killList`, `firstBoot`, beads epics and parents: the tick refills PR state, `followups.sh reconcile` refills parents, children and `epic=` ids, and the kill list is asked again before any autonomous teardown |
 
-Due when the ledger is missing or its `updatedAt` is older than the newest record. A missing ledger is written
-whole (`cm_ledger_write --init`, so a ring of backups blocks it: restore instead). A present, older one is merged:
-the lane fields GitHub answered replace the ledger's, hosts and worktrees it does not know are added, nothing is
-removed or rewritten otherwise. Unreachable hosts are listed and left out (the tick adopts their worktrees once they
-answer). A lane issue gh could not read makes `--apply` write nothing.
+Due when the ledger is missing, or when a lane's newest record is newer than that lane's `recordedAt` (both are
+GitHub's `created_at`, so no host clock decides). A missing ledger is written whole (`cm_ledger_write --init`); a
+ring of backups beside it stops the run with the restore command, and no record at all is exit 4: first boot. A
+present, older one is merged: a lane takes the record's state only when its record is newer, keeps a `lead` that
+still names a live row, hosts and worktrees it does not know are added, a known row whose comment says `cm:asleep`
+is set back to `asleep` (`asleepFrom` keeps the old state), and nothing is removed or rewritten otherwise.
+Unreachable hosts are listed and left out (the tick adopts their worktrees once they answer). A lane issue gh could
+not read stops the run with exit 1, dry run included: nothing is judged current on a partial read.
 
 **Never a ledger from another host.** The rebuild reads GitHub and the fleet CLI only. A `ledger.json` found on
 another host (an off-host backup generation, an older state dir) is a stale snapshot, a night old at best: adopting
