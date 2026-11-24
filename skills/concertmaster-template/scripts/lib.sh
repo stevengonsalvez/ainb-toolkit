@@ -1291,3 +1291,44 @@ cm_sb_collect() {
              else "stack scan did not finish (exit \($rc))" end),
      docker: .docker, truncated: $tr, worktrees: .worktrees, stacks: .stacks}'
 }
+
+# ---- typed input boundary: repeated keys and the ledger version (references/input-contract.md) ----------------------------------------
+# The ledger, and every document or CLI reply a decision reads, is raw input. A key written twice in one object is invisible to jq (it keeps the last),
+# so the document is scanned by scripts/jdupkeys (python3) on the same bytes that are parsed. Fails CLOSED: a scan that cannot run is an unreadable document.
+_CM_INPUT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# cm_input_dupkeys [file]: one JSON path per line for every object key written twice in the same object, at ANY depth and whatever the values
+# (scripts/jdupkeys scans the document itself: jq and `jq --stream` keep or lose one of two equal keys). Returns 0 when scanned
+# (nothing printed = no repeat), non-zero when the scan failed (the caller treats the document as unreadable; 2 from jdupkeys itself): no python3, no such file, not exactly one JSON
+# value, NaN, Infinity, a number that does not fit a double, a decimal that is not a whole number but rounds to one, or a lone surrogate escape.
+cm_input_dupkeys() {
+  local f="${1:-$(cm_ledger_path)}"
+  command -v python3 >/dev/null 2>&1 || return 2
+  python3 "$_CM_INPUT_DIR/jdupkeys" "$f"
+}
+
+# cm_ledger_schema_version [ledger]: the ledger's `schemaVersion`. Prints one word and returns:
+#   a positive integer  0  the version (the key ABSENT or null is version 1: a legacy ledger, read with today's legacy defaults for ABSENT keys)
+#   invalid             1  the key is present but is not a positive whole number (text, 0, a negative, a fraction, true, an object, a list):
+#                          an invalid value is invalid in EVERY version, so a caller holds or refuses and never reads it as 1
+#   unreadable          2  no such file, not JSON, not one object, a scan that fails, or a decimal that is not a whole number but rounds to one anywhere in the ledger
+#                          (a schemaVersion written twice is `invalid`: jq would keep only the last)
+# A reader of the boundary applies a legacy default for an ABSENT key only while this prints 1.
+cm_ledger_schema_version() {
+  local L="${1:-$(cm_ledger_path)}" out snap dups
+  [ -r "$L" ] || { printf 'unreadable\n'; return 2; }
+  # the bytes are read ONCE into a private snapshot and scanned, as the typed view does: a scan that fails, or a decimal that is not a whole number but
+  # rounds to one, is an unreadable ledger; a schemaVersion written twice is invalid (jq would keep only the last)
+  snap="$(mktemp "${TMPDIR:-/tmp}/cm-version.XXXXXX")" || { printf 'unreadable\n'; return 2; }
+  if ! cat -- "$L" > "$snap" 2>/dev/null || ! dups="$(cm_input_dupkeys "$snap")"; then rm -f -- "$snap"; printf 'unreadable\n'; return 2; fi
+  if ! out="$(jq -r -s --arg dups "$dups" 'if length != 1 or (.[0] | type) != "object" then "unreadable"
+      elif ($dups | split("\n") | index("[\"schemaVersion\"]")) != null then "invalid"
+      else .[0].schemaVersion as $v
+        | if $v == null then "1"
+          elif ($v | type) == "number" and $v >= 1 and $v == ($v | floor) and $v < 1000000 then ($v | floor | tostring)
+          else "invalid" end end' "$snap" 2>/dev/null)"; then rm -f -- "$snap"; printf 'unreadable\n'; return 2; fi
+  rm -f -- "$snap"
+  printf '%s\n' "$out"
+  case "$out" in unreadable) return 2 ;; invalid) return 1 ;; esac
+  return 0
+}
