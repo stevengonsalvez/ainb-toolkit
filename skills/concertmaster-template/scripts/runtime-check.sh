@@ -83,10 +83,13 @@ NUDGE_QUIET="Status check from the concertmaster: you have had no turn for longe
 norm() { sed -E 's#/\.(/|$)#/#g; s#//+#/#g; s#(.)/+$#\1#'; }
 row() { printf '%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5"; } # lane handle age result detail
 
-tl="$(cm_timeout 60 "$ORCA" terminal list --json </dev/null 2>/dev/null)"
-if ! printf '%s' "$tl" | jq -e '.result.terminals | type == "array"' >/dev/null 2>&1; then
+# list_whole <terminal-list JSON>: a whole list; a cut-off one (truncated, or totalCount above its rows) is unreadable, never "no terminal"
+list_whole() { printf '%s' "$1" | jq -e '(.result.terminals | type == "array") and ((.result.truncated // false) != true)
+    and ((.result.totalCount // 0) <= (.result.terminals | length))' >/dev/null 2>&1; }
+tl="$(cm_timeout 60 "$ORCA" terminal list --limit 500 --json </dev/null 2>/dev/null)"
+if ! list_whole "$tl"; then
   cm_warn "runtime-check.sh: terminal list unreadable: no lane checked, nothing changed"
-  row - - - unreadable "orca terminal list failed; nothing checked this tick"; exit 0
+  row - - - unreadable "orca terminal list failed or was cut off; nothing checked this tick"; exit 0
 fi
 terms="$(printf '%s' "$tl" | jq -r --arg re "$CM_PATH_MATCH" '.result.terminals[]? | select((.worktreePath // "") | test($re)) | select((.agentIdentity // "") == "claude") | [.handle, .worktreePath] | @tsv')"
 
@@ -164,8 +167,8 @@ codemode_pass() {
         return 0
       fi
       cm_cli_host_into hsel "$host" || { cm_unreadable_host "$host" "host $host has no usable --environment: its Code Mode dialogs were not checked"; continue; }
-      hl="$(cm_timeout 60 "$ORCA" terminal list "${hsel[@]}" --json </dev/null 2>/dev/null)"
-      printf '%s' "$hl" | jq -e '.result.terminals | type == "array"' >/dev/null 2>&1 || { cm_warn "runtime-check.sh: terminal list of host $host unreadable: its Code Mode dialogs not checked"; cm_unreadable_host "$host" "terminal list of host $host unreadable: its Code Mode dialogs were not checked"; continue; }
+      hl="$(cm_timeout 60 "$ORCA" terminal list "${hsel[@]}" --limit 500 --json </dev/null 2>/dev/null)"
+      list_whole "$hl" || { cm_warn "runtime-check.sh: terminal list of host $host unreadable or cut off: its Code Mode dialogs not checked"; cm_unreadable_host "$host" "terminal list of host $host unreadable or cut off: its Code Mode dialogs were not checked"; continue; }
     fi
     while IFS="$US" read -r id hp path standing; do
       [ "$hp" = "$host" ] && [ -n "$id" ] || continue
