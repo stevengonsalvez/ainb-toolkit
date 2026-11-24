@@ -77,6 +77,11 @@ variant empty-delegated 's/^  delegated_classes: .*/  delegated_classes: ["store
 doctor "a delegated class that matches the empty text fails"     "$ROOT/empty-delegated.yaml" 1 'FAIL drive.delegated_classes'
 variant class-delegated 's/^  delegated_classes: .*/  delegated_classes: ["beta go[ .-]?live", "over[ -]?the[ -]?air", "ota (release|bundle)"]/'
 doctor "a dot inside a bracket class is not a wildcard"          "$ROOT/class-delegated.yaml" 0 'ok   drive.delegated_classes'
+# a bracket class with a repeat, or a negated class, absorbs free words: "ship the store foo bar baz build to production"
+for frag in 'store [a-z ]+' 'ship [^x]*' 'ship [^x]' 'store [a-z ]{0,40}' 'store([a-z ])*' 'store\\s+build'; do
+  yq ".drive.delegated_classes = [\"store build\", \"$frag\"]" "$EXAMPLE" > "$ROOT/rep-delegated.yaml"
+  doctor "a delegated class with a repeat or a negated class fails ($frag)" "$ROOT/rep-delegated.yaml" 1 'FAIL drive.delegated_classes'
+done
 variant bad-outward 's/^  everything_else: draft_first.*/  everything_else: whenever/'
 doctor "an unknown outward_messages value fails"                "$ROOT/bad-outward.yaml" 1 'FAIL outward_messages'
 variant bad-since 's/^  since: .*/  since: "last week"/'

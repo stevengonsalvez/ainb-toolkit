@@ -753,6 +753,18 @@ _cm_ledger_write_locked() {
 # shellcheck disable=SC2034  # read by lane-handles.sh
 CM_JQ_STATE_DEFS='def cm_state_dead: type == "string" and IN("gone", "repurposed", "torn-down"); '
 
+# CM_JQ_CLASS_PHRASE: `class_phrase`, true for a drive.delegated_classes fragment that may stand for one class phrase:
+# it compiles, matches no empty text, and has no wildcard (an unescaped dot, \w \W \S \D), no negated class and no
+# repeat (+, *, {n,m}) outside a bracket class. A class or a repeat could absorb free words ("store [a-z ]+" would
+# take "ship the store foo bar build to production"); `[ .-]?` (one listed character) stays allowed. config-check.sh
+# refuses such a fragment, ask-deny.sh drops it at runtime.
+# shellcheck disable=SC2034,SC2016  # a jq program, read by config-check.sh and ask-deny.sh
+CM_JQ_CLASS_PHRASE='def class_phrase: type == "string" and length > 0
+  and (. as $re | try ("" | test($re) | not) catch false)
+  and (gsub("\\\\\\\\"; "") as $s
+       | ($s | test("\\\\[wWSD]") | not)
+       and ($s | gsub("\\\\."; "e") | (test("\\[\\^") | not) and (gsub("\\[[^\\]]*\\]"; "c") | test("[.+*{]") | not))); '
+
 # ---- worker terminal handle setter ------------------------------------------------------------
 # cm_worker_set_handle <worker-id> <handle>
 # cm_worker_set_handle --by-path <host> <path> <handle>

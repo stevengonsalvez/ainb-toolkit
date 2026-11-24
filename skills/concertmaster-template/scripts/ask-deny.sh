@@ -16,7 +16,8 @@
 #   CM_ASK_DELEGATED_CLASSES  the release or deploy classes the concertmaster may decide itself on the drive ladder
 #                       (scripts/stall.sh), from config drive.delegated_classes (a list of regex fragments, each
 #                       matched as a whole phrase). Default: none, so every release or deploy ask goes to the owner.
-#                       A fragment that is not a valid regex is dropped (fewer delegated classes: fail safe)
+#                       A fragment that is not a class phrase (no compile, an empty match, a wildcard, a negated
+#                       class or a repeat) is dropped with a warning (fewer delegated classes: fail safe)
 #   CM_ASK_DELEGATED_ASK      the whole-text allowlist built from the classes: a delegated release or deploy ask's
 #                       question and topic must match it end to end, else the owner decides. With no class it matches
 #                       nothing
@@ -41,16 +42,18 @@
 # allowlist of the shape, not a denylist of words. The secret and cutover scans of scripts/stall.sh still run first,
 # as a second layer. The shape has no free-text slot, so no credential or value can ride in one.
 
-# _ask_cfg_alt <jq path> [valid]: a config list of regex fragments joined with |. With `valid`, a fragment that does
-# not compile is dropped. Empty list or no config: empty.
+# _ask_cfg_alt <jq path> [valid]: a config list of regex fragments joined with |. With `valid`, a fragment that is not
+# a class phrase (lib.sh CM_JQ_CLASS_PHRASE) is dropped with a warning: config-check may not have run. Empty list or no
+# config: empty.
 _ask_cfg_alt() {
-  local f="$1" mode="${2:-}"
+  local f="$1" mode="${2:-}" l bad
+  l="$(cm_cfg_json "$f" '[]' | jq -c 'if type == "array" then . else [] end | map(select(type == "string" and length > 0))' 2>/dev/null)" || l='[]'
   if [ "$mode" = valid ]; then
-    cm_cfg_json "$f" '[]' | jq -r 'if type == "array" then . else [] end
-      | map(select(type == "string" and length > 0 and (. as $re | try ("" | test($re) | true) catch false))) | join("|")' 2>/dev/null || true
-  else
-    cm_cfg_json "$f" '[]' | jq -r 'if type == "array" then . else [] end | map(select(type == "string" and length > 0)) | join("|")' 2>/dev/null || true
+    bad="$(printf '%s' "$l" | jq -r "$CM_JQ_CLASS_PHRASE"'map(select(class_phrase | not)) | join(", ")' 2>/dev/null)" || bad="(unreadable)"
+    [ -z "$bad" ] || cm_warn "ask-deny: $f: dropped, not a class phrase (scripts/config-check.sh): $bad"
+    l="$(printf '%s' "$l" | jq -c "$CM_JQ_CLASS_PHRASE"'map(select(class_phrase))' 2>/dev/null)" || l='[]'
   fi
+  printf '%s' "$l" | jq -r 'join("|")' 2>/dev/null || true
 }
 
 CM_ASK_DENY_CRED='auth(entic\w*|ori[sz]\w*|n|z)?|oauth|unauthenticated|login|jwt|magic link|secrets?|credentials?|passwords?|api ?keys?|service.?role|env vars?|(access|refresh|api|auth|bearer)[ _-]?tokens?'

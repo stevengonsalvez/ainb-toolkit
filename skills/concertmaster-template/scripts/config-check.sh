@@ -138,12 +138,10 @@ opt "health.daemon_units is a list of unit names"       '.health.daemon_units' '
 opt "health.alerts.send is a command (or empty: inbox note only)" '.health.alerts.send' 'type == "string"'
 opt "schedule.stall_rungs_min is 3 rising whole minutes (scripts/stall.sh)" '.schedule.stall_rungs_min' \
   'type == "array" and length == 3 and all(.[]; type == "number" and . > 0 and . == floor) and .[0] < .[1] and .[1] < .[2]'
-# a fragment is a class phrase: it compiles, does not match the empty text, and has no wildcard (an unescaped dot, or
-# \w \W \S \D outside a bracket class), since a wildcard voids "one class phrase and nothing else"
-opt "drive.delegated_classes is a list of class phrases: regex fragments that compile, match no empty text, hold no wildcard (scripts/stall.sh)" '.drive.delegated_classes' \
-  'type == "array" and all(.[]; type == "string" and length > 0
-     and (. as $re | try ("" | test($re) | not) catch false)
-     and (gsub("\\[[^\\]]*\\]"; "") | test("(^|[^\\\\])\\.|\\\\[wWSD]") | not))'
+# a fragment is a class phrase (lib.sh CM_JQ_CLASS_PHRASE): a wildcard, a negated class or a repeat voids "one class
+# phrase and nothing else"
+opt "drive.delegated_classes is a list of class phrases: regex fragments that compile, match no empty text, hold no wildcard, negated class or repeat (scripts/stall.sh)" '.drive.delegated_classes' \
+  "$CM_JQ_CLASS_PHRASE"'type == "array" and all(.[]; class_phrase)'
 
 # Secrets and house style, on the raw text. Pieces are split so this file never
 # holds a literal token prefix itself.

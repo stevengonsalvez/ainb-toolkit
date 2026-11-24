@@ -1425,6 +1425,18 @@ check "F22 an invalid fragment is dropped, the valid class still counts: laddere
 check "F22 an invalid fragment is dropped: a deploy ask of the valid class ladders" "$(exr e-dep)$(field e-dep rung)" "absent1"
 check "F22 an invalid fragment is dropped: free wording is still the owner's" "$(exr e-any)$(field e-any rung)" "ownerabsent"
 check "F22 an invalid fragment does not stop the run (rows are listed)" "$(jq -r '.rows | length > 0' <<<"$OUT")" "true"
+# F22b a fragment config-check refuses (a bracket class with a repeat) is dropped at runtime too, with a warning: it would
+# let a free-wording release ask pass as the class ("ship the store foo bar baz build to production")
+{ sed '/^drive:/,$d' "$ROOT/config.yaml"; printf 'drive:\n  delegated_classes:\n    - "store [a-z ]+"\n    - "ship [^x]*"\n    - "store build"\n'; } > "$ROOT/config-repfrag.yaml"
+reset; W="$ROOT/f22b"
+LED="$(jq -nc --arg f "$(ago 95)" '{workers: {}, asks: [
+    {id: "e-wide", kind: "release", askedAt: $f, question: "ship the store foo bar baz build to production", state: "open"},
+    {id: "e-rel", kind: "release", askedAt: $f, question: "ship the store build", state: "open"}]}')"
+gen "$W"
+CM_CONFIG="$ROOT/config-repfrag.yaml" runj "$W"
+check "F22b a repeated bracket class is dropped: a free-wording release ask is the owner's" "$(exr e-wide)$(field e-wide rung)" "ownerabsent"
+check "F22b ...the valid class still ladders" "$(exr e-rel)$(field e-rel rung)" "absent1"
+has "F22b ...and the dropped fragments are named in a warning" "$(cat "$W/err")" "dropped, not a class phrase (scripts/config-check.sh): store [a-z ]+, ship [^x]*"
 
 # ---- 13b. an ask climbs the ladder and its resolution reaches the ledger ----------------------------------------------
 # F23 rung 2 of an ask has a non-closing action (escalate), so the ladder reaches the rung 3 verdict; close-ask and verdict
