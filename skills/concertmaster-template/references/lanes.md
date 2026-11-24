@@ -511,7 +511,13 @@ Merge gate, ALL at the current head sha:
   must be empty: the script does not examine those files, and an applied file must never be edited (the migration
   runner skips it silently), so a non-empty list is NOT mergeable; hold and ask the concertmaster, who clears a
   legitimate case (for example deleting a duplicate-stamp file). If the added list is non-empty, at the exact head to
-  merge run `scripts/deploy-migration-check.sh $MB <PR head sha>`. Pass `--pr-body-file <file> --only <path>` (once per
+  merge run `scripts/deploy-migration-check.sh $MB <PR head sha>` with NO `--caps-ref` and no `--no-cover`: the merge
+  gate is STRICT, so the script never reports `covered` here and its output says `mode: pr-gate`. An unguarded file (no
+  `BEGIN`/`COMMIT`, no in-file `SET LOCAL` timeouts) is a STOP, and its author adds the in-file guard (`BEGIN; SET LOCAL
+  lock_timeout = '3s'; SET LOCAL statement_timeout = '30s'; ...; COMMIT;`), because the file is unapplied and can still
+  be fixed with the stronger guard. The workflows' connection-level caps are a deploy-time safety net only (the deploy
+  worker passes `--caps-ref`, see the deploy worker brief); never pass `--caps-ref` at this gate, and if a merge line
+  shows `mode: deploy` the check was run wrongly: run it again. Pass `--pr-body-file <file> --only <path>` (once per
   approved file; produce the file at merge time from the GraphQL fields `body` and `lastEditedAt` of the pull request
   (`updatedAt` moves on every comment and cannot show a body edit), never reuse an earlier copy) ONLY when an
   owner-authored comment, posted after the PR body's last edit (`createdAt` when `lastEditedAt` is null), names that
@@ -523,9 +529,10 @@ Merge gate, ALL at the current head sha:
   the new head. A clean result (exit 0 and `<n> migration files examined` where n equals the length of the added list)
   is recorded in the merge line. A run with `--only` skips every file it does not name, so the merge needs each added
   file covered: either the run without `--only` exits 0, or every file it flags is named in an approved `--only` run
-  that also exits 0 (record both runs). A STOP has no waiver at this gate: neither the author, the sweeper nor a
-  comment can turn it into a merge, and the PR's own file is unapplied, so the fix is always to edit it. (The deploy
-  workflows' push-step caps are a fallback for an already-applied file, not a gate-time answer.) Why: a merged
+  that also exits 0 (record both runs). A STOP is never waived by the author, the sweeper or a comment, and the PR's
+  own file is unapplied, so the fix is to edit it. There is no exception for a missing guard at this gate: the script's
+  `covered (connection caps)` result exists at deploy time only, so a plain unguarded file is a STOP here, whatever the
+  deploy workflows carry. Why: a merged
   migration that the deploy pre-check STOPs on costs the whole deploy window, because an applied file cannot be
   edited.
 - The in-session review at that head: a PR comment whose whole body matches
@@ -994,12 +1001,16 @@ freeze time; delta from {{from_tag}}). Before your first action (your own merge 
 trigger production. Never run staging validation in parallel with the
 production trigger. Staging red: STOP, set "cm:failed staging red: <job +
 reason>", do not trigger production.
-Migration guard: re-run `scripts/deploy-migration-check.sh {{from_tag}} {{main_sha}}`
-on the pinned sha before staging (for a file the owner approved, with that PR's `--pr-body-file` and
-`--only <path>`). Any exit other than 0 blocks the window: exit 3 is a STOP (set "cm:failed migration
+Migration guard: re-run `scripts/deploy-migration-check.sh {{from_tag}} {{main_sha}} --caps-ref {{main_sha}}`
+on the pinned sha before staging (for a file the owner approved, keep `--caps-ref` and add that PR's
+`--pr-body-file` and `--only <path>`; without `--caps-ref` the run is the strict PR-gate mode). Any exit other than 0 blocks the window: exit 3 is a STOP (set "cm:failed migration
 guard stop: <file>", never trigger production), exit 2 is an ask for the owner (set "cm:blocked migration
 guard ask: <file>"), and exit 1 or 127 means the check did not run (set "cm:blocked migration guard did
-not run: <exit code>"). Read its "<n> migration files examined" line: n must match the delta you expect.
+not run: <exit code>"). Read its "<n> migration files examined" line: n must match the delta you expect. A `covered (connection caps)` file
+exits 0, so nothing blocks on it: copy the `summary:` line (it carries `covered=N`) and the list of covered files into
+the ledger or your report, so the cover is never silent downstream. The cover reads the push steps only: a step that is
+skipped by `if:`, migrations applied by a `uses:` action, and anything set at workflow or job level (`env:` such as `BASH_ENV`,
+`defaults.run.shell`) are not seen, so a human reads the workflow if it changed.
 Evidence: screenshots of the staging checks and of the post-release production walk (test
 personas only, no real user data) are published per references/lanes.md § Evidence standard
 (<PR> is the release or deploy PR the brief names). Screenshots of real users stay in the

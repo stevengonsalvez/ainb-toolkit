@@ -49,7 +49,9 @@ newrepo() {
 # addmig <file> <content>: write a new migration and commit it
 addmig() { printf '%s\n' "$2" > "$D/supabase/migrations/$1"; ( cd "$D" && git add supabase && git_q commit -q -m "add $1" ) >/dev/null; }
 # run [args...]: runs the script in $D over BASE..HEAD, sets OUT and RC
-run() { OUT="$(cd "$D" && bash "$SCRIPT" "$BASE" HEAD "$@" 2>&1)"; RC=$?; }
+# RUNARGS: arguments put before the caller's own (empty = the strict PR merge gate; sections 42 to 53 set --caps-ref HEAD, deploy mode)
+RUNARGS=()
+run() { OUT="$(cd "$D" && bash "$SCRIPT" "$BASE" HEAD ${RUNARGS[@]+"${RUNARGS[@]}"} "$@" 2>&1)"; RC=$?; }
 F1=supabase/migrations/88000000000002_a.sql
 F2=supabase/migrations/88000000000003_b.sql
 
@@ -93,7 +95,7 @@ newrepo; addmig 88000000000002_a.sql "$(guard "'0'" "'30s'")"; run
 check "lock_timeout 0 (no limit) is not accepted: exit 2" "$RC" 2
 
 # 6. no BEGIN and no COMMIT
-newrepo; addmig 88000000000002_a.sql "$(printf '%s %s %s;\n%s %s %s;\nSELECT 1;' "$SL" "$LK" "'3s'" "$SL" "$ST" "'30s'")"; run
+newrepo; addmig 88000000000002_a.sql "$(printf '%s %s %s;\n%s %s %s;\nSELECT 1;' "$SL" "$LK" "'3s'" "$SL" "$ST" "'30s'")"; run --caps-ref HEAD   # deploy mode: the deploy-time note
 check "no BEGIN/COMMIT: exit 3" "$RC" 3; has "no BEGIN/COMMIT: stop line" "$OUT" "stop $F1 reason=no BEGIN; and COMMIT;"
 has "no BEGIN/COMMIT: the stop note forbids editing an applied file" "$OUT" "do NOT edit the file"
 has "no BEGIN/COMMIT: the stop note names connection-level timeouts on the push step" "$OUT" "connection-level timeouts on the push step"
@@ -638,13 +640,16 @@ fi
 # 40. the STOP note: merge-gate advice (edit the unmerged file) apart from deploy-time advice; the connection-level fix is the
 # options= db-url form, never the PGOPTIONS env
 newrepo; addmig 88000000000002_a.sql "no guard here"; run
-check "an unguarded file: exit 3" "$RC" 3
-has "the note gives merge-gate advice first: edit the unmerged file" "$OUT" "At the PR merge gate the file is not on the base branch yet: edit it"
-has "the note gives deploy-time advice apart" "$OUT" "At deploy time, if that version is already applied"
-has "the note names the options= db-url form with the 120000 cap" "$OUT" "options=-c lock_timeout=3s -c statement_timeout=120000"
-has "the note says the PGOPTIONS env is not a substitute" "$OUT" "The PGOPTIONS env is not a substitute"
-hasnt "the note no longer offers PGOPTIONS as the example fix" "$OUT" "for example PGOPTIONS="
-has "the note keeps the in-file values at 30s" "$OUT" "the in-file SET LOCAL values stay 3s / 30s"
+check "an unguarded file, PR gate: exit 3" "$RC" 3
+has "PR gate: the note says edit the unmerged file" "$OUT" "The file is not on the base branch yet: edit it"
+has "PR gate: the note says the caps are not accepted here" "$OUT" "connection-level caps are not accepted here"
+run --caps-ref HEAD
+check "an unguarded file, deploy mode with no covering workflows: exit 3" "$RC" 3
+has "deploy mode: the note is about an already-applied file" "$OUT" "If that version is already applied on staging"
+has "deploy mode: the note names the options= db-url form with the 120000 cap" "$OUT" "options=-c lock_timeout=3s -c statement_timeout=120000"
+has "deploy mode: the note says the PGOPTIONS env is not a substitute" "$OUT" "The PGOPTIONS env is not a substitute"
+hasnt "deploy mode: the note no longer offers PGOPTIONS as the example fix" "$OUT" "for example PGOPTIONS="
+has "deploy mode: the note keeps the in-file values at 30s" "$OUT" "the in-file SET LOCAL values stay 3s / 30s"
 OUT="$(bash "$SCRIPT" --help 2>&1)"
 has "the help names the db-url options= fix" "$OUT" "options=-c lock_timeout=3s -c statement_timeout=120000"
 has "the help says the PGOPTIONS env was ignored when measured" "$OUT" "ignored it (lock_timeout=0)"
@@ -657,7 +662,9 @@ LANES="$(cat "$SKILL_DIR/references/lanes.md")"; SKM="$(cat "$SKILL_DIR/SKILL.md
 has "lanes.md: the pr-sweeper merge gate runs the migration check at the exact head" "$LANES" 'scripts/deploy-migration-check.sh $MB <PR head sha>'
 has "lanes.md: the merge-base is of the PR's own base" "$LANES" 'MB=$(git merge-base origin/<base> <PR head sha>)'
 has "lanes.md: an edited or deleted migration is held" "$LANES" "The edited or deleted list"
-has "lanes.md: a STOP has no waiver at the gate" "$LANES" "A STOP has no waiver at this gate"
+has "lanes.md: a STOP is never waived at the gate" "$LANES" "A STOP is never waived by the author"
+has "lanes.md: the gate runs with no --caps-ref and shows its mode" "$LANES" "mode: pr-gate"
+has "lanes.md: the deploy worker brief passes --caps-ref" "$LANES" "{{from_tag}} {{main_sha}} --caps-ref {{main_sha}}"
 has "lanes.md: the directory and bases are placeholders" "$LANES" "{{migration_bases}}"
 has "SKILL.md: merge gate item 3a points at the lane" "$SKM" "3a. **Migration check**"
 has "SKILL.md: the already-applied fix is the options= form" "$SKM" "Use the connection URL's \`options=\` form"
@@ -665,6 +672,820 @@ hasnt "SKILL.md: PGOPTIONS is no longer the example fix" "$SKM" "(for example \`
 for f in "$SKILL_DIR/references/lanes.md" "$SKILL_DIR/SKILL.md" "$SKILL_DIR/scripts/deploy-migration-check.sh" "$SKILL_DIR/config.example.yaml"; do
   if grep -n -E '#[0-9]{4}|/home/[a-z]|/Users/[a-z]' "$f" >/dev/null 2>&1; then bad "$(basename "$f"): an issue number or an absolute home path found" "$(grep -n -E '#[0-9]{4}|/home/[a-z]|/Users/[a-z]' "$f" | head -3)"; else ok "$(basename "$f"): no issue number or absolute home path"; fi
 done
+
+# From here to the end of section 53 the script runs in DEPLOY MODE (--caps-ref HEAD): the cover is a deploy-time rule only.
+# Section 54 runs the same files in the strict PR-gate mode (no --caps-ref).
+RUNARGS=(--caps-ref HEAD)
+# 42. a STOP covered by the deploy workflows' connection-level caps (read from the --caps-ref tree): only the "no BEGIN; and
+# COMMIT;" class, only when BOTH workflows cap the push, and every covered file is reported, never silent
+WP=.github/workflows/deploy-production.yml; WS=.github/workflows/deploy-staging.yml
+CAPPED_URL='DB_URL="postgresql://postgres@db.${DB_REF}.supabase.co:5432/postgres?options=-c%20lock_timeout%3D3s%20-c%20statement_timeout%3D120000"'
+PUSH='supabase db push --include-all --db-url "$DB_URL"'
+# wfput <path> <lines...>: write a workflow step (one line per argument), commit it and move BASE past it, so the workflows sit
+# BEFORE the range under test (a range that edits them cannot vouch for them); WF_KEEP_BASE=1 leaves BASE alone
+wfput() { local f="$1"; shift; mkdir -p "$D/$(dirname "$f")"; { printf 'steps:\n  - run: |\n'; for l in "$@"; do printf '      %s\n' "$l"; done; } > "$D/$f"; ( cd "$D" && git add . && git_q commit -q -m "wf $f" ) >/dev/null; [ "${WF_KEEP_BASE:-}" = 1 ] || BASE="$(git -C "$D" rev-parse HEAD)"; }
+# covrepo <prod url line> <staging url line> [push line]: a repo with the two workflows and one plain (no transaction) migration
+covrepo() { newrepo; wfput "$WP" "$1" "${3:-$PUSH}"; wfput "$WS" "$2" "${3:-$PUSH}"; addmig 88000000000002_a.sql "SELECT 1 FROM $MARK;"; run; }
+
+covrepo "$CAPPED_URL" "$CAPPED_URL"
+check "both workflows capped: a no-transaction file is covered, exit 0" "$RC" 0
+has "covered: one line names the file" "$OUT" "covered (connection caps): $F1"
+has "covered: the production workflow line is quoted with file:line" "$OUT" "$WP:"
+has "covered: the staging workflow line is quoted with file:line" "$OUT" "$WS:"
+has "covered: the decoded caps are shown" "$OUT" "lock_timeout=3000ms statement_timeout=120000ms"
+has "covered: the summary counts it" "$OUT" "stop=0 covered=1"
+has "covered: the summary lists the file again" "$OUT" "covered (not silent, reported on every run): $F1"
+hasnt "covered: no stop line" "$OUT" "stop $F1"
+hasnt "covered: no SQL body in the output" "$OUT" "$MARK"
+has "covered: counts as examined" "$OUT" "1 migration files examined"
+
+covrepo "$CAPPED_URL" "DB_URL=postgresql://postgres@db.x.supabase.co:5432/postgres"
+check "staging uncapped: still a stop, exit 3" "$RC" 3; has "staging uncapped: the stop line" "$OUT" "stop $F1 reason=no BEGIN; and COMMIT;"
+covrepo "DB_URL=postgresql://postgres@db.x.supabase.co:5432/postgres" "$CAPPED_URL"
+check "production uncapped: still a stop, exit 3" "$RC" 3
+covrepo "PGOPTIONS='-c lock_timeout=3s -c statement_timeout=120000'" "PGOPTIONS='-c lock_timeout=3s -c statement_timeout=120000'" 'supabase db push --include-all --db-url "$DB_URL"'
+check "a PGOPTIONS env only (the pinned CLI ignores it): stop, exit 3" "$RC" 3
+covrepo 'DB_URL="postgresql://postgres@db.x:5432/postgres?options=-c%20lock_timeout%3D10s%20-c%20statement_timeout%3D120000"' "$CAPPED_URL"
+check "lock_timeout 10s: stop, exit 3" "$RC" 3
+covrepo 'DB_URL="postgresql://postgres@db.x:5432/postgres?options=-c%20lock_timeout%3D3s%20-c%20statement_timeout%3D5min"' "$CAPPED_URL"
+check "statement_timeout 5min: stop, exit 3" "$RC" 3
+covrepo 'DB_URL="postgresql://postgres@db.x:5432/postgres?options=-c%20lock_timeout%3D0%20-c%20statement_timeout%3D120000"' "$CAPPED_URL"
+check "lock_timeout 0 means no limit: stop, exit 3" "$RC" 3
+covrepo 'DB_URL="postgresql://postgres@db.x:5432/postgres?options=-c%20lock_timeout%3D3s%20-c%20statement_timeout%3D0"' "$CAPPED_URL"
+check "statement_timeout 0 means no limit: stop, exit 3" "$RC" 3
+covrepo 'DB_URL="postgresql://postgres@db.x:5432/postgres?options=-c%20lock_timeout%3D3s"' "$CAPPED_URL"
+check "statement_timeout missing: stop, exit 3" "$RC" 3
+covrepo '# DB_URL="postgresql://postgres@db.x:5432/postgres?options=-c%20lock_timeout%3D3s%20-c%20statement_timeout%3D120000"' "$CAPPED_URL"
+check "a cap in a comment line only: stop, exit 3" "$RC" 3
+covrepo 'echo "DB_URL=postgresql://x/p?options=-c%20lock_timeout%3D3s%20-c%20statement_timeout%3D120000"' "$CAPPED_URL"
+check "a cap inside an echo only: stop, exit 3" "$RC" 3
+
+# encoded and decoded forms, and the unit forms
+DEC_URL='DB_URL="postgresql://postgres@db.x:5432/postgres?options=-c lock_timeout=3s -c statement_timeout=2min"'
+covrepo "$DEC_URL" "$DEC_URL"
+check "decoded form with 2min: covered, exit 0" "$RC" 0; has "2min decodes to 120000ms" "$OUT" "statement_timeout=120000ms"
+MS_URL='DB_URL="postgresql://postgres@db.x:5432/postgres?options=-c%20lock_timeout%3D3000ms%20-c%20statement_timeout%3D120s"'
+covrepo "$MS_URL" "$MS_URL"
+check "3000ms and 120s: covered, exit 0" "$RC" 0
+covrepo "$CAPPED_URL" "$CAPPED_URL" 'supabase db push --include-all --db-url "postgresql://postgres@db.x:5432/postgres?options=-c%20lock_timeout%3D3s%20-c%20statement_timeout%3D120000"'
+check "a literal --db-url in the push line: covered, exit 0" "$RC" 0
+covrepo "$CAPPED_URL" "$CAPPED_URL" 'supabase db push --include-all \
+  --db-url "$DB_URL"'
+check "a --db-url on a continuation line: covered, exit 0" "$RC" 0
+covrepo "$CAPPED_URL" "$CAPPED_URL" 'supabase db push --include-all'
+check "a push with no --db-url: stop, exit 3" "$RC" 3
+PWV="hun""ter2"   # a fake password, built from pieces so no literal credential sits in this file
+AT='@'   # the @ of a fake URL is spliced in, so no scan-shaped user:password@host literal sits in this file
+covrepo 'DB_URL="postgresql://deploy:'"$PWV$AT"'db.x:5432/postgres?options=-c%20lock_timeout%3D3s%20-c%20statement_timeout%3D120000"' "$CAPPED_URL"
+check "userinfo in the URL: covered, exit 0" "$RC" 0; hasnt "userinfo in the URL: the password is never printed" "$OUT" "$PWV"
+
+# a second, uncapped push in one workflow keeps the stop
+newrepo; wfput "$WP" "$CAPPED_URL" "$PUSH" 'supabase db push --db-url "postgresql://postgres@db.x:5432/postgres"'; wfput "$WS" "$CAPPED_URL" "$PUSH"
+addmig 88000000000002_a.sql "SELECT 1;"; run
+check "one uncapped push among two in a workflow: stop, exit 3" "$RC" 3
+newrepo; addmig 88000000000002_a.sql "SELECT 1;"; run
+check "no workflow files at all: stop, exit 3" "$RC" 3
+newrepo; wfput "$WP" "$CAPPED_URL" "$PUSH"; addmig 88000000000002_a.sql "SELECT 1;"; run
+check "one workflow file missing: stop, exit 3" "$RC" 3
+
+# the workflows are read at the <to-ref> tree, not the working copy
+newrepo; wfput "$WP" 'DB_URL=postgresql://x/p' "$PUSH"; wfput "$WS" 'DB_URL=postgresql://x/p' "$PUSH"; addmig 88000000000002_a.sql "SELECT 1;"
+for w in "$WP" "$WS"; do printf '      %s\n      %s\n' "$CAPPED_URL" "$PUSH" > "$D/$w"; done
+run
+check "committed workflows uncapped, working copy capped: stop (read from the <to-ref> tree)" "$RC" 3
+newrepo; wfput "$WP" "$CAPPED_URL" "$PUSH"; wfput "$WS" "$CAPPED_URL" "$PUSH"; addmig 88000000000002_a.sql "SELECT 1;"
+for w in "$WP" "$WS"; do printf '      DB_URL=postgresql://x/p\n      %s\n' "$PUSH" > "$D/$w"; done
+run
+check "committed workflows capped, working copy uncapped: covered (read from the <to-ref> tree)" "$RC" 0
+has "to-ref tree: reported as covered" "$OUT" "covered (connection caps): $F1"
+
+# every other class stays what it was, with or without caps
+covrepo "$CAPPED_URL" "$CAPPED_URL"
+newrepo; wfput "$WP" "$CAPPED_URL" "$PUSH"; wfput "$WS" "$CAPPED_URL" "$PUSH"
+addmig 88000000000002_a.sql "SELECT 1;"
+addmig 88000000000003_b.sql "$(printf '%s\nROLLBACK;\n%s\n' "$BG" "$CM")"; run
+check "a covered file next to a ROLLBACK shape stop: exit 3" "$RC" 3; has "the shape stop is still reported" "$OUT" "stop $F2 reason=shape: ROLLBACK"; has "the covered file is still reported" "$OUT" "covered (connection caps): $F1"
+newrepo; wfput "$WP" "$CAPPED_URL" "$PUSH"; wfput "$WS" "$CAPPED_URL" "$PUSH"; addmig 88000000000002_a.sql "$(printf 'SELECT 1;\nROLLBACK;\n')"; run
+check "a plain file that holds a ROLLBACK is not covered: exit 3" "$RC" 3
+newrepo; wfput "$WP" "$CAPPED_URL" "$PUSH"; wfput "$WS" "$CAPPED_URL" "$PUSH"; addmig 88000000000002_a.sql "$(printf '%s\nSELECT 1;\n' "$BG")"; run
+check "BEGIN with no COMMIT is not covered: exit 3" "$RC" 3
+newrepo; wfput "$WP" "$CAPPED_URL" "$PUSH"; wfput "$WS" "$CAPPED_URL" "$PUSH"; addmig 88000000000002_a.sql "$(guard "'5s'" "'120s'")"; run
+check "an ask stays an ask with caps in place: exit 2" "$RC" 2; hasnt "an ask is never reported covered" "$OUT" "covered (connection caps)"
+newrepo; wfput "$WP" "$CAPPED_URL" "$PUSH"; wfput "$WS" "$CAPPED_URL" "$PUSH"; addmig 88000000000002_a.sql "SELECT 1;"; addmig 88000000000003_b.sql "$(guard "'3s'" "'30s'")"; run
+check "a covered file next to an ok file: exit 0" "$RC" 0; has "covered and ok: both counted" "$OUT" "ok=1 exception=0 ask=0 stop=0 covered=1"
+newrepo; wfput "$WP" "$CAPPED_URL" "$PUSH"; wfput "$WS" "$CAPPED_URL" "$PUSH"; addmig 88000000000002_a.sql "SELECT 1;"; addmig 88000000000003_b.sql "$(guard "'5s'" "'120s'")"; run
+check "a covered file next to an ask: exit 2" "$RC" 2
+CM_DMC_WORKFLOWS="ci/one.yml ci/two.yml" covrepo "$CAPPED_URL" "$CAPPED_URL"
+check "CM_DMC_WORKFLOWS names other paths: the default workflows are not read, stop, exit 3" "$RC" 3
+
+# 43. review of the covered class: the file's own timeout changes, the options= parameter only, the tree the caps are read from
+covfile() { covrepo "$CAPPED_URL" "$CAPPED_URL" >/dev/null 2>&1; addmig 88000000000003_b.sql "$1"; run; }
+newrepo; wfput "$WP" "$CAPPED_URL" "$PUSH"; wfput "$WS" "$CAPPED_URL" "$PUSH"
+addmig 88000000000002_a.sql "$(printf 'SET statement_timeout = 0;\nSELECT 1;\n')"; run
+check "a plain file that sets statement_timeout itself is not covered: exit 3" "$RC" 3
+newrepo; wfput "$WP" "$CAPPED_URL" "$PUSH"; wfput "$WS" "$CAPPED_URL" "$PUSH"
+addmig 88000000000002_a.sql "$(printf "SELECT set_config('lock_timeout', '0', false);\n")"; run
+check "a plain file that calls set_config on a timeout is not covered: exit 3" "$RC" 3
+newrepo; wfput "$WP" "$CAPPED_URL" "$PUSH"; wfput "$WS" "$CAPPED_URL" "$PUSH"
+addmig 88000000000002_a.sql "$(printf 'RESET lock_timeout;\nSELECT 1;\n')"; run
+check "a plain file that resets lock_timeout is not covered: exit 3" "$RC" 3
+newrepo; wfput "$WP" "$CAPPED_URL" "$PUSH"; wfput "$WS" "$CAPPED_URL" "$PUSH"
+addmig 88000000000002_a.sql "$(printf 'DO $$ BEGIN PERFORM set_config(%s, %s, false); END $$;\n' "'$LK'" "'0'")"; run
+check "a timeout named in a DO body is not covered: exit 3" "$RC" 3
+
+APP_URL='DB_URL="postgresql://postgres@db.x:5432/postgres?application_name=lock_timeout=3s_statement_timeout=1&sslmode=require"'
+covrepo "$APP_URL" "$APP_URL"
+check "the caps only inside another URL parameter are not options=: stop, exit 3" "$RC" 3
+PW_URL='DB_URL="postgresql://postgres:lock_timeout=3s_statement_timeout=1'"$AT"'db.x:5432/postgres"'
+covrepo "$PW_URL" "$PW_URL"
+check "the caps text inside the userinfo is not options=: stop, exit 3" "$RC" 3
+AMP_URL='DB_URL="postgresql://postgres@db.x:5432/postgres?options=-c%20lock_timeout%3D3s&sslmode=require&x=-c%20statement_timeout%3D1000"'
+covrepo "$AMP_URL" "$AMP_URL"
+check "options= stops at the next &: a statement cap after it does not count: exit 3" "$RC" 3
+TAIL_URL='DB_URL="postgresql://postgres@db.x:5432/postgres?sslmode=require&options=-c%20lock_timeout%3D3s%20-c%20statement_timeout%3D120000"'
+covrepo "$TAIL_URL" "$TAIL_URL"
+check "options= after another parameter still counts: exit 0" "$RC" 0
+
+# the range must not edit the workflows, and --caps-ref picks the tree
+newrepo; wfput "$WP" 'DB_URL=postgresql://x/p' "$PUSH"; wfput "$WS" 'DB_URL=postgresql://x/p' "$PUSH"
+WF_KEEP_BASE=1 wfput "$WP" "$CAPPED_URL" "$PUSH"; WF_KEEP_BASE=1 wfput "$WS" "$CAPPED_URL" "$PUSH"; addmig 88000000000002_a.sql "SELECT 1;"; run --caps-ref "$BASE"
+check "a range that adds the caps to the workflows itself cannot vouch for them (gate passes --caps-ref base): exit 3" "$RC" 3
+newrepo; wfput "$WP" "$CAPPED_URL" "$PUSH"; wfput "$WS" "$CAPPED_URL" "$PUSH"
+WF_KEEP_BASE=1 wfput "$WP" 'DB_URL=postgresql://x/p' "$PUSH"; WF_KEEP_BASE=1 wfput "$WS" "$CAPPED_URL" "$PUSH"; addmig 88000000000002_a.sql "SELECT 1;"; run --caps-ref "$BASE"
+check "a range that drops the caps (base has them, head does not): exit 3" "$RC" 3
+newrepo; wfput "$WP" "$CAPPED_URL" "$PUSH"; wfput "$WS" "$CAPPED_URL" "$PUSH"
+WF_KEEP_BASE=1 wfput "$WP" "$CAPPED_URL" 'echo unrelated edit' "$PUSH"; addmig 88000000000002_a.sql "SELECT 1;"; run --caps-ref HEAD
+check "an unrelated workflow edit in the range keeps the caps (deploy passes --caps-ref <pinned sha>): covered, exit 0" "$RC" 0
+RUNARGS=(); run; RUNARGS=(--caps-ref HEAD)
+check "the same range with no --caps-ref is not covered (strict PR gate): exit 3" "$RC" 3; has "the stop says why" "$OUT" "add the in-file guard"
+newrepo; wfput "$WP" "$CAPPED_URL" "$PUSH"; wfput "$WS" "$CAPPED_URL" "$PUSH"; addmig 88000000000002_a.sql "SELECT 1;"
+run --caps-ref "$(git -C "$D" rev-list --max-parents=0 HEAD)"
+check "--caps-ref at the base commit that has no workflows: stop, exit 3" "$RC" 3
+run --caps-ref HEAD
+check "--caps-ref at the capped tree: covered, exit 0" "$RC" 0; has "covered line names the ref read" "$OUT" "read at HEAD"; has "covered line shows the active bounds" "$OUT" "bounds lock<=3000ms statement<=120000ms"
+run --caps-ref nosuchref
+check "--caps-ref with a bad ref: exit 1" "$RC" 1
+CM_DMC_MAX_STATEMENT_MS=300000 covrepo 'DB_URL="postgresql://postgres@db.x:5432/postgres?options=-c%20lock_timeout%3D3s%20-c%20statement_timeout%3D200000"' 'DB_URL="postgresql://postgres@db.x:5432/postgres?options=-c%20lock_timeout%3D3s%20-c%20statement_timeout%3D200000"'
+check "a bound raised from the environment is clamped to the default: stop, exit 3" "$RC" 3
+CM_DMC_MAX_STATEMENT_MS=60000 covrepo "$CAPPED_URL" "$CAPPED_URL"
+check "a bound tightened from the environment is honoured (120000 cap > 60000): stop, exit 3" "$RC" 3
+
+# 44. review round: every bypass it reproduced must stay a STOP
+capurl() { printf 'DB_URL="postgresql://postgres@db.x:5432/postgres?options=%s"' "$1"; }
+for o in '-c%20lock_timeout%3D1h%20-c%20statement_timeout%3D120000' \
+         '-c%20lock_timeout%3D3s%20-c%20statement_timeout%3D2d' \
+         '-c%20lock_timeout%3D3s%20-c%20statement_timeout%3D120000%20-clock_timeout%3D0' \
+         '-c%20lock_timeout%3D3s%20-c%20statement_timeout%3D120000%20--lock-timeout%3D0' \
+         '-c%20lock_timeout%3D3s%20-c%20statement_timeout%3D120000%20-c%20LOCK_TIMEOUT%3D0' \
+         '-c%20lock_timeout%3D3s%20-c%20statement_timeout%3D120000%20-c%20lock-timeout%3D0' \
+         '-c%20lock_timeout%3D3s%20-c%20statement_timeout%3D120000%20-c%20Statement_Timeout%3D0' \
+         '-c%20lock_timeout%3D3s%20-c%20statement_timeout%3D120000%20-c' \
+         '-c%20lock_timeout%3D3s%20-c%20statement_timeout%3D120000%20-c%20lock_timeout' \
+         '-c%20lock_timeout%3D3s%20-c%20statement_timeout%3D120000%0A-c%20lock_timeout%3D0' \
+         '-c%20lock_timeout%3D3s%20-c%20statement_timeout%3D120000%09-c%20lock_timeout%3D0' \
+         '-c%20lock_timeout%3D3s%20-c%20statement_timeout%3D120000%0B-c%20lock_timeout%3D0' \
+         '-c%20lock_timeout%3D3s%20-c%20statement_timeout%3D120000%00-c%20lock_timeout%3D0' \
+         '-c%20lock_timeout%3D3s%20-c%20statement_timeout%3D120000%0D-c%20lock_timeout%3D0'; do
+  covrepo "$(capurl "$o")" "$(capurl "$o")"
+  check "options '$o': stop, exit 3" "$RC" 3
+done
+covrepo "$(capurl '-c%20lock_timeout%3D3s%20-c%20statement_timeout%3D120000%20-c%20search_path%3Dpublic')" "$(capurl '-c%20lock_timeout%3D3s%20-c%20statement_timeout%3D120000%20-c%20search_path%3Dpublic')"
+check "an unrelated -c setting next to the caps still counts: exit 0" "$RC" 0
+covrepo "$(capurl '-c%20lock_timeout%3D3s%20-c%20LOCK_TIMEOUT%3D2s%20-c%20statement_timeout%3D120000')" "$(capurl '-c%20lock_timeout%3D3s%20-c%20LOCK_TIMEOUT%3D2s%20-c%20statement_timeout%3D120000')"
+check "a later same-name cap wins and is within bounds: exit 0" "$RC" 0
+
+# SET LOCAL and the other ways a plain file changes its own timeouts
+for sql in "SET LOCAL lock_timeout = 0;
+SELECT 1;" "SET LOCAL statement_timeout = '10min';
+SELECT 1;" "SET SESSION lock_timeout TO 0;
+SELECT 1;" "SELECT 1;
+RESET statement_timeout;"; do
+  newrepo; wfput "$WP" "$CAPPED_URL" "$PUSH"; wfput "$WS" "$CAPPED_URL" "$PUSH"; addmig 88000000000002_a.sql "$sql"; run
+  check "a plain file that changes its own timeout is not covered: exit 3 ($(printf '%s' "$sql" | head -1))" "$RC" 3
+done
+
+# the options key must be exactly options
+covrepo 'DB_URL="postgresql://u:p'"$AT"'h:5432/db?application_options=-c%20lock_timeout%3D3s%20-c%20statement_timeout%3D1000&options=-c%20lock_timeout%3D0"' 'DB_URL="postgresql://u:p'"$AT"'h:5432/db?application_options=-c%20lock_timeout%3D3s%20-c%20statement_timeout%3D1000&options=-c%20lock_timeout%3D0"'
+check "a longer key that ends in options is not options: exit 3" "$RC" 3
+covrepo 'DB_URL="postgresql://u:p'"$AT"'h:5432/db?options=-c%20lock_timeout%3D3s%20-c%20statement_timeout%3D1000&options=-c%20lock_timeout%3D0"' 'DB_URL="postgresql://u:p'"$AT"'h:5432/db?options=-c%20lock_timeout%3D3s%20-c%20statement_timeout%3D1000&options=-c%20lock_timeout%3D0"'
+check "two options parameters: stop, exit 3" "$RC" 3
+covrepo 'DB_URL="postgresql://postgres@db.x:5432/postgres"' 'DB_URL="postgresql://postgres@db.x:5432/postgres"'
+check "a URL with no query string: stop, exit 3" "$RC" 3
+
+# workflow parsing fails closed
+covrepo "$CAPPED_URL" "$CAPPED_URL" 'echo go && supabase db push --db-url "postgresql://x/p"'
+check "a push chained after && is not a clean push: stop, exit 3" "$RC" 3
+covrepo "$CAPPED_URL" "$CAPPED_URL" 'npx supabase@2.67.1 db push --db-url "$DB_URL"'
+check "a push behind npx is not a clean push: stop, exit 3" "$RC" 3
+covrepo "$CAPPED_URL" "$CAPPED_URL" 'supabase db push --db-url "$DB_URL" --db-url "postgresql://x/p"'
+check "two --db-url flags: stop, exit 3" "$RC" 3
+covrepo "$CAPPED_URL" "$CAPPED_URL" 'echo "next: supabase db push"'
+check "any other line that mentions db push fails closed: stop, exit 3" "$RC" 3
+newrepo; wfput "$WP" "$CAPPED_URL" 'DB_URL+="%20-c%20lock_timeout%3D0"' "$PUSH"; wfput "$WS" "$CAPPED_URL" "$PUSH"; addmig 88000000000002_a.sql "SELECT 1;"; run
+check "a NAME+= append: stop, exit 3" "$RC" 3
+newrepo; wfput "$WP" "$CAPPED_URL" 'DB_URL=postgresql://x/p' "$PUSH"; wfput "$WS" "$CAPPED_URL" "$PUSH"; addmig 88000000000002_a.sql "SELECT 1;"; run
+check "the URL variable assigned twice in a step (if/else): stop, exit 3" "$RC" 3
+newrepo; wfput "$WP" "$CAPPED_URL" "$PUSH"; wfput "$WS" 'echo no url here' "$PUSH"; addmig 88000000000002_a.sql "SELECT 1;"; run
+check "a variable with no assignment in the step: stop, exit 3" "$RC" 3
+
+newrepo; wfput "$WP" "- name: Run supabase db push" "$CAPPED_URL" "$PUSH"; wfput "$WS" "$CAPPED_URL" "$PUSH"; addmig 88000000000002_a.sql "SELECT 1;"; run
+check "a step name that mentions db push does not block a cover: exit 0" "$RC" 0
+newrepo; wfput "$WP" "$CAPPED_URL" '- item' "$PUSH"; wfput "$WS" "$CAPPED_URL" "$PUSH"; addmig 88000000000002_a.sql "SELECT 1;"; run
+check "any shell the allowlist does not know inside the push step (a '- item' line) is refused: exit 3" "$RC" 3
+newrepo; wfput "$WP" 'DB_URL="postgresql://u@h:5432/db?"' "$PUSH"; wfput "$WS" "$CAPPED_URL" "$PUSH"; addmig 88000000000002_a.sql "SELECT 1;"; run
+check "a URL that ends in ? (empty query): stop, exit 3, no crash" "$RC" 3
+newrepo; wfput "$WP" 'DB_URL="postgresql://u@h:5432/db?options="' "$PUSH"; wfput "$WS" "$CAPPED_URL" "$PUSH"; addmig 88000000000002_a.sql "SELECT 1;"; run
+check "an empty options= value: stop, exit 3, no crash" "$RC" 3
+
+newrepo; wfput "$WP" 'OPTIONAL_SECRETS+=("A=${B}")' "$CAPPED_URL" "$PUSH"; wfput "$WS" 'OPTIONAL_SECRETS+=("A=${B}")' "$CAPPED_URL" "$PUSH"; addmig 88000000000002_a.sql "SELECT 1;"; run
+check "any shell the allowlist does not know inside the push step (an append) is refused: exit 3" "$RC" 3
+newrepo; mkdir -p "$D/.github/workflows"
+printf 'steps:\n  - run: |\n      OPTIONAL_SECRETS+=("A=${B}")\n  - run: |\n      %s\n      %s\n' "$CAPPED_URL" "$PUSH" > "$D/$WP"
+printf 'steps:\n  - run: |\n      %s\n      %s\n' "$CAPPED_URL" "$PUSH" > "$D/$WS"; ( cd "$D" && git add . && git_q commit -q -m wf ) >/dev/null; BASE="$(git -C "$D" rev-parse HEAD)"
+addmig 88000000000002_a.sql "SELECT 1;"; run
+check "an append in ANOTHER step does not block a cover: exit 0" "$RC" 0
+
+# 45. re-verdict: URL query keys, single-use plain variable, folded run, function SET clause
+CAPS_Q='options=-c%20lock_timeout%3D3s%20-c%20statement_timeout%3D120000'
+urlq() { printf 'DB_URL="postgresql://postgres@db.x:5432/postgres?%s"' "$1"; }
+for q in "$CAPS_Q&lock_timeout=0&statement_timeout=0" "sslmode=require#&$CAPS_Q" "%6Fptions=-c%20lock_timeout%3D0&$CAPS_Q" "$CAPS_Q&search_path=x" "$CAPS_Q&options=-c%20lock_timeout%3D0"; do
+  covrepo "$(urlq "$q")" "$(urlq "$q")"
+  check "query '$q': stop, exit 3" "$RC" 3
+done
+covrepo "$(urlq "sslmode=require&$CAPS_Q")" "$(urlq "application_name=x&$CAPS_Q")"
+check "whitelisted sibling keys (sslmode, application_name) still cover: exit 0" "$RC" 0
+for extra in 'declare DB_URL="postgresql://x/p"' 'printf -v DB_URL %s "postgresql://x/p"' '[ -n "$X" ] && DB_URL="postgresql://x/p"' 'export DB_URL'; do
+  newrepo; wfput "$WP" "$CAPPED_URL" "$extra" "$PUSH"; wfput "$WS" "$CAPPED_URL" "$PUSH"; addmig 88000000000002_a.sql "SELECT 1;"; run
+  check "the URL variable is touched again ($extra): stop, exit 3" "$RC" 3
+done
+newrepo; wfput "$WP" 'DB_URL="${SUPABASE_DB_URL:-postgresql://postgres@db.x:5432/postgres?'"$CAPS_Q"'}"' "$PUSH"; wfput "$WS" "$CAPPED_URL" "$PUSH"; addmig 88000000000002_a.sql "SELECT 1;"; run
+check "a ':-' default expansion in the URL value is not a plain literal: stop, exit 3" "$RC" 3
+newrepo; wfput "$WP" 'DB_URL="postgresql://postgres@db.x:5432/postgres?'"$CAPS_Q"'$(cat /x)"' "$PUSH"; wfput "$WS" "$CAPPED_URL" "$PUSH"; addmig 88000000000002_a.sql "SELECT 1;"; run
+check "a command substitution in the URL value: stop, exit 3" "$RC" 3
+newrepo; mkdir -p "$D/.github/workflows"
+printf 'steps:\n  - env:\n      DB_URL: ${{ secrets.X }}\n    run: >\n      %s\n      %s\n' "$CAPPED_URL" "$PUSH" > "$D/$WP"; cp "$D/$WP" "$D/$WS"; ( cd "$D" && git add . && git_q commit -q -m wf ) >/dev/null; BASE="$(git -C "$D" rev-parse HEAD)"
+addmig 88000000000002_a.sql "SELECT 1;"; run
+check "a folded run: > block: stop, exit 3" "$RC" 3
+newrepo; wfput "$WP" "$CAPPED_URL" "$PUSH"; wfput "$WS" "$CAPPED_URL" "$PUSH"
+addmig 88000000000002_a.sql "$(printf 'CREATE FUNCTION f() RETURNS int LANGUAGE sql SET lock_timeout = 0 AS $$ SELECT 1 $$;\nSELECT f();\n')"; run
+check "CREATE FUNCTION ... SET lock_timeout: not covered, exit 3" "$RC" 3
+newrepo; wfput "$WP" "$CAPPED_URL" "$PUSH"; wfput "$WS" "$CAPPED_URL" "$PUSH"
+addmig 88000000000002_a.sql "$(printf 'ALTER FUNCTION f() SET statement_timeout = 0;\n')"; run
+check "ALTER FUNCTION ... SET statement_timeout: not covered, exit 3" "$RC" 3
+newrepo; wfput "$WP" "$CAPPED_URL" "$PUSH"; wfput "$WS" "$CAPPED_URL" "$PUSH"
+addmig 88000000000002_a.sql "$(printf -- '-- lock_timeout in a comment only\nSELECT 1;\n')"; run
+check "a timeout named only in a comment does not block the cover: exit 0" "$RC" 0
+CM_DMC_MAX_LOCK_MS=3000 covrepo "$CAPPED_URL" "$CAPPED_URL"
+has "an environment override is announced in the covered lines" "$OUT" "come from CM_DMC_* in the environment"
+
+# 46. second review: dynamic SQL, unquoted value with spaces, expansion in the query
+for sql in "$(printf 'DO $$ BEGIN EXECUTE %s; END $$;\n' "'SET lock_' || 'timeout = 0'")" 'DISCARD ALL;' 'RESET ALL;' "$(printf 'DO $$ BEGIN PERFORM 1; END $$;\nEXECUTE x;\n')" "$(printf 'DO $$ DECLARE function_sql text; BEGIN function_sql := %s; EXECUTE function_sql; END $$;\n' "'SET statement_' || 'timeout = 0'")" "$(printf 'DO $$ DECLARE procedure_sql text; BEGIN procedure_sql := %s; EXECUTE procedure_sql; END $$;\n' "'SET lock_' || 'timeout = 0'")" "$(printf 'DO $$ DECLARE function text := %s; BEGIN EXECUTE function || %s; END $$;\n' "'SET lock_'" "'timeout = 0'")"; do
+  newrepo; wfput "$WP" "$CAPPED_URL" "$PUSH"; wfput "$WS" "$CAPPED_URL" "$PUSH"; addmig 88000000000002_a.sql "$sql"; run
+  check "dynamic SQL or a session reset is not covered ($(printf '%s' "$sql" | head -c 30)): exit 3" "$RC" 3
+done
+UNQ='DB_URL=postgresql://postgres@db.x:5432/postgres?options=-c lock_timeout=3s -c statement_timeout=120000'
+covrepo "$UNQ" "$UNQ"
+check "an unquoted URL value with spaces is not one shell word: exit 3" "$RC" 3
+covrepo 'DB_URL="postgresql://postgres@db.${DB_REF}.x:5432/postgres?options=-c%20lock_timeout%3D3s%20-c%20statement_timeout%3D120000"' 'DB_URL="postgresql://postgres@db.${DB_REF}.x:5432/postgres?options=-c%20lock_timeout%3D3s%20-c%20statement_timeout%3D120000"'
+check "an expansion in the host still covers: exit 0" "$RC" 0
+covrepo 'DB_URL="postgresql://postgres@db.x:5432/postgres?options=-c%20lock_timeout%3D3s%20-c%20statement_timeout%3D120000${EXTRA}"' 'DB_URL="postgresql://postgres@db.x:5432/postgres?options=-c%20lock_timeout%3D3s%20-c%20statement_timeout%3D120000${EXTRA}"'
+check "an expansion in the query is not covered: exit 3" "$RC" 3
+
+# 47. third review: GRANT EXECUTE and strings are not dynamic SQL, a stale branch, one proof for many files, reasons
+for sql in 'CREATE FUNCTION f() RETURNS int LANGUAGE sql AS $$ SELECT 1 $$; GRANT EXECUTE ON FUNCTION f() TO authenticated;' "COMMENT ON TABLE t IS 'I will execute this';" 'DO $$ BEGIN GRANT EXECUTE ON FUNCTION f() TO authenticated; END $$;'; do
+  newrepo; wfput "$WP" "$CAPPED_URL" "$PUSH"; wfput "$WS" "$CAPPED_URL" "$PUSH"; addmig 88000000000002_a.sql "$sql"; run
+  check "GRANT EXECUTE or a string saying execute does not block the cover ($(printf '%s' "$sql" | head -c 30)): exit 0" "$RC" 0
+done
+newrepo; wfput "$WP" "$CAPPED_URL" "$PUSH"; wfput "$WS" "$CAPPED_URL" "$PUSH"; addmig 88000000000002_a.sql "SELECT 1;"; addmig 88000000000003_b.sql "SELECT 2;"; run
+check "two covered files: exit 0" "$RC" 0
+check "the workflow proof is printed once for two covered files" "$(printf '%s\n' "$OUT" | grep -c 'deploy-production.yml:')" 1
+newrepo; wfput "$WP" 'DB_URL=postgresql://x/p' "$PUSH"; wfput "$WS" 'DB_URL=postgresql://x/p' "$PUSH"; STALE="$BASE"
+wfput "$WP" "$CAPPED_URL" "$PUSH"; wfput "$WS" "$CAPPED_URL" "$PUSH"; MAINT="$(git -C "$D" rev-parse HEAD)"
+git -C "$D" checkout -q -b stale "$STALE"; addmig 88000000000002_a.sql "SELECT 1;"; BASE="$STALE"; run --caps-ref "$MAINT"
+check "a branch behind main (stale workflows, range untouched) is judged by the caps ref: covered, exit 0" "$RC" 0
+newrepo; wfput "$WP" "$CAPPED_URL" "$PUSH"; wfput "$WS" "$CAPPED_URL" "$PUSH"; addmig 88000000000002_a.sql "$(printf 'SET lock_timeout = 0;\nSELECT 1;\n')"; run
+has "a stop on a file that touches a timeout says why it is not covered" "$OUT" "not covered: the file touches a timeout"
+newrepo; wfput "$WP" 'DB_URL=postgresql://x/p' "$PUSH"; wfput "$WS" 'DB_URL=postgresql://x/p' "$PUSH"; addmig 88000000000002_a.sql "SELECT 1;"; run
+has "a stop with no caps in the workflows says why" "$OUT" "not covered: the deploy workflows do not carry the caps"
+
+# 48. fourth review: quoted bodies, forgotten --caps-ref, pooler, --no-cover, CM_DMC_WORKFLOWS, comments, EXECUTE FUNCTION, parser reason
+for sql in "create function f() returns void language plpgsql as 'begin execute format(''set %s_timeout = 0'', ''lock''); end'; select f();" "create function f() returns void language plpgsql as 'begin reset all; end';" "DO 'begin reset all; end';"; do
+  newrepo; wfput "$WP" "$CAPPED_URL" "$PUSH"; wfput "$WS" "$CAPPED_URL" "$PUSH"; addmig 88000000000002_a.sql "$sql"; run
+  check "a function or DO body in a quoted string is not covered ($(printf '%s' "$sql" | head -c 30)): exit 3" "$RC" 3
+done
+newrepo; wfput "$WP" 'DB_URL=postgresql://x/p' "$PUSH"; wfput "$WS" 'DB_URL=postgresql://x/p' "$PUSH"
+WF_KEEP_BASE=1 wfput "$WP" "$CAPPED_URL" "$PUSH"; WF_KEEP_BASE=1 wfput "$WS" "$CAPPED_URL" "$PUSH"; addmig 88000000000002_a.sql "SELECT 1;"; RUNARGS=(); run; RUNARGS=(--caps-ref HEAD)
+check "PR adds the caps itself and --caps-ref is forgotten: exit 3" "$RC" 3
+POOL='DB_URL="postgresql://postgres@aws-0-eu-west-2.pooler.supabase.com:6543/postgres?options=-c%20lock_timeout%3D3s%20-c%20statement_timeout%3D120000"'
+covrepo "$POOL" "$POOL"
+check "a pooler URL is not covered: exit 3" "$RC" 3; has "the stop names the pooler" "$OUT" "pooler host or port 6543"
+covrepo "$CAPPED_URL" "$CAPPED_URL" ; run --no-cover
+check "--no-cover turns the cover off: exit 3" "$RC" 3; has "--no-cover is named in the reason" "$OUT" "--no-cover was given"
+CM_DMC_WORKFLOWS=".github/workflows/deploy-staging.yml" covrepo "$CAPPED_URL" "$CAPPED_URL"
+check "an ambient CM_DMC_WORKFLOWS cannot drop a workflow from the cover: exit 3" "$RC" 3
+newrepo; wfput "$WP" "$CAPPED_URL" "$PUSH"; wfput "$WS" "$CAPPED_URL" "$PUSH"
+addmig 88000000000002_a.sql "$(printf 'CREATE FUNCTION f() RETURNS int LANGUAGE plpgsql AS $$\nBEGIN\n-- callers execute it via rpc\nRETURN 1;\nEND $$;\n')"; run
+check "a comment saying execute inside a body does not block the cover: exit 0" "$RC" 0
+newrepo; wfput "$WP" "$CAPPED_URL" "$PUSH"; wfput "$WS" "$CAPPED_URL" "$PUSH"
+addmig 88000000000002_a.sql "$(printf 'DO $$ BEGIN CREATE TRIGGER t AFTER INSERT ON x FOR EACH ROW EXECUTE FUNCTION g(); END $$;\n')"; run
+check "EXECUTE FUNCTION in a trigger inside a DO body does not block the cover: exit 0" "$RC" 0
+newrepo; wfput "$WP" "$CAPPED_URL" 'echo "Using $DB_URL"' "$PUSH"; wfput "$WS" "$CAPPED_URL" "$PUSH"; addmig 88000000000002_a.sql "SELECT 1;"; run
+check "an extra mention of the URL variable fails closed: exit 3" "$RC" 3
+
+# 49. independent verdict: CLI query decoding, a push line the parser cannot see, deploy callers pass --caps-ref
+OPTS='options=-c%20lock_timeout%3D3s%20-c%20statement_timeout%3D120000'
+for sfx in '%20-c%20application_name%3Da;b' '%20-c%20application_name%3D%zz' '%20-c%20application_name%3Dx+-c+lock_timeout%3D0' '%20-c%20application_name%3D%2'; do
+  U="DB_URL=\"postgresql://postgres@db.x:5432/postgres?$OPTS$sfx\""
+  covrepo "$U" "$U"
+  check "the CLI would drop or re-decode this query ($sfx): stop, exit 3" "$RC" 3
+done
+for pl in 'supabase "db" push --include-all' "supabase db 'push' --include-all" 'supabase db pu""sh --include-all'; do
+  newrepo; wfput "$WP" "$CAPPED_URL" "$PUSH" "$pl"; wfput "$WS" "$CAPPED_URL" "$PUSH"; addmig 88000000000002_a.sql "SELECT 1;"; run
+  check "a second push in a shape the parser cannot read ($pl): stop, exit 3" "$RC" 3
+done
+DOCS="$HERE/../.."
+if grep -q 'deploy-migration-check.sh {{from_tag}} {{main_sha}} --caps-ref {{main_sha}}' "$DOCS/references/lanes.md"; then check "the deploy worker brief passes --caps-ref" 0 0; else check "the deploy worker brief passes --caps-ref" 1 0; fi
+if grep -q 'deploy-migration-check.sh <tag> <pinned sha> --caps-ref <pinned sha>' "$DOCS/SKILL.md"; then check "the SKILL.md deploy call passes --caps-ref" 0 0; else check "the SKILL.md deploy call passes --caps-ref" 1 0; fi
+
+# 50. second independent verdict: the push step is an allowlist (N1 to N5)
+n1() { newrepo; wfput "$WP" "$CAPPED_URL" "$@"; wfput "$WS" "$CAPPED_URL" "$PUSH"; addmig 88000000000002_a.sql "SELECT 1;"; run; }
+n1 "$PUSH || supabase db push --include-all"
+check "N1 an uncapped fallback after the capped push: exit 3" "$RC" 3
+newrepo; wfput "$WP" "DB_URL=\"postgresql://postgres@db.example.supabase.co:5432/postgres?options=-c%20lock_timeout%3D3s%20-c%20statement_timeout%3D120000\" DB_URL=\"postgresql://postgres@db.example.supabase.co:5432/postgres\"" "$PUSH"; wfput "$WS" "$CAPPED_URL" "$PUSH"; addmig 88000000000002_a.sql "SELECT 1;"; run
+check "N2 two assignments on one line: exit 3" "$RC" 3
+n1 'CMD=push' "$CAPPED_URL" "$PUSH" 'supabase db $CMD --include-all'
+check "N3 the subcommand in a variable: exit 3" "$RC" 3
+n1 'sb() { supabase "$@"; }' "$PUSH" 'sb db "push" --include-all'
+check "N4 a wrapper function: exit 3" "$RC" 3
+n1 "$PUSH" 'supabase migration up --linked --include-all'
+check "N5 another command that applies migrations: exit 3" "$RC" 3
+n1 "$PUSH" 'supabase db reset --linked'
+check "supabase db reset: exit 3" "$RC" 3
+n1 "$PUSH" 'psql "$X" -f supabase/migrations/a.sql'
+check "psql -f: exit 3" "$RC" 3
+n1 "$PUSH" 'psql "$X" -c "select 1"' 
+check "psql -c in the push step is also refused (not on the allowlist): exit 3" "$RC" 3
+
+# 51. third independent verdict: S1 to S4, byte-equal trees
+# mstep <prod-yaml-file-content-printf-args...>: write both workflows from a multi-step layout, commit, move BASE past them
+mwf() { newrepo; mkdir -p "$D/.github/workflows"; printf "$1" "${@:2}" > "$D/$WP"; cp "$D/$WP" "$D/$WS"; ( cd "$D" && git add . && git_q commit -q -m wf ) >/dev/null; BASE="$(git -C "$D" rev-parse HEAD)"; addmig 88000000000002_a.sql "SELECT 1;"; run; }
+n1 'CMD=push' 'X="$(supabase db $CMD --include-all)"' "$CAPPED_URL" "$PUSH"
+check "S1 a command substitution inside an assignment: exit 3" "$RC" 3
+mwf 'steps:\n  - run: |\n      psql "$PSQL_URL" < supabase/migrations/88000000000002_a.sql\n  - run: |\n      %s\n      %s\n' "$CAPPED_URL" "$PUSH"
+check "S2 psql reading a migration from stdin in another step: exit 3" "$RC" 3
+n1 'true: || psql $PSQL_URL < supabase/migrations/88000000000002_a.sql' "$CAPPED_URL" "$PUSH"
+check "S3 a shell line shaped like a YAML key inside the run block: exit 3" "$RC" 3
+mwf 'steps:\n  - env:\n      BASH_ENV: ./ci/shim.sh\n    run: |\n      %s\n      %s\n' "$CAPPED_URL" "$PUSH"
+check "S4 BASH_ENV in the push step env: exit 3" "$RC" 3
+mwf 'steps:\n  - env:\n      PGPASSWORD: x\n      DB_REF: y\n    run: |\n      psql "$PSQL_URL" <<EOSQL\n      select 1;\n      EOSQL\n  - env:\n      PGPASSWORD: x\n    run: |\n      %s\n      %s\n' "$CAPPED_URL" "$PUSH"
+check "a heredoc psql step and PGPASSWORD env still cover: exit 0" "$RC" 0
+newrepo; wfput "$WP" "$CAPPED_URL" "$PUSH"; wfput "$WS" "$CAPPED_URL" "$PUSH"
+WF_KEEP_BASE=1 wfput "$WP" "$CAPPED_URL" 'echo unrelated edit' "$PUSH"; addmig 88000000000002_a.sql "SELECT 1;"; run --caps-ref "$BASE"
+check "a PR that edits a workflow (even keeping the caps) differs from the caps ref: exit 3" "$RC" 3; has "the stop says why" "$OUT" "the head differs from"
+
+# 52. fourth verdict: set_config inside a dropped body
+for sql in "$(printf 'CREATE FUNCTION public.tmp_relax() RETURNS void LANGUAGE plpgsql AS $$ BEGIN PERFORM set_config(%s, %s, true); END $$;\nSELECT public.tmp_relax();\n' "'lock' || '_timeout'" "'0'")" "$(printf 'DO $$ BEGIN PERFORM set_config(%s, %s, true); END $$;\n' "'statement' || '_timeout'" "'0'")" "$(printf 'DO $$ BEGIN UPDATE pg_settings SET setting = %s; END $$;\n' "'0'")"; do
+  newrepo; wfput "$WP" "$CAPPED_URL" "$PUSH"; wfput "$WS" "$CAPPED_URL" "$PUSH"; addmig 88000000000002_a.sql "$sql"; run
+  check "set_config or pg_settings inside a dollar body is not covered ($(printf '%s' "$sql" | head -c 40 | tr '\n' ' ')): exit 3" "$RC" 3
+done
+
+# 53. fifth verdict: U& escaped identifiers inside a dollar body
+for sql in "$(printf 'DO $$ BEGIN PERFORM U&"set\\005fconfig"(%s, %s, true); END $$;\n' "'lock' || '_timeout'" "'0'")" "$(printf 'DO $$ BEGIN SET LOCAL U&"lock\\005ftimeout" = 0; END $$;\n')" "$(printf 'CREATE FUNCTION public.tmp_r2() RETURNS void LANGUAGE plpgsql AS $$ BEGIN SET LOCAL U&"statement\\005ftimeout" = 0; END $$;\nSELECT public.tmp_r2();\n')"; do
+  newrepo; wfput "$WP" "$CAPPED_URL" "$PUSH"; wfput "$WS" "$CAPPED_URL" "$PUSH"; addmig 88000000000002_a.sql "$sql"; run
+  check "a U& escaped identifier inside a dollar body is not covered ($(printf '%s' "$sql" | head -c 40 | tr '\n' ' ')): exit 3" "$RC" 3
+done
+
+# the range check and the ref reading hold from a subdirectory
+newrepo; WF_KEEP_BASE=1 wfput "$WP" "$CAPPED_URL" "$PUSH"; WF_KEEP_BASE=1 wfput "$WS" "$CAPPED_URL" "$PUSH"; addmig 88000000000002_a.sql "SELECT 1;"
+mkdir -p "$D/supabase"; OUT="$(cd "$D/supabase" && bash "$SCRIPT" "$BASE" HEAD --caps-ref "$BASE" 2>&1)"; RC=$?
+check "a range that adds the caps is refused from a subdirectory too: exit 3" "$RC" 3
+covrepo "$CAPPED_URL" "$CAPPED_URL"; OUT="$(cd "$D/supabase" || exit 1; bash "$SCRIPT" "$BASE" HEAD --caps-ref HEAD 2>&1)"; RC=$?
+check "a covered file from a subdirectory: exit 0" "$RC" 0
+
+# 54. TWO MODES: strict at the PR merge gate (no --caps-ref), cover at deploy time only (--caps-ref).
+# The same unguarded file is STOP / exit 3 without --caps-ref and covered / exit 0 with it; a guarded file is ok in both.
+# Both workflows carry the caps in every case below, so the ONLY thing that differs between the two runs is the mode.
+fwindow() { # the shape of a real file that cost a deploy window: a long comment header, a SECURITY DEFINER function with a
+          # plpgsql body, grants, a policy swap and a trigger; no transaction control and no timeout anywhere
+  printf '%s\n' '-- Note writes need real standing in the group and a note belongs to the group of its author' \
+    '-- WHY. an outsider who knows a group id can put a published note into that group board.' \
+    'CREATE OR REPLACE FUNCTION public.can_write_note_for_group(p_group_id uuid) RETURNS boolean' \
+    "LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS \$\$" \
+    'BEGIN' '  IF auth.uid() IS NULL THEN RETURN false; END IF;' '  RETURN EXISTS (SELECT 1 FROM public.group_members gm WHERE gm.group_id = p_group_id);' 'END;' '$$;' \
+    'REVOKE ALL ON FUNCTION public.can_write_note_for_group(uuid) FROM PUBLIC, anon;' \
+    'GRANT EXECUTE ON FUNCTION public.can_write_note_for_group(uuid) TO authenticated;' \
+    'DROP POLICY IF EXISTS notes_manage ON public.notes;' \
+    'CREATE POLICY notes_manage ON public.notes USING (public.can_write_note_for_group(group_id)) WITH CHECK (public.can_write_note_for_group(group_id));' \
+    'DROP TRIGGER IF EXISTS notes_guard_group ON public.notes;' \
+    'CREATE TRIGGER notes_guard_group BEFORE INSERT OR UPDATE OF group_id ON public.notes FOR EACH ROW EXECUTE FUNCTION public.notes_guard_group_matches_author();'
+}
+modes() { # <label> <file text>: run the file in both modes, workflows capped; sets PR_RC PR_OUT DP_RC DP_OUT
+  newrepo; wfput "$WP" "$CAPPED_URL" "$PUSH"; wfput "$WS" "$CAPPED_URL" "$PUSH"; addmig 88000000000002_a.sql "$2"
+  RUNARGS=(); run; PR_RC=$RC; PR_OUT="$OUT"
+  RUNARGS=(--caps-ref HEAD); run; DP_RC=$RC; DP_OUT="$OUT"
+}
+modes unguarded "SELECT 1 FROM $MARK;"
+check "unguarded file, PR mode (no --caps-ref): STOP, exit 3" "$PR_RC" 3
+has   "unguarded file, PR mode: the stop line" "$PR_OUT" "stop $F1 reason=no BEGIN; and COMMIT;"
+has   "unguarded file, PR mode: the text tells the author to add the in-file guard" "$PR_OUT" "add the in-file guard: BEGIN; SET LOCAL lock_timeout = '3s'; SET LOCAL statement_timeout = '30s'"
+hasnt "unguarded file, PR mode: never reported covered" "$PR_OUT" "covered (connection caps)"
+hasnt "unguarded file, PR mode: the summary has no covered file" "$PR_OUT" "covered=1"
+hasnt "unguarded file, PR mode: the caps are not offered as a way out (no options= or push step advice)" "$PR_OUT" "options="
+hasnt "unguarded file, PR mode: the final note does not send the author to the push step" "$PR_OUT" "push step"
+has   "unguarded file, PR mode: the final note says the gate is strict" "$PR_OUT" "strict"
+has   "unguarded file, PR mode: the output names the mode" "$PR_OUT" "mode: pr-gate (strict"
+has   "unguarded file, PR mode: the note keeps the applied-file caution" "$PR_OUT" "do NOT edit the file"
+check "unguarded file, deploy mode (--caps-ref): covered, exit 0" "$DP_RC" 0
+has   "unguarded file, deploy mode: the covered line" "$DP_OUT" "covered (connection caps): $F1"
+has   "unguarded file, deploy mode: the output names the mode" "$DP_OUT" "mode: deploy (--caps-ref HEAD"
+
+modes winloss "$(fwindow)"
+check "window-loss-shaped file, PR mode: STOP, exit 3" "$PR_RC" 3
+has   "window-loss-shaped file, PR mode: add the in-file guard" "$PR_OUT" "add the in-file guard"
+hasnt "window-loss-shaped file, PR mode: never covered" "$PR_OUT" "covered (connection caps)"
+check "window-loss-shaped file, deploy mode: covered, exit 0" "$DP_RC" 0
+has   "window-loss-shaped file, deploy mode: the covered line" "$DP_OUT" "covered (connection caps): $F1"
+
+modes guarded "$(guard "'3s'" "'30s'")"
+check "guarded file, PR mode: ok, exit 0" "$PR_RC" 0; has "guarded file, PR mode: ok line" "$PR_OUT" "ok $F1"
+check "guarded file, deploy mode: ok, exit 0" "$DP_RC" 0; has "guarded file, deploy mode: ok line" "$DP_OUT" "ok $F1"
+hasnt "guarded file: not reported covered in either mode" "$PR_OUT$DP_OUT" "covered (connection caps)"
+
+modes half "$(printf '%s\nSELECT 1;\n' "$BG")"
+check "half transaction: STOP in PR mode" "$PR_RC" 3; check "half transaction: STOP in deploy mode too" "$DP_RC" 3
+
+# --no-cover and a base branch other than the default one change nothing in PR mode; an explicit --caps-ref plus --no-cover is a stop with a reason
+newrepo; wfput "$WP" "$CAPPED_URL" "$PUSH"; wfput "$WS" "$CAPPED_URL" "$PUSH"; addmig 88000000000002_a.sql "SELECT 1;"
+RUNARGS=(); run --no-cover; check "PR mode with --no-cover: STOP, exit 3" "$RC" 3; has "PR mode with --no-cover: add the in-file guard" "$OUT" "add the in-file guard"
+RUNARGS=(--caps-ref HEAD); run --no-cover; check "deploy mode with --no-cover: STOP, exit 3" "$RC" 3
+# an ask is still an ask (exit 2) in both modes
+newrepo; wfput "$WP" "$CAPPED_URL" "$PUSH"; wfput "$WS" "$CAPPED_URL" "$PUSH"; addmig 88000000000002_a.sql "$(guard "'5s'" "'120s'")"
+RUNARGS=(); run; check "ask file, PR mode: exit 2" "$RC" 2
+RUNARGS=(--caps-ref HEAD); run; check "ask file, deploy mode: exit 2" "$RC" 2
+
+# Mutant helper (one place for every mutation check below): mutant <name> <sed args...> builds $ROOT/mutant-<name>.sh from the script with
+# the HERE= line pinned to the real scripts directory (a copy under $ROOT cannot find lib.sh by dirname $0), then applies the sed args.
+# Returns 1 when the sed args changed nothing, so a mutation that no longer matches the script fails loudly instead of passing vacuously.
+mutant() {
+  MUTF="$ROOT/mutant-$1.sh"; shift
+  sed -e "s|^HERE=.*|HERE=\"$(dirname "$SCRIPT")\"|" "$SCRIPT" > "$MUTF.base"
+  sed "$@" "$MUTF.base" > "$MUTF"
+  ! cmp -s "$MUTF.base" "$MUTF"
+}
+
+# a plain file that touches a timeout or runs dynamic SQL: in PR mode the answer is the add-the-in-file-guard STOP and never "not covered"
+# (that wording implies a cover exists); in deploy mode it is still "not covered: ..." with the reason
+tamper_n=0
+for sql in "$(printf 'SET lock_timeout = 0;\nSELECT 1;\n')" "$(printf 'DO $$ BEGIN EXECUTE %s; END $$;\n' "'SELECT 1'")" 'DISCARD ALL;' 'RESET ALL;'; do
+  tamper_n=$((tamper_n + 1)); modes "tamper$tamper_n" "$sql"
+  check "tamper file $tamper_n, PR mode: STOP, exit 3" "$PR_RC" 3
+  has   "tamper file $tamper_n, PR mode: add the in-file guard" "$PR_OUT" "add the in-file guard: BEGIN; SET LOCAL lock_timeout = '3s'"
+  hasnt "tamper file $tamper_n, PR mode: never says not covered" "$PR_OUT" "not covered"
+  hasnt "tamper file $tamper_n, PR mode: never covered" "$PR_OUT" "covered (connection caps)"
+  check "tamper file $tamper_n, deploy mode: STOP, exit 3" "$DP_RC" 3
+  has   "tamper file $tamper_n, deploy mode: says why it is not covered" "$DP_OUT" "not covered: the file touches a timeout"
+done
+
+# mutation check: make the PR mode covered (the strict branch removed) and the PR-mode tests above must fail
+if ! mutant pr-covered -e 's|if \[ "\$CAPS_EXPLICIT" = no \]; then|if false; then|'; then bad "mutation: the sed no longer matches the script (update this test)"; else
+  newrepo; wfput "$WP" "$CAPPED_URL" "$PUSH"; wfput "$WS" "$CAPPED_URL" "$PUSH"; addmig 88000000000002_a.sql "SELECT 1 FROM $MARK;"
+  MOUT="$(cd "$D" && bash "$MUTF" "$BASE" HEAD 2>&1)"; MRC=$?
+  if [ "$MRC" = 0 ] && case "$MOUT" in *"covered (connection caps)"*) true ;; *) false ;; esac; then ok "mutation: with the PR mode made covered the unguarded file exits 0, so the PR-mode STOP tests above fail"
+  else bad "mutation: the mutant did not turn the PR mode covered (rc=$MRC)" "$MOUT"; fi
+fi
+# mutation check: put the tamper test back before the strict test (the old order) and the PR-mode tamper file prints "not covered"
+if ! mutant tamper-first -e 's/if \[ "\$CAPS_EXPLICIT" = no \]; then/if timeout_tamper "$body"; then NOTCOV="not covered: the file touches a timeout or runs dynamic SQL (EXECUTE, DISCARD, RESET ALL)"; elif [ "$CAPS_EXPLICIT" = no ]; then/'; then bad "mutation: the tamper-first sed no longer matches the script (update this test)"; else
+  newrepo; wfput "$WP" "$CAPPED_URL" "$PUSH"; wfput "$WS" "$CAPPED_URL" "$PUSH"; addmig 88000000000002_a.sql "RESET ALL;"
+  MOUT="$(cd "$D" && bash "$MUTF" "$BASE" HEAD 2>&1)"; MRC=$?
+  if [ "$MRC" = 3 ] && case "$MOUT" in *"not covered"*) true ;; *) false ;; esac; then ok "mutation: with the tamper check first, PR mode prints \"not covered\", so the tamper PR-mode tests above fail"
+  else bad "mutation: the tamper-first mutant did not print \"not covered\" in PR mode (rc=$MRC)" "$MOUT"; fi
+fi
+# mutation check: strip "EXECUTE function"/"EXECUTE procedure" by prefix again (the old regex) and a dynamic EXECUTE of a variable named function_sql reads as covered
+if ! mutant exec-prefix -e 's#(function|procedure)\[ \\t\]+(\[a-z_\].*\\(/, " (", lc)#(function|procedure)/, "", lc)#'; then bad "mutation: the exec-prefix sed no longer matches the script (update this test)"
+else
+  newrepo; wfput "$WP" "$CAPPED_URL" "$PUSH"; wfput "$WS" "$CAPPED_URL" "$PUSH"
+  addmig 88000000000002_a.sql "$(printf 'DO $$ DECLARE function_sql text; BEGIN function_sql := %s; EXECUTE function_sql; END $$;\n' "'SET statement_' || 'timeout = 0'")"
+  MOUT="$(cd "$D" && bash "$MUTF" "$BASE" HEAD --caps-ref HEAD 2>&1)"; MRC=$?
+  if [ "$MRC" = 0 ] && case "$MOUT" in *"covered (connection caps)"*) true ;; *) false ;; esac; then ok "mutation: with the prefix strip, EXECUTE function_sql reads as covered, so the dynamic-SQL tests above fail"
+  else bad "mutation: the exec-prefix mutant did not report the dynamic file as covered (rc=$MRC)" "$MOUT"; fi
+fi
+RUNARGS=()
+
+# 55. an empty or whitespace-only --caps-ref is refused (exit 1) in either argument order; it must not turn deploy mode on
+#     with the caps ref defaulting to the PR head (a PR that caps its own workflows would then read as covered)
+newrepo; wfput "$WP" "$CAPPED_URL" "$PUSH"; wfput "$WS" "$CAPPED_URL" "$PUSH"; addmig 88000000000002_a.sql "SELECT 1;"
+raw() { OUT="$(cd "$D" && bash "$SCRIPT" "$@" 2>&1)"; RC=$?; }
+for NAME in empty space tab; do
+  case "$NAME" in empty) CV="" ;; space) CV="  " ;; tab) CV=$'\t' ;; esac
+  raw "$BASE" HEAD --caps-ref "$CV"; check "empty --caps-ref [$NAME] after the refs: exit 1" "$RC" 1
+  hasnt "empty --caps-ref [$NAME] after the refs: never covered" "$OUT" "covered (connection caps)"
+  has   "empty --caps-ref [$NAME] after the refs: says why" "$OUT" "--caps-ref needs a non-empty ref"
+  raw --caps-ref "$CV" "$BASE" HEAD; check "empty --caps-ref [$NAME] before the refs: exit 1" "$RC" 1
+  hasnt "empty --caps-ref [$NAME] before the refs: never covered" "$OUT" "covered (connection caps)"
+done
+raw "$BASE" HEAD --caps-ref HEAD; check "--caps-ref HEAD stays valid deploy mode: covered, exit 0" "$RC" 0
+has "--caps-ref HEAD stays valid deploy mode: covered line" "$OUT" "covered (connection caps): $F1"
+raw --caps-ref HEAD "$BASE" HEAD; check "--caps-ref HEAD before the refs: covered, exit 0" "$RC" 0
+
+# mutation check: remove the guard and the empty-value tests above must fail
+if ! mutant empty-caps -e '/--caps-ref needs a non-empty ref/d'; then bad "mutation: the sed no longer matches the script (update this test)"; else
+  MOUT="$(cd "$D" && bash "$MUTF" "$BASE" HEAD --caps-ref "" 2>&1)"; MRC=$?
+  MOUT2="$(cd "$D" && bash "$MUTF" --caps-ref "" "$BASE" HEAD 2>&1)"; MRC2=$?
+  if [ "$MRC" = 0 ] && [ "$MRC2" = 0 ] && case "$MOUT$MOUT2" in *"covered (connection caps)"*) true ;; *) false ;; esac; then ok "mutation: without the guard an empty --caps-ref exits 0 in both orders, so the exit-1 tests above fail"
+  else bad "mutation: the mutant still refused an empty --caps-ref (rc=$MRC/$MRC2)" "$MOUT$MOUT2"; fi
+fi
+
+# 56. the cover follows the project's own layout: deploy.caps_workflows and deploy.migrations_dir (config or env)
+RUNARGS=(--caps-ref HEAD)
+if command -v yq >/dev/null 2>&1; then
+  # two custom workflow paths, both capped: covered; one of them uncapped: a stop
+  printf 'schema: concertmaster.config/v1\ndeploy:\n  caps_workflows:\n    - ci/ship-prod.yml\n    - ci/ship-stage.yml\n' > "$ROOT/caps-cfg.yaml"
+  cfgrun() { OUT="$(cd "$D" && CM_CONFIG="$ROOT/caps-cfg.yaml" bash "$SCRIPT" "$BASE" HEAD --caps-ref HEAD 2>&1)"; RC=$?; }
+  newrepo; wfput ci/ship-prod.yml "$CAPPED_URL" "$PUSH"; wfput ci/ship-stage.yml "$CAPPED_URL" "$PUSH"; addmig 88000000000002_a.sql "SELECT 1;"; cfgrun
+  check "configured caps workflows, both capped: covered, exit 0" "$RC" 0; has "configured workflows: the first is quoted" "$OUT" "ci/ship-prod.yml:"; has "configured workflows: the second is quoted" "$OUT" "ci/ship-stage.yml:"
+  newrepo; wfput ci/ship-prod.yml "$CAPPED_URL" "$PUSH"; wfput ci/ship-stage.yml 'DB_URL=postgresql://x/p' "$PUSH"; addmig 88000000000002_a.sql "SELECT 1;"; cfgrun
+  check "configured caps workflows, one uncapped: stop, exit 3" "$RC" 3
+  # the default workflow paths are not read once the config names others
+  newrepo; wfput "$WP" "$CAPPED_URL" "$PUSH"; wfput "$WS" "$CAPPED_URL" "$PUSH"; addmig 88000000000002_a.sql "SELECT 1;"; cfgrun
+  check "configured paths missing from the repo (defaults capped): stop, exit 3" "$RC" 3
+  # one configured workflow is enough for a project with a single deploy workflow
+  printf 'schema: concertmaster.config/v1\ndeploy:\n  caps_workflows: [ci/only.yml]\n' > "$ROOT/caps-cfg1.yaml"
+  newrepo; wfput ci/only.yml "$CAPPED_URL" "$PUSH"; addmig 88000000000002_a.sql "SELECT 1;"
+  OUT="$(cd "$D" && CM_CONFIG="$ROOT/caps-cfg1.yaml" bash "$SCRIPT" "$BASE" HEAD --caps-ref HEAD 2>&1)"; RC=$?
+  check "a single configured caps workflow: covered, exit 0" "$RC" 0
+  # a bad configured path fails closed
+  for badwf in /abs/wf.yml ../out.yml 'a b.yml' 'a;b.yml'; do
+    printf 'schema: concertmaster.config/v1\ndeploy:\n  caps_workflows: ["%s"]\n' "$badwf" > "$ROOT/caps-bad.yaml"
+    newrepo; addmig 88000000000002_a.sql "SELECT 1;"
+    OUT="$(cd "$D" && CM_CONFIG="$ROOT/caps-bad.yaml" bash "$SCRIPT" "$BASE" HEAD --caps-ref HEAD 2>&1)"; RC=$?
+    check "bad caps workflow path '$badwf': exit 1" "$RC" 1; has "bad caps workflow path '$badwf': says so" "$OUT" "bad workflow path"
+  done
+else
+  echo "skip the caps_workflows config cases: yq is not installed"
+fi
+# a custom migrations directory: the cover works there, and a psql read of that directory in a workflow refuses it
+otherrepo db/migrate; wfput "$WP" "$CAPPED_URL" "$PUSH"; wfput "$WS" "$CAPPED_URL" "$PUSH"; addat db/migrate 88000000000002_a.sql "SELECT 1;"
+OUT="$(cd "$D" && CM_MIGRATIONS_DIR=db/migrate bash "$SCRIPT" "$BASE" HEAD --caps-ref HEAD 2>&1)"; RC=$?
+check "a custom migrations directory, capped workflows: covered, exit 0" "$RC" 0; has "custom directory: the covered line names the file" "$OUT" "covered (connection caps): db/migrate/88000000000002_a.sql"
+otherrepo db/migrate; wfput "$WP" "$CAPPED_URL" 'psql "$U" < db/migrate/88000000000001_old.sql' "$PUSH"; wfput "$WS" "$CAPPED_URL" "$PUSH"; addat db/migrate 88000000000002_a.sql "SELECT 1;"
+OUT="$(cd "$D" && CM_MIGRATIONS_DIR=db/migrate bash "$SCRIPT" "$BASE" HEAD --caps-ref HEAD 2>&1)"; RC=$?
+check "a workflow that feeds the custom migrations directory to psql: stop, exit 3" "$RC" 3
+# the mode line and the covered count are always printed
+newrepo; addmig 88000000000002_a.sql "$(guard "'3s'" "'30s'")"; RUNARGS=(); run
+has "PR gate output names its mode" "$OUT" "mode: pr-gate"; has "PR gate output carries covered=0" "$OUT" "covered=0"
+RUNARGS=(--caps-ref HEAD); run
+has "deploy output names its mode" "$OUT" "mode: deploy (--caps-ref"
+
+# 57. review round: a ${VAR} host or port could be a pooler, a `: "${URL:?}"` check line is allowed, and a glob in the env list is not expanded
+RUNARGS=(--caps-ref HEAD)
+UQ='?options=-c%20lock_timeout%3D3s%20-c%20statement_timeout%3D120000'
+newrepo; wfput "$WP" ': "${DB_URL:?not set}"' 'DB_URL="postgresql://postgres@db.example.invalid:5432/postgres'"$UQ"'"' "$PUSH"; wfput "$WS" "$CAPPED_URL" "$PUSH"; addmig 88000000000002_a.sql "SELECT 1;"; run
+check "a ': \"\${DB_URL:?..}\"' check line beside the assignment and the push: covered, exit 0" "$RC" 0
+for u in 'postgresql://postgres@${DB_HOST}:5432/postgres' 'postgresql://postgres@db.example.invalid:${DB_PORT}/postgres' 'postgresql://postgres@${DB_HOST}/postgres'; do
+  newrepo; wfput "$WP" 'DB_URL="'"$u$UQ"'"' "$PUSH"; wfput "$WS" "$CAPPED_URL" "$PUSH"; addmig 88000000000002_a.sql "SELECT 1;"; run
+  check "a host or port built from an expansion ($u): stop, exit 3" "$RC" 3; has "expansion host or port ($u): the reason is named" "$OUT" "from an expansion"
+done
+newrepo; addmig 88000000000002_a.sql "SELECT 1;"; mkdir -p "$D/globdir"; : > "$D/globdir/a.yml"
+OUT="$(cd "$D/globdir" && CM_DMC_WORKFLOWS='*' bash "$SCRIPT" "$BASE" HEAD --caps-ref HEAD 2>&1)"; RC=$?
+check "a glob in CM_DMC_WORKFLOWS is not expanded against the directory: exit 1" "$RC" 1; has "glob workflow list: bad path named" "$OUT" "bad workflow path"
+
+# 58. documented residual (pinned so a change is deliberate): the cover reads the push steps only. A capped push step that is skipped
+#     by `if: false`, with the real migrations applied by a later `uses:` action step, still reads as covered. The script header,
+#     SKILL.md and the deploy brief say a human reads the workflow if it changed.
+RUNARGS=(--caps-ref HEAD)
+newrepo
+for f in "$WP" "$WS"; do
+  mkdir -p "$D/$(dirname "$f")"
+  { printf 'steps:\n  - name: push (disabled)\n    if: false\n    run: |\n'
+    printf '      %s\n' "$CAPPED_URL" "$PUSH"
+    printf '  - name: apply migrations\n    uses: example/apply-migrations@v1\n'; } > "$D/$f"
+done
+( cd "$D" && git add . && git_q commit -q -m "wf if-false push plus a uses: action" ) >/dev/null; BASE="$(git -C "$D" rev-parse HEAD)"
+addmig 88000000000002_a.sql "SELECT 1;"; run
+check "residual: a capped push step skipped by if: false, migrations applied by a uses: action, still reads covered: exit 0" "$RC" 0
+has "residual: the covered line is printed (a human reads the workflow if it changed)" "$OUT" "covered (connection caps): $F1"
+OUT="$(bash "$SCRIPT" --help 2>&1)"
+has "residual: the header documents that an if: skipped step is not seen" "$OUT" "skipped by an \`if:\`"
+has "residual: the header documents that a uses: action is not seen" "$OUT" "later \`uses:\` action step"
+RUNARGS=()
+
+# 59. fifth review: a backslash in the options (the server removes it, so lock%5C_timeout=0 is a later lock_timeout=0), and a custom
+#     step-level shell: (it can source a file that applies the migrations without the caps). Both are refused, so the file is not covered.
+RUNARGS=(--caps-ref HEAD)
+BSL_URL='DB_URL="postgresql://postgres@db.${DB_REF}.supabase.co:5432/postgres?options=-c%20lock_timeout%3D3s%20-c%20statement_timeout%3D120000%20-c%20lock%5C_timeout%3D0"'
+covrepo "$BSL_URL" "$BSL_URL"
+check "an options value with an escaped later lock_timeout (%5C) is not covered: exit 3" "$RC" 3
+BSL_RAW='DB_URL="postgresql://postgres@db.${DB_REF}.supabase.co:5432/postgres?options=-c%20lock_timeout%3D3s%20-c%20statement_timeout%3D120000%20-c%20lock\_timeout%3D0"'
+covrepo "$BSL_RAW" "$BSL_RAW"
+check "an options value with a raw backslash is not covered: exit 3" "$RC" 3
+wfshell() { # <shell value> : both workflows get a capped push step with that step-level shell:
+  newrepo
+  for f in "$WP" "$WS"; do
+    mkdir -p "$D/$(dirname "$f")"
+    { printf 'steps:\n  - name: push\n    shell: %s\n    run: |\n' "$1"; printf '      %s\n' "$CAPPED_URL" "$PUSH"; } > "$D/$f"
+  done
+  ( cd "$D" && git add . && git_q commit -q -m "wf shell" ) >/dev/null; BASE="$(git -C "$D" rev-parse HEAD)"
+  addmig 88000000000002_a.sql "SELECT 1;"; run
+}
+wfshell "bash"
+check "a step with shell: bash is still covered: exit 0" "$RC" 0
+wfshell "sh"
+check "a step with shell: sh is still covered: exit 0" "$RC" 0
+wfshell "bash -c 'source ./ci/deploy.sh; bash \"\$0\"' {0}"
+check "a step with a custom shell: command is not covered: exit 3" "$RC" 3
+if ! mutant bsl-decoded -e 's/\*\[\[:cntrl:\]\]\*|\*.\\.\*) return 0/*[[:cntrl:]]*) return 0/'; then bad "mutation: the bsl-decoded sed no longer matches the script (update this test)"
+else
+  newrepo; wfput "$WP" "$BSL_URL" "$PUSH"; wfput "$WS" "$BSL_URL" "$PUSH"; addmig 88000000000002_a.sql "SELECT 1 FROM $MARK;"
+  MOUT="$(cd "$D" && bash "$MUTF" "$BASE" HEAD --caps-ref HEAD 2>&1)"; MRC=$?
+  if [ "$MRC" = 0 ] && case "$MOUT" in *"covered (connection caps)"*) true ;; *) false ;; esac; then ok "mutation: without the decoded-backslash refusal, an escaped later lock_timeout reads as covered, so the test above fails"
+  else bad "mutation: the bsl-decoded mutant did not report the file as covered (rc=$MRC)" "$MOUT"; fi
+fi
+if ! mutant shell-key -e '/shell:\/) return (l/d'; then bad "mutation: the shell-key sed no longer matches the script (update this test)"
+else
+  newrepo
+  for f in "$WP" "$WS"; do
+    mkdir -p "$D/$(dirname "$f")"
+    { printf 'steps:\n  - name: push\n    shell: bash -c %s\n    run: |\n' "'source ./ci/deploy.sh; bash \"\$0\"' {0}"; printf '      %s\n' "$CAPPED_URL" "$PUSH"; } > "$D/$f"
+  done
+  ( cd "$D" && git add . && git_q commit -q -m "wf shell" ) >/dev/null; BASE="$(git -C "$D" rev-parse HEAD)"; addmig 88000000000002_a.sql "SELECT 1;"
+  MOUT="$(cd "$D" && bash "$MUTF" "$BASE" HEAD --caps-ref HEAD 2>&1)"; MRC=$?
+  if [ "$MRC" = 0 ] && case "$MOUT" in *"covered (connection caps)"*) true ;; *) false ;; esac; then ok "mutation: without the shell: refusal, a custom shell reads as covered, so the test above fails"
+  else bad "mutation: the shell-key mutant did not report the file as covered (rc=$MRC)" "$MOUT"; fi
+fi
+
+# 59b. sixth review: EXECUTE <keyword-named variable> is dynamic SQL (only a real trigger clause "EXECUTE FUNCTION name(" is exempt), and a
+#      PATH= (or another startup variable) line in the push step's shell is refused like the same variable under env:
+addmig_cov() { newrepo; wfput "$WP" "$CAPPED_URL" "$PUSH"; wfput "$WS" "$CAPPED_URL" "$PUSH"; addmig 88000000000002_a.sql "$1"; }
+KWV="$(printf 'DO $$ DECLARE function text := %s; BEGIN EXECUTE function || %s; END $$;\n' "'SET lock_'" "'timeout = 0'")"
+addmig_cov "$KWV"; run
+check "EXECUTE function || '...' (a variable named function) is dynamic SQL, not covered: exit 3" "$RC" 3
+addmig_cov "$(printf 'DO $$ BEGIN CREATE TRIGGER t AFTER INSERT ON x FOR EACH ROW EXECUTE PROCEDURE public.g(); END $$;\n')"; run
+check "a schema-qualified EXECUTE PROCEDURE trigger clause inside a DO body still covers: exit 0" "$RC" 0
+addmig_cov "$(printf 'DO $$ BEGIN CREATE TRIGGER t AFTER INSERT ON x FOR EACH ROW EXECUTE FUNCTION "my fn"(); END $$;\n')"; run
+check "a quoted EXECUTE FUNCTION trigger clause inside a DO body still covers: exit 0" "$RC" 0
+newrepo; wfput "$WP" 'PATH=/tmp/shims' "$CAPPED_URL" "$PUSH"; wfput "$WS" 'PATH=/tmp/shims' "$CAPPED_URL" "$PUSH"; addmig 88000000000002_a.sql "SELECT 1;"; run
+check "a PATH= line in the push step is refused, not covered: exit 3" "$RC" 3
+if ! mutant exec-kw -e 's#(function|procedure)\[ \\t\]+(\[a-z_\].*\\(/, " (", lc)#(function|procedure)/, "", lc)#'; then bad "mutation: the exec-kw sed no longer matches the script (update this test)"
+else
+  addmig_cov "$KWV"
+  MOUT="$(cd "$D" && bash "$MUTF" "$BASE" HEAD --caps-ref HEAD 2>&1)"; MRC=$?
+  if [ "$MRC" = 0 ] && case "$MOUT" in *"covered (connection caps)"*) true ;; *) false ;; esac; then ok "mutation: with the bare prefix strip, EXECUTE function || '...' reads as covered, so the test above fails"
+  else bad "mutation: the exec-kw mutant did not report the file as covered (rc=$MRC)" "$MOUT"; fi
+fi
+if ! mutant path-line -e '/NODE_OPTIONS)=\/) return 0/d'; then bad "mutation: the path-line sed no longer matches the script (update this test)"
+else
+  newrepo; wfput "$WP" 'PATH=/tmp/shims' "$CAPPED_URL" "$PUSH"; wfput "$WS" 'PATH=/tmp/shims' "$CAPPED_URL" "$PUSH"; addmig 88000000000002_a.sql "SELECT 1;"
+  MOUT="$(cd "$D" && bash "$MUTF" "$BASE" HEAD --caps-ref HEAD 2>&1)"; MRC=$?
+  if [ "$MRC" = 0 ] && case "$MOUT" in *"covered (connection caps)"*) true ;; *) false ;; esac; then ok "mutation: without the shell-line startup variable refusal, a PATH= line reads as covered, so the test above fails"
+  else bad "mutation: the path-line mutant did not report the file as covered (rc=$MRC)" "$MOUT"; fi
+fi
+
+# 59c. seventh review: the migrations of one push share one connection, so a file that changes the SESSION timeouts (SET, RESET, set_config, dynamic SQL)
+#      leaves them changed for every file after it. No later file is covered, also when --only leaves the earlier one out.
+RUNARGS=(--caps-ref HEAD)
+F3=supabase/migrations/88000000000003_b.sql
+twofiles() { newrepo; wfput "$WP" "$CAPPED_URL" "$PUSH"; wfput "$WS" "$CAPPED_URL" "$PUSH"; addmig 88000000000002_a.sql "$1"; addmig 88000000000003_b.sql "$2"; shift 2; run "$@"; }
+twofiles "$(printf 'SET statement_timeout = 0;\nSELECT 1;\n')" "SELECT 1 FROM $MARK;"
+check "an earlier file that does SET statement_timeout: the later plain file is not covered, exit 3" "$RC" 3
+has "an earlier session SET: the later file is named as not covered because of the earlier one" "$OUT" "an earlier migration in this push ($F1) changes the session timeouts"
+hasnt "an earlier session SET: the later file is never reported covered" "$OUT" "covered (connection caps): $F3"
+twofiles "$(printf 'SET statement_timeout = 0;\nSELECT 1;\n')" "SELECT 1 FROM $MARK;" --only "$F3"
+check "an earlier session SET left out by --only still blocks the later file: exit 3" "$RC" 3
+has "an earlier session SET left out by --only: the later file names the earlier one" "$OUT" "an earlier migration in this push ($F1) changes the session timeouts"
+twofiles "$(printf 'SELECT set_config(%s, %s, false);\n' "'statement_' || 'timeout'" "'0'")" "SELECT 1 FROM $MARK;"
+check "an earlier set_config on a rebuilt timeout name blocks the later file: exit 3" "$RC" 3
+twofiles "$(printf 'DO $$ BEGIN EXECUTE %s; END $$;\n' "'SET statement_' || 'timeout = 0'")" "SELECT 1 FROM $MARK;"
+check "an earlier dynamic EXECUTE blocks the later file: exit 3" "$RC" 3
+twofiles "SELECT 1 FROM $MARK;" "$(printf 'SET statement_timeout = 0;\nSELECT 1;\n')"
+has "a file BEFORE the session change stays covered" "$OUT" "covered (connection caps): $F1"
+twofiles "SELECT 2 FROM $MARK;" "SELECT 1 FROM $MARK;"
+check "two harmless plain files are both covered: exit 0" "$RC" 0
+has "two harmless plain files: the second is covered" "$OUT" "covered (connection caps): $F3"
+if ! mutant taint-off -e 's/elif \[ -n "\$TAINT_FILE" \] \&\&/elif false \&\&/'; then bad "mutation: the taint-off sed no longer matches the script (update this test)"
+else
+  newrepo; wfput "$WP" "$CAPPED_URL" "$PUSH"; wfput "$WS" "$CAPPED_URL" "$PUSH"; addmig 88000000000002_a.sql "$(printf 'SET statement_timeout = 0;\nSELECT 1;\n')"; addmig 88000000000003_b.sql "SELECT 1 FROM $MARK;"
+  MOUT="$(cd "$D" && bash "$MUTF" "$BASE" HEAD --caps-ref HEAD 2>&1)"; MRC=$?
+  if case "$MOUT" in *"covered (connection caps): $F3"*) true ;; *) false ;; esac; then ok "mutation: without the session-taint check the later file reads covered, so the tests above fail"
+  else bad "mutation: the taint-off mutant did not report the later file as covered (rc=$MRC)" "$MOUT"; fi
+fi
+# 59d. eighth review: a DO block that names a timeout runs at once, so it is a session change like a plain SET; and a job that follows the capped
+#      push job is not shell of the push step (the step ends where the indentation leaves it)
+DOSET="$(printf 'DO $$ BEGIN SET SESSION statement_timeout = 0; END $$;\n')"
+twofiles "$DOSET" "SELECT 1 FROM $MARK;"
+check "an earlier DO block that sets a session timeout blocks the later file: exit 3" "$RC" 3
+has "an earlier DO block that sets a session timeout: the later file names the earlier one" "$OUT" "an earlier migration in this push ($F1) changes the session timeouts"
+if ! mutant taint-do -e '/@@body-timeout-do.*&& return 0/d'; then bad "mutation: the taint-do sed no longer matches the script (update this test)"
+else
+  newrepo; wfput "$WP" "$CAPPED_URL" "$PUSH"; wfput "$WS" "$CAPPED_URL" "$PUSH"; addmig 88000000000002_a.sql "$DOSET"; addmig 88000000000003_b.sql "SELECT 1 FROM $MARK;"
+  MOUT="$(cd "$D" && bash "$MUTF" "$BASE" HEAD --caps-ref HEAD 2>&1)"; MRC=$?
+  if case "$MOUT" in *"covered (connection caps): $F3"*) true ;; *) false ;; esac; then ok "mutation: without the DO-block marker in the taint check, the later file reads covered, so the tests above fail"
+  else bad "mutation: the taint-do mutant did not report the later file as covered (rc=$MRC)" "$MOUT"; fi
+fi
+multijob() { # both workflows: a capped push job, then an unrelated echo-only job
+  newrepo
+  for f in "$WP" "$WS"; do
+    mkdir -p "$D/$(dirname "$f")"
+    { printf 'jobs:\n  deploy:\n    steps:\n      - name: push\n        run: |\n'; printf '          %s\n' "$CAPPED_URL" "$PUSH"
+      printf '  verify:\n    steps:\n      - run: echo done\n'; } > "$D/$f"
+  done
+  ( cd "$D" && git add . && git_q commit -q -m "wf two jobs" ) >/dev/null; BASE="$(git -C "$D" rev-parse HEAD)"
+  addmig 88000000000002_a.sql "SELECT 1;"
+}
+multijob; run
+check "a capped push job followed by another job is still covered: exit 0" "$RC" 0
+if ! mutant job-scope -e 's/if (nsb > 0 \&\& line !~/if (0 \&\& line !~/'; then bad "mutation: the job-scope sed no longer matches the script (update this test)"
+else
+  multijob
+  MOUT="$(cd "$D" && bash "$MUTF" "$BASE" HEAD --caps-ref HEAD 2>&1)"; MRC=$?
+  if [ "$MRC" = 3 ] && case "$MOUT" in *"covered (connection caps)"*) false ;; *) true ;; esac; then ok "mutation: without the step-scope close, the job after the push job is read as shell and the file is not covered, so the test above fails"
+  else bad "mutation: the job-scope mutant still covered the file (rc=$MRC)" "$MOUT"; fi
+fi
+# 59e. ninth review: an inline env map in the push step (env: { BASH_ENV: ... }) and a command substitution in a ${X:?message} check
+#      are shell or startup code outside the capped push: both are refused
+wfkey() { # <step key line> : both workflows get a capped push step carrying that extra key line
+  newrepo
+  for f in "$WP" "$WS"; do
+    mkdir -p "$D/$(dirname "$f")"
+    { printf 'steps:\n  - name: push\n    %s\n    run: |\n' "$1"; printf '      %s\n' "$CAPPED_URL" "$PUSH"; } > "$D/$f"
+  done
+  ( cd "$D" && git add . && git_q commit -q -m "wf key" ) >/dev/null; BASE="$(git -C "$D" rev-parse HEAD)"
+  addmig 88000000000002_a.sql "SELECT 1;"; run
+}
+wfkey "timeout-minutes: 5"
+check "a plain step key (timeout-minutes) still covers: exit 0" "$RC" 0
+wfkey "env: { BASH_ENV: ./ci/startup.sh }"
+check "an inline env map with BASH_ENV in the push step is refused, not covered: exit 3" "$RC" 3
+wfkey "env: { FOO: bar }"
+check "any inline env map in the push step is refused (it is not parsed): exit 3" "$RC" 3
+newrepo; wfput "$WP" ': "${DB_REF:?DB_REF is required}"' "$CAPPED_URL" "$PUSH"; wfput "$WS" ': "${DB_REF:?DB_REF is required}"' "$CAPPED_URL" "$PUSH"; addmig 88000000000002_a.sql "SELECT 1;"; run
+check "a literal \${X:?message} check still covers: exit 0" "$RC" 0
+newrepo; wfput "$WP" ': "${DB_REF:?$(./ci/deploy.sh)}"' "$CAPPED_URL" "$PUSH"; wfput "$WS" ': "${DB_REF:?$(./ci/deploy.sh)}"' "$CAPPED_URL" "$PUSH"; addmig 88000000000002_a.sql "SELECT 1;"; run
+check "a command substitution in a \${X:?message} check is refused, not covered: exit 3" "$RC" 3
+if ! mutant inline-env -e '/env:\[ \]\*\[^ \]/d'; then bad "mutation: the inline-env sed no longer matches the script (update this test)"
+else
+  newrepo
+  for f in "$WP" "$WS"; do
+    mkdir -p "$D/$(dirname "$f")"
+    { printf 'steps:\n  - name: push\n    env: { BASH_ENV: ./ci/startup.sh }\n    run: |\n'; printf '      %s\n' "$CAPPED_URL" "$PUSH"; } > "$D/$f"
+  done
+  ( cd "$D" && git add . && git_q commit -q -m "wf inline env" ) >/dev/null; BASE="$(git -C "$D" rev-parse HEAD)"; addmig 88000000000002_a.sql "SELECT 1;"
+  MOUT="$(cd "$D" && bash "$MUTF" "$BASE" HEAD --caps-ref HEAD 2>&1)"; MRC=$?
+  if [ "$MRC" = 0 ] && case "$MOUT" in *"covered (connection caps)"*) true ;; *) false ;; esac; then ok "mutation: without the inline-env refusal, BASH_ENV in an env map reads as covered, so the test above fails"
+  else bad "mutation: the inline-env mutant did not report the file as covered (rc=$MRC)" "$MOUT"; fi
+fi
+if ! mutant subst-msg -e 's/:\\?\[^"`$]\*/:\\?[^"`]*/'; then bad "mutation: the subst-msg sed no longer matches the script (update this test)"
+else
+  newrepo; wfput "$WP" ': "${DB_REF:?$(./ci/deploy.sh)}"' "$CAPPED_URL" "$PUSH"; wfput "$WS" ': "${DB_REF:?$(./ci/deploy.sh)}"' "$CAPPED_URL" "$PUSH"; addmig 88000000000002_a.sql "SELECT 1;"
+  MOUT="$(cd "$D" && bash "$MUTF" "$BASE" HEAD --caps-ref HEAD 2>&1)"; MRC=$?
+  if [ "$MRC" = 0 ] && case "$MOUT" in *"covered (connection caps)"*) true ;; *) false ;; esac; then ok "mutation: with the old message pattern, a command substitution in the check reads as covered, so the test above fails"
+  else bad "mutation: the subst-msg mutant did not report the file as covered (rc=$MRC)" "$MOUT"; fi
+fi
+# 59f. tenth review: a DO block with a quoted language name and a quoted body is not scanned, so it is never covered and a session change in
+#      it blocks the files after it; and the proof line redacts the whole userinfo when the password holds a raw @
+QLDO="DO LANGUAGE \"plpgsql\" 'BEGIN EXECUTE ''SET lock_'' || ''timeout = 0''; END';"
+addmig_cov "$QLDO"; run
+check "a DO LANGUAGE \"plpgsql\" '...' block (quoted language and body) is not covered: exit 3" "$RC" 3
+twofiles "$QLDO" "SELECT 1 FROM $MARK;"
+check "an earlier quoted-language DO block blocks the later file: exit 3" "$RC" 3
+has "an earlier quoted-language DO block: the later file names the earlier one" "$OUT" "an earlier migration in this push ($F1) changes the session timeouts"
+if ! mutant ql-do -e 's/(\\"\[^\\"\]\*\\"|\[a-z_\]+)/[a-z_]+/'; then bad "mutation: the ql-do sed no longer matches the script (update this test)"
+else
+  newrepo; wfput "$WP" "$CAPPED_URL" "$PUSH"; wfput "$WS" "$CAPPED_URL" "$PUSH"; addmig 88000000000002_a.sql "$QLDO"
+  MOUT="$(cd "$D" && bash "$MUTF" "$BASE" HEAD --caps-ref HEAD 2>&1)"; MRC=$?
+  if [ "$MRC" = 0 ] && case "$MOUT" in *"covered (connection caps)"*) true ;; *) false ;; esac; then ok "mutation: without the quoted-language alternative, the quoted DO block reads as covered, so the tests above fail"
+  else bad "mutation: the ql-do mutant did not report the file as covered (rc=$MRC)" "$MOUT"; fi
+fi
+PWX="du""mmy"
+AT2_URL='DB_URL="postgresql://deploy:'"$PWX$AT"'password-tail'"$AT"'db.example.test:5432/postgres?options=-c%20lock_timeout%3D3s%20-c%20statement_timeout%3D120000"'
+covrepo "$AT2_URL" "$AT2_URL"
+check "a URL whose password holds a raw @ is still read as covered: exit 0" "$RC" 0
+hasnt "the proof line does not print the password" "$OUT" "$PWX"
+hasnt "the proof line does not print the password tail after the first @" "$OUT" "password-tail"
+has "the proof line keeps the host" "$OUT" "***@db.example.test"
+if ! mutant scrub-first-at -e 's#\[^/ "\]\*@#[^@/ "]*@#'; then bad "mutation: the scrub-first-at sed no longer matches the script (update this test)"
+else
+  newrepo; wfput "$WP" "$AT2_URL" "$PUSH"; wfput "$WS" "$AT2_URL" "$PUSH"; addmig 88000000000002_a.sql "SELECT 1 FROM $MARK;"
+  MOUT="$(cd "$D" && bash "$MUTF" "$BASE" HEAD --caps-ref HEAD 2>&1)"; MRC=$?
+  if case "$MOUT" in *"password-tail"*) true ;; *) false ;; esac; then ok "mutation: with the old redaction (first @ only) the password tail is printed, so the test above fails"
+  else bad "mutation: the scrub-first-at mutant did not print the password tail (rc=$MRC)" "$MOUT"; fi
+fi
+RUNARGS=()
+
+# 60. documented residual, pinned: an inherited scope is not read. A workflow- or job-level env: BASH_ENV (or a defaults.run.shell) still
+#     reads covered, because the cover reads the push step's own text only. A human reads the workflow when it changed.
+RUNARGS=(--caps-ref HEAD)
+newrepo
+for f in "$WP" "$WS"; do
+  mkdir -p "$D/$(dirname "$f")"
+  { printf 'env:\n  BASH_ENV: ./ci/startup.sh\njobs:\n  deploy:\n    defaults:\n      run:\n        shell: bash -c "source ./ci/deploy.sh; bash \\"$0\\"" {0}\n    steps:\n      - name: push\n        run: |\n'
+    printf '          %s\n' "$CAPPED_URL" "$PUSH"; } > "$D/$f"
+done
+( cd "$D" && git add . && git_q commit -q -m "wf inherited env and shell" ) >/dev/null; BASE="$(git -C "$D" rev-parse HEAD)"
+addmig 88000000000002_a.sql "SELECT 1;"; run
+check "residual: a workflow-level BASH_ENV and a defaults.run.shell are not read, the file still reads covered: exit 0" "$RC" 0
+OUT="$(bash "$SCRIPT" --help 2>&1)"
+has "residual: the header documents that inherited env and default shell are not read" "$OUT" "defaults.run.shell"
+RUNARGS=()
 
 printf '\npassed=%s failed=%s\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
