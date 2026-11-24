@@ -13,7 +13,7 @@
 # Exempt, and only these (stated in references/lanes.md Lead charter, Ticket link):
 #   the concertmaster's own worktree (worktrees.self_name, and, when worktrees.orca_repo is set, only one under a /<orca_repo>/
 #   directory: a same-named worktree of another repo is an ordinary worktree here); a standing lane's own worktree on POSITIVE evidence (a configured lane
-#   or an ownership lead by name, or a ledger worker with standing:true at that path); a main checkout; an archived worktree; a
+#   or an ownership lead by name, or a ledger worker with standing:true at that path ON THAT HOST: a worker with no recorded host counts as local, and the same path on another host is an ordinary worktree); a main checkout; an archived worktree; a
 #   worktree with a path segment equal to a worktrees.never_touch name; and any path outside worktrees.path_match. A NAME SHAPE
 #   alone (-lead, -sweeper, epic-) exempts nothing here: an exemption only hides this nag, so `dev-lead-time-fix` is listed like any
 #   worker, and an unledgered lead is listed until it is recorded. Children of a lane are NOT exempt: every worker needs its own issue.
@@ -70,7 +70,7 @@ cm_lane_names | jq -R . | jq -sc . > "$TMP/lanes.json" 2>/dev/null; [ -s "$TMP/l
 LEDGER="${CM_LEDGER:-$CM_HOME/ledger.json}"
 echo '[]' > "$TMP/stand.json"
 if [ -r "$LEDGER" ]; then
-  if jq -c '[(.workers // {}) | to_entries[] | .value | select(.standing == true) | (.path // .worktree // .worktreePath // empty) | select(type == "string") | sub("/+$"; "")]' "$LEDGER" > "$TMP/stand.new" 2>/dev/null && [ -s "$TMP/stand.new" ]; then mv -f "$TMP/stand.new" "$TMP/stand.json"
+  if jq -c '[(.workers // {}) | to_entries[] | .value | select(.standing == true) | ((.host // "local" | ascii_downcase) + "|" + ((.path // .worktree // .worktreePath // empty) | select(type == "string") | sub("/+$"; "")))]' "$LEDGER" > "$TMP/stand.new" 2>/dev/null && [ -s "$TMP/stand.new" ]; then mv -f "$TMP/stand.new" "$TMP/stand.json"
   else printf '%s\t%s\n' "(ledger)" "the ledger could not be parsed: ledger standing workers are not exempted" >> "$TMP/bad.tsv"; fi
 fi
 
@@ -107,7 +107,7 @@ read_host() { # <n> <host>
       elif (.isArchived // false) then "archived"
       elif any(names[]; . == $self) and ($orca == "" or ((.path | sub("/+$"; "") | split("/"))[:-1] | map(ascii_downcase) | index($orca)) != null) then "concertmaster worktree"
       elif any(names[]; . as $n | any($lanes[]; . == $n)) then "standing lane (configured)"
-      elif (.path | sub("/+$"; "")) as $p | any($stand[]; . == $p) then "standing lane (ledger)"
+      elif (($host | ascii_downcase) + "|" + (.path | sub("/+$"; ""))) as $p | any($stand[]; . == $p) then "standing lane (ledger)"
       elif (.path | ascii_downcase | split("/")) as $segs | any($never[]; . as $n | any($segs[]; . == $n)) then "never_touch"
       else null end;
     .result.worktrees[]
