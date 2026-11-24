@@ -9,21 +9,26 @@ HOOK="$(cd "$(dirname "$0")/../hooks" && pwd)/msg-guard-hook.sh"
 fail=0
 export CM_CONFIG=/nonexistent CM_PATH_MATCH="/acme-app/" CM_ORG=acme
 unset CM_ALLOW_SENDMESSAGE CM_LEDGER CM_SELF_WORKTREE
-CM_HOME="$(mktemp -d "${TMPDIR:-/tmp}/cm-msgguard.XXXXXX")" || exit 1
-export CM_HOME
-trap 'rm -rf -- "${CM_HOME:?}"' EXIT
-# ledger workers name sessions too: their ids and lanes (alone or with a -<suffix>) are denied
-printf '{"workers":{"research-cache":{"lane":"ops-db"},"w-dev-1":{"lane":"dev-1"}}}\n' > "$CM_HOME/ledger.json"
+ROOT="$(mktemp -d "${TMPDIR:-/tmp}/cm-msgguard.XXXXXX")" || exit 1
+trap 'rm -rf -- "${ROOT:?}"' EXIT
+# the per-session record of spawned subagent names lives under TMPDIR: a private one per run
+export CM_HOME="$ROOT/home" TMPDIR="$ROOT/tmp"; mkdir -p "$CM_HOME" "$TMPDIR"
 CWD="${CWD:-/home/user/orca/workspaces/acme-app/lane}"
+SID=sess-a
 run() { # $1 = tool, $2 = to, $3 = cwd
-  jq -n --arg t "$1" --arg to "$2" --arg w "${3:-$CWD}" '{tool_name:$t,cwd:$w,tool_input:{to:$to,message:"hi"}}' | "$HOOK"
+  jq -n --arg t "$1" --arg to "$2" --arg w "${3:-$CWD}" --arg s "$SID" '{tool_name:$t,session_id:$s,cwd:$w,tool_input:{to:$to,message:"hi"}}' | "$HOOK"
+}
+spawn() { # $1 = subagent name, as Claude Code sends PreToolUse for Agent(name: ...); the Agent call is never denied
+  local out
+  out="$(jq -n --arg n "$1" --arg w "$CWD" --arg s "$SID" '{tool_name:"Agent",session_id:$s,cwd:$w,tool_input:{name:$n,prompt:"p"}}' | "$HOOK")"
+  [ -z "$out" ] || { echo "FAIL Agent call produced output: $out"; fail=1; }
 }
 want() { # $1 = deny|allow, $2 = tool, $3 = to, $4 = cwd (optional)
   local out got=allow
   out="$(run "$2" "$3" "${4:-}")"
   [ -n "$out" ] && got=deny
   if [ "$1" = deny ] && [ -n "$out" ] && [ "$(printf '%s' "$out" | jq -r '.hookSpecificOutput.permissionDecision' 2>/dev/null)" != deny ]; then got=malformed; fi
-  if [ "$got" = "$1" ]; then echo "ok   $1: $2 -> $3"; else echo "FAIL want $1 got $got: $2 -> $3"; fail=1; fi
+  if [ "$got" = "$1" ]; then echo "ok   $1 ($SID): $2 -> $3"; else echo "FAIL want $1 got $got ($SID): $2 -> $3"; fail=1; fi
 }
 # deny: named sessions, sockets, broadcast
 want deny SendMessage 'rs-lead-g-4f'
@@ -38,36 +43,41 @@ want allow SendMessage 'a28db5b89b29c8c21'
 want allow SendMessage '3f2a9c10b7e4'
 want allow SendMessage 'acode-reviewer-0123456789abcdef'
 want deny SendMessage 'a-lead-concertmaster'
-# deny: lane-shaped names, w-<lane> ids, ledger worker ids and lanes (with or without a suffix)
-want deny SendMessage 'dev-sweeper'
-want deny SendMessage 'w-pr-sweep'
+# no record yet (nothing spawned): every plain name is denied, a lane-shaped one too
+want deny SendMessage 'reviewer'
 want deny SendMessage 'research-cache'
-want deny SendMessage 'Research-Cache-3f'
-want deny SendMessage 'ops-db'
-want deny SendMessage 'dev-1-9c'
-# allow: a subagent this session spawned with Agent(name: ...)
-want allow SendMessage 'reviewer'
-want allow SendMessage 'test-engineer'
-want allow SendMessage 'research'
-want allow SendMessage 'dev-10'
+want deny SendMessage 'fix-login-482'
+want deny SendMessage 'dev-sweeper'
 want deny SendMessage 'w-dev-sweeper'
-# deny: socket, path and URL forms whatever the case or padding, and names that are not a plain subagent name
+# a name this session spawned is allowed (any case or padding); one it did not spawn stays denied
+spawn reviewer; spawn ' Test-Engineer '; spawn 'host:bad'; spawn 'two words'
+want allow SendMessage 'reviewer'
+want allow SendMessage ' Reviewer '
+want allow SendMessage 'test-engineer'
+want deny SendMessage 'research-cache'
+want deny SendMessage 'host:bad'
+want deny SendMessage 'two words'
+check_rec() { grep -qxF "$1" "$TMPDIR/cm-msg-guard/sess-a.names" && [ -n "$(find "$TMPDIR/cm-msg-guard" -maxdepth 0 -perm 0700)" ]; }
+check_rec reviewer && ! grep -q 'host:bad\|two words' "$TMPDIR/cm-msg-guard/sess-a.names" && echo "ok   the record holds valid names only, in a 0700 directory" || { echo "FAIL record contents or mode"; fail=1; }
+# another session's spawned name is not this session's subagent
+SID=sess-b
+want deny SendMessage 'reviewer'
+SID=sess-a
+# an unreadable record, a record directory that is not 0700, or no session_id: denied
+chmod 000 "$TMPDIR/cm-msg-guard/sess-a.names"
+if [ "$(id -u)" != 0 ]; then want deny SendMessage 'reviewer'; fi
+chmod 600 "$TMPDIR/cm-msg-guard/sess-a.names"
+chmod 755 "$TMPDIR/cm-msg-guard"; want deny SendMessage 'reviewer'; chmod 700 "$TMPDIR/cm-msg-guard"
+SID=''; want deny SendMessage 'reviewer'; SID=sess-a
+SID='../sess-a'; want deny SendMessage 'reviewer'; SID=sess-a
+rm -rf -- "${TMPDIR:?}/cm-msg-guard"; want deny SendMessage 'reviewer'
+# deny: socket, path and URL forms whatever the case or padding
 want deny SendMessage 'UDS:/run/user/1000/cc-socks/1.sock'
 want deny SendMessage ' uds:/run/user/1000/x'
 want deny SendMessage '/tmp/x.sock'
 want deny SendMessage 'peer.sock'
-want deny SendMessage 'host:reviewer'
 want deny SendMessage 'team/reviewer'
 want deny SendMessage 'https://example.test/session'
-want deny SendMessage 'two words'
-want allow SendMessage ' Reviewer '
-# a ledger that exists but cannot be parsed: every plain name is denied (deny by default), a missing ledger is no ids
-cp "$CM_HOME/ledger.json" "$CM_HOME/ledger.keep"
-printf '{not json' > "$CM_HOME/ledger.json"
-want deny SendMessage 'reviewer'
-rm -f "$CM_HOME/ledger.json"
-want allow SendMessage 'reviewer'
-mv "$CM_HOME/ledger.keep" "$CM_HOME/ledger.json"
 # allow: other tools, no recipient, a session outside the project
 want allow Bash 'rs-lead-g-4f'
 want allow SendMessage 'rs-lead-g-4f' /home/user/other-project

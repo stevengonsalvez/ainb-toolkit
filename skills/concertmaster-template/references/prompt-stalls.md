@@ -89,12 +89,12 @@ Rollback: restore `settings.json.bak-rmguard`.
 Owner rule: leads and the concertmaster coordinate ONLY through the fleet CLI (`plugly terminal send`,
 the `cm:` worktree comment, the ledger). A written rule alone did not hold: a 14-day log scan of one
 host found thousands of `SendMessage` calls to named sessions and to `uds:/run/user/<uid>/cc-socks/*.sock`
-targets. `scripts/hooks/msg-guard-hook.sh` (PreToolUse, matcher `SendMessage`) denies those with the fix.
-It denies by default: any recipient holding `:`, `/` or `*` (sockets, paths, URLs, broadcast; case and padding
-ignored) and any plain name that is not a subagent name. A subagent name (one spawned with `Agent(name: "reviewer")`)
-matches `^[a-z0-9][a-z0-9_-]*$`, is not lane-shaped, not `w-<id>`, does not hold the concertmaster's own name, and is
-not a configured lane, ledger worker id or ledger lane (alone or with a `-<suffix>`); a ledger that does not parse
-allows none. It allows an agent id or a subagent name as recipient, no recipient, any other tool,
+targets. `scripts/hooks/msg-guard-hook.sh` (PreToolUse, matcher `SendMessage|Agent`) denies those with the fix.
+On `Agent` it records the subagent name (`tool_input.name`, `^[a-z0-9][a-z0-9_-]*$`) in this session's record,
+`${TMPDIR:-/tmp}/cm-msg-guard/<session_id>.names` (directory 0700); the Agent call is never denied. On `SendMessage`
+it denies by default: any recipient holding `:`, `/` or `*` (sockets, paths, URLs, broadcast; case and padding
+ignored) and any plain name this session did not spawn (no record, or an unreadable one, denies every plain name).
+It allows an agent id or a name this session spawned as recipient, no recipient, any other tool,
 `CM_ALLOW_SENDMESSAGE=1` in the session env, and any session outside this project's checkouts (same
 scope as the rm-guard: `worktrees.path_match` or a git origin in `github.org`). Always exits 0; the
 verdict is the JSON. Claude only (Codex and agy do not read Claude settings, so they keep the brief rule).
@@ -115,7 +115,7 @@ jq --arg h "$HOOK" '
   .hooks.PreToolUse = ((.hooks.PreToolUse // [])
     | map(.hooks = ((.hooks // []) | map(select(.command != $h))))
     | map(select((.hooks | length) > 0))
-    + [{"matcher":"SendMessage","hooks":[{"type":"command","command":$h,"timeout":5}]}])' \
+    + [{"matcher":"SendMessage|Agent","hooks":[{"type":"command","command":$h,"timeout":5}]}])' \
   "$SETTINGS" > "$SETTINGS.new" && mv "$SETTINGS.new" "$SETTINGS"
 # verify: must print "deny" (use a cwd that matches your worktrees.path_match)
 printf '%s' "{\"tool_name\":\"SendMessage\",\"cwd\":\"$PWD\",\"tool_input\":{\"to\":\"some-lane-4f\"}}" | "$HOOK" | jq -r .hookSpecificOutput.permissionDecision
