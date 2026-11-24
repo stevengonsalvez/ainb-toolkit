@@ -754,16 +754,19 @@ _cm_ledger_write_locked() {
 CM_JQ_STATE_DEFS='def cm_state_dead: type == "string" and IN("gone", "repurposed", "torn-down"); '
 
 # CM_JQ_CLASS_PHRASE: `class_phrase`, true for a drive.delegated_classes fragment that may stand for one class phrase:
-# it compiles, matches no empty text, and has no wildcard (an unescaped dot, \w \W \S \D), no negated class and no
-# repeat (+, *, {n,m}) outside a bracket class. A class or a repeat could absorb free words ("store [a-z ]+" would
-# take "ship the store foo bar build to production"); `[ .-]?` (one listed character) stays allowed. config-check.sh
+# it compiles, matches no empty text, and has no wildcard (an unescaped dot, \w \W \S \D \N \X \O \H \R), no negated
+# class, no repeat (+, *, {n,m}) outside a bracket class, and no two bracket classes in a row (optional or not, across
+# a group paren: [a-z ]?[a-z ]? or ([a-z])([a-z])). A class chain or a repeat could absorb free words ("store [a-z ]+"
+# would take "ship the store foo bar build to production"); one listed character between literal text
+# (go[ .-]?live, over[ -]?the[ -]?air) stays allowed. config-check.sh
 # refuses such a fragment, ask-deny.sh drops it at runtime.
 # shellcheck disable=SC2034,SC2016  # a jq program, read by config-check.sh and ask-deny.sh
 CM_JQ_CLASS_PHRASE='def class_phrase: type == "string" and length > 0
   and (. as $re | try ("" | test($re) | not) catch false)
   and (gsub("\\\\\\\\"; "") as $s
-       | ($s | test("\\\\[wWSD]") | not)
-       and ($s | gsub("\\\\."; "e") | (test("\\[\\^") | not) and (gsub("\\[[^\\]]*\\]"; "c") | test("[.+*{]") | not))); '
+       | ($s | test("\\\\[wWSDNXOHR]") | not)
+       and ($s | gsub("\\\\."; "e") | (test("\\[\\^") | not)
+            and (gsub("\\[[^\\]]*\\]"; "\u0001") | (test("[.+*{]") | not) and (test("\u0001[?()]*\u0001") | not)))); '
 
 # ---- worker terminal handle setter ------------------------------------------------------------
 # cm_worker_set_handle <worker-id> <handle>

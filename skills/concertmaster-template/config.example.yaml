@@ -364,7 +364,8 @@ drive:
   # a whole phrase in the ask's question and topic (lowercased). The ask must be ONE such phrase and nothing else:
   # `[verb] [the] <class> [build|release|bundle|update] [version] [to|on|in <track>] [today|tonight|now]`. Default
   # [] (or unset): every release or deploy ask goes to the owner. Never list a secret, a migration or a data change.
-  # A fragment holds no wildcard (`.*`, `\w+`), no negated class (`[^x]`) and no repeat (`[a-z ]+`, `x*`, `x{0,9}`),
+  # A fragment holds no wildcard (`.*`, `\w+`, `\N`), no negated class (`[^x]`), no repeat (`[a-z ]+`, `x*`, `x{0,9}`)
+  # and no two bracket classes in a row (`[a-z ]?[a-z ]?`); `go[ .-]?live` is fine,
   # and never matches the empty text: config-check refuses each, and at runtime such a fragment is dropped with a warning. Example: ["store build", "store submission", "deploy window", "ota (release|bundle)"]
   delegated_classes: []            # [script] scripts/stall.sh, scripts/ask-deny.sh
 
