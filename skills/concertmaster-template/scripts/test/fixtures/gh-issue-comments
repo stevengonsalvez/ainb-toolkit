@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Stub gh for the lane-record and ledger-rebuild tests: issue comments kept in $STUB/issue-<n>.json.
+#   gh api [--paginate] repos/<o>/<r>/issues/<n>/comments[?..]       prints the list, in pages of 2 with --paginate
+#   gh api -X POST repos/<o>/<r>/issues/<n>/comments -f body=<text>  appends an OWNER comment, prints it
+# created_at is $STUB/clock when that file exists, else the real UTC time. $STUB/gh-fail makes every call fail.
+# Every call is logged to $STUB/gh.log as "<METHOD> <path>".
+set -uo pipefail
+method=GET; path=""; body=""; pages=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    api) ;;
+    -X|--method) method="$2"; shift ;;
+    -f|--raw-field) case "$2" in body=*) body="${2#body=}" ;; esac; shift ;;
+    --paginate) pages=1 ;;
+    repos/*) path="$1" ;;
+  esac
+  shift
+done
+echo "$method $path" >> "$STUB/gh.log"
+[ -e "$STUB/gh-fail" ] && { echo "HTTP 502: stub failure" >&2; exit 1; }
+n="$(printf '%s' "$path" | sed -n 's#^repos/[^/]*/[^/]*/issues/\([0-9][0-9]*\)/comments.*#\1#p')"
+[ -n "$n" ] || { echo "stub gh: unexpected path $path" >&2; exit 1; }
+f="$STUB/issue-$n.json"
+[ -s "$f" ] || echo '[]' > "$f"
+if [ "$method" = POST ]; then
+  at="$(cat "$STUB/clock" 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ)"
+  jq --arg b "$body" --arg at "$at" --arg n "$n" \
+    '. + [{id: (length + 1), created_at: $at, body: $b, author_association: "OWNER",
+           html_url: "https://github.example/issues/\($n)#issuecomment-\(length + 1)"}]' "$f" > "$f.new" && mv "$f.new" "$f"
+  jq -c 'last' "$f"
+elif [ "$pages" = 1 ]; then
+  jq -c 'if length == 0 then [] else range(0; length; 2) as $i | .[$i:$i + 2] end' "$f"
+else
+  jq -c '.' "$f"
+fi

@@ -137,6 +137,9 @@ close it, but the live-comment gate in `teardown.sh` reads the comment as well a
 poster writes the same `<id>` (same lane) and the old poster drops the line. A `cm:done` written to a child keeps that
 child's open lines.
 
+The concertmaster also records each lane's state on the lane's GitHub issue, one `cm:state <lane> <line>` comment per
+change (`scripts/lane-record.sh`). Those comments are its own: a lane never posts, edits or deletes one.
+
 Workers never use AskUserQuestion: nobody is there to answer the menu, and
 concertmaster never types into one. A worker that needs a decision writes
 `cm:blocked <question>`, prints the question with its options and a

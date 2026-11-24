@@ -88,6 +88,8 @@ opt "outward_messages values are autonomous or draft_first" '.outward_messages' 
 opt "lanes: each has a name, a boolean standing and a known agent" '.lanes' \
   'type == "array" and all(.[]; (.name | type == "string" and length > 0) and (.standing | type == "boolean") and ((.agent // "claude") | IN("claude", "codex", "agy")))'
 opt "lanes: names are unique"                           '.lanes' '(map(.name) | length) == (map(.name) | unique | length)'
+opt "lanes: an issue is a whole number, 1 or more"      '.lanes' 'all(.[]; (.issue // null) == null or (.issue | type == "number" and . >= 1 and . == floor))'
+opt "github.record_repo is a repo name"                 '.github.record_repo' 'type == "string" and test("^[A-Za-z0-9._-]+$")'
 req "no never_touch name is a lane name" \
   '((.worktrees.never_touch // []) | map(ascii_downcase)) as $nt
    | ([(.lanes // [])[] | .name | ascii_downcase] | map(select(. as $k | $nt | index($k))) | length) == 0'

@@ -28,6 +28,7 @@ state_dir: ~/.concertmaster
 github:
   org: AcmeOrg                     # [script] hygiene covers every repo in this org
   main_repo: acme-app              # [script] lanes and the merge gate run here
+  record_repo: null                # [script] repo of the lane issues (lanes[].issue) that hold each lane's cm:state record; null = main_repo
   exclude_repo_patterns:           # [script] shell globs, never in scope at all
     - "mirror-*"
   repos_on_request:                # other org repos: only when the owner hands work
@@ -265,6 +266,9 @@ beads:
 lanes:
   # model: every Claude lane and the workers it spawns run claude-sonnet-5-5 at effort high.
   # loop_minutes (optional, any lane): that lane's /loop interval when it differs from schedule.lane_loop_minutes
+  # issue (optional, any lane): the lane's GitHub issue number in github.record_repo. The tick records each state
+  # change there as one `cm:state <lane> <line>` comment (scripts/lane-record.sh), and scripts/ledger-rebuild.sh
+  # rebuilds the ledger from them when the ledger is lost. A lane without one is not rebuilt.
   - { name: pr-sweeper,  standing: true,  spawn_at: 1, agent: claude, model: claude-sonnet-5-5, skills: [pr-sweep, ready-to-ship] }
   - { name: dev-sweeper, standing: true,  spawn_at: 2, agent: claude, model: claude-sonnet-5-5, skills: [dev-flow, ready-to-ship], max_parallel: 3 }
   - { name: ops-sweeper, standing: true,  spawn_at: 2, agent: claude, model: claude-sonnet-5-5, skills: [] }
