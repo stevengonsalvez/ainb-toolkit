@@ -303,23 +303,21 @@ check "...and --json carries it under warnings" 'jq -e "(.warnings | length) == 
 cat > "$ROOT/alias.yaml" <<'CFG'
 schema: concertmaster.config/v1
 worktrees: { path_match: "/acme/", self_name: concertmaster }
-health:
-  host_aliases: { host-a: [host-b] }
 hosts:
+  same_machine: [[host-a, host-b]]
   per_host:
     host-a:      { maxWorkers: 2 }
     host-b: { maxWorkers: 2 }
 CFG
 CM_CONFIG="$ROOT/alias.yaml" run "$S" --no-candidates
-check "one name in the other's health.host_aliases: the same WARN (health.host_aliases)" 'grep -q "ONE machine (health.host_aliases)" <<<"$OUT"' "$OUT"
-# the other accepted shapes of health.host_aliases (config-check accepts them): a plain string value, and a list of name lists
-sed 's/host_aliases: { host-a: \[host-b\] }/host_aliases: { host-a: host-b }/' "$ROOT/alias.yaml" > "$ROOT/alias-str.yaml"
-sed 's/host_aliases: { host-a: \[host-b\] }/host_aliases: [[host-a, host-b]]/' "$ROOT/alias.yaml" > "$ROOT/alias-list.yaml"
-grep -q 'host-a: host-b' "$ROOT/alias-str.yaml" && grep -q '\[\[host-a, host-b\]\]' "$ROOT/alias-list.yaml" || fail "alias fixtures" "the sed edits changed nothing"
-CM_CONFIG="$ROOT/alias-str.yaml" run "$S" --no-candidates
-check "health.host_aliases with a plain string value ({ host-a: host-b }): the same WARN" 'grep -q "ONE machine (health.host_aliases)" <<<"$OUT"' "$OUT"
+check "both names in one hosts.same_machine group: the same WARN (hosts.same_machine), no deprecation row" 'grep -q "ONE machine (hosts.same_machine)" <<<"$OUT" && ! grep -q "deprecated" <<<"$OUT"' "$OUT"
+# the old list-of-name-lists health.host_aliases still counts, with a deprecation WARN; its map form is hostname aliases only
+yq '.health.host_aliases = [["host-a", "host-b"]] | del(.hosts.same_machine)' "$ROOT/alias.yaml" > "$ROOT/alias-list.yaml"
+yq '.health.host_aliases = {"host-a": ["host-b"]} | del(.hosts.same_machine)' "$ROOT/alias.yaml" > "$ROOT/alias-map.yaml"
 CM_CONFIG="$ROOT/alias-list.yaml" run "$S" --no-candidates
-check "health.host_aliases as a list of name lists: the same WARN" 'grep -q "ONE machine (health.host_aliases)" <<<"$OUT"' "$OUT"
+check "health.host_aliases as a list of name lists (deprecated): the same WARN plus a deprecation row" 'grep -q "ONE machine (health.host_aliases, deprecated)" <<<"$OUT" && grep -q "(config): health.host_aliases as a list of name lists is deprecated: move it to hosts.same_machine" <<<"$OUT"' "$OUT"
+CM_CONFIG="$ROOT/alias-map.yaml" run "$S" --no-candidates
+check "health.host_aliases as a map (names hostname -s answers as) is not read as one machine" '! grep -q "ONE machine" <<<"$OUT" && ! grep -q "deprecated" <<<"$OUT"' "$OUT"
 cat > "$ROOT/two.yaml" <<'CFG'
 schema: concertmaster.config/v1
 worktrees: { path_match: "/acme/", self_name: concertmaster }

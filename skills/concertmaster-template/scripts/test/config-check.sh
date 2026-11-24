@@ -174,6 +174,16 @@ yq '.hosts.per_host.local.hostname = "box-main"' "$ROOT/ident-base.yaml" > "$ROO
 doctor "local's own hostname alone passes"                       "$ROOT/ident-local-ok.yaml" 0 'config-check: 0 failed'
 yq '.health.host_aliases.host-b = "beta-alt"' "$ROOT/ident-base.yaml" > "$ROOT/alias-notlist.yaml"
 doctor "an alias value that is not a list fails"                 "$ROOT/alias-notlist.yaml" 1 'FAIL health.host_aliases'
+# health.host_aliases has one shape (host -> names hostname -s answers as); fleet names of one machine are hosts.same_machine
+yq '.health.host_aliases = [["host-a", "host-b"]]' "$ROOT/ident-base.yaml" > "$ROOT/alias-listform.yaml"
+doctor "health.host_aliases as a list of name lists fails, pointing at hosts.same_machine" "$ROOT/alias-listform.yaml" 1 'FAIL health.host_aliases maps a host name to a list of host names (a list of name lists belongs in hosts.same_machine)'
+doctor "...and the identity check still reads the config (no 'unreadable')" "$ROOT/alias-listform.yaml" 1 'ok   no host name (key, hostname, alias, ledger hostname) belongs to two hosts'
+yq '.hosts.same_machine = [["host-a", "host-b"]]' "$ROOT/ident-base.yaml" > "$ROOT/same-ok.yaml"
+doctor "hosts.same_machine as a list of name lists passes"      "$ROOT/same-ok.yaml" 0 'ok   hosts.same_machine is a list of fleet name lists'
+yq '.hosts.same_machine = [["host-a"]]' "$ROOT/ident-base.yaml" > "$ROOT/same-one.yaml"
+doctor "a hosts.same_machine group of one name fails"           "$ROOT/same-one.yaml" 1 'FAIL hosts.same_machine'
+yq '.hosts.same_machine = {"host-a": ["host-b"]}' "$ROOT/ident-base.yaml" > "$ROOT/same-map.yaml"
+doctor "hosts.same_machine as a map fails"                      "$ROOT/same-map.yaml" 1 'FAIL hosts.same_machine'
 mkdir -p "$CM_HOME"
 printf '{"schema":"concertmaster.ledger/v1","workers":{},"hosts":{"host-b":{"hostname":"alpha"}}}\n' > "$CM_HOME/ledger.json"
 doctor "a ledger hosts.<h>.hostname equal to another host's hostname fails" "$ROOT/ident-base.yaml" 1 "FAIL no host name .*alpha"

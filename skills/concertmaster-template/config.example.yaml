@@ -149,6 +149,9 @@ hosts:
     # environment name) is expected, which a host whose real name differs never matches. An ssh alias that
     # differs from the host name is given per run in CM_SSH_TARGET, or kept in the ledger as hosts.<h>.sshTarget
     # (a dotless hostname is never used as an ssh target: it is the identity above, not an address).
+  # same_machine: fleet host names that are ONE machine, so capacity-check.sh warns when they report the same count
+  # instead of silently counting it twice. A list of name lists, e.g. [[build-box, build-box-2]]. Default: none.
+  same_machine: []                 # [script] not health.host_aliases: that maps a host to the names `hostname -s` answers as
 
 # Agent types the project does not allow. Each census (discover.sh, classify.sh) lists every
 # terminal under worktrees.path_match whose Orca agentIdentity is one of these as a
@@ -206,9 +209,6 @@ health:
   host_aliases: {}                 # configured host name -> the other names `hostname -s` may answer as there, e.g. { build-mac: [mac-mini-7], cloud-1: [vm-0-12] }. A host that answers as its configured hostname (hosts.per_host.<h>.hostname) or as any alias is the host asked about; any other name is a wrong machine and is not read. A name must not belong to two hosts, as a key, per_host hostname, alias or ledger hostname (scripts/config-check.sh fails it: the identity check would take that machine for this host)
   cloud: none                      # gce: ask the GCE metadata server whether the VM was preempted (Spot); none: only the previous boot's power-key line counts
   ignore_hosts: []                 # hosts gone for good: never probed and never counted as unread (their comments)
-  # host_aliases: one machine that the fleet lists under two names, so capacity-check.sh warns when both report the same count
-  # instead of silently counting it twice. A map of name to [other names] (or a list of name lists). Default: none.
-  # host_aliases: { build-box: [build-box-2] }
   daemon_units: []                 # systemd units of the terminal runtime (user units first, then system), e.g. [orca-serve.service]; a restart after boot is a daemon-restart event
   # limit_regex and error_regex (extended, case-insensitive, judged on the pane's bottom 6 lines) replace the defaults when set
   alerts:

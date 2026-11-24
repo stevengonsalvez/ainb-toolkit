@@ -69,7 +69,8 @@ opt "worktrees.path_match compiles as a regex"          '.worktrees.path_match' 
 opt "hosts.min_free_disk_gb is a number"                '.hosts.min_free_disk_gb' 'type == "number" and . >= 0'
 opt "hosts.defaults.maxWorkers is a whole number, 1 or more" '.hosts.defaults.maxWorkers' 'type == "number" and . >= 1 and . == floor'
 opt "hosts.per_host: every maxWorkers is a whole number, 1 or more" '.hosts.per_host' 'type == "object" and all(.[]; (.maxWorkers // 1) | type == "number" and . >= 1 and . == floor)'
-opt "health.host_aliases is a map of host names or a list of name lists" '.health.host_aliases' '(type == "object" and all(.[]; (type == "string") or (type == "array" and all(.[]; type == "string")))) or (type == "array" and all(.[]; type == "array" and all(.[]; type == "string")))'
+opt "hosts.same_machine is a list of fleet name lists, 2 or more names each" '.hosts.same_machine' \
+  'type == "array" and all(.[]; type == "array" and length >= 2 and all(.[]; type == "string" and test("^[A-Za-z0-9._-]+$")))'
 opt "schedule.deploy_windows are HH:MM"                 '.schedule.deploy_windows' "$hhmm"
 opt "schedule.digest_times are HH:MM"                   '.schedule.digest_times' "$hhmm"
 opt "schedule.tick_delays_s are positive numbers"       '.schedule.tick_delays_s' 'type == "object" and all(.[]; type == "number" and . > 0)'
@@ -104,7 +105,7 @@ opt "health minutes, seconds and hours are whole numbers" '.health' \
   'type == "object" and all(to_entries[] | select(.key | test("_(minutes|seconds|hours)$")); .value == null or (.value | type == "number" and . >= 0 and . == floor))'
 opt "health.cloud is gce or none"                       '.health.cloud' 'IN("gce", "none")'
 opt "health.ignore_hosts is a list of host names"         '.health.ignore_hosts' 'type == "array" and all(.[]; type == "string" and test("^[A-Za-z0-9._-]+$"))'
-opt "health.host_aliases maps a host name to a list of host names" '.health.host_aliases' \
+opt "health.host_aliases maps a host name to a list of host names (a list of name lists belongs in hosts.same_machine)" '.health.host_aliases' \
   'type == "object" and all(to_entries[]; (.key | test("^[A-Za-z0-9._-]+$")) and (.value | type == "array" and all(.[]; type == "string" and test("^[A-Za-z0-9._-]+$"))))'
 # One identity set across every host: its key, its per_host hostname, its health.host_aliases, and its ledger
 # hosts.<h>.hostname (read first by lane-health.sh). The probe and the stop check before a sleep trust a host that answers
@@ -121,7 +122,7 @@ fi
 # shellcheck disable=SC2016  # jq program
 IDENT_JQ='def sn: ascii_downcase | split(".")[0];
    def arr: if type == "array" then .[] else empty end;
-   (.hosts.per_host // {}) as $ph | (.health.host_aliases // {}) as $al | ($led.hosts // {}) as $lh
+   (.hosts.per_host // {}) as $ph | (.health.host_aliases | objects // {}) as $al | ($led.hosts // {}) as $lh
    | (([$ph | keys[]] + [$al | keys[]] + [$lh | keys[]]) | unique) as $hs
    | [ $hs[] | . as $h
        | ([$h] + [(($ph[$h] // {}).hostname // empty) | strings] + [($al[$h] // null) | arr | strings] + [(($lh[$h] // {}).hostname // empty) | strings])
