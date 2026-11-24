@@ -335,6 +335,12 @@ hostlist build-box build-box-2; mkn build-box bb 29; mkn build-box-2 bc 29
 CM_CONFIG="$ROOT/oldmap.yaml" run "$S" --no-candidates
 check "old map-form same-machine entry, both hosts at 29: one row pointing at hosts.same_machine" 'grep -q "(config): health.host_aliases.build-box names build-box and build-box-2, which both report 29 agent terminals: health.host_aliases is now only the names hostname -s answers as, so they are no longer treated as one machine; if they are, list them in hosts.same_machine" <<<"$OUT" && [ "$(grep -o "health.host_aliases.build-box names" <<<"$OUT" | wc -l | tr -d " ")" = 1 ] && ! grep -q "other-box names" <<<"$OUT"' "$OUT"
 yq '.hosts.same_machine = [["build-box", "build-box-2"]]' "$ROOT/oldmap.yaml" > "$ROOT/oldmap-sm.yaml"
+yq '.hosts.same_machine = []' "$ROOT/oldmap.yaml" > "$ROOT/oldmap-empty.yaml"
+CM_CONFIG="$ROOT/oldmap-empty.yaml" run "$S" --no-candidates
+check "...with hosts.same_machine: [] (the new example): the map-form row still shows, once" '[ "$(grep -o "health.host_aliases.build-box names build-box and build-box-2, which both report 29" <<<"$OUT" | wc -l | tr -d " ")" = 1 ]' "$OUT"
+yq '.hosts.same_machine = [["build-box", "other-1"]]' "$ROOT/oldmap.yaml" > "$ROOT/oldmap-other.yaml"
+CM_CONFIG="$ROOT/oldmap-other.yaml" run "$S" --no-candidates
+check "...with a hosts.same_machine group that does not hold the pair: the map-form row still shows" 'grep -q "health.host_aliases.build-box names build-box and build-box-2" <<<"$OUT"' "$OUT"
 CM_CONFIG="$ROOT/oldmap-sm.yaml" run "$S" --no-candidates
 check "...with hosts.same_machine set: the same-machine WARN, no map-form row" 'grep -q "ONE machine (hosts.same_machine)" <<<"$OUT" && ! grep -q "health.host_aliases.build-box names" <<<"$OUT"' "$OUT"
 mkn build-box-2 bc 28

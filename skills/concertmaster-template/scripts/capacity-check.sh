@@ -189,11 +189,12 @@ printf '%s' "$CM_CFG_JSON" | jq -r --slurpfile c "$TMP/counts.json" --slurpfile 
     | select(($miss | length) > 0 and ($extra | length) > 0)
     | "(host names)\tconfig hosts \($miss | join(",")) were not read, read hosts \($extra | join(",")) are not in hosts.per_host: check the hosts.per_host names against the fleet host list" ),
   # an old same-machine entry in the map form ({ build-box: [build-box-2] }, the old example): once per entry whose
-  # hosts report the same non-zero count, while hosts.same_machine is not set
-  ( select($cfg.hosts.same_machine == null and ($cfg.health.host_aliases | type) == "object")
+  # hosts report the same non-zero count and are not already in one hosts.same_machine group (an empty list is none)
+  ( select(($cfg.health.host_aliases | type) == "object")
     | $cfg.health.host_aliases | to_entries[] | .key as $k | ([.key] + [.value | if type == "array" then .[] else . end | strings]) as $g
     | first([ range(0; $cnt | length) as $i | range($i + 1; $cnt | length) as $j | $cnt[$i] as $x | $cnt[$j] as $y
-              | select($x.count > 0 and $x.count == $y.count and ($g | index($x.host)) != null and ($g | index($y.host)) != null)
+              | select($x.count > 0 and $x.count == $y.count and ($g | index($x.host)) != null and ($g | index($y.host)) != null
+                       and (together($sm; $x.host; $y.host) | not))
               | [$x.host, $y.host, $x.count] ][])
     | "(config)\thealth.host_aliases.\($k) names \(.[0]) and \(.[1]), which both report \(.[2]) agent terminals: health.host_aliases is now only the names hostname -s answers as, so they are no longer treated as one machine; if they are, list them in hosts.same_machine" ),
   ( select(($legacy | length) > 0)
