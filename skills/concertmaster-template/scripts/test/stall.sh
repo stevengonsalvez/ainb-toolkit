@@ -1504,6 +1504,36 @@ check "F25 an old lock whose owner is alive stays busy: nothing recorded, the lo
 has "F25 ...and the refusal says busy" "$(cat "$W/act.err")" "busy: nothing recorded"
 rm -rf -- "${W:?}/cm/stall-actions.lock.d"
 
+# F26 the reclaim race: the stale lock is judged, then (staged at the rename) a killed lock is replaced by a live
+# owner's fresh one, so the rename moves the live lock. The tombstone is judged again: not the lock judged, so it is
+# kept, never deleted, and the run retries before it enters. A holder whose lock was taken away records nothing.
+sleep 120 & LIVE=$!
+LOCKD="$W/cm/stall-actions.lock.d"
+mkdir "$LOCKD"; echo "$DEADPID" > "$LOCKD/pid"; touch -t 202001010000 "$LOCKD"
+: > "$W/cm/stall-actions.ndjson"
+# shellcheck disable=SC2016  # the hook is an sh -c program: its $1 and $2 are its own
+CM_TEST=1 CM_TEST_ACT_LOCK_HOOK='[ "$1" = retire ] && [ ! -e "$2.c" ] && rm -rf -- "$2" && mkdir "$2" && echo '"$LIVE"' > "$2/pid" && : > "$2.c"' \
+  PATH="$NOFLOCK" act "$W" "$T0" lane l60 nudge "nudged: after a reclaim race"; RCA=$?
+TOMB="$(find "$W/cm" -maxdepth 1 -name 'stall-actions.lock.d.dead.*' | head -n 1)"
+check "F26 a live lock moved by a racing reclaim is kept as a tombstone with its owner pid, never deleted" "$([ -n "$TOMB" ] && cat "$TOMB/pid")" "$LIVE"
+check "F26 ...the run retried and entered only after the move: one line, lock released" "$RCA/$(wc -l < "$W/cm/stall-actions.ndjson" | tr -d ' ')/$([ -e "$LOCKD" ] && echo held || echo free)" "0/1/free"
+rm -rf -- "${LOCKD:?}" "$LOCKD.c" "$W"/cm/stall-actions.lock.d.dead.*
+# shellcheck disable=SC2016  # the hook is an sh -c program: its $1 and $2 are its own
+CM_TEST=1 CM_TEST_ACT_LOCK_HOOK='[ "$1" = held ] && mv "$2" "$2.away" && mkdir "$2" && echo '"$LIVE"' > "$2/pid"' \
+  PATH="$NOFLOCK" act "$W" "$T0" lane l60 nudge "nudged: lock taken away"; RCA=$?
+check "F26 a holder whose lock was taken over records nothing and leaves the new owner's lock" "$RCA/$(wc -l < "$W/cm/stall-actions.ndjson" | tr -d ' ')/$(cat "$LOCKD/pid")" "1/1/$LIVE"
+has "F26 ...and says so" "$(cat "$W/act.err")" "was taken over while held: nothing recorded"
+kill "$LIVE" 2>/dev/null; wait "$LIVE" 2>/dev/null
+rm -rf -- "${LOCKD:?}" "$LOCKD.away"
+# F27 the owner pid cannot be written: the append fails and says why, and the lock it made is released
+if [ "$(id -u)" != 0 ]; then
+  # shellcheck disable=SC2016  # the hook is an sh -c program: its $1 and $2 are its own
+  CM_TEST=1 CM_TEST_ACT_LOCK_HOOK='[ "$1" = made ] && chmod 500 "$2"' \
+    PATH="$NOFLOCK" act "$W" "$T0" lane l60 nudge "nudged: pid unwritable"; RCA=$?
+  check "F27 an unwritable owner pid: nothing recorded, the lock released" "$RCA/$(wc -l < "$W/cm/stall-actions.ndjson" | tr -d ' ')/$([ -e "$LOCKD" ] && echo held || echo free)" "1/1/free"
+  has "F27 ...and the reason is given" "$(cat "$W/act.err")" "cannot write the owner pid into"
+fi
+
 # ---- 14. no fleet CLI, no gh --------------------------------------------------------------------------------------------
 check "orca, plugly, gh and ssh were never called" "$(wc -l < "$CALLS" | tr -d ' ')" "0"
 
