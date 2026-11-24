@@ -444,6 +444,7 @@ trow() { # trow <worktree-path> <handle> <agentIdentity or null>
   lps /z/by-path 1 "$(hist 3 'done')"              # identified terminal has no worktreeId, only an un-normalised path
   lps /z/zero-ltc 0 "$(hist 4 'done')"             # Orca says no terminal is open: dead without needing the list
   lps /z/late-term 1 "$(hist 3 'done')"            # bare shell at the census; an identified terminal shows up before the re-check
+  lps /z/no-row 1 "$(hist 3 'done')"               # a terminal is open, but no list row names this worktree
 } | jq -s '{ok: true, result: {worktrees: ., totalCount: length}}' > "$STUB/ps-local.json"
 rm -f "$STUB/ps-local.late.json"
 {
@@ -454,6 +455,7 @@ rm -f "$STUB/ps-local.late.json"
   trow /z/other-tree s1 null; trow /z/elsewhere a-elsewhere claude
   jq -cn '{handle: "p1", worktreePath: "/z/./by-path/", tabId: "tab-p1", leafId: "leaf0", agentIdentity: "claude"}'
   trow /z/late-term s1 null
+  jq -cn '{handle: "r1", tabId: "tab-r1", leafId: "leaf0", agentIdentity: null}'   # a row with no worktree fields (another list shape)
 } | jq -s '{ok: true, result: {totalCount: length, terminals: .}}' > "$STUB/terms-local.json"
 jq -c --argjson r "$(trow /z/late-term a-late claude)" '.result.terminals += [$r] | .result.totalCount += 1' "$STUB/terms-local.json" > "$STUB/terms-local.late.json"
 : > "$STUB/cwds.txt"
@@ -468,7 +470,8 @@ cat > "$CM_HOME/ledger.json" <<'J'
   "w-other":  {"lane": "other-tree", "host": "local", "agent": "claude", "model": "sonnet", "path": "/z/other-tree", "task": "#9006 other", "lastComment": "cm:running"},
   "w-path":   {"lane": "by-path",    "host": "local", "agent": "claude", "model": "sonnet", "path": "/z/by-path",    "task": "#9007 path", "lastComment": "cm:running"},
   "w-zero":   {"lane": "zero-ltc",   "host": "local", "agent": "claude", "model": "sonnet", "path": "/z/zero-ltc",   "task": "#9008 zero", "lastComment": "cm:running"},
-  "w-late":   {"lane": "late-term",  "host": "local", "agent": "claude", "model": "sonnet", "path": "/z/late-term",  "task": "#9009 late", "lastComment": "cm:running"}}}
+  "w-late":   {"lane": "late-term",  "host": "local", "agent": "claude", "model": "sonnet", "path": "/z/late-term",  "task": "#9009 late", "lastComment": "cm:running"},
+  "w-norow":  {"lane": "no-row",     "host": "local", "agent": "claude", "model": "sonnet", "path": "/z/no-row",     "task": "#9010 no row", "lastComment": "cm:running"}}}
 J
 rm -f "$CM_HOME/roster.yaml"
 lrun() { # lrun <lane>: one resume run for that lane, clean stub state
@@ -507,11 +510,13 @@ lrun by-path
 check "(7) terminal row with no worktreeId is matched by normalised path (/z/./by-path/): live" 'has_line "by-path +live +left alone" && [ "$(creates)" = 0 ]'
 lrun late-term
 check "(9) identified terminal appears after the census: the re-check reads a fresh list, live agent appeared, no create" 'has_line "late-term +live +live agent appeared since the census, left alone" && [ "$(creates)" = 0 ] && [ "$(sends)" = 0 ] && [ "$(printf "%s\n" "$CALLS" | grep -c "^terminal list")" = 2 ]'
+lrun no-row
+check "(10) liveTerminalCount 1, only done entries, no terminal row matched to the worktree: unknown, never dead" 'has_line "no-row +unknown +live count unreadable, left alone \(terminals open, none matched to this worktree\)" && [ "$(creates)" = 0 ] && [ "$(sends)" = 0 ] && [ "$RC" = 3 ]'
 # the fetch is once per host even over a many-row run
 rm -f -- "${STUB:?}"/tlcount-*
 : > "$STUB/calls.log"; rm -rf -- "${CM_HOME:?}/resume.attempts" "${CM_HOME:?}/resume.lock"
 OUT="$("$SCRIPTS/resume.sh" --dry-run 2>/dev/null)"; CALLS="$(cat "$STUB/calls.log")"
-check "(8) 9 rows on one host: one terminal list call in the census" '[ "$(printf "%s\n" "$CALLS" | grep -c "^terminal list")" = 1 ]'
+check "(8) 10 rows on one host: one terminal list call in the census" '[ "$(printf "%s\n" "$CALLS" | grep -c "^terminal list")" = 1 ]'
 
 echo "passed=$PASS failed=$FAIL"
 [ "$FAIL" = 0 ]

@@ -100,7 +100,10 @@ or briefs.
    a false duplicate whenever their keys differ. A bare shell (`agentIdentity`
    null: Claude exited, the shell stayed) and `done` entries count zero, so that
    lane is **dead** and is resumed. A live-state entry with no terminal row still
-   counts 1: never respawn on doubt. A row with no `liveTerminalCount` at all is
+   counts 1: never respawn on doubt. Open terminals with no list row matched to
+   the worktree (and no live-state entry) are **unknown**, never zero: a fresh
+   `agentIdentity` gap, another id or path form, or another list shape must not
+   start a second agent. A row with no `liveTerminalCount` at all is
    not read as zero: a live-state agent counts as live, an agent entry in any other
    state is **unknown**. On the local host also count `claude` processes of this
    user whose cwd is the worktree or inside it (canonical paths; `cm_claude_pids`

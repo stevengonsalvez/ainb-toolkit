@@ -43,8 +43,9 @@
 # host a claude process of this user whose cwd is the worktree or inside it also counts (the larger of the two
 # counts is used). Orca's explicit liveTerminalCount of 0 means dead (agent entries go stale after a restart). A
 # terminal list that cannot be read, is malformed or is cut off makes a row with liveTerminalCount > 0 `unknown`:
-# never dead. Every unreadable input fails closed, never toward a second agent. The process backstop is local
-# only. The roster is rewritten from the ledger on every run (roster.sh) so a row the tick just retired is never
+# never dead, and so does a list with no row matched to the worktree and no live-state entry (the open terminals
+# cannot be placed). Every unreadable input fails closed, never toward a second agent. The process backstop is
+# local only. The roster is rewritten from the ledger on every run (roster.sh) so a row the tick just retired is never
 # resumed; no readable ledger: the roster is used as is. One acting run at a time per CM_HOME (lock dir).
 #
 # Env: CM_HOME, CM_HOST_TIMEOUT (25s), CM_TERM_WAIT_MS (60000), CM_RESUME_BUDGET_S,
@@ -69,7 +70,7 @@ while [ $# -gt 0 ]; do
     --path) need "$1" "${2:-}"; F_PATH="$2"; shift ;;
     --host) need "$1" "${2:-}"; F_HOST="$2"; shift ;;
     --worktree-id) need "$1" "${2:-}"; F_WID="$2"; shift ;;
-    -h|--help) sed -n '2,56p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,57p' "$0"; exit 0 ;;
     *) cm_warn "resume.sh: unknown arg: $1"; exit 2 ;;
   esac
   shift
@@ -322,7 +323,7 @@ CWDS=""; CWDS_DONE=0; CWDS_OK=1
 # The agent count with liveTerminalCount > 0 is the larger of (a) the distinct terminals of this worktree
 # (worktreeId equal, or normalised worktreePath equal) with a non-empty agentIdentity and (b) the distinct
 # top-level agents[] paneKeys in a live state. `done` entries and bare shells count zero. Without the terminal
-# list such a row is unreadable. liveTerminalCount 0 is 0; no liveTerminalCount keeps the agents[]-state rule.
+# list, or with no terminal row matched to this worktree and no live-state entry, such a row is unreadable. liveTerminalCount 0 is 0; no liveTerminalCount keeps the agents[]-state rule.
 live_count() {
   local wt="$1" host="$2" path="$3" fresh="$4" tf="${5:-}" have=1 verdict n_agents n_pid
   LC_N=""; LC_ERR=""; LC_TERMS=0; LC_ENTRIES=0
@@ -343,9 +344,9 @@ live_count() {
       elif $ltc != null then
         (if $ltc <= 0 then "n=0"
          elif $have != 1 then "noterms"
-         else ([ ($tl[0].result.terminals // [])[] | select(mine($wid; $wp)) | select(agent_term)
-                 | (.handle // "\(.tabId // ""):\(.leafId // "")") | tostring ] | unique | length) as $idt
-              | "n=\([$idt, $liveSt] | max)" end)
+         else [ ($tl[0].result.terminals // [])[] | select(mine($wid; $wp)) ] as $mt
+              | ([ $mt[] | select(agent_term) | (.handle // "\(.tabId // ""):\(.leafId // "")") | tostring ] | unique | length) as $idt
+              | if ($mt | length) == 0 and $liveSt == 0 then "nomatch" else "n=\([$idt, $liveSt] | max)" end end)
       elif $liveSt > 0 then "n=\($liveSt)"
       elif ($a | length) > 0 then "unknown"
       else "empty" end' 2>/dev/null)"
@@ -360,6 +361,7 @@ live_count() {
   if [ -z "$n_agents" ]; then
     LC_ERR="live count unreadable, left alone"
     [ "$verdict" != noterms ] || LC_ERR="live count unreadable, left alone (terminal list unreadable or cut off)"
+    [ "$verdict" != nomatch ] || LC_ERR="live count unreadable, left alone (terminals open, none matched to this worktree)"
     return
   fi
   n_pid=0
