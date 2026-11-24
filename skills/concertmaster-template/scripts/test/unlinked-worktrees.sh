@@ -170,6 +170,21 @@ run
 check "an unparsable ledger is CHECK INCOMPLETE (ledger), never read as 'no standing workers'" 'grep -q "CHECK INCOMPLETE: (ledger): the ledger could not be parsed" <<<"$OUT"' "$OUT"
 printf '{"workers":{"w-ledger":{"standing":true,"path":"%s/ledger-lane/"}}}\n' "$W" > "$CM_HOME/ledger.json"
 
+# ---- a standing worker exempts its own host's path only: the same path on another host is an ordinary worktree ----
+hostlist local box2
+printf '{"workers":{"w-ledger":{"standing":true,"host":"local","path":"%s/ledger-lane"},"w-remote":{"standing":true,"host":"box2","path":"%s/box2-lane"}}}\n' "$W" "$W" > "$CM_HOME/ledger.json"
+put local "$(row $W/ledger-lane null null)" "$(row $W/box2-lane null null)"
+put box2 "$(row $W/ledger-lane null null)" "$(row $W/box2-lane null null)"
+run
+check "a standing worker recorded on local does not exempt the same path on box2, and the reverse" '[ "$(listed)" = 2 ] && grep -qF "UNLINKED ledger-lane @ box2:" <<<"$OUT" && grep -qF "UNLINKED box2-lane @ local:" <<<"$OUT"' "$OUT"
+printf '{"workers":{"w-ledger":{"standing":true,"path":"%s/ledger-lane"}}}\n' "$W" > "$CM_HOME/ledger.json"
+put local "$(row $W/ledger-lane null null)"
+put box2 "$(row $W/ledger-lane null null)"
+run
+check "a standing worker with no recorded host belongs to the local host only" '[ "$(listed)" = 1 ] && grep -qF "UNLINKED ledger-lane @ box2:" <<<"$OUT"' "$OUT"
+hostlist local
+rm -f "$STUB_DIR/wl-box2.json"
+
 # ---- mutants on a scratch copy: each exemption or the linked test removed must fail a case ----
 mkdir -p "$ROOT/mut/scripts" && cp "$SKILL"/scripts/lib.sh "$SKILL"/scripts/unlinked-worktrees.sh "$ROOT/mut/scripts/"
 M="$ROOT/mut/scripts/unlinked-worktrees.sh"
@@ -188,7 +203,7 @@ mutant() { # <label> <perl substitution that removes one guard>
 }
 mutant "linked test removed" 's/def linked: .*?\n.*?\n.*?;/def linked: false;/s'
 mutant "configured lane and ownership lead exemption removed" 's/elif any\(names\[\]; \. as \$n \| any\(\$lanes\[\]; \. == \$n\)\) then "standing lane \(configured\)"//'
-mutant "ledger standing exemption removed" 's/elif \(\.path \| sub\("\/\+\$"; ""\)\) as \$p \| any\(\$stand\[\]; \. == \$p\) then "standing lane \(ledger\)"//'
+mutant "ledger standing exemption removed" 's/elif \(\(\$host \| ascii_downcase\) \+ "\|" \+ \(\.path \| sub\("\/\+\$"; ""\)\)\) as \$p \| any\(\$stand\[\]; \. == \$p\) then "standing lane \(ledger\)"//'
 mutant "concertmaster own worktree exemption removed" 's/elif any\(names\[\]; \. == \$self\)[^\n]*then "concertmaster worktree"//'
 mutant "archived exemption removed" 's/elif \(\.isArchived \/\/ false\) then "archived"//'
 mutant "main checkout exemption removed" 's/if \(\.isMainWorktree \/\/ false\) then "main checkout"/if false then "main checkout"/'
@@ -246,7 +261,7 @@ if cmp -s "$SKILL/scripts/unlinked-worktrees.sh" "$M"; then fail "mutant repo ch
 fi
 
 # the name-shape exemption put BACK must be caught: dev-lead-time-fix would vanish from the report
-cp "$SKILL/scripts/unlinked-worktrees.sh" "$M"; perl -0pi -e 's/(      elif \(\.path \| sub\("\/\+\$"; ""\)\) as \$p \| any\(\$stand)/      elif any(names[]; test("-lead(\$|-)|-sweeper|^epic[-:]")) then "standing lane (lane-shaped)"\n$1/' "$M"
+cp "$SKILL/scripts/unlinked-worktrees.sh" "$M"; perl -0pi -e 's/(      elif \(\(\$host \| ascii_downcase\) \+ "\|" \+ \(\.path \| sub\("\/\+\$"; ""\)\)\) as \$p \| any\(\$stand)/      elif any(names[]; test("-lead(\$|-)|-sweeper|^epic[-:]")) then "standing lane (lane-shaped)"\n$1/' "$M"
 if cmp -s "$SKILL/scripts/unlinked-worktrees.sh" "$M"; then fail "mutant name-shape exemption restored" "the edit changed nothing"; else
   put local "$(row $W/dev-lead-time-fix null null)" "$(row $W/dev-5 null null)"
   run "$M"
