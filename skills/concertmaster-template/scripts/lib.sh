@@ -745,13 +745,65 @@ _cm_ledger_write_locked() {
   return 0
 }
 
+# ---- worker states ----------------------------------------------------------------------------
+# ONE enum for workers.<id>.state (references/ledger.md, the `workers.<id>.state` rows). A new
+# state is added HERE and in that table: the dead-record predicate below and the typed input
+# boundary (cm_input_cfg) are built from these lists.
+# shellcheck disable=SC2034  # read by the scripts that source this file
+CM_STATES_LIVE="queued spawning running stuck blocked-on-owner asleep done retired teardown"
+# shellcheck disable=SC2034
+CM_STATES_DEAD="gone repurposed"
+# shellcheck disable=SC2034
+CM_STATES_ALL="$CM_STATES_LIVE $CM_STATES_DEAD"
+# Live rows with no agent session to resume (the same list resume.sh and roster.sh leave out).
+# shellcheck disable=SC2034
+CM_STATES_NORESUME="queued spawning done retired teardown asleep"
+# Legacy spellings found in old ledgers, <legacy>=<state>. Read as the mapped state by cm_state_dead.
+# shellcheck disable=SC2034
+CM_STATES_LEGACY="torn-down=gone"
+
+# _cm_jq_words <words> <separator>: the words as jq string literals joined by the separator ("gone", "repurposed").
+_cm_jq_words() {
+  local w out="" sep=""
+  for w in $1; do out="$out$sep\"$w\""; sep="$2"; done
+  printf '%s' "$out"
+}
+
+# _cm_jq_legacy_map: CM_STATES_LEGACY as a jq object literal, {"torn-down": "gone"}.
+_cm_jq_legacy_map() {
+  local p out="" sep=""
+  for p in $CM_STATES_LEGACY; do out="$out$sep\"${p%%=*}\": \"${p#*=}\""; sep=", "; done
+  printf '{%s}' "$out"
+}
+
 # ---- dead ledger records ----------------------------------------------------------------------
 # A finished record (state gone or repurposed, or the old spelling torn-down) is dead: it holds no
 # terminal handle and is ignored when a worktree path is matched. CM_JQ_STATE_DEFS puts the jq
-# definition `cm_state_dead` in front of a jq program:
+# definitions in front of a jq program:
 #   jq "$CM_JQ_STATE_DEFS"' .workers[] | select((.state // "running") | cm_state_dead | not)'
+#   cm_state_norm   a legacy spelling becomes its state, anything else is unchanged
+#   cm_state_dead   true for gone, repurposed and a legacy spelling of one (torn-down)
 # shellcheck disable=SC2034  # read by lane-handles.sh
-CM_JQ_STATE_DEFS='def cm_state_dead: type == "string" and IN("gone", "repurposed", "torn-down"); '
+CM_JQ_STATE_DEFS="def cm_state_norm: if type == \"string\" then ($(_cm_jq_legacy_map)[.] // .) else . end; def cm_state_dead: cm_state_norm as \$s | (\$s | type) == \"string\" and (\$s | IN($(_cm_jq_words "$CM_STATES_DEAD" ", "))); "
+
+# CM_JQ_NAME_DEFS: the closed TYPE TABLE of a worker row and the one predicate for a name, as jq definitions (references/input-contract.md, rule 12). Put it in front
+# of a jq program, after CM_JQ_STATE_DEFS when the program needs both:
+#   cm_row_types / cm_live_types / cm_health_types  every field a script reads from a worker row, from its `live` object and from its `health` object, with the ONE JSON
+#                     type it may have: string, boolean, object, array, count (a whole number, 0 or more), time (text or a number), text (any string, blank or multi-line
+#                     allowed). Absent or null is allowed (rows omit most of them). Any other type is UNKNOWN: `jq -r` prints an array as its text, a joining reader
+#                     joins it, the string "true" is not true.
+#   cm_row_typed_ok   true for a worker row (and its live and health objects) every present field of which has the type the table says
+#   cm_name_ok        true for a string with no control character (NUL, TAB, VT, ESC, NEL ...) and no line or paragraph separator (U+2028, U+2029). Such a character is what a
+#                     shell variable, a command substitution (it drops NUL and a trailing newline), a line-per-row list or `read` loses, trims or splits on, so two names
+#                     that differ only by one would be read as the same row or host. It is the same test as `iv_oneline` in scripts/input-view.jq.
+#   cm_strip          the string with every such character removed (what a reader that drops them would see)
+#   cm_val_ok         true for a value that is not a string, or is a plain one
+#   cm_row_names_ok   true for a worker row none of whose string fields (the table, live and health included) holds one
+#   cm_row_fields_ok  cm_row_names_ok and cm_row_typed_ok: the one gate a program passes before it acts on a row
+# shellcheck disable=SC2016  # a jq program
+CM_JQ_NAME_DEFS='def cm_row_types: {host: "string", path: "string", worktree: "string", worktreePath: "string", worktreeId: "string", lane: "string", terminal: "string", parent: "string", state: "string", sessionId: "string", agent: "string", model: "string", effort: "string", beadsEpic: "string", kind: "string", asleepAt: "string", asleepFrom: "string", lastStopCause: "string", lastStopAt: "string", terminalRefreshedAt: "string", terminalChurnAt: "string", standing: "boolean", adopted: "boolean", shouldRun: "boolean", resumeAttempts: "count", nudges: "count", loopIntervalMin: "count", health: "object", stopHistory: "array", lastNudgeAt: "string", updatedAt: "string", displayName: "string", lastComment: "text", blockedQuestion: "text", task: "text", current: "text"}; def cm_live_types: {sessionId: "string", agent: "string", runtime: "string", model: "string", effort: "string", handle: "string", host: "string", sessionSource: "string", pid: "count", bypass: "boolean", lastTranscriptAt: "time", checkedAt: "time"}; def cm_health_types: {word: "string", paneState: "string", stopFromHealthy: "boolean", healthySince: "time", lastResumeAt: "time", paneSince: "time", checkedAt: "time", meaning: "text"}; def cm_type_is($t): if $t == "count" then (type == "number" and . >= 0 and . == floor) elif $t == "time" then (type == "string" or type == "number") elif $t == "text" then type == "string" else type == $t end; def cm_typed_in($t): . as $o | ($t | to_entries | all(. as $e | ($o[$e.key] == null) or ($o[$e.key] | cm_type_is($e.value)))); def cm_row_typed_ok: . as $r | ($r | type) == "object" and cm_typed_in(cm_row_types) and ($r.live == null or (($r.live | type) == "object" and ($r.live | cm_typed_in(cm_live_types)))) and ($r.health == null or (($r.health | type) == "object" and ($r.health | cm_typed_in(cm_health_types)))); def cm_name_ok: type == "string" and (test("\\p{Cc}|\\p{Zl}|\\p{Zp}") | not);'
+CM_JQ_NAME_DEFS="$CM_JQ_NAME_DEFS"' def cm_strip: gsub("\\p{Cc}|\\p{Zl}|\\p{Zp}"; ""); def cm_val_ok: (type != "string") or cm_name_ok;'
+CM_JQ_NAME_DEFS="$CM_JQ_NAME_DEFS"' def cm_row_names_ok: type == "object" and (. as $r | ([ cm_row_types | to_entries[] | select(.value == "string") | $r[.key] ] + [ ($r.live | objects) as $l | cm_live_types | to_entries[] | select(.value == "string") | $l[.key] ] + [ ($r.health | objects) as $hh | cm_health_types | to_entries[] | select(.value == "string") | $hh[.key] ]) | all(cm_val_ok)); def cm_row_fields_ok: cm_row_names_ok and cm_row_typed_ok;'
 
 # CM_JQ_CLASS_PHRASE: `class_phrase`, true for a drive.delegated_classes fragment that may stand for one class phrase:
 # it compiles, matches no empty text, and has no wildcard (an unescaped dot, \w \W \S \D \N \X \O \H \R), no negated
