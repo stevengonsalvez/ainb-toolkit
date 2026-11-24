@@ -364,7 +364,8 @@ worktree.
    first (exit 1 prints the command), never rebuilt over. It never takes a ledger file from another host
    (`references/ledger.md` § Rebuild). A rebuilt ledger has no `firstBoot.completedAt`: the kill list is asked again
    (§ First boot steps 3 to 5) before any autonomous teardown. Exit 4 (missing, and no lane issue holds a record):
-   this is **first boot** (below). Exit 1 otherwise: report it and stop the boot. Present: print the fleet table.
+   this is **first boot** (below). Any other non-zero exit (1, 2, 3): report it and stop the boot. Present: print the
+   fleet table.
 5. After a restart, run `resume` (§ Resume) before the first tick (skip it on first
    boot: no ledger, nothing to resume). Then run one tick (below).
 6. Arm the loop: `/loop /concertmaster tick` with no interval (dynamic,
