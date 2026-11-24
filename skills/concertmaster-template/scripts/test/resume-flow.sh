@@ -518,5 +518,9 @@ rm -f -- "${STUB:?}"/tlcount-*
 OUT="$("$SCRIPTS/resume.sh" --dry-run 2>/dev/null)"; CALLS="$(cat "$STUB/calls.log")"
 check "(8) 10 rows on one host: one terminal list call in the census" '[ "$(printf "%s\n" "$CALLS" | grep -c "^terminal list")" = 1 ]'
 
+# cm_cli_host_into fails only on an empty host or an unknown cli kind, both refused before these calls, so no stub
+# reaches it: the guard is read from the source. An unchecked call leaves the selector empty and reads (or creates
+# on) the LOCAL host for a remote lane.
+check "(11) every cm_cli_host_into call in resume.sh is checked (3 calls, none unchecked)" '[ "$(grep -c "cm_cli_host_into " "$SCRIPTS/resume.sh")" = 3 ] && ! grep "cm_cli_host_into " "$SCRIPTS/resume.sh" | grep -qv "||"'
 echo "passed=$PASS failed=$FAIL"
 [ "$FAIL" = 0 ]

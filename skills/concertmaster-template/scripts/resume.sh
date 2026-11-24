@@ -222,7 +222,8 @@ fi
 fetch_ps() {
   local rc
   local -a hsel
-  cm_cli_host_into hsel "$1"
+  # a refused selector leaves hsel empty: never read the local census for a remote host
+  cm_cli_host_into hsel "$1" 2>"$2.err" || return 1
   cm_timeout "$HOST_TIMEOUT" "$ORCA" worktree ps ${hsel[@]+"${hsel[@]}"} --limit 500 --json </dev/null > "$2" 2>"$2.err"
   rc=$?
   [ "$rc" -eq 0 ] && jq -e '.ok == true and (.result.worktrees | type == "array")' "$2" >/dev/null 2>&1
@@ -233,7 +234,7 @@ fetch_ps() {
 fetch_terms() {
   local rc
   local -a hsel
-  cm_cli_host_into hsel "$1"
+  cm_cli_host_into hsel "$1" 2>"$2.err" || return 1
   cm_timeout "$HOST_TIMEOUT" "$ORCA" terminal list ${hsel[@]+"${hsel[@]}"} --limit 500 --json </dev/null 2>"$2.err" | "$HERE/jsanitize" > "$2"
   rc=$?
   [ "$rc" -eq 0 ] && jq -e '.ok == true and (.result.terminals | type == "array") and (.result.terminals | all(type == "object"))
@@ -401,7 +402,7 @@ resume_dead() {
   # metacharacter, backtick, dollar, quote, backslash, redirect or pipe survives.
   ok_chars='A-Za-z0-9 #:.,_/()+@=-'
   cur_s="$(printf '%s' "$cur" | tr -cd "$ok_chars")"; state_s="$(printf '%s' "$state" | tr -cd "$ok_chars")"
-  cm_cli_host_into envargs "$host"
+  cm_cli_host_into envargs "$host" || { RES_STATUS=unknown; RES_ACTION="host selector refused, left alone"; return; }
   if [ -n "$wid" ]; then sel="id:$wid"; else sel="path:$path"; fi
   cmd="claude --continue"
   model="$(rf "$row" model)"
