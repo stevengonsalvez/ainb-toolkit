@@ -101,9 +101,12 @@ or briefs.
    null: Claude exited, the shell stayed) and `done` entries count zero, so that
    lane is **dead** and is resumed. A live-state entry with no terminal row still
    counts 1: never respawn on doubt. Open terminals with no list row matched to
-   the worktree (and no live-state entry) are **unknown**, never zero: a fresh
-   `agentIdentity` gap, another id or path form, or another list shape must not
-   start a second agent. A row with no `liveTerminalCount` at all is
+   the worktree (and no live-state entry: a stale count after a reboot, rows with
+   no worktree fields) are never read as zero from the list alone. On the local
+   host the process check below decides (no claude process in the worktree: dead,
+   resumed). On a remote host, with no process check, the row is **unknown**,
+   `terminal count N but no listed row (stale count?)`, with an ask line, and is
+   never resumed on it. A host whose selector is refused is **unknown** too. A row with no `liveTerminalCount` at all is
    not read as zero: a live-state agent counts as live, an agent entry in any other
    state is **unknown**. On the local host also count `claude` processes of this
    user whose cwd is the worktree or inside it (canonical paths; `cm_claude_pids`

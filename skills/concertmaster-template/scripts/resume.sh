@@ -43,9 +43,11 @@
 # host a claude process of this user whose cwd is the worktree or inside it also counts (the larger of the two
 # counts is used). Orca's explicit liveTerminalCount of 0 means dead (agent entries go stale after a restart). A
 # terminal list that cannot be read, is malformed or is cut off makes a row with liveTerminalCount > 0 `unknown`:
-# never dead, and so does a list with no row matched to the worktree and no live-state entry (the open terminals
-# cannot be placed). Every unreadable input fails closed, never toward a second agent. The process backstop is
-# local only. The roster is rewritten from the ledger on every run (roster.sh) so a row the tick just retired is never
+# never dead. A list with no row matched to the worktree and no live-state entry (a stale count after a reboot, rows
+# with no worktree fields) is left to the process backstop on the local host (no claude process there: dead, as
+# before); on a remote host it is `unknown` with "terminal count N but no listed row (stale count?)" and an ask line,
+# never resumed. A refused host selector is `unknown`. Every unreadable input fails closed, never toward a second
+# agent. The process backstop is local only. The roster is rewritten from the ledger on every run (roster.sh) so a row the tick just retired is never
 # resumed; no readable ledger: the roster is used as is. One acting run at a time per CM_HOME (lock dir).
 #
 # Env: CM_HOME, CM_HOST_TIMEOUT (25s), CM_TERM_WAIT_MS (60000), CM_RESUME_BUDGET_S,
@@ -70,7 +72,7 @@ while [ $# -gt 0 ]; do
     --path) need "$1" "${2:-}"; F_PATH="$2"; shift ;;
     --host) need "$1" "${2:-}"; F_HOST="$2"; shift ;;
     --worktree-id) need "$1" "${2:-}"; F_WID="$2"; shift ;;
-    -h|--help) sed -n '2,57p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,59p' "$0"; exit 0 ;;
     *) cm_warn "resume.sh: unknown arg: $1"; exit 2 ;;
   esac
   shift
@@ -247,7 +249,9 @@ for host in $(jq -r '[.[].host | select(. != null and . != "")] | unique[]' "$TM
   i=$((i + 1))
   ps="$TMP/ps-$i.json"; tf="$TMP/terms-$i.json"
   up=0; why=""
-  if fetch_ps "$host" "$ps"; then
+  # a refused selector would read (or create on) the local host: the host is unknown, never offline or local
+  if ! cm_cli_host_into _sel "$host" 2>/dev/null; then up=refused; why="host selector refused"; tf=""
+  elif fetch_ps "$host" "$ps"; then
     up=1
     fetch_terms "$host" "$tf" || tf=""   # no list: rows that need it read as unknown, the rest are decided as before
   else why="$(head -c 60 "$ps.err" 2>/dev/null | tr '\t\n' '  ')"; tf=""; fi
@@ -327,7 +331,7 @@ CWDS=""; CWDS_DONE=0; CWDS_OK=1
 # list, or with no terminal row matched to this worktree and no live-state entry, such a row is unreadable. liveTerminalCount 0 is 0; no liveTerminalCount keeps the agents[]-state rule.
 live_count() {
   local wt="$1" host="$2" path="$3" fresh="$4" tf="${5:-}" have=1 verdict n_agents n_pid
-  LC_N=""; LC_ERR=""; LC_TERMS=0; LC_ENTRIES=0
+  LC_N=""; LC_ERR=""; LC_STALE=0; LC_TERMS=0; LC_ENTRIES=0
   if [ -z "$tf" ] || [ ! -s "$tf" ]; then tf="$TMP/terms-none.json"; have=0; fi
   verdict="$(printf '%s' "$wt" | jq -r --slurpfile tl "$tf" --argjson have "$have" "$NORMP"'
     def live_states: ["working", "waiting", "permission", "blocked", "running"];
@@ -358,11 +362,12 @@ live_count() {
   case "$verdict" in
     n=[0-9]*) n_agents="${verdict#n=}" ;;
     empty) if [ "$host" = local ]; then n_agents=0; fi ;;   # remote rows often lack fields: unknown
+    nomatch) if [ "$host" = local ]; then n_agents=0; fi ;;   # local: the process backstop below decides
   esac
   if [ -z "$n_agents" ]; then
     LC_ERR="live count unreadable, left alone"
     [ "$verdict" != noterms ] || LC_ERR="live count unreadable, left alone (terminal list unreadable or cut off)"
-    [ "$verdict" != nomatch ] || LC_ERR="live count unreadable, left alone (terminals open, none matched to this worktree)"
+    [ "$verdict" != nomatch ] || { LC_ERR="terminal count $LC_TERMS but no listed row (stale count?), left alone, never resumed on it"; LC_STALE=1; }
     return
   fi
   n_pid=0
@@ -508,6 +513,7 @@ while IFS= read -r row <&3; do
   if [ -z "$host" ]; then emit "$label" unknown "host unknown in the ledger, left alone"; continue; fi
   line="$(awk -F'\t' -v h="$host" '$1 == h' "$TMP/hosts.tsv" | head -n 1)"
   psf="$(printf '%s' "$line" | cut -f2)"; up="$(printf '%s' "$line" | cut -f3)"; why="$(printf '%s' "$line" | cut -f4)"
+  if [ "$up" = refused ]; then emit "$label" unknown "host selector refused for $host, left alone"; continue; fi
   if [ "$up" != 1 ]; then emit "$label" offline "retry next tick${why:+ ($why)}"; continue; fi
 
   if [ -n "$path" ] && grep -qxF "$(printf '%s\t%s' "$host" "$path")" "$TMP/shared.tsv"; then
@@ -534,7 +540,11 @@ while IFS= read -r row <&3; do
   # (matched by id), and the process check must look at the real directory.
   opath="$(printf '%s' "$wt" | jq -r '.path // empty')"; [ -z "$opath" ] || path="$(normp "$opath")"
   live_count "$wt" "$host" "$path" 0 "$(printf '%s' "$line" | cut -f5)"
-  if [ -z "$LC_N" ]; then emit "$label" unknown "$LC_ERR"; continue; fi
+  if [ -z "$LC_N" ]; then
+    emit "$label" unknown "$LC_ERR"
+    [ "$LC_STALE" = 0 ] || printf '%s\n' "$label: unknown: terminal count $LC_TERMS but no listed row (stale count?) on $host; check the lane by hand" >> "$ASKS"
+    continue
+  fi
 
   if [ "$LC_N" -ge 2 ]; then
     emit "$label" duplicate "sent to neither, ask $CM_OWNER_NAME"

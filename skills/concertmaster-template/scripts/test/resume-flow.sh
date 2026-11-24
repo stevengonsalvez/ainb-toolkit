@@ -445,6 +445,8 @@ trow() { # trow <worktree-path> <handle> <agentIdentity or null>
   lps /z/zero-ltc 0 "$(hist 4 'done')"             # Orca says no terminal is open: dead without needing the list
   lps /z/late-term 1 "$(hist 3 'done')"            # bare shell at the census; an identified terminal shows up before the re-check
   lps /z/no-row 1 "$(hist 3 'done')"               # a terminal is open, but no list row names this worktree
+  lps /z/no-row-proc 1 "$(hist 3 'done')"          # the same, and a claude process owns the cwd
+  lps /z/refused 0 "$(hist 1 'done')"              # dead if read here: only a lane on another host, whose selector is refused
 } | jq -s '{ok: true, result: {worktrees: ., totalCount: length}}' > "$STUB/ps-local.json"
 rm -f "$STUB/ps-local.late.json"
 {
@@ -458,6 +460,9 @@ rm -f "$STUB/ps-local.late.json"
   jq -cn '{handle: "r1", tabId: "tab-r1", leafId: "leaf0", agentIdentity: null}'   # a row with no worktree fields (another list shape)
 } | jq -s '{ok: true, result: {totalCount: length, terminals: .}}' > "$STUB/terms-local.json"
 jq -c --argjson r "$(trow /z/late-term a-late claude)" '.result.terminals += [$r] | .result.totalCount += 1' "$STUB/terms-local.json" > "$STUB/terms-local.late.json"
+# a remote host with the same shape: an open terminal, no list row for the worktree, no process backstop there
+lps /w/no-row-r 1 "$(hist 3 'done')" | jq -s '{ok: true, result: {worktrees: ., totalCount: length}}' > "$STUB/ps-remote-2.json"
+jq -cn '{ok: true, result: {totalCount: 1, terminals: [{handle: "r2", tabId: "tab-r2", leafId: "leaf0", agentIdentity: null}]}}' > "$STUB/terms-remote-2.json"
 : > "$STUB/cwds.txt"
 cat > "$CM_HOME/ledger.json" <<'J'
 {"updatedAt": "2026-11-19T06:00:00Z",
@@ -471,7 +476,10 @@ cat > "$CM_HOME/ledger.json" <<'J'
   "w-path":   {"lane": "by-path",    "host": "local", "agent": "claude", "model": "sonnet", "path": "/z/by-path",    "task": "#9007 path", "lastComment": "cm:running"},
   "w-zero":   {"lane": "zero-ltc",   "host": "local", "agent": "claude", "model": "sonnet", "path": "/z/zero-ltc",   "task": "#9008 zero", "lastComment": "cm:running"},
   "w-late":   {"lane": "late-term",  "host": "local", "agent": "claude", "model": "sonnet", "path": "/z/late-term",  "task": "#9009 late", "lastComment": "cm:running"},
-  "w-norow":  {"lane": "no-row",     "host": "local", "agent": "claude", "model": "sonnet", "path": "/z/no-row",     "task": "#9010 no row", "lastComment": "cm:running"}}}
+  "w-norow":  {"lane": "no-row",     "host": "local", "agent": "claude", "model": "sonnet", "path": "/z/no-row",     "task": "#9010 no row", "lastComment": "cm:running"},
+  "w-norowp": {"lane": "no-row-proc", "host": "local", "agent": "claude", "model": "sonnet", "path": "/z/no-row-proc", "task": "#9011 no row proc", "lastComment": "cm:running"},
+  "w-norowr": {"lane": "no-row-r",   "host": "remote-2", "agent": "claude", "model": "sonnet", "path": "/w/no-row-r", "task": "#9012 no row remote", "lastComment": "cm:running"},
+  "w-refused": {"lane": "refused",   "host": "refused-host", "agent": "claude", "model": "sonnet", "path": "/z/refused", "task": "#9013 refused", "lastComment": "cm:running"}}}
 J
 rm -f "$CM_HOME/roster.yaml"
 lrun() { # lrun <lane>: one resume run for that lane, clean stub state
@@ -510,17 +518,33 @@ lrun by-path
 check "(7) terminal row with no worktreeId is matched by normalised path (/z/./by-path/): live" 'has_line "by-path +live +left alone" && [ "$(creates)" = 0 ]'
 lrun late-term
 check "(9) identified terminal appears after the census: the re-check reads a fresh list, live agent appeared, no create" 'has_line "late-term +live +live agent appeared since the census, left alone" && [ "$(creates)" = 0 ] && [ "$(sends)" = 0 ] && [ "$(printf "%s\n" "$CALLS" | grep -c "^terminal list")" = 2 ]'
+# liveTerminalCount 1, only done entries, no terminal row matched to the worktree (a stale count after a reboot, a row
+# with no worktree fields): the local process backstop decides; a remote host has none, so it stays unknown with a
+# distinct line and an ask, never resumed
 lrun no-row
-check "(10) liveTerminalCount 1, only done entries, no terminal row matched to the worktree: unknown, never dead" 'has_line "no-row +unknown +live count unreadable, left alone \(terminals open, none matched to this worktree\)" && [ "$(creates)" = 0 ] && [ "$(sends)" = 0 ] && [ "$RC" = 3 ]'
+check "(10a) local, no row matched, no claude process: dead and resumed (the process backstop)" 'has_line "no-row +dead +claude --continue --model sonnet, nudged \(#9010\)" && [ "$(creates)" = 1 ] && [ "$(sends)" = 1 ]'
+printf '%s\n' /z/no-row-proc > "$STUB/cwds.txt"
+lrun no-row-proc
+check "(10b) local, no row matched, a claude process in the worktree: live, no create" 'has_line "no-row-proc +live +left alone" && [ "$(creates)" = 0 ] && [ "$(sends)" = 0 ]'
+: > "$STUB/cwds.txt"
+lrun no-row-r
+check "(10c) remote, no row matched: unknown, terminal count 1 but no listed row (stale count?), an ask, nothing created" 'has_line "no-row-r +unknown +terminal count 1 but no listed row \(stale count\?\), left alone, never resumed on it" && has_line "^ask Owner: no-row-r: unknown: terminal count 1 but no listed row \(stale count\?\) on remote-2; check the lane by hand" && [ "$(creates)" = 0 ] && [ "$(sends)" = 0 ] && [ "$RC" = 3 ]'
 # the fetch is once per host even over a many-row run
 rm -f -- "${STUB:?}"/tlcount-*
 : > "$STUB/calls.log"; rm -rf -- "${CM_HOME:?}/resume.attempts" "${CM_HOME:?}/resume.lock"
 OUT="$("$SCRIPTS/resume.sh" --dry-run 2>/dev/null)"; CALLS="$(cat "$STUB/calls.log")"
-check "(8) 10 rows on one host: one terminal list call in the census" '[ "$(printf "%s\n" "$CALLS" | grep -c "^terminal list")" = 1 ]'
+check "(8) 12 rows on the local host: one local terminal list call in the census" '[ "$(printf "%s\n" "$CALLS" | grep "^terminal list" | grep -vc -- "--environment")" = 1 ]'
 
-# cm_cli_host_into fails only on an empty host or an unknown cli kind, both refused before these calls, so no stub
-# reaches it: the guard is read from the source. An unchecked call leaves the selector empty and reads (or creates
-# on) the LOCAL host for a remote lane.
-check "(11) every cm_cli_host_into call in resume.sh is checked (3 calls, none unchecked)" '[ "$(grep -c "cm_cli_host_into " "$SCRIPTS/resume.sh")" = 3 ] && ! grep "cm_cli_host_into " "$SCRIPTS/resume.sh" | grep -qv "||"'
+# (11) a refused host selector (cm_cli_host_into fails for the host) must never fall back to the local host: the lane is
+# unknown, and no worktree ps and no terminal create runs, though the local census holds a dead worktree at its path.
+# The selector fails here only through a stubbed cm_cli_host_into in a copy of the scripts.
+REF="$ROOT/scripts-refused"; rm -rf -- "$REF"; cp -R "$SCRIPTS" "$REF"
+cat >> "$REF/lib.sh" <<'L'
+eval "$(declare -f cm_cli_host_into | sed '1s/^cm_cli_host_into/_test_real_host_into/')"
+cm_cli_host_into() { case "${2-}" in refused-host) eval "$1=()"; return 2 ;; esac; _test_real_host_into "$@"; }
+L
+: > "$STUB/calls.log"; rm -f -- "${STUB:?}"/pscount-* "${STUB:?}"/tlcount-*; rm -rf -- "${CM_HOME:?}/resume.attempts" "${CM_HOME:?}/resume.lock"
+OUT="$("$REF/resume.sh" --lane refused 2>/dev/null)"; RC=$?; CALLS="$(cat "$STUB/calls.log")"
+check "(11) refused host selector: unknown, no worktree ps, no terminal list, no terminal create" 'has_line "refused +unknown +host selector refused for refused-host, left alone" && ! printf "%s\n" "$CALLS" | grep -q "^worktree ps" && ! printf "%s\n" "$CALLS" | grep -q "^terminal" && [ "$RC" = 3 ]'
 echo "passed=$PASS failed=$FAIL"
 [ "$FAIL" = 0 ]
