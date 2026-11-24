@@ -1332,3 +1332,162 @@ cm_ledger_schema_version() {
   case "$out" in unreadable) return 2 ;; invalid) return 1 ;; esac
   return 0
 }
+
+# ---- typed input boundary: the bash adapter (scripts/input-view.jq, references/input-contract.md) --------------------------------------
+# raw ledger -> scripts/input-view.jq (typed view + decisions) -> these functions -> a program acts only on permit:true.
+# Fails CLOSED: a jq crash, a missing module or helper, a scan that fails or an unreadable file is a refusal, never a permit.
+# No program calls these yet: moving the programs onto the boundary is a later change.
+
+# cm_input_cfg: the one cfg JSON the module reads ({states, dead, noresume, legacy, types}; types is the closed type table of the worker row, its live object and its health object), built from the CM_STATES_* lists and CM_JQ_NAME_DEFS above.
+cm_input_cfg() {
+  jq -nc --arg all "$CM_STATES_ALL" --arg dead "$CM_STATES_DEAD" --arg nr "$CM_STATES_NORESUME" --arg leg "$CM_STATES_LEGACY" "$CM_JQ_NAME_DEFS"'
+    def w: split(" ") | map(select(. != ""));
+    {states: ($all | w), dead: ($dead | w), noresume: ($nr | w),
+     legacy: ($leg | w | map(split("=") | {key: .[0], value: .[1]}) | from_entries),
+     types: {row: cm_row_types, live: cm_live_types, health: cm_health_types}}'
+}
+
+# cm_input_bundle [ledger]: reads the ledger ONCE into a private snapshot and builds, from those same bytes, {readable, doc, dups}. The parse and
+# the duplicate-key scan never see two different reads. Any failure (read, scan, parse, not exactly one object) is readable:false, rc 1.
+cm_input_bundle() {
+  local f="${1:-$(cm_ledger_path)}" snap dups out
+  snap="$(mktemp "${TMPDIR:-/tmp}/cm-input.XXXXXX")" || { printf '{"readable":false,"doc":null,"dups":[]}\n'; return 1; }
+  if cat -- "$f" > "$snap" 2>/dev/null \
+     && dups="$(cm_input_dupkeys "$snap")" \
+     && dups="$(printf '%s' "$dups" | jq -sc '.' 2>/dev/null)" \
+     && out="$(jq -c -s --argjson dups "$dups" 'if length == 1 and (.[0] | type) == "object" then {readable: true, doc: .[0], dups: $dups} else {readable: false, doc: null, dups: []} end' "$snap" 2>/dev/null)"; then
+    rm -f -- "$snap"
+    printf '%s\n' "$out"
+    [ "$(printf '%s' "$out" | jq -r '.readable' 2>/dev/null)" = true ]
+    return
+  fi
+  rm -f -- "$snap"
+  printf '{"readable":false,"doc":null,"dups":[]}\n'; return 1
+}
+
+# cm_input_view_of <bundle-json>: the typed view (envelope cm.input/v1) of a bundle from cm_input_bundle, on stdout. rc 1 when the bundle is not readable.
+cm_input_view_of() {
+  local bundle="${1:-}" cfg
+  cfg="$(cm_input_cfg)" || { printf '{"schema":"cm.input/v1","readable":false}\n'; return 1; }
+  printf '%s' "$bundle" | jq -c -L "$_CM_INPUT_DIR" --argjson cfg "$cfg" \
+    'include "input-view"; .dups as $d | (if .readable then .doc else null end) | iv_apply_dups(iv_view(.; $cfg); $d)' 2>/dev/null \
+    || { printf '{"schema":"cm.input/v1","readable":false}\n'; return 1; }
+  [ "$(printf '%s' "$bundle" | jq -r '.readable' 2>/dev/null)" = true ]
+}
+
+# cm_input_view [ledger]: the typed view of the ledger, read once (cm_input_bundle). Returns 0 when read, 1 when the file is unreadable, the scan
+# failed or the file is not one JSON object (the view then has readable:false, so every decision on it refuses).
+cm_input_view() {
+  local f="${1:-$(cm_ledger_path)}" bundle
+  bundle="$(cm_input_bundle "$f")" || { cm_input_view_of "$bundle"; return 1; }
+  cm_input_view_of "$bundle"
+}
+
+# _cm_input_refusal <action> <target> <why>: a refusal decision as JSON; every value goes through jq --arg, so a hostile id cannot break it.
+_cm_input_refusal() {
+  jq -nc --arg a "${1:-}" --arg t "${2:-}" --arg w "${3:-}" '{action: $a, target: $t, permit: false, reasons: [$w], snapshot: null}' 2>/dev/null \
+    || printf '{"permit":false,"reasons":["refused"],"snapshot":null}\n'
+}
+
+# _cm_input_args [args...]: the ONE argument parser of cm_input_decide and cm_input_revalidate. The flags --host H and --view-file F may stand in ANY position among the
+# arguments; the one positional is the ledger. Refused, never guessed: a flag with no value (the last argument, or followed by another of our flags), an empty value, a
+# flag given twice, an unknown option, an empty ledger, and a SECOND positional. Result in _CMI_HOST (default local), _CMI_VF, _CMI_LEDGER (empty = the default ledger).
+# Returns 1 with the reason in _CMI_ERR.
+_cm_input_args() {
+  local sh=0 sv=0 sp=0 flag
+  _CMI_HOST=local; _CMI_VF=""; _CMI_LEDGER=""; _CMI_ERR=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --host|--view-file)
+        flag="$1"
+        # the next argument is the value, unless it is another flag of ours: then this flag has none
+        if [ $# -lt 2 ]; then _CMI_ERR="the option $flag needs a value"; return 1; fi
+        case "$2" in --host|--view-file) _CMI_ERR="the option $flag needs a value"; return 1 ;; esac
+        case "$flag" in
+          --host) [ "$sh" = 0 ] || { _CMI_ERR="the option --host is given twice"; return 1; }; sh=1
+                  case "$2" in ''|*[[:space:]]*) _CMI_ERR="the host this decision is for is empty or has a space"; return 1 ;; esac
+                  _CMI_HOST="$2" ;;
+          --view-file) [ "$sv" = 0 ] || { _CMI_ERR="the option --view-file is given twice"; return 1; }; sv=1
+                  [ -n "$2" ] || { _CMI_ERR="the option --view-file needs a non-empty value"; return 1; }
+                  _CMI_VF="$2" ;;
+        esac
+        shift 2 ;;
+      -*) _CMI_ERR="unknown option $1"; return 1 ;;
+      *)
+        [ "$sp" = 0 ] || { _CMI_ERR="an extra argument: $1 (the ledger is already $_CMI_LEDGER)"; return 1; }; sp=1
+        [ -n "$1" ] || { _CMI_ERR="the ledger path is empty"; return 1; }
+        _CMI_LEDGER="$1"; shift ;;
+    esac
+  done
+  return 0
+}
+
+# cm_input_decide <action> <target> [--host H] [--view-file F] [ledger]: the decision JSON {action,target,permit,reasons,snapshot} on stdout.
+# action: sleep | nudge | resume | capacity_kill | teardown. Returns 0 when permit is true, 1 when refused. A failure inside jq prints a
+# refusal and returns 2: the caller must not act on 2 either. The flags may stand anywhere; a flag with no value, an unknown flag and a second positional are
+# refused (_cm_input_args, shared with cm_input_revalidate).
+cm_input_decide() {
+  local action="${1:-}" target="${2:-}" host vf f out
+  [ $# -ge 2 ] || { _cm_input_refusal "$action" "$target" "usage: cm_input_decide <action> <target> [--host H] [--view-file F] [ledger]"; return 2; }
+  shift 2
+  _cm_input_args "$@" || { _cm_input_refusal "$action" "$target" "$_CMI_ERR"; return 2; }
+  host="$_CMI_HOST"; vf="$_CMI_VF"; f="${_CMI_LEDGER:-$(cm_ledger_path)}"
+  if [ -n "$vf" ]; then out="$(jq -c -L "$_CM_INPUT_DIR" --arg a "$action" --arg t "$target" --arg h "$host" 'include "input-view"; iv_decide($a; .; $t; {host: $h})' "$vf" 2>/dev/null)"
+  else out="$(cm_input_view "$f" | jq -c -L "$_CM_INPUT_DIR" --arg a "$action" --arg t "$target" --arg h "$host" 'include "input-view"; iv_decide($a; .; $t; {host: $h})' 2>/dev/null)"; fi
+  if [ -z "$out" ]; then _cm_input_refusal "$action" "$target" "the decision could not be computed"; return 2; fi
+  printf '%s\n' "$out"
+  printf '%s' "$out" | jq -e '.permit == true' >/dev/null 2>&1
+}
+
+# cm_input_revalidate <decision-json> [--host H] [--view-file F] [ledger]: decide again NOW and compare. Returns 0 only when it is still permitted, is for the
+# SAME action and the SAME target, and the snapshot is unchanged since <decision-json>. What is printed is always the truth: permit:true only on return 0; a
+# changed snapshot prints permit:false with the reason. Use it right before acting, under whatever lock the action takes. The action and the target are read from
+# the decision with `read -d ''`, which keeps every byte: a command substitution would drop a trailing newline and turn the target "T<newline>" into the row "T".
+cm_input_revalidate() {
+  local prior="${1:-}" a="" t=""
+  shift || true
+  # a NUL in the action or target cannot be held in a shell variable: such a decision is refused (the filter prints nothing for it)
+  IFS= read -r -d '' a < <(printf '%s' "$prior" | jq -j '.action | strings | select(contains("\u0000") | not)' 2>/dev/null) || true
+  IFS= read -r -d '' t < <(printf '%s' "$prior" | jq -j '.target | strings | select(contains("\u0000") | not)' 2>/dev/null) || true
+  _cm_input_revalidate_for "$a" "$t" "$prior" "$@"
+}
+# _cm_input_revalidate_for <action> <target> <decision-json> [args as cm_input_decide]: the body of cm_input_revalidate with the action and target given as shell
+# variables. The comparison is done in jq: the prior and the fresh decision must both be for exactly <action> and <target>, the prior must have permitted, and the
+# snapshots must be equal.
+_cm_input_revalidate_for() {
+  local a="$1" t="$2" prior="$3" now rc
+  shift 3
+  [ -n "$a" ] && [ -n "$t" ] || { _cm_input_refusal "$a" "$t" "no prior decision to revalidate"; return 2; }
+  now="$(cm_input_decide "$a" "$t" "$@")"; rc=$?
+  if [ "$rc" != 0 ]; then printf '%s\n' "$now"; return 1; fi
+  if jq -en --argjson a "$prior" --argjson b "$now" --arg act "$a" --arg tgt "$t" \
+       '$a.permit == true and $a.snapshot == $b.snapshot and $a.action == $act and $a.target == $tgt and $b.action == $act and $b.target == $tgt' >/dev/null 2>&1; then
+    printf '%s\n' "$now"; return 0
+  fi
+  printf '%s' "$now" | jq -c '.permit = false | .reasons += ["the ledger changed since the decision (snapshot differs)"]' 2>/dev/null \
+    || _cm_input_refusal "$a" "$t" "the ledger changed since the decision"
+  return 1
+}
+
+# cm_input_live <terminals|worktrees>: a live reply (Orca / plugly / ssh, JSON on stdin) as ONE typed envelope on stdout, always: empty input, text that
+# is not JSON, and every wrong shape give {complete:false, reason, ...} and rc 1; rc 0 only for a complete list. Callers read `.complete` and `.terminals` /
+# `.worktrees` (agent: agent|shell|unknown per terminal); an incomplete list is never read as an empty one.
+cm_input_live() {
+  local kind="${1:-}" cfg out snap dups rc
+  case "$kind" in terminals|worktrees) ;; *) printf '{"complete":false,"reason":"usage: cm_input_live <terminals|worktrees>"}\n'; return 1 ;; esac
+  cfg="$(cm_input_cfg)" || { printf '{"complete":false,"reason":"cfg unreadable"}\n'; return 1; }
+  # the reply is read ONCE into a private file; the repeated-key scan and the parse see the same bytes. A scan that fails (not JSON, empty, no python3)
+  # is an unreadable reply, never a complete one.
+  snap="$(mktemp "${TMPDIR:-/tmp}/cm-live.XXXXXX")" || { printf '{"complete":false,"reason":"no temp file"}\n'; return 1; }
+  # the copy status counts: a copy that read part of the reply and then failed is not the reply (the bytes it got may scan and parse as a complete list)
+  if cat > "$snap" 2>/dev/null; then rc=0; else rc=1; fi
+  if [ "$rc" = 0 ]; then dups="$(cm_input_dupkeys "$snap")"; rc=$?; fi
+  if [ "$rc" = 0 ]; then dups="$(printf '%s' "$dups" | jq -sc '.' 2>/dev/null)" || rc=2; fi
+  if [ "$rc" != 0 ]; then rm -f -- "$snap"; printf '{"name":"%s","complete":false,"reason":"the reply could not be read or scanned for repeated keys","rows":[],"%s":[]}\n' "$kind" "$kind"; return 1; fi
+  out="$(jq -c -R -s -L "$_CM_INPUT_DIR" --argjson cfg "$cfg" --argjson dups "$dups" --arg k "$kind" 'include "input-view";
+      (try fromjson catch null) as $r | if $k == "terminals" then iv_live_terminals($r; $cfg; $dups) else iv_live_worktrees($r; $cfg; $dups) end' "$snap" 2>/dev/null)" || out=""
+  rm -f -- "$snap"
+  [ -n "$out" ] || { printf '{"complete":false,"reason":"the reply could not be read"}\n'; return 1; }
+  printf '%s\n' "$out"
+  [ "$(printf '%s' "$out" | jq -r '.complete' 2>/dev/null)" = true ]
+}
