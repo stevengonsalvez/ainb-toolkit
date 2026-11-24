@@ -156,13 +156,31 @@ act_append() { # <json line>: append under a lock
     ) 9>>"$lock"
     return
   fi
-  until mkdir "$lock.d" 2>/dev/null; do
-    i=$((i + 1)); [ "$i" -gt 50 ] && { cm_warn "stall.sh: $lock.d busy: nothing recorded"; return 1; }
+  # no flock (stock macOS): a mkdir lock holding its owner pid. It is held for one append, so one over a minute old whose
+  # owner is gone was left by a killed run: retired by rename (one reclaimer wins) and judged again on the tombstone, as
+  # codemode-recover.sh take_lock does. A live lock moved by mistake is never deleted: its tombstone waits for the sweep.
+  local d="$lock.d" p t
+  until mkdir "$d" 2>/dev/null; do
+    for t in "$d".dead.*; do if [ -d "$t" ] && act_lock_stale "$t"; then rm -rf -- "${t:?}"; fi; done
+    p="$(cat -- "$d/pid" 2>/dev/null || true)"; t="$d.dead.$$"
+    if act_lock_stale "$d" && [ ! -e "$t" ] && mv "$d" "$t" 2>/dev/null; then
+      if [ "$(cat -- "$t/pid" 2>/dev/null || true)" = "$p" ] && act_lock_stale "$t"; then rm -rf -- "${t:?}"; fi
+      continue
+    fi
+    i=$((i + 1)); [ "$i" -gt 50 ] && { cm_warn "stall.sh: $d busy: nothing recorded"; return 1; }
     sleep 0.1
   done
+  printf '%s\n' "$$" > "$d/pid" 2>/dev/null
   printf '%s\n' "$line" >> "$ACTIONS"; local rc=$?
-  rmdir "$lock.d" 2>/dev/null || true
+  if [ "$(cat -- "$d/pid" 2>/dev/null || true)" = "$$" ]; then rm -f -- "$d/pid"; rmdir "$d" 2>/dev/null || true; fi
   return "$rc"
+}
+# act_lock_stale <dir>: over a minute old and its owner pid (or no pid at all) names no live process
+act_lock_stale() {
+  local p
+  [ -n "$(find "$1" -maxdepth 0 -mmin +1 2>/dev/null)" ] || return 1
+  p="$(cat -- "$1/pid" 2>/dev/null || true)"
+  [ -z "$p" ] || ! kill -0 "$p" 2>/dev/null
 }
 
 do_act() { # <kind> <name> <verb> <text> <host|""> <path|"">

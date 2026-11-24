@@ -1485,6 +1485,25 @@ check "F24 an ask with a fresh verdict claim is held, not laddered" "$(exr d-cla
 check "F24 an ask whose claim expired ladders again" "$(exr d-old)$(field d-old rung)" "absent1"
 check "F24 the held ask reason names the claim" "$(jq -r '.exempt[] | select(.name == "d-claim") | .reason | contains("verdict claimed")' <<<"$OUT")" "true"
 
+# ---- 13c. the mkdir fallback lock of --act (no flock, stock macOS) -------------------------------------------------------
+# F25 a lock a killed run left (over a minute old, owner pid gone) is reclaimed and the action recorded; a lock whose owner is
+# alive stays busy and nothing is recorded. PATH holds every tool but flock, so the fallback runs.
+NOFLOCK="$ROOT/noflock"; mkdir -p "$NOFLOCK"
+IFS=: read -r -a _pdirs <<<"$PATH"
+for _d in "${_pdirs[@]}"; do for _f in "$_d"/*; do
+  _n="${_f##*/}"; [ "$_n" = flock ] || [ -e "$NOFLOCK/$_n" ] || ln -s "$_f" "$NOFLOCK/$_n" 2>/dev/null
+done; done
+DEADPID="$(sh -c 'echo $$')"
+reset; W="$ROOT/f24"; LED='{"workers":{}}'; gen "$W"; mkdir -p "$W/cm"
+mkdir "$W/cm/stall-actions.lock.d"; echo "$DEADPID" > "$W/cm/stall-actions.lock.d/pid"; touch -t 202001010000 "$W/cm/stall-actions.lock.d"
+PATH="$NOFLOCK" act "$W" "$T0" lane l60 nudge "nudged: after a killed run"; RCA=$?
+check "F25 a stale lock (old, owner dead) is reclaimed: recorded, lock released" "$RCA/$(wc -l < "$W/cm/stall-actions.ndjson" | tr -d ' ')/$(find "$W/cm" -maxdepth 1 -name "stall-actions.lock.d*" | wc -l | tr -d ' ')" "0/1/0"
+mkdir "$W/cm/stall-actions.lock.d"; echo "$$" > "$W/cm/stall-actions.lock.d/pid"; touch -t 202001010000 "$W/cm/stall-actions.lock.d"
+PATH="$NOFLOCK" act "$W" "$T0" lane l90 nudge "nudged: lock held"; RCA=$?
+check "F25 an old lock whose owner is alive stays busy: nothing recorded, the lock is left" "$RCA/$(wc -l < "$W/cm/stall-actions.ndjson" | tr -d ' ')/$(cat "$W/cm/stall-actions.lock.d/pid")" "1/1/$$"
+has "F25 ...and the refusal says busy" "$(cat "$W/act.err")" "busy: nothing recorded"
+rm -rf -- "${W:?}/cm/stall-actions.lock.d"
+
 # ---- 14. no fleet CLI, no gh --------------------------------------------------------------------------------------------
 check "orca, plugly, gh and ssh were never called" "$(wc -l < "$CALLS" | tr -d ' ')" "0"
 
