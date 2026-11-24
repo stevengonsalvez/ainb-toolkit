@@ -1,0 +1,84 @@
+#!/usr/bin/env python3
+# jdupkeys <file>: print the path of every object key that is written more than once in the same JSON object, one JSON array per line
+# (["lanes","pr"] means "pr" is repeated inside lanes). jq keeps only the last of two equal keys, so a repeat is invisible to it and to
+# `jq --stream` when the values differ in shape; this scans the document itself, at every depth, whatever the values are.
+# Exit 0: scanned (the output may be empty). Exit 2: the file cannot be read or is not exactly one JSON value, or a key or a string value holds a
+# LONE surrogate escape (\udc00): jq reads that as U+FFFD, so two keys that differ only there are ONE key to jq and two to python, and a repeat
+# would go unreported. A surrogate PAIR (\ud83d\ude00) is one real character and is accepted. The caller treats exit 2 as an unreadable
+# document and refuses. Nothing is written anywhere.
+import sys
+sys.path.pop(0)  # never import a planted module from the script directory
+import json
+import math
+from decimal import Decimal
+
+class Pairs(list):
+    pass
+
+def refuse(name):
+    # NaN, Infinity and -Infinity are not JSON: jq reads them and writes null, which would turn a bad value into "absent"
+    raise ValueError("not JSON: " + name)
+
+def whole(text):
+    # an integer too big for a double (jq reads it as a number and loses it) is as unreadable as a float that overflows
+    v = int(text)
+    try:
+        float(v)
+    except OverflowError:
+        raise ValueError("number out of range")
+    return v
+
+def finite(text):
+    v = float(text)
+    if v != v or v in (float("inf"), float("-inf")):
+        raise ValueError("number out of range")
+    # a token that is NOT a whole number but whose double IS one (1.0000000000000001, 0.99999999999999999999, 1.00000000000000001e0) would pass every
+    # whole-number check downstream (jq compares the double): the exact decimal decides, and such a token makes the document unreadable. A token whose exact
+    # value IS a whole number (1.0, 1e0, 10E-1, 7.000) is accepted: it is the same number as the integer.
+    if v == math.floor(v):
+        d = Decimal(text)
+        if d != d.to_integral_value():
+            raise ValueError("a decimal that only rounds to a whole number")
+    return v
+
+def lone_surrogate(text):
+    # python joins a valid pair into one astral character, so any code point left in D800-DFFF is a lone surrogate
+    return any(0xD800 <= ord(c) <= 0xDFFF for c in text)
+
+def main():
+    if len(sys.argv) != 2:
+        sys.exit(2)
+    try:
+        with open(sys.argv[1], "rb") as fh:
+            raw = fh.read().decode("utf-8")
+        sys.setrecursionlimit(10000)
+        doc = json.loads(raw, object_pairs_hook=Pairs, parse_constant=refuse, parse_float=finite, parse_int=whole)
+    except Exception:
+        sys.exit(2)
+    out = []
+    stack = [((), doc)]
+    while stack:
+        path, node = stack.pop()
+        if isinstance(node, str):
+            if lone_surrogate(node):
+                sys.exit(2)
+        elif isinstance(node, Pairs):
+            seen = set()
+            for k, v in node:
+                if lone_surrogate(k):
+                    sys.exit(2)
+                if k in seen:
+                    out.append(list(path) + [k])
+                seen.add(k)
+                stack.append((path + (k,), v))
+        elif isinstance(node, list):
+            for i, v in enumerate(node):
+                stack.append((path + (i,), v))
+    seen_out = set()
+    for p in sorted(out, key=lambda p: json.dumps(p)):
+        s = json.dumps(p, separators=(",", ":"))
+        if s not in seen_out:
+            seen_out.add(s)
+            sys.stdout.write(s + "\n")
+
+main()

@@ -745,13 +745,65 @@ _cm_ledger_write_locked() {
   return 0
 }
 
+# ---- worker states ----------------------------------------------------------------------------
+# ONE enum for workers.<id>.state (references/ledger.md, the `workers.<id>.state` rows). A new
+# state is added HERE and in that table: the dead-record predicate below and the typed input
+# boundary (cm_input_cfg) are built from these lists.
+# shellcheck disable=SC2034  # read by the scripts that source this file
+CM_STATES_LIVE="queued spawning running stuck blocked-on-owner asleep done retired teardown"
+# shellcheck disable=SC2034
+CM_STATES_DEAD="gone repurposed"
+# shellcheck disable=SC2034
+CM_STATES_ALL="$CM_STATES_LIVE $CM_STATES_DEAD"
+# Live rows with no agent session to resume (the same list resume.sh and roster.sh leave out).
+# shellcheck disable=SC2034
+CM_STATES_NORESUME="queued spawning done retired teardown asleep"
+# Legacy spellings found in old ledgers, <legacy>=<state>. Read as the mapped state by cm_state_dead.
+# shellcheck disable=SC2034
+CM_STATES_LEGACY="torn-down=gone"
+
+# _cm_jq_words <words> <separator>: the words as jq string literals joined by the separator ("gone", "repurposed").
+_cm_jq_words() {
+  local w out="" sep=""
+  for w in $1; do out="$out$sep\"$w\""; sep="$2"; done
+  printf '%s' "$out"
+}
+
+# _cm_jq_legacy_map: CM_STATES_LEGACY as a jq object literal, {"torn-down": "gone"}.
+_cm_jq_legacy_map() {
+  local p out="" sep=""
+  for p in $CM_STATES_LEGACY; do out="$out$sep\"${p%%=*}\": \"${p#*=}\""; sep=", "; done
+  printf '{%s}' "$out"
+}
+
 # ---- dead ledger records ----------------------------------------------------------------------
 # A finished record (state gone or repurposed, or the old spelling torn-down) is dead: it holds no
 # terminal handle and is ignored when a worktree path is matched. CM_JQ_STATE_DEFS puts the jq
-# definition `cm_state_dead` in front of a jq program:
+# definitions in front of a jq program:
 #   jq "$CM_JQ_STATE_DEFS"' .workers[] | select((.state // "running") | cm_state_dead | not)'
+#   cm_state_norm   a legacy spelling becomes its state, anything else is unchanged
+#   cm_state_dead   true for gone, repurposed and a legacy spelling of one (torn-down)
 # shellcheck disable=SC2034  # read by lane-handles.sh
-CM_JQ_STATE_DEFS='def cm_state_dead: type == "string" and IN("gone", "repurposed", "torn-down"); '
+CM_JQ_STATE_DEFS="def cm_state_norm: if type == \"string\" then ($(_cm_jq_legacy_map)[.] // .) else . end; def cm_state_dead: cm_state_norm as \$s | (\$s | type) == \"string\" and (\$s | IN($(_cm_jq_words "$CM_STATES_DEAD" ", "))); "
+
+# CM_JQ_NAME_DEFS: the closed TYPE TABLE of a worker row and the one predicate for a name, as jq definitions (references/input-contract.md, rule 12). Put it in front
+# of a jq program, after CM_JQ_STATE_DEFS when the program needs both:
+#   cm_row_types / cm_live_types / cm_health_types  every field a script reads from a worker row, from its `live` object and from its `health` object, with the ONE JSON
+#                     type it may have: string, boolean, object, array, count (a whole number, 0 or more), time (text or a number), text (any string, blank or multi-line
+#                     allowed). Absent or null is allowed (rows omit most of them). Any other type is UNKNOWN: `jq -r` prints an array as its text, a joining reader
+#                     joins it, the string "true" is not true.
+#   cm_row_typed_ok   true for a worker row (and its live and health objects) every present field of which has the type the table says
+#   cm_name_ok        true for a string with no control character (NUL, TAB, VT, ESC, NEL ...) and no line or paragraph separator (U+2028, U+2029). Such a character is what a
+#                     shell variable, a command substitution (it drops NUL and a trailing newline), a line-per-row list or `read` loses, trims or splits on, so two names
+#                     that differ only by one would be read as the same row or host. It is the same test as `iv_oneline` in scripts/input-view.jq.
+#   cm_strip          the string with every such character removed (what a reader that drops them would see)
+#   cm_val_ok         true for a value that is not a string, or is a plain one
+#   cm_row_names_ok   true for a worker row none of whose string fields (the table, live and health included) holds one
+#   cm_row_fields_ok  cm_row_names_ok and cm_row_typed_ok: the one gate a program passes before it acts on a row
+# shellcheck disable=SC2016  # a jq program
+CM_JQ_NAME_DEFS='def cm_row_types: {host: "string", path: "string", worktree: "string", worktreePath: "string", worktreeId: "string", lane: "string", terminal: "string", parent: "string", state: "string", sessionId: "string", agent: "string", model: "string", effort: "string", beadsEpic: "string", kind: "string", asleepAt: "string", asleepFrom: "string", lastStopCause: "string", lastStopAt: "string", terminalRefreshedAt: "string", terminalChurnAt: "string", standing: "boolean", adopted: "boolean", shouldRun: "boolean", resumeAttempts: "count", nudges: "count", loopIntervalMin: "count", health: "object", stopHistory: "array", lastNudgeAt: "string", updatedAt: "string", displayName: "string", lastComment: "text", blockedQuestion: "text", task: "text", current: "text"}; def cm_live_types: {sessionId: "string", agent: "string", runtime: "string", model: "string", effort: "string", handle: "string", host: "string", sessionSource: "string", pid: "count", bypass: "boolean", lastTranscriptAt: "time", checkedAt: "time"}; def cm_health_types: {word: "string", paneState: "string", stopFromHealthy: "boolean", healthySince: "time", lastResumeAt: "time", paneSince: "time", checkedAt: "time", meaning: "text"}; def cm_type_is($t): if $t == "count" then (type == "number" and . >= 0 and . == floor) elif $t == "time" then (type == "string" or type == "number") elif $t == "text" then type == "string" else type == $t end; def cm_typed_in($t): . as $o | ($t | to_entries | all(. as $e | ($o[$e.key] == null) or ($o[$e.key] | cm_type_is($e.value)))); def cm_row_typed_ok: . as $r | ($r | type) == "object" and cm_typed_in(cm_row_types) and ($r.live == null or (($r.live | type) == "object" and ($r.live | cm_typed_in(cm_live_types)))) and ($r.health == null or (($r.health | type) == "object" and ($r.health | cm_typed_in(cm_health_types)))); def cm_name_ok: type == "string" and (test("\\p{Cc}|\\p{Zl}|\\p{Zp}") | not);'
+CM_JQ_NAME_DEFS="$CM_JQ_NAME_DEFS"' def cm_strip: gsub("\\p{Cc}|\\p{Zl}|\\p{Zp}"; ""); def cm_val_ok: (type != "string") or cm_name_ok;'
+CM_JQ_NAME_DEFS="$CM_JQ_NAME_DEFS"' def cm_row_names_ok: type == "object" and (. as $r | ([ cm_row_types | to_entries[] | select(.value == "string") | $r[.key] ] + [ ($r.live | objects) as $l | cm_live_types | to_entries[] | select(.value == "string") | $l[.key] ] + [ ($r.health | objects) as $hh | cm_health_types | to_entries[] | select(.value == "string") | $hh[.key] ]) | all(cm_val_ok)); def cm_row_fields_ok: cm_row_names_ok and cm_row_typed_ok;'
 
 # CM_JQ_CLASS_PHRASE: `class_phrase`, true for a drive.delegated_classes fragment that may stand for one class phrase:
 # it compiles, matches no empty text, and has no wildcard (an unescaped dot, \w \W \S \D \N \X \O \H \R), no negated
@@ -1238,4 +1290,228 @@ cm_sb_collect() {
              elif $rc == 124 or $rc == 142 then "stack scan timed out"
              else "stack scan did not finish (exit \($rc))" end),
      docker: .docker, truncated: $tr, worktrees: .worktrees, stacks: .stacks}'
+}
+
+# ---- typed input boundary: repeated keys and the ledger version (references/input-contract.md) ----------------------------------------
+# The ledger, and every document or CLI reply a decision reads, is raw input. A key written twice in one object is invisible to jq (it keeps the last),
+# so the document is scanned by scripts/jdupkeys (python3) on the same bytes that are parsed. Fails CLOSED: a scan that cannot run is an unreadable document.
+_CM_INPUT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# cm_input_dupkeys [file]: one JSON path per line for every object key written twice in the same object, at ANY depth and whatever the values
+# (scripts/jdupkeys scans the document itself: jq and `jq --stream` keep or lose one of two equal keys). Returns 0 when scanned
+# (nothing printed = no repeat), non-zero when the scan failed (the caller treats the document as unreadable; 2 from jdupkeys itself): no python3, no such file, not exactly one JSON
+# value, NaN, Infinity, a number that does not fit a double, a decimal that is not a whole number but rounds to one, or a lone surrogate escape.
+cm_input_dupkeys() {
+  local f="${1:-$(cm_ledger_path)}"
+  command -v python3 >/dev/null 2>&1 || return 2
+  python3 "$_CM_INPUT_DIR/jdupkeys" "$f"
+}
+
+# cm_ledger_schema_version [ledger]: the ledger's `schemaVersion`. Prints one word and returns:
+#   a positive integer  0  the version (the key ABSENT or null is version 1: a legacy ledger, read with today's legacy defaults for ABSENT keys)
+#   invalid             1  the key is present but is not a positive whole number (text, 0, a negative, a fraction, true, an object, a list):
+#                          an invalid value is invalid in EVERY version, so a caller holds or refuses and never reads it as 1
+#   unreadable          2  no such file, not JSON, not one object, a scan that fails, or a decimal that is not a whole number but rounds to one anywhere in the ledger
+#                          (a schemaVersion written twice is `invalid`: jq would keep only the last)
+# A reader of the boundary applies a legacy default for an ABSENT key only while this prints 1.
+cm_ledger_schema_version() {
+  local L="${1:-$(cm_ledger_path)}" out snap dups
+  [ -r "$L" ] || { printf 'unreadable\n'; return 2; }
+  # the bytes are read ONCE into a private snapshot and scanned, as the typed view does: a scan that fails, or a decimal that is not a whole number but
+  # rounds to one, is an unreadable ledger; a schemaVersion written twice is invalid (jq would keep only the last)
+  snap="$(mktemp "${TMPDIR:-/tmp}/cm-version.XXXXXX")" || { printf 'unreadable\n'; return 2; }
+  if ! cat -- "$L" > "$snap" 2>/dev/null || ! dups="$(cm_input_dupkeys "$snap")"; then rm -f -- "$snap"; printf 'unreadable\n'; return 2; fi
+  if ! out="$(jq -r -s --arg dups "$dups" 'if length != 1 or (.[0] | type) != "object" then "unreadable"
+      elif ($dups | split("\n") | index("[\"schemaVersion\"]")) != null then "invalid"
+      else .[0].schemaVersion as $v
+        | if $v == null then "1"
+          elif ($v | type) == "number" and $v >= 1 and $v == ($v | floor) and $v < 1000000 then ($v | floor | tostring)
+          else "invalid" end end' "$snap" 2>/dev/null)"; then rm -f -- "$snap"; printf 'unreadable\n'; return 2; fi
+  rm -f -- "$snap"
+  printf '%s\n' "$out"
+  case "$out" in unreadable) return 2 ;; invalid) return 1 ;; esac
+  return 0
+}
+
+# ---- typed input boundary: the bash adapter (scripts/input-view.jq, references/input-contract.md) --------------------------------------
+# raw ledger -> scripts/input-view.jq (typed view + decisions) -> these functions -> a program acts only on permit:true.
+# Fails CLOSED: a jq crash, a missing module or helper, a scan that fails or an unreadable file is a refusal, never a permit.
+# No program calls these yet: moving the programs onto the boundary is a later change.
+
+# cm_input_cfg: the one cfg JSON the module reads ({states, dead, noresume, legacy, types}; types is the closed type table of the worker row, its live object and its health object), built from the CM_STATES_* lists and CM_JQ_NAME_DEFS above.
+cm_input_cfg() {
+  jq -nc --arg all "$CM_STATES_ALL" --arg dead "$CM_STATES_DEAD" --arg nr "$CM_STATES_NORESUME" --arg leg "$CM_STATES_LEGACY" "$CM_JQ_NAME_DEFS"'
+    def w: split(" ") | map(select(. != ""));
+    {states: ($all | w), dead: ($dead | w), noresume: ($nr | w),
+     legacy: ($leg | w | map(split("=") | {key: .[0], value: .[1]}) | from_entries),
+     types: {row: cm_row_types, live: cm_live_types, health: cm_health_types}}'
+}
+
+# cm_input_bundle [ledger]: reads the ledger ONCE into a private snapshot and builds, from those same bytes, {readable, doc, dups}. The parse and
+# the duplicate-key scan never see two different reads. Any failure (read, scan, parse, not exactly one object) is readable:false, rc 1.
+cm_input_bundle() {
+  local f="${1:-$(cm_ledger_path)}" snap dups out
+  snap="$(mktemp "${TMPDIR:-/tmp}/cm-input.XXXXXX")" || { printf '{"readable":false,"doc":null,"dups":[]}\n'; return 1; }
+  if cat -- "$f" > "$snap" 2>/dev/null \
+     && dups="$(cm_input_dupkeys "$snap")" \
+     && dups="$(printf '%s' "$dups" | jq -sc '.' 2>/dev/null)" \
+     && out="$(jq -c -s --argjson dups "$dups" 'if length == 1 and (.[0] | type) == "object" then {readable: true, doc: .[0], dups: $dups} else {readable: false, doc: null, dups: []} end' "$snap" 2>/dev/null)"; then
+    rm -f -- "$snap"
+    printf '%s\n' "$out"
+    [ "$(printf '%s' "$out" | jq -r '.readable' 2>/dev/null)" = true ]
+    return
+  fi
+  rm -f -- "$snap"
+  printf '{"readable":false,"doc":null,"dups":[]}\n'; return 1
+}
+
+# cm_input_view_of <bundle-json>: the typed view (envelope cm.input/v1) of a bundle from cm_input_bundle, on stdout. rc 1 when the bundle is not readable.
+cm_input_view_of() {
+  local bundle="${1:-}" cfg
+  cfg="$(cm_input_cfg)" || { printf '{"schema":"cm.input/v1","readable":false}\n'; return 1; }
+  printf '%s' "$bundle" | jq -c -L "$_CM_INPUT_DIR" --argjson cfg "$cfg" \
+    'include "input-view"; .dups as $d | (if .readable then .doc else null end) | iv_apply_dups(iv_view(.; $cfg); $d)' 2>/dev/null \
+    || { printf '{"schema":"cm.input/v1","readable":false}\n'; return 1; }
+  [ "$(printf '%s' "$bundle" | jq -r '.readable' 2>/dev/null)" = true ]
+}
+
+# cm_input_view [ledger]: the typed view of the ledger, read once (cm_input_bundle). Returns 0 when read, 1 when the file is unreadable, the scan
+# failed or the file is not one JSON object (the view then has readable:false, so every decision on it refuses).
+cm_input_view() {
+  local f="${1:-$(cm_ledger_path)}" bundle
+  bundle="$(cm_input_bundle "$f")" || { cm_input_view_of "$bundle"; return 1; }
+  cm_input_view_of "$bundle"
+}
+
+# _cm_input_refusal <action> <target> <why>: a refusal decision as JSON; every value goes through jq --arg, so a hostile id cannot break it.
+_cm_input_refusal() {
+  jq -nc --arg a "${1:-}" --arg t "${2:-}" --arg w "${3:-}" '{action: $a, target: $t, permit: false, reasons: [$w], snapshot: null}' 2>/dev/null \
+    || printf '{"permit":false,"reasons":["refused"],"snapshot":null}\n'
+}
+
+# _cm_input_args [args...]: the ONE argument parser of cm_input_decide and cm_input_revalidate. The flags --host H and --view-file F may stand in ANY position among the
+# arguments; the one positional is the ledger. Refused, never guessed: a flag with no value (the last argument, or followed by another of our flags), an empty value, a
+# flag given twice, an unknown option, an empty ledger, and a SECOND positional. Result in _CMI_HOST (default local), _CMI_VF, _CMI_LEDGER (empty = the default ledger).
+# Returns 1 with the reason in _CMI_ERR.
+_cm_input_args() {
+  local sh=0 sv=0 sp=0 flag
+  _CMI_HOST=local; _CMI_VF=""; _CMI_LEDGER=""; _CMI_ERR=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --host|--view-file)
+        flag="$1"
+        # the next argument is the value, unless it is another flag of ours: then this flag has none
+        if [ $# -lt 2 ]; then _CMI_ERR="the option $flag needs a value"; return 1; fi
+        case "$2" in --host|--view-file) _CMI_ERR="the option $flag needs a value"; return 1 ;; esac
+        case "$flag" in
+          --host) [ "$sh" = 0 ] || { _CMI_ERR="the option --host is given twice"; return 1; }; sh=1
+                  case "$2" in ''|*[[:space:]]*) _CMI_ERR="the host this decision is for is empty or has a space"; return 1 ;; esac
+                  _CMI_HOST="$2" ;;
+          --view-file) [ "$sv" = 0 ] || { _CMI_ERR="the option --view-file is given twice"; return 1; }; sv=1
+                  [ -n "$2" ] || { _CMI_ERR="the option --view-file needs a non-empty value"; return 1; }
+                  _CMI_VF="$2" ;;
+        esac
+        shift 2 ;;
+      -*) _CMI_ERR="unknown option $1"; return 1 ;;
+      *)
+        [ "$sp" = 0 ] || { _CMI_ERR="an extra argument: $1 (the ledger is already $_CMI_LEDGER)"; return 1; }; sp=1
+        [ -n "$1" ] || { _CMI_ERR="the ledger path is empty"; return 1; }
+        _CMI_LEDGER="$1"; shift ;;
+    esac
+  done
+  return 0
+}
+
+# _cm_input_decide_jq <action> <target> <host> [view file...]: the decision for ONE view document, read from the files given or from stdin. The view documents are
+# slurped and counted BEFORE iv_decide runs, so a second document, trailing garbage and empty input are jq failures that print nothing (jq -s parses the whole
+# input before it emits), never a decision made from the first document. A view FILE is handed to jq as it is, never read through a command substitution: that drops
+# NUL bytes, and text that jq rejects would become a valid view. The caller reads this function's exit status: a non-empty output is not proof it worked.
+_cm_input_decide_jq() {
+  local action="$1" target="$2" host="$3"
+  shift 3
+  jq -c -s -L "$_CM_INPUT_DIR" --arg a "$action" --arg t "$target" --arg h "$host" \
+    'include "input-view"; (if length == 1 and (.[0] | type) == "object" then .[0] else error("not exactly one view document") end) | iv_decide($a; .; $t; {host: $h})' "$@" 2>/dev/null
+}
+
+# cm_input_decide <action> <target> [--host H] [--view-file F] [ledger]: the decision JSON {action,target,permit,reasons,snapshot} on stdout.
+# action: sleep | nudge | resume | capacity_kill | teardown. Returns 0 when permit is true, 1 when refused. A failure to compute the decision prints a
+# refusal and returns 2: the caller must not act on 2 either. Fail closed on EVERY failure: the exit status of the jq that decides is read (a non-empty
+# output is not proof: jq prints the decision for the first document and then fails on a malformed tail), the view must be exactly ONE document (a second
+# document, trailing garbage, an empty file and a NUL byte all refuse), and a view producer that failed (cm_input_view) never permits. The flags may stand
+# anywhere; a flag with no value, an unknown flag and a second positional are refused (_cm_input_args, shared with cm_input_revalidate).
+cm_input_decide() {
+  local action="${1:-}" target="${2:-}" host vf f out view vrc=0 jrc
+  [ $# -ge 2 ] || { _cm_input_refusal "$action" "$target" "usage: cm_input_decide <action> <target> [--host H] [--view-file F] [ledger]"; return 2; }
+  shift 2
+  _cm_input_args "$@" || { _cm_input_refusal "$action" "$target" "$_CMI_ERR"; return 2; }
+  host="$_CMI_HOST"; vf="$_CMI_VF"; f="${_CMI_LEDGER:-$(cm_ledger_path)}"
+  if [ -n "$vf" ]; then out="$(_cm_input_decide_jq "$action" "$target" "$host" "$vf")"; jrc=$?
+  else
+    # the view is read into a variable so the producer's own status is kept (a pipe would hide it)
+    view="$(cm_input_view "$f")" || vrc=$?
+    out="$(printf '%s\n' "$view" | _cm_input_decide_jq "$action" "$target" "$host")"; jrc=$?
+  fi
+  if [ "$jrc" != 0 ] || [ -z "$out" ]; then _cm_input_refusal "$action" "$target" "the decision could not be computed"; return 2; fi
+  # the answer is one object with a boolean permit, or it is not a decision
+  printf '%s' "$out" | jq -es 'length == 1 and (.[0] | type) == "object" and (.[0].permit | type) == "boolean"' >/dev/null 2>&1 \
+    || { _cm_input_refusal "$action" "$target" "the decision could not be computed"; return 2; }
+  # a failed view producer prints a view with readable:false, which iv_decide refuses with its reason (kept, rc 1); a permit from it is refused outright
+  if [ "$vrc" != 0 ] && printf '%s' "$out" | jq -e '.permit == true' >/dev/null 2>&1; then _cm_input_refusal "$action" "$target" "the decision could not be computed: the view could not be read"; return 2; fi
+  printf '%s\n' "$out"
+  printf '%s' "$out" | jq -e '.permit == true' >/dev/null 2>&1
+}
+
+# cm_input_revalidate <decision-json> [--host H] [--view-file F] [ledger]: decide again NOW and compare. Returns 0 only when it is still permitted, is for the
+# SAME action and the SAME target, and the snapshot is unchanged since <decision-json>. What is printed is always the truth: permit:true only on return 0; a
+# changed snapshot prints permit:false with the reason. Use it right before acting, under whatever lock the action takes. The action and the target are read from
+# the decision with `read -d ''`, which keeps every byte: a command substitution would drop a trailing newline and turn the target "T<newline>" into the row "T".
+cm_input_revalidate() {
+  local prior="${1:-}" a="" t=""
+  shift || true
+  # a NUL in the action or target cannot be held in a shell variable: such a decision is refused (the filter prints nothing for it)
+  IFS= read -r -d '' a < <(printf '%s' "$prior" | jq -j '.action | strings | select(contains("\u0000") | not)' 2>/dev/null) || true
+  IFS= read -r -d '' t < <(printf '%s' "$prior" | jq -j '.target | strings | select(contains("\u0000") | not)' 2>/dev/null) || true
+  _cm_input_revalidate_for "$a" "$t" "$prior" "$@"
+}
+# _cm_input_revalidate_for <action> <target> <decision-json> [args as cm_input_decide]: the body of cm_input_revalidate with the action and target given as shell
+# variables. The comparison is done in jq: the prior and the fresh decision must both be for exactly <action> and <target>, the prior must have permitted, and the
+# snapshots must be equal.
+_cm_input_revalidate_for() {
+  local a="$1" t="$2" prior="$3" now rc
+  shift 3
+  [ -n "$a" ] && [ -n "$t" ] || { _cm_input_refusal "$a" "$t" "no prior decision to revalidate"; return 2; }
+  # the prior decision is exactly one object; a valid first document followed by text that does not parse is not a decision
+  printf '%s' "$prior" | jq -es 'length == 1 and (.[0] | type) == "object"' >/dev/null 2>&1 || { _cm_input_refusal "$a" "$t" "the prior decision is not exactly one readable document"; return 2; }
+  now="$(cm_input_decide "$a" "$t" "$@")"; rc=$?
+  if [ "$rc" != 0 ]; then printf '%s\n' "$now"; return 1; fi
+  if jq -en --argjson a "$prior" --argjson b "$now" --arg act "$a" --arg tgt "$t" \
+       '$a.permit == true and $a.snapshot == $b.snapshot and $a.action == $act and $a.target == $tgt and $b.action == $act and $b.target == $tgt' >/dev/null 2>&1; then
+    printf '%s\n' "$now"; return 0
+  fi
+  printf '%s' "$now" | jq -c '.permit = false | .reasons += ["the ledger changed since the decision (snapshot differs)"]' 2>/dev/null \
+    || _cm_input_refusal "$a" "$t" "the ledger changed since the decision"
+  return 1
+}
+
+# cm_input_live <terminals|worktrees>: a live reply (Orca / plugly / ssh, JSON on stdin) as ONE typed envelope on stdout, always: empty input, text that
+# is not JSON, and every wrong shape give {complete:false, reason, ...} and rc 1; rc 0 only for a complete list. Callers read `.complete` and `.terminals` /
+# `.worktrees` (agent: agent|shell|unknown per terminal); an incomplete list is never read as an empty one.
+cm_input_live() {
+  local kind="${1:-}" cfg out snap dups rc
+  case "$kind" in terminals|worktrees) ;; *) printf '{"complete":false,"reason":"usage: cm_input_live <terminals|worktrees>"}\n'; return 1 ;; esac
+  cfg="$(cm_input_cfg)" || { printf '{"complete":false,"reason":"cfg unreadable"}\n'; return 1; }
+  # the reply is read ONCE into a private file; the repeated-key scan and the parse see the same bytes. A scan that fails (not JSON, empty, no python3)
+  # is an unreadable reply, never a complete one.
+  snap="$(mktemp "${TMPDIR:-/tmp}/cm-live.XXXXXX")" || { printf '{"complete":false,"reason":"no temp file"}\n'; return 1; }
+  # the copy status counts: a copy that read part of the reply and then failed is not the reply (the bytes it got may scan and parse as a complete list)
+  if cat > "$snap" 2>/dev/null; then rc=0; else rc=1; fi
+  if [ "$rc" = 0 ]; then dups="$(cm_input_dupkeys "$snap")"; rc=$?; fi
+  if [ "$rc" = 0 ]; then dups="$(printf '%s' "$dups" | jq -sc '.' 2>/dev/null)" || rc=2; fi
+  if [ "$rc" != 0 ]; then rm -f -- "$snap"; printf '{"name":"%s","complete":false,"reason":"the reply could not be read or scanned for repeated keys","rows":[],"%s":[]}\n' "$kind" "$kind"; return 1; fi
+  out="$(jq -c -R -s -L "$_CM_INPUT_DIR" --argjson cfg "$cfg" --argjson dups "$dups" --arg k "$kind" 'include "input-view";
+      (try fromjson catch null) as $r | if $k == "terminals" then iv_live_terminals($r; $cfg; $dups) else iv_live_worktrees($r; $cfg; $dups) end' "$snap" 2>/dev/null)" || out=""
+  rm -f -- "$snap"
+  [ -n "$out" ] || { printf '{"complete":false,"reason":"the reply could not be read"}\n'; return 1; }
+  printf '%s\n' "$out"
+  [ "$(printf '%s' "$out" | jq -r '.complete' 2>/dev/null)" = true ]
 }
