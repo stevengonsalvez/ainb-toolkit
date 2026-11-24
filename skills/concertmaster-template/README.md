@@ -31,6 +31,7 @@ those keys; nothing in them names an org, repo, host, person or chat.
 | `references/lanes.md` | brief templates with `{{placeholders}}` and a placeholder-to-config map |
 | `references/overlay.md` | the project overlay contract: hook points, `references/project-local.md` format, overlay versus toolkit PR |
 | `references/ledger.md` | ledger, roster and outbox schema |
+| `references/input-contract.md` | the typed input boundary (`cm.input/v1`): roles, rules, field dictionary, decisions, numbers, migration manifest, what is not in it yet |
 | `references/intake.md` | chat intake procedure; wacli is one adapter |
 | `references/resume.md` | restart recovery |
 | `references/hooks-install.md` | optional telemetry hooks |
