@@ -1,16 +1,21 @@
 #!/usr/bin/env bash
+# cm-test: rm-cleanup (its EXIT trap rm -rf-s its own mktemp dir; CM_TEST_KEEP_TMP=1 keeps it)
 # shellcheck disable=SC2015  # "A && ok || bad": ok never fails
 # msg-guard-hook.sh test: feeds tool calls to the hook as Claude Code does and asserts deny
 # (SendMessage to a named session, a cc-socks socket or a broadcast) or allow.
 #
 #   scripts/test/msg-guard-hook.sh        # exit 0 when every case passes
 set -uo pipefail
-HOOK="$(cd "$(dirname "$0")/../hooks" && pwd)/msg-guard-hook.sh"
+SCRIPTS="$(cd "$(dirname "$0")/.." && pwd)"
 fail=0
 export CM_CONFIG=/nonexistent CM_PATH_MATCH="/acme-app/" CM_ORG=acme
 unset CM_ALLOW_SENDMESSAGE CM_LEDGER CM_SELF_WORKTREE
 ROOT="$(mktemp -d "${TMPDIR:-/tmp}/cm-msgguard.XXXXXX")" || exit 1
-trap 'rm -rf -- "${ROOT:?}"' EXIT
+trap '[ "${CM_TEST_KEEP_TMP:-}" = 1 ] && echo "cm-test: CM_TEST_KEEP_TMP set, kept $ROOT" >&2 || rm -rf -- "${ROOT:?}"' EXIT
+# run a copy with no config.yaml beside it: lib.sh falls through from a missing CM_CONFIG to ../config.yaml, which in a
+# project copy is the project's own config (another self_name), so the cases stay hermetic only from here
+mkdir -p "$ROOT/noproj/scripts/hooks"; cp "$SCRIPTS/lib.sh" "$ROOT/noproj/scripts/"; cp "$SCRIPTS/hooks/msg-guard-hook.sh" "$ROOT/noproj/scripts/hooks/"
+HOOK="$ROOT/noproj/scripts/hooks/msg-guard-hook.sh"
 # the per-session record of spawned subagent names lives under TMPDIR: a private one per run
 export CM_HOME="$ROOT/home" TMPDIR="$ROOT/tmp"; mkdir -p "$CM_HOME" "$TMPDIR"
 CWD="${CWD:-/home/user/orca/workspaces/acme-app/lane}"
