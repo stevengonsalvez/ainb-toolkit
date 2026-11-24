@@ -188,6 +188,14 @@ printf '%s' "$CM_CFG_JSON" | jq -r --slurpfile c "$TMP/counts.json" --slurpfile 
     | (($cn - $rn)) as $miss | (($rn - $cn - ["local"])) as $extra
     | select(($miss | length) > 0 and ($extra | length) > 0)
     | "(host names)\tconfig hosts \($miss | join(",")) were not read, read hosts \($extra | join(",")) are not in hosts.per_host: check the hosts.per_host names against the fleet host list" ),
+  # an old same-machine entry in the map form ({ build-box: [build-box-2] }, the old example): once per entry whose
+  # hosts report the same non-zero count, while hosts.same_machine is not set
+  ( select($cfg.hosts.same_machine == null and ($cfg.health.host_aliases | type) == "object")
+    | $cfg.health.host_aliases | to_entries[] | .key as $k | ([.key] + [.value | if type == "array" then .[] else . end | strings]) as $g
+    | first([ range(0; $cnt | length) as $i | range($i + 1; $cnt | length) as $j | $cnt[$i] as $x | $cnt[$j] as $y
+              | select($x.count > 0 and $x.count == $y.count and ($g | index($x.host)) != null and ($g | index($y.host)) != null)
+              | [$x.host, $y.host, $x.count] ][])
+    | "(config)\thealth.host_aliases.\($k) names \(.[0]) and \(.[1]), which both report \(.[2]) agent terminals: health.host_aliases is now only the names hostname -s answers as, so they are no longer treated as one machine; if they are, list them in hosts.same_machine" ),
   ( select(($legacy | length) > 0)
     | "(config)\thealth.host_aliases as a list of name lists is deprecated: move it to hosts.same_machine (health.host_aliases is a map of host to the names hostname -s answers as)" )
 ' >> "$TMP/warn.tsv" 2>/dev/null || printf '%s\t%s\n' "(warnings)" "the same-machine check could not run" >> "$TMP/warn.tsv"

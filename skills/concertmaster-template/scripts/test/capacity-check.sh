@@ -318,6 +318,29 @@ CM_CONFIG="$ROOT/alias-list.yaml" run "$S" --no-candidates
 check "health.host_aliases as a list of name lists (deprecated): the same WARN plus a deprecation row" 'grep -q "ONE machine (health.host_aliases, deprecated)" <<<"$OUT" && grep -q "(config): health.host_aliases as a list of name lists is deprecated: move it to hosts.same_machine" <<<"$OUT"' "$OUT"
 CM_CONFIG="$ROOT/alias-map.yaml" run "$S" --no-candidates
 check "health.host_aliases as a map (names hostname -s answers as) is not read as one machine" '! grep -q "ONE machine" <<<"$OUT" && ! grep -q "deprecated" <<<"$OUT"' "$OUT"
+# the old example put a same-machine pair in the map form ({ build-box: [build-box-2] }): with no hosts.same_machine and
+# both hosts at the same count (29 each), one row per entry points at hosts.same_machine instead of the WARN going silent
+cat > "$ROOT/oldmap.yaml" <<'CFG'
+schema: concertmaster.config/v1
+worktrees: { path_match: "/acme/", self_name: concertmaster }
+health:
+  host_aliases: { build-box: [build-box-2], other-box: [other-vm] }
+hosts:
+  per_host:
+    build-box:   { maxWorkers: 40 }
+    build-box-2: { maxWorkers: 40 }
+CFG
+mkn() { local h="$1" pre="$2" n="$3" i rows=(); for ((i = 1; i <= n; i++)); do rows+=("$(term "$pre$i" "$W/dev-$pre$i" '"claude"')"); done; putt "$h" "${rows[@]}"; }
+hostlist build-box build-box-2; mkn build-box bb 29; mkn build-box-2 bc 29
+CM_CONFIG="$ROOT/oldmap.yaml" run "$S" --no-candidates
+check "old map-form same-machine entry, both hosts at 29: one row pointing at hosts.same_machine" 'grep -q "(config): health.host_aliases.build-box names build-box and build-box-2, which both report 29 agent terminals: health.host_aliases is now only the names hostname -s answers as, so they are no longer treated as one machine; if they are, list them in hosts.same_machine" <<<"$OUT" && [ "$(grep -o "health.host_aliases.build-box names" <<<"$OUT" | wc -l | tr -d " ")" = 1 ] && ! grep -q "other-box names" <<<"$OUT"' "$OUT"
+yq '.hosts.same_machine = [["build-box", "build-box-2"]]' "$ROOT/oldmap.yaml" > "$ROOT/oldmap-sm.yaml"
+CM_CONFIG="$ROOT/oldmap-sm.yaml" run "$S" --no-candidates
+check "...with hosts.same_machine set: the same-machine WARN, no map-form row" 'grep -q "ONE machine (hosts.same_machine)" <<<"$OUT" && ! grep -q "health.host_aliases.build-box names" <<<"$OUT"' "$OUT"
+mkn build-box-2 bc 28
+CM_CONFIG="$ROOT/oldmap.yaml" run "$S" --no-candidates
+check "...and with different counts (29 and 28): no map-form row" '! grep -q "health.host_aliases.build-box names" <<<"$OUT"' "$OUT"
+hostlist host-a host-b   # back to the pair the cases below read
 cat > "$ROOT/two.yaml" <<'CFG'
 schema: concertmaster.config/v1
 worktrees: { path_match: "/acme/", self_name: concertmaster }
