@@ -533,7 +533,8 @@ check "(10c) remote, no row matched: unknown, terminal count 1 but no listed row
 rm -f -- "${STUB:?}"/tlcount-*
 : > "$STUB/calls.log"; rm -rf -- "${CM_HOME:?}/resume.attempts" "${CM_HOME:?}/resume.lock"
 OUT="$("$SCRIPTS/resume.sh" --dry-run 2>/dev/null)"; CALLS="$(cat "$STUB/calls.log")"
-check "(8) 12 rows on the local host: one local terminal list call in the census" '[ "$(printf "%s\n" "$CALLS" | grep "^terminal list" | grep -vc -- "--environment")" = 1 ]'
+NLOCAL="$(jq '[.workers[] | select((.host // "local") == "local")] | length' "$CM_HOME/ledger.json")"
+check "(8) $NLOCAL rows on the local host (counted from the fixture ledger): one local terminal list call in the census" '[ "$(printf "%s\n" "$CALLS" | grep "^terminal list" | grep -vc -- "--environment")" = 1 ]'
 
 # (11) a refused host selector (cm_cli_host_into fails for the host) must never fall back to the local host: the lane is
 # unknown, and no worktree ps and no terminal create runs, though the local census holds a dead worktree at its path.
