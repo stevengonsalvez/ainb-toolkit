@@ -401,7 +401,7 @@ ci:
 # ledger.json, ledger.bak/ and handovers/, and only after scripts/scan-secrets.sh finds nothing in
 # that exact set; mc.env, salvage/, *.env, secrets, tmp.* and outbox* never leave the host.
 backup:
-  host: ""                         # [script] REQUIRED, no default: the owner chooses the target host (ssh alias, BatchMode, a host other than this one). Unset: the script exits 2
+  host: backup-peer                # [script] REQUIRED (config-check.sh fails when empty), no default: the owner chooses the target host (ssh alias, BatchMode, a host other than this one). Unset: the script exits 2
   remote_dir: backups/concertmaster   # [script] directory on the peer, relative to its home
   keep: 7                          # [script] dated generations kept on the peer
   max_age_hours: 50                # [script] scripts/backup-stale.sh alerts when no backup finished for this long (default 50 h: one missed night is quiet, two alert)
