@@ -20,7 +20,7 @@ before a worktree goes: its local Supabase stack and leftover codex processes.
 `scripts/backup-offhost.sh` copies the part of `$CM_HOME` that cannot be rebuilt from git to a peer
 host over ssh + rsync, nightly. Peer and directory come from `config.yaml` (`backup.host`,
 `backup.remote_dir`, `backup.keep`). **The owner chooses the target host: `backup.host` has no
-real default (`config.example.yaml` holds a placeholder name).** It is required: `scripts/config-check.sh`
+default (`config.example.yaml` leaves it empty).** It is required: `scripts/config-check.sh`
 fails on an empty or missing `backup.host`, so boot stops until it is set (a host lost with an empty one
 took its ledger with it, with no copy anywhere). A config with no host makes the script exit 2 with
 `backup.host is not set: the owner chooses the target host`. Nothing runs nightly until the cron

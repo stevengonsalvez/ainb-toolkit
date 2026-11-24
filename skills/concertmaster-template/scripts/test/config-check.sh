@@ -31,7 +31,13 @@ doctor() {
 # variant <name> <sed expression>: the example config with one edit
 variant() { sed -e "$2" "$EXAMPLE" > "$ROOT/$1.yaml"; }
 
-doctor "config.example.yaml passes every check"                 "$EXAMPLE" 0 'config-check: 0 failed'
+# The example leaves backup.host empty on purpose (the owner picks the peer): a verbatim copy fails on it and on
+# nothing else. Every other case runs on the example with a peer set.
+doctor "config.example.yaml as shipped fails on backup.host"    "$EXAMPLE" 1 'FAIL backup.host is empty or missing: set it to the ssh alias of another host'
+doctor "...and on nothing else"                                 "$EXAMPLE" 1 'config-check: 1 failed'
+sed -e 's/^  host: "" /  host: backup-peer /' "$EXAMPLE" > "$ROOT/example.yaml"
+EXAMPLE="$ROOT/example.yaml"
+doctor "the example with a backup peer passes every check"      "$EXAMPLE" 0 'config-check: 0 failed'
 printf 'schema: concertmaster.config/v1\n' > "$ROOT/bare.yaml"
 doctor "a bare config is missing the required keys"             "$ROOT/bare.yaml" 1 'FAIL project.name'
 
@@ -43,7 +49,7 @@ variant bad-schema 's/concertmaster.config\/v1/other/'
 doctor "wrong schema fails"                                     "$ROOT/bad-schema.yaml" 1 'FAIL schema'
 variant no-self 's/^  self_name: .*/  self_gone: x/'
 doctor "missing worktrees.self_name fails"                      "$ROOT/no-self.yaml" 1 'FAIL worktrees.self_name'
-variant empty-backup 's/^  host: backup-peer .*/  host: ""/'
+variant empty-backup 's/^  host: backup-peer /  host: "" /'
 doctor "an empty backup.host fails and names the fix"           "$ROOT/empty-backup.yaml" 1 'FAIL backup.host is empty or missing: set it to the ssh alias of another host'
 variant no-backup '/^  host: backup-peer /d'
 doctor "a missing backup.host fails"                            "$ROOT/no-backup.yaml" 1 'FAIL backup.host is empty or missing'
