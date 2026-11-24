@@ -176,6 +176,9 @@ deploy:
   # fixed: merge, staging deploy, staging validate, only then production.
   ship_verb: .agents/skills/pr-sweep/verbs/ship.md
   production_tag_glob: "v*"        # delta = <last tag>..origin/main
+  # Where the delta migration files live: scripts/deploy-migration-check.sh reads the .sql files DIRECTLY in this
+  # directory (relative to the repo top, plain characters only). [script] Env CM_MIGRATIONS_DIR wins. Default supabase/migrations.
+  migrations_dir: supabase/migrations
   # Rails: any hit means ASK the owner, the window waits.
   rails:
     - name: destructive-migration
@@ -234,6 +237,10 @@ merge:
   command: "gh pr merge {pr} -R {org}/{repo} --merge"
   env_prefix: ""                   # e.g. a hook bypass variable, if your merge hook needs one
   strategy: merge                  # merge | squash | rebase
+  # A PR that touches deploy.migrations_dir runs scripts/deploy-migration-check.sh at the merge gate (references/lanes.md,
+  # pr-sweeper). Only these PR base branches are checked there; any other base: the pr-sweeper holds and asks.
+  migration_check:
+    bases: [main]
   gates:
     evidence: "node scripts/ci/evidence.mjs --pr {pr} --json"   # must report ready_value
     ready_value: MERGE_READY

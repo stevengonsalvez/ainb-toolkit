@@ -20,6 +20,7 @@ ROOT="$(mktemp -d "${TMPDIR:-/tmp}/cm-dmc-test.XXXXXX")" || { echo "cannot creat
 [ -n "$ROOT" ] && [ -d "$ROOT" ] || { echo "temp dir missing" >&2; exit 1; }
 trap '[ "${CM_TEST_KEEP_TMP:-}" = 1 ] && echo "cm-test: CM_TEST_KEEP_TMP set, kept $ROOT" >&2 || rm -rf -- "${ROOT:?}"' EXIT
 export HOME="$ROOT/home" CM_HOME="$ROOT/home" CM_CONFIG=/nonexistent
+unset CM_MIGRATIONS_DIR CM_DMC_WORKFLOWS CM_DMC_MAX_LOCK_MS CM_DMC_MAX_STATEMENT_MS   # the host's environment must not change a case
 mkdir -p "$HOME"
 PASS=0; FAIL=0
 ok() { PASS=$((PASS + 1)); printf 'PASS %s\n' "$1"; }
@@ -556,6 +557,114 @@ newrepo; addmig 88000000000002_a.sql "$(printf '%s\n%s %s = %s;\n%s\n' "$BG" "$S
 check "only statement_timeout in the window: exit 2" "$RC" 2; has "only statement_timeout: lock_timeout shown as missing" "$OUT" "lock_timeout=missing statement_timeout=30s"
 newrepo; addmig 88000000000002_a.sql "$(printf '%s\n%s %s = %s;\n%s\n' "$BG" "$SL" "$LK" "'3s'" "$CM")"; run
 check "only lock_timeout in the window: exit 2" "$RC" 2; has "only lock_timeout: statement_timeout shown as missing" "$OUT" "lock_timeout=3s statement_timeout=missing"
+# 39. the migrations directory is configurable (deploy.migrations_dir, env CM_MIGRATIONS_DIR); default supabase/migrations
+# otherrepo <dir>: like newrepo, but the old migration and the files under test live in <dir>
+otherrepo() {
+  N=$((N + 1)); D="$ROOT/r$N"; mkdir -p "$D/$1"
+  ( cd "$D" && git init -q . && printf -- '-- old\n' > "$1/88000000000001_old.sql" \
+    && git add . && git_q commit -q -m base ) >/dev/null
+  BASE="$(git -C "$D" rev-parse HEAD)"
+}
+# addat <dir> <file> <content>
+addat() { mkdir -p "$D/$1"; printf '%s\n' "$3" > "$D/$1/$2"; ( cd "$D" && git add . && git_q commit -q -m "add $2" ) >/dev/null; }
+# runenv <dir>: run with CM_MIGRATIONS_DIR set
+runenv() { OUT="$(cd "$D" && CM_MIGRATIONS_DIR="$1" bash "$SCRIPT" "$BASE" HEAD 2>&1)"; RC=$?; }
+otherrepo db/migrate; addat db/migrate 88000000000002_a.sql "$(guard "'3s'" "'30s'")"; addat supabase/migrations 88000000000003_b.sql "no guard here"; runenv db/migrate
+check "a custom directory: only its files are examined, exit 0" "$RC" 0
+has "a custom directory: its file is read" "$OUT" "ok db/migrate/88000000000002_a.sql"
+has "a custom directory: one file examined" "$OUT" "1 migration files examined"
+hasnt "a custom directory: the default directory is not read" "$OUT" "supabase/migrations"
+otherrepo db/migrate; addat db/migrate 88000000000002_a.sql "$(guard "'3s'" "'30s'")"; runenv db/migrate/
+check "a trailing slash on the directory is accepted" "$RC" 0; has "a trailing slash: the file is read" "$OUT" "ok db/migrate/88000000000002_a.sql"
+otherrepo db/migrate; addat db/migrate 88000000000002_a.sql "no guard here"; runenv db/migrate
+check "an unguarded file in a custom directory is a stop: exit 3" "$RC" 3
+otherrepo db/migrate; addat db/migrate/sub 88000000000002_a.sql "no guard here"; runenv db/migrate
+check "a file in a subdirectory of a custom directory is not examined: exit 0" "$RC" 0; has "a subdirectory: zero examined" "$OUT" "0 migration files examined"
+# the dot in the directory name is literal: db/mxg is not db/m.g
+otherrepo db/m.g; addat db/mxg 88000000000002_a.sql "no guard here"; runenv db/m.g
+check "a dot in the directory name is literal (a sibling that only matches as a regex is not examined): exit 0" "$RC" 0
+has "a literal dot: zero examined" "$OUT" "0 migration files examined"
+# the default stays supabase/migrations when nothing is configured
+newrepo; addmig 88000000000002_a.sql "$(guard "'3s'" "'30s'")"; run
+has "no configuration: the default directory is read" "$OUT" "ok $F1"
+# a well-formed directory that is not in the tree (a typo) fails closed: it must not read as "0 migration files examined"
+otherrepo supabase/migrations; addat supabase/migrations 88000000000002_a.sql "no guard here"; runenv supabse/migrations
+check "a typo in the migrations directory: exit 1, not a silent pass" "$RC" 1; has "a typo directory: names the missing directory" "$OUT" "'supabse/migrations' does not exist"
+hasnt "a typo directory: never reports a clean run" "$OUT" "migration files examined"
+otherrepo db/migrate; addat db/migrate 88000000000002_a.sql "$(guard "'3s'" "'30s'")"; runenv db/migrate
+check "the real directory still passes next to the typo case: exit 0" "$RC" 0
+otherrepo db/migrate; addat db/migrate 88000000000002_a.sql "no guard here"; runenv db/migrate/missing
+check "a missing subdirectory of a real directory: exit 1" "$RC" 1
+# mutation: drop the existence check and the typo directory reads as a clean run
+MUTD="$ROOT/mutant-missing-dir.sh"
+sed -e "s|^HERE=.*|HERE=\"$(dirname "$SCRIPT")\"|" -e '/does not exist at \$TO/d' "$SCRIPT" > "$MUTD"
+if cmp -s "$SCRIPT" "$MUTD"; then bad "mutation: the missing-directory sed no longer matches the script (update this test)"; else
+  otherrepo supabase/migrations; addat supabase/migrations 88000000000002_a.sql "no guard here"
+  MOUT="$(cd "$D" && CM_MIGRATIONS_DIR=supabse/migrations bash "$MUTD" "$BASE" HEAD 2>&1)"; MRC=$?
+  if [ "$MRC" = 0 ] && case "$MOUT" in *"0 migration files examined"*) true ;; *) false ;; esac; then ok "mutation: without the existence check a typo directory exits 0 with 0 files examined, so the exit-1 tests above fail"
+  else bad "mutation: the mutant still refused a missing directory (rc=$MRC)" "$MOUT"; fi
+fi
+# bad directories fail closed with exit 1
+for bad in /abs/dir ../out a//b . ./a a/. a/./ 'a b' 'a*' 'a;b' '$(x)' 'a/../b'; do
+  otherrepo db/migrate; addat db/migrate 88000000000002_a.sql "$(guard "'3s'" "'30s'")"; runenv "$bad"
+  check "bad migrations directory '$bad': exit 1" "$RC" 1; has "bad migrations directory '$bad': says so" "$OUT" "bad migrations directory"
+done
+# the config key is read through lib.sh (needs yq); the env var beats it
+if command -v yq >/dev/null 2>&1; then
+  printf 'schema: concertmaster.config/v1\ndeploy:\n  migrations_dir: db/migrate\n' > "$ROOT/mig-cfg.yaml"
+  otherrepo db/migrate; addat db/migrate 88000000000002_a.sql "$(guard "'3s'" "'30s'")"
+  OUT="$(cd "$D" && CM_CONFIG="$ROOT/mig-cfg.yaml" bash "$SCRIPT" "$BASE" HEAD 2>&1)"; RC=$?
+  check "deploy.migrations_dir from the config: exit 0" "$RC" 0; has "the config directory is read" "$OUT" "ok db/migrate/88000000000002_a.sql"
+  OUT="$(cd "$D" && CM_CONFIG="$ROOT/mig-cfg.yaml" CM_MIGRATIONS_DIR=other/dir bash "$SCRIPT" "$BASE" HEAD 2>&1)"; RC=$?
+  check "the env var beats the config directory (which holds a guarded file): the other dir is missing, exit 1" "$RC" 1; has "env beats config: the missing directory is named" "$OUT" "'other/dir' does not exist"
+  # fail closed: a config that cannot be read, or an empty key, never falls back to the default directory
+  printf 'schema: concertmaster.config/v1\ndeploy:\n  migrations_dir: ""\n' > "$ROOT/mig-cfg-empty.yaml"
+  OUT="$(cd "$D" && CM_CONFIG="$ROOT/mig-cfg-empty.yaml" bash "$SCRIPT" "$BASE" HEAD 2>&1)"; RC=$?
+  check "an empty deploy.migrations_dir: exit 1" "$RC" 1; has "an empty deploy.migrations_dir: says so" "$OUT" "empty or not a string"
+  # a deploy section that is not a map must not fall back to the default directory either
+  for DEP in '"x"' '[]'; do
+    printf 'schema: concertmaster.config/v1\ndeploy: %s\n' "$DEP" > "$ROOT/mig-cfg-shape.yaml"
+    newrepo; addmig 88000000000002_a.sql "no guard here"
+    OUT="$(cd "$D" && CM_CONFIG="$ROOT/mig-cfg-shape.yaml" bash "$SCRIPT" "$BASE" HEAD 2>&1)"; RC=$?
+    check "a deploy section that is $DEP, not a map: exit 1, no silent default directory" "$RC" 1; has "a deploy section that is $DEP: says so" "$OUT" "not a map"
+  done
+  printf 'schema: [unclosed\n' > "$ROOT/mig-cfg-bad.yaml"
+  OUT="$(cd "$D" && CM_CONFIG="$ROOT/mig-cfg-bad.yaml" bash "$SCRIPT" "$BASE" HEAD 2>&1)"; RC=$?
+  check "a config that does not parse: exit 1, no silent default" "$RC" 1; has "unreadable config: says so" "$OUT" "could not be read"
+else
+  echo "SKIP the config-key cases: yq is not installed (they cover the config path)"
+fi
+
+# 40. the STOP note: merge-gate advice (edit the unmerged file) apart from deploy-time advice; the connection-level fix is the
+# options= db-url form, never the PGOPTIONS env
+newrepo; addmig 88000000000002_a.sql "no guard here"; run
+check "an unguarded file: exit 3" "$RC" 3
+has "the note gives merge-gate advice first: edit the unmerged file" "$OUT" "At the PR merge gate the file is not on the base branch yet: edit it"
+has "the note gives deploy-time advice apart" "$OUT" "At deploy time, if that version is already applied"
+has "the note names the options= db-url form with the 120000 cap" "$OUT" "options=-c lock_timeout=3s -c statement_timeout=120000"
+has "the note says the PGOPTIONS env is not a substitute" "$OUT" "The PGOPTIONS env is not a substitute"
+hasnt "the note no longer offers PGOPTIONS as the example fix" "$OUT" "for example PGOPTIONS="
+has "the note keeps the in-file values at 30s" "$OUT" "the in-file SET LOCAL values stay 3s / 30s"
+OUT="$(bash "$SCRIPT" --help 2>&1)"
+has "the help names the db-url options= fix" "$OUT" "options=-c lock_timeout=3s -c statement_timeout=120000"
+has "the help says the PGOPTIONS env was ignored when measured" "$OUT" "ignored it (lock_timeout=0)"
+has "the help names the configurable directory" "$OUT" "deploy.migrations_dir"
+has "the help names the PR merge gate range" "$OUT" "at the PR"
+
+# 41. the docs carry the merge-gate rule and no issue number or absolute home path (text lint over the skill)
+SKILL_DIR="$(cd "$HERE/../.." && pwd)"
+LANES="$(cat "$SKILL_DIR/references/lanes.md")"; SKM="$(cat "$SKILL_DIR/SKILL.md")"
+has "lanes.md: the pr-sweeper merge gate runs the migration check at the exact head" "$LANES" 'scripts/deploy-migration-check.sh $MB <PR head sha>'
+has "lanes.md: the merge-base is of the PR's own base" "$LANES" 'MB=$(git merge-base origin/<base> <PR head sha>)'
+has "lanes.md: an edited or deleted migration is held" "$LANES" "The edited or deleted list"
+has "lanes.md: a STOP has no waiver at the gate" "$LANES" "A STOP has no waiver at this gate"
+has "lanes.md: the directory and bases are placeholders" "$LANES" "{{migration_bases}}"
+has "SKILL.md: merge gate item 3a points at the lane" "$SKM" "3a. **Migration check**"
+has "SKILL.md: the already-applied fix is the options= form" "$SKM" "Use the connection URL's \`options=\` form"
+hasnt "SKILL.md: PGOPTIONS is no longer the example fix" "$SKM" "(for example \`PGOPTIONS="
+for f in "$SKILL_DIR/references/lanes.md" "$SKILL_DIR/SKILL.md" "$SKILL_DIR/scripts/deploy-migration-check.sh" "$SKILL_DIR/config.example.yaml"; do
+  if grep -n -E '#[0-9]{4}|/home/[a-z]|/Users/[a-z]' "$f" >/dev/null 2>&1; then bad "$(basename "$f"): an issue number or an absolute home path found" "$(grep -n -E '#[0-9]{4}|/home/[a-z]|/Users/[a-z]' "$f" | head -3)"; else ok "$(basename "$f"): no issue number or absolute home path"; fi
+done
 
 printf '\npassed=%s failed=%s\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
