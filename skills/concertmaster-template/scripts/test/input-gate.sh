@@ -480,6 +480,59 @@ for sv in '' '"schemaVersion":2,'; do
   dt "control: a lead that names another existing worker does not hold t (${sv:-no schemaVersion})" "{${sv}\"workers\":{$TT},\"lanes\":{\"a\":{\"lead\":\"x\"}}}" teardown t true
   dt "control: the lead that IS t holds (${sv:-no schemaVersion})" "{${sv}\"workers\":{$TT},\"lanes\":{\"a\":{\"lead\":\"t\"}}}" teardown t false "lead of lane a"
 done
+# --- cm_input_decide acts only on exactly ONE readable view document, and checks the status of whatever produced it
+printf '%s' "{\"workers\":{\"a\":{$W}}}" > "$L"
+GV="$ROOT/good-view.json"; cm_input_view "$L" > "$GV"
+dv() { # <label> <view file> <want rc> <want permit>
+  local out rc got
+  out="$(cm_input_decide teardown a --view-file "$2" 2>/dev/null)"; rc=$?
+  got="$(printf '%s' "$out" | jq -r '.permit' 2>/dev/null)"
+  [ "$rc" = "$3" ] && [ "$got" = "$4" ] && ok "$1" || no "$1" "rc=$rc permit=$got out=$out"
+}
+dv "view file: one valid view permits (control)" "$GV" 0 true
+{ cat "$GV"; echo BROKEN; } > "$ROOT/v-tail.json"
+dv "view file: a valid view followed by a malformed line refuses with rc 2" "$ROOT/v-tail.json" 2 false
+{ cat "$GV"; printf '{"broken":'; } > "$ROOT/v-tail2.json"
+dv "view file: a valid view followed by a truncated document refuses with rc 2" "$ROOT/v-tail2.json" 2 false
+{ cat "$GV"; cat "$GV"; } > "$ROOT/v-two.json"
+dv "view file: two valid views refuse with rc 2" "$ROOT/v-two.json" 2 false
+{ echo BROKEN; cat "$GV"; } > "$ROOT/v-head.json"
+dv "view file: a malformed line before a valid view refuses with rc 2" "$ROOT/v-head.json" 2 false
+: > "$ROOT/v-empty.json"
+dv "view file: an empty file refuses with rc 2" "$ROOT/v-empty.json" 2 false
+printf '[1]\n' > "$ROOT/v-arr.json"
+dv "view file: a document that is not an object refuses with rc 2" "$ROOT/v-arr.json" 2 false
+dv "view file: a file that does not exist refuses with rc 2" "$ROOT/v-none.json" 2 false
+# the producer branch: a stand-in for cm_input_view (a subshell, so the real one is back afterwards)
+dp() { # <label> <want rc> <want permit> <producer body>
+  local out rc got body="$4"
+  out="$( cm_input_view() { eval "$body"; }; cm_input_decide teardown a "$L" 2>/dev/null )"; rc=$?
+  got="$(printf '%s' "$out" | jq -r '.permit' 2>/dev/null)"
+  [ "$rc" = "$2" ] && [ "$got" = "$3" ] && ok "$1" || no "$1" "rc=$rc permit=$got out=$out"
+}
+dp "producer: one valid view, status 0 permits (control)" 0 true 'cat "$GV"'
+dp "producer: a valid view then a malformed line refuses with rc 2" 2 false 'cat "$GV"; echo BROKEN'
+dp "producer: two valid views refuse with rc 2" 2 false 'cat "$GV"; cat "$GV"'
+dp "producer: no output at all refuses with rc 2" 2 false ':'
+dp "producer: a valid readable view but a failing status refuses with rc 2" 2 false 'cat "$GV"; return 1'
+dp "producer: a failing status with no view refuses with rc 2" 2 false 'return 3'
+# the real producer on an unreadable ledger still ends in a refusal with the reason (rc 1, not a crash)
+out="$(cm_input_decide teardown a "$ROOT/vanished.json" 2>/dev/null)"; rc=$?
+[ "$rc" = 1 ] && [ "$(printf '%s' "$out" | jq -r '.permit')" = false ] && ok "producer: an unreadable ledger refuses with rc 1 and a reason" || no "unreadable ledger" "rc=$rc $out"
+# revalidation: a prior decision with a valid first document and a malformed tail is not a decision
+printf '%s' "{\"workers\":{\"a\":{$W}}}" > "$L"
+prior="$(cm_input_decide teardown a "$L")"
+out="$(cm_input_revalidate "$prior" "$L" 2>/dev/null)"; rc=$?
+[ "$rc" = 0 ] && [ "$(printf '%s' "$out" | jq -r '.permit')" = true ] && ok "revalidate: an unchanged ledger is still permitted (control)" || no "revalidate control" "rc=$rc $out"
+out="$(cm_input_revalidate "$prior
+BROKEN" "$L" 2>/dev/null)"; rc=$?
+[ "$rc" != 0 ] && [ "$(printf '%s' "$out" | jq -r '.permit')" = false ] && ok "revalidate: a prior decision with a malformed tail refuses" || no "revalidate tail" "rc=$rc $out"
+out="$(cm_input_revalidate "$prior
+$prior" "$L" 2>/dev/null)"; rc=$?
+[ "$rc" != 0 ] && [ "$(printf '%s' "$out" | jq -r '.permit')" = false ] && ok "revalidate: two prior decisions refuse" || no "revalidate two" "rc=$rc $out"
+{ cat "$GV"; echo BROKEN; } > "$ROOT/v-tail.json"
+out="$(cm_input_revalidate "$prior" --view-file "$ROOT/v-tail.json" 2>/dev/null)"; rc=$?
+[ "$rc" != 0 ] && [ "$(printf '%s' "$out" | jq -r '.permit')" = false ] && ok "revalidate: a view file with a malformed tail refuses" || no "revalidate view tail" "rc=$rc $out"
 DT_FILL=
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]

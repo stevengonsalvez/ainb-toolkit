@@ -1427,14 +1427,30 @@ _cm_input_args() {
 # refusal and returns 2: the caller must not act on 2 either. The flags may stand anywhere; a flag with no value, an unknown flag and a second positional are
 # refused (_cm_input_args, shared with cm_input_revalidate).
 cm_input_decide() {
-  local action="${1:-}" target="${2:-}" host vf f out
+  local action="${1:-}" target="${2:-}" host vf f out view vrc
   [ $# -ge 2 ] || { _cm_input_refusal "$action" "$target" "usage: cm_input_decide <action> <target> [--host H] [--view-file F] [ledger]"; return 2; }
   shift 2
   _cm_input_args "$@" || { _cm_input_refusal "$action" "$target" "$_CMI_ERR"; return 2; }
   host="$_CMI_HOST"; vf="$_CMI_VF"; f="${_CMI_LEDGER:-$(cm_ledger_path)}"
-  if [ -n "$vf" ]; then out="$(jq -c -L "$_CM_INPUT_DIR" --arg a "$action" --arg t "$target" --arg h "$host" 'include "input-view"; iv_decide($a; .; $t; {host: $h})' "$vf" 2>/dev/null)"
-  else out="$(cm_input_view "$f" | jq -c -L "$_CM_INPUT_DIR" --arg a "$action" --arg t "$target" --arg h "$host" 'include "input-view"; iv_decide($a; .; $t; {host: $h})' 2>/dev/null)"; fi
-  if [ -z "$out" ]; then _cm_input_refusal "$action" "$target" "the decision could not be computed"; return 2; fi
+  # The view is read into a variable first and the status of the producer is checked. A view file that cannot be read, or a producer that fails, is a refusal
+  # (rc 2). The one producer failure that is not: cm_input_view returns 1 for an unreadable ledger and then prints a view with readable:false, and a decision on that
+  # view refuses with the reason; any other failure, or a status of 1 with a view that says readable:true, is refused here without a decision.
+  if [ -n "$vf" ]; then
+    view="$(cat -- "$vf" 2>/dev/null)" || { _cm_input_refusal "$action" "$target" "the view file could not be read"; return 2; }
+  else
+    view="$(cm_input_view "$f")"; vrc=$?
+    if [ "$vrc" != 0 ] && [ "$(printf '%s' "$view" | jq -s 'if length == 1 then (.[0].readable | tostring) else "x" end' 2>/dev/null)" != '"false"' ]; then
+      _cm_input_refusal "$action" "$target" "the view could not be produced"; return 2
+    fi
+  fi
+  # EXACTLY ONE view document: an empty input, a second document, or text after the first one is not a view. jq -s fails on a parse error anywhere in the input,
+  # and its status is checked, so a valid first document followed by a malformed tail never reaches the decision.
+  out="$(printf '%s' "$view" | jq -c -s -L "$_CM_INPUT_DIR" --arg a "$action" --arg t "$target" --arg h "$host" \
+    'include "input-view"; if length == 1 and (.[0] | type) == "object" then .[0] | iv_decide($a; .; $t; {host: $h}) else error("not exactly one view document") end' 2>/dev/null)" \
+    || { _cm_input_refusal "$action" "$target" "the view is not exactly one readable document"; return 2; }
+  # the answer is one object with a boolean permit, or it is not a decision
+  printf '%s' "$out" | jq -es 'length == 1 and (.[0] | type) == "object" and (.[0].permit | type) == "boolean"' >/dev/null 2>&1 \
+    || { _cm_input_refusal "$action" "$target" "the decision could not be computed"; return 2; }
   printf '%s\n' "$out"
   printf '%s' "$out" | jq -e '.permit == true' >/dev/null 2>&1
 }
@@ -1458,6 +1474,8 @@ _cm_input_revalidate_for() {
   local a="$1" t="$2" prior="$3" now rc
   shift 3
   [ -n "$a" ] && [ -n "$t" ] || { _cm_input_refusal "$a" "$t" "no prior decision to revalidate"; return 2; }
+  # the prior decision is exactly one object; a valid first document followed by text that does not parse is not a decision
+  printf '%s' "$prior" | jq -es 'length == 1 and (.[0] | type) == "object"' >/dev/null 2>&1 || { _cm_input_refusal "$a" "$t" "the prior decision is not exactly one readable document"; return 2; }
   now="$(cm_input_decide "$a" "$t" "$@")"; rc=$?
   if [ "$rc" != 0 ]; then printf '%s\n' "$now"; return 1; fi
   if jq -en --argjson a "$prior" --argjson b "$now" --arg act "$a" --arg tgt "$t" \
