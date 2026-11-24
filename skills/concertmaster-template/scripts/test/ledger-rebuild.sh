@@ -50,8 +50,9 @@ lanes:
   - { name: lane-a-sweeper, standing: true, issue: 11 }
   - { name: lane-b-sweeper, standing: true, issue: 12 }
   - { name: lane-c-sweeper, standing: true }
+  - { name: lane-d-sweeper, standing: true }
 ownership:
-  leads: { lane-a-sweeper: lane-a-sweeper, lane-b-sweeper: lane-b-sweeper }
+  leads: { lane-a-sweeper: lane-a-sweeper, lane-b-sweeper: lane-b-sweeper, lane-d-sweeper: lane-d-sweeper }
   prefixes: { task-: lane-b-sweeper }
   comment_markers: ["cm:child"]
   comment_stop_words: []
@@ -67,8 +68,10 @@ printf '{"ok":true,"result":{"hosts":[{"kind":"local","name":"this machine"},{"k
 { wt concertmaster "cm:state freeze=off window=- prod=v1 at=2026-11-24T09:00:00Z"
   wt lane-a-sweeper 'cm:running sweeping\ncm:child fix-x'
   wt fix-x "cm:running fixing the export"
+  wt lane-d-sweeper "cm:running sweeping, no issue of its own"
   wt acme-app "" true; } | wl > "$STUB/wl-local.json"
 { wt lane-b-sweeper "cm:asleep 2026-11-24T08:00:00Z put to sleep by lane-health; wake with scripts/lane-health.sh wake w-lane-b-sweeper --apply"
+  wt lane-b-sweeper "" | jq -c '.comment = null'   # the CLI can list one worktree twice, one copy with no comment
   wt task-42 "cm:blocked which database?"
   wt stray-1 ""; } | wl > "$STUB/wl-host-b.json"
 
@@ -82,12 +85,15 @@ jq -n --arg d "$D" '
            "host-b": {kind: "environment", selector: "--environment host-b", hostname: "host-b", reachable: true, lastSeenAt: "2026-11-24T09:00:00Z", offlineSince: null, role: "general", maxWorkers: 6},
            "host-c": {kind: "environment", selector: "--environment host-c", reachable: false, lastSeenAt: "2026-11-23T09:00:00Z", offlineSince: "2026-11-23T09:15:00Z", role: "general", maxWorkers: 4}},
    lanes: {"lane-a-sweeper": {state: "running", lead: "w-lane-a-sweeper", queue: [], issue: 11},
-           "lane-b-sweeper": {state: "idle", lead: "w-lane-b-sweeper", queue: [], issue: 12}},
+           "lane-b-sweeper": {state: "idle", lead: "w-lane-b-sweeper", queue: [], issue: 12},
+           "lane-c-sweeper": {state: "absent", lead: null, queue: []},
+           "lane-d-sweeper": {state: "running", lead: "w-lane-d-sweeper", queue: []}},
    workers: {concertmaster: w("concertmaster"; "local"; "concertmaster"; "running"; true),
              "w-lane-a-sweeper": w("lane-a-sweeper"; "local"; "lane-a-sweeper"; "running"; true),
              "w-fix-x": (w("fix-x"; "local"; "lane-a-sweeper"; "running"; false) + {parent: "w-lane-a-sweeper"}),
              "w-lane-b-sweeper": w("lane-b-sweeper"; "host-b"; "lane-b-sweeper"; "asleep"; true),
-             "w-task-42": w("task-42"; "host-b"; "lane-b-sweeper"; "blocked-on-owner"; false)},
+             "w-task-42": w("task-42"; "host-b"; "lane-b-sweeper"; "blocked-on-owner"; false),
+             "w-lane-d-sweeper": w("lane-d-sweeper"; "local"; "lane-d-sweeper"; "running"; true)},
    prs: {"acme-app#341": {number: 341, state: "OPEN"}}, asks: [{id: "ask-1", state: "open"}]}' > "$CM_HOME/ledger.json"
 
 lr() { bash "$S/lane-record.sh" "$@" >/dev/null 2>&1 || bad "lane-record.sh $*" "rc=$?"; }
@@ -111,13 +117,13 @@ rb
   && ok "dry run: prints the ledger it would write, writes nothing" || bad "dry run" "rc=$RC $ERR"
 has "...says the ledger is missing" "$ERR" "no ledger at $CM_HOME/ledger.json"
 has "...reports the unreachable host" "$ERR" "host host-c:"
-has "...and the lane with no issue" "$ERR" "lane lane-c-sweeper: no lanes[].issue, not rebuilt"
+has "...and the lane with no issue" "$ERR" "lane lane-c-sweeper: no lanes[].issue, its state is not rebuilt (its lead is)"
 has "...and an orphan worktree, left to the tick" "$ERR" "worktree stray-1 @ host-b: no owner (ORPHAN), not rebuilt"
 rb --apply
 [ "$RC" = 0 ] && [ -s "$CM_HOME/ledger.json" ] && ok "--apply writes the ledger" || bad "apply" "rc=$RC $ERR"
 R="$CM_HOME/ledger.json"
 
-norm='{lanes: (.lanes | map_values({state, issue, lead})),
+norm='{lanes: (.lanes | map_values(if .issue != null then {state, issue, lead} else {issue, lead} end)),
        workers: (.workers | map_values({host, path, lane, state})),
        hosts: (.hosts | map_values({kind, selector, role, maxWorkers}))}'
 if diff <(jq -S "$norm" "$ROOT/saved.json") <(jq -S "$norm" "$R") > "$ROOT/diff"; then
@@ -130,7 +136,11 @@ got="$(jq -c '[.workers["w-fix-x"].lane, .workers["w-fix-x"].standing, .workers[
 got="$(jq -c '[.workers["w-lane-b-sweeper"].state, .workers["w-lane-b-sweeper"].standing, .workers.concertmaster.lane]' "$R")"
 [ "$got" = '["asleep",true,"concertmaster"]' ] && ok "a lead asleep before the loss stays asleep; the concertmaster is its own row" || bad "asleep" "$got"
 got="$(jq -c '[(.workers | length), ([.workers[].path] | index("/srv/work/acme-app/acme-app")), .hosts["host-c"].reachable, .project]' "$R")"
-[ "$got" = '[5,null,false,"acme"]' ] && ok "no main checkout, host-c offline, the ledger stamped with the project" || bad "shape" "$got"
+[ "$got" = '[6,null,false,"acme"]' ] && ok "no main checkout, host-c offline, the ledger stamped with the project" || bad "shape" "$got"
+got="$(jq -c '.lanes["lane-d-sweeper"] | [.issue, .state, .lead]' "$R")"
+[ "$got" = '[null,null,"w-lane-d-sweeper"]' ] && ok "a lane with no issue still gets its entry and its lead (no second lead spawned)" || bad "issue-less lane" "$got"
+got="$(jq -c '[(.workers | keys | map(select(startswith("w-lane-b-sweeper")))), .workers["w-lane-b-sweeper"].state, .lanes["lane-b-sweeper"].lead]' "$R")"
+[ "$got" = '[["w-lane-b-sweeper"],"asleep","w-lane-b-sweeper"]' ] && ok "a worktree listed twice (one copy with no comment) is one row, still asleep, still the lead" || bad "dedupe" "$got"
 grep -vE '^(host list|worktree list) ' "$STUB/cli.log" > "$ROOT/other-calls" && bad "fleet calls" "$(cat "$ROOT/other-calls")" \
   || ok "only host and worktree lists are read: no other host's files are fetched"
 rb
@@ -145,25 +155,29 @@ rb
 has "an older ledger: the dry run says it merges" "$ERR" "ledger older than the lane record"
 rb --apply
 got="$(jq -c '[.lanes["lane-b-sweeper"].state, .lanes["lane-b-sweeper"].lead, .workers["w-task-42"].beadsEpic, .workers["w-task-77"].lane, (.workers | length), .prs == null]' "$R")"
-[ "$RC" = 0 ] && [ "$got" = '["running","w-lane-b-sweeper","acme-e1","lane-b-sweeper",6,true]' ] \
+[ "$RC" = 0 ] && [ "$got" = '["running","w-lane-b-sweeper","acme-e1","lane-b-sweeper",7,true]' ] \
   && ok "merge: GitHub's newer state wins, a field it never knew is kept, the new worktree is added" || bad "merge" "rc=$RC $got $ERR"
 cp "$ROOT/lost/ledger.json" "$R"   # the restored copy, older than every record
 rb --apply
 got="$(jq -c '[.lanes["lane-b-sweeper"].state, .prs["acme-app#341"].number, (.asks | length), .tick.count, (.workers | length)]' "$R")"
-[ "$RC" = 0 ] && [ "$got" = '["running",341,1,420,6]' ] && ok "a restored copy keeps its prs, asks and tick; the newer lane state and worktree are laid over it" || bad "restored" "rc=$RC $got $ERR"
+[ "$RC" = 0 ] && [ "$got" = '["running",341,1,420,7]' ] && ok "a restored copy keeps its prs, asks and tick; the newer lane state and worktree are laid over it" || bad "restored" "rc=$RC $got $ERR"
 
 # merge keeps what the ledger knows better: a lane whose record is not newer, a successor lead, and asleep only tightens
 rec() { jq --arg at "$2" --arg l "$3" --arg s "$4" '. + [{id: (length + 100), created_at: $at, body: "cm:state \($l) \($s)", author_association: "OWNER"}]' \
   "$STUB/issue-$1.json" > "$STUB/x" && mv "$STUB/x" "$STUB/issue-$1.json"; }
 jq --arg d "$D" '.lanes["lane-a-sweeper"].state = "spawning" | .lanes["lane-a-sweeper"].lead = "w-lane-a-sweeper-2"
   | .workers["w-lane-a-sweeper-2"] = {host: "local", path: ($d + "/lane-a-sweeper-2"), lane: "lane-a-sweeper", state: "running", standing: true}
-  | .workers["w-lane-b-sweeper"].state = "running"' "$R" > "$ROOT/x" && mv "$ROOT/x" "$R"
+  | .workers["w-lane-b-sweeper"].state = "running" | .workers.concertmaster.path = "/old/place/concertmaster" | .workers.concertmaster.worktreeId = "old::concertmaster"' "$R" > "$ROOT/x" && mv "$ROOT/x" "$R"
 rec 12 2099-01-02T00:00:00Z lane-b-sweeper "idle lead=w-lane-b-sweeper"
+rec 11 2099-01-02T00:00:00Z lane-a-sweeper "paused for maintenance"
 rb --apply
 got="$(jq -c '[.lanes["lane-a-sweeper"].state, .lanes["lane-a-sweeper"].lead, .lanes["lane-b-sweeper"].state, .workers["w-lane-b-sweeper"].state, .workers["w-lane-b-sweeper"].asleepFrom]' "$R")"
 [ "$RC" = 0 ] && [ "$got" = '["spawning","w-lane-a-sweeper-2","idle","asleep","running"]' ] \
-  && ok "merge: a lane with no newer record keeps its state, a live successor lead is kept, a restored row asleep on its comment goes back to sleep" \
+  && ok "merge: a newer record whose first word is no lane state leaves the state alone, a live successor lead is kept, a restored row asleep on its comment goes back to sleep" \
   || bad "merge keeps" "rc=$RC $got $ERR"
+has "...and the unknown word is reported" "$ERR" "lane lane-a-sweeper: newest record '2099-01-02T00:00:00Z cm:state lane-a-sweeper paused for maintenance' does not start with a lane state"
+got="$(jq -c '[.workers.concertmaster.path, (.workers | keys | map(select(startswith("concertmaster"))))]' "$R")"
+[ "$got" = "[\"$D/concertmaster\",[\"concertmaster\"]]" ] && ok "the concertmaster row keeps its key and moves to where it runs now" || bad "self" "$got"
 
 # a lead that claims a configured lane with cm:child: the claimed row is never written standing false (teardown would take it)
 { jq -c '.result.worktrees[] | if .displayName == "lane-a-sweeper" then .comment += "\\ncm:child lane-c-sweeper" else . end' "$STUB/wl-local.json"
@@ -180,8 +194,10 @@ mv "$STUB/gh-fail" "$STUB/gh-fail.off"
 
 # a lost ledger whose ring is still here (the merges above filled it): --init is refused, restore first
 mv "$R" "$ROOT/lost/ledger-2.json"
+touch "$STUB/gh-fail"
 rb --apply
-[ "$RC" = 1 ] && [ ! -e "$R" ] && has "ring present: refused before anything is read from the fleet, with the restore command" "$ERR" "holds copies: restore the newest first" || bad "ring" "rc=$RC $ERR"
+[ "$RC" = 1 ] && [ ! -e "$R" ] && has "ring present: refused before gh or the fleet is read (gh down too), with the restore command" "$ERR" "holds copies: restore the newest first" || bad "ring" "rc=$RC $ERR"
+mv "$STUB/gh-fail" "$STUB/gh-fail.off"
 mv "$CM_HOME/ledger.bak" "$ROOT/lost/ledger.bak-2"
 
 touch "$STUB/gh-fail"
