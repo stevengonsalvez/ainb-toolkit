@@ -89,11 +89,13 @@ Rollback: restore `settings.json.bak-rmguard`.
 Owner rule: leads and the concertmaster coordinate ONLY through the fleet CLI (`plugly terminal send`,
 the `cm:` worktree comment, the ledger). A written rule alone did not hold: a 14-day log scan of one
 host found thousands of `SendMessage` calls to named sessions and to `uds:/run/user/<uid>/cc-socks/*.sock`
-targets. `scripts/hooks/msg-guard-hook.sh` (PreToolUse, matcher `SendMessage|Agent`) denies those with the fix.
-On `Agent` it records the subagent name (`tool_input.name`, `^[a-z0-9][a-z0-9_-]*$`) in this session's record,
-`${TMPDIR:-/tmp}/cm-msg-guard/<session_id>.names` (directory 0700); the Agent call is never denied. On `SendMessage`
-it denies by default: any recipient holding `:`, `/` or `*` (sockets, paths, URLs, broadcast; case and padding
-ignored) and any plain name this session did not spawn (no record, or an unreadable one, denies every plain name).
+targets. `scripts/hooks/msg-guard-hook.sh` (PreToolUse matcher `SendMessage`, PostToolUse matcher `Agent`) denies
+those with the fix. After an `Agent` spawn that ran (PostToolUse, no error) it records the subagent name in this
+session's record, `${TMPDIR:-/tmp}/cm-msg-guard/<session_id>.names` (directory 0700), only when it is a plain name:
+no control character, `^[a-z0-9][a-z0-9_-]{0,63}$`, and not lane-shaped, `w-<id>`, the concertmaster's own name, a
+configured lane or a ledger worker id or lane. On `SendMessage` it denies by default: a control character, any
+recipient holding `:`, `/` or `*` (sockets, paths, URLs, broadcast; case and padding ignored) and any plain name that
+fails the same test or that this session did not spawn (no record, or an unreadable one, denies every plain name).
 It allows an agent id or a name this session spawned as recipient, no recipient, any other tool,
 `CM_ALLOW_SENDMESSAGE=1` in the session env, and any session outside this project's checkouts (same
 scope as the rm-guard: `worktrees.path_match` or a git origin in `github.org`). Always exits 0; the
@@ -112,10 +114,11 @@ SETTINGS="$(readlink -f ~/.claude/settings.json 2>/dev/null || echo ~/.claude/se
 [ -f "$SETTINGS.bak-msgguard" ] || cp "$SETTINGS" "$SETTINGS.bak-msgguard"
 HOOK="$HOME/.concertmaster/bin/msg-guard-hook.sh"
 jq --arg h "$HOOK" '
-  .hooks.PreToolUse = ((.hooks.PreToolUse // [])
-    | map(.hooks = ((.hooks // []) | map(select(.command != $h))))
-    | map(select((.hooks | length) > 0))
-    + [{"matcher":"SendMessage|Agent","hooks":[{"type":"command","command":$h,"timeout":5}]}])' \
+  def drop($h): map(.hooks = ((.hooks // []) | map(select(.command != $h)))) | map(select((.hooks | length) > 0));
+  .hooks.PreToolUse = ((.hooks.PreToolUse // []) | drop($h)
+    + [{"matcher":"SendMessage","hooks":[{"type":"command","command":$h,"timeout":5}]}])
+  | .hooks.PostToolUse = ((.hooks.PostToolUse // []) | drop($h)
+    + [{"matcher":"Agent","hooks":[{"type":"command","command":$h,"timeout":5}]}])' \
   "$SETTINGS" > "$SETTINGS.new" && mv "$SETTINGS.new" "$SETTINGS"
 # verify: must print "deny" (use a cwd that matches your worktrees.path_match)
 printf '%s' "{\"tool_name\":\"SendMessage\",\"cwd\":\"$PWD\",\"tool_input\":{\"to\":\"some-lane-4f\"}}" | "$HOOK" | jq -r .hookSpecificOutput.permissionDecision

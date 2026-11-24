@@ -18,11 +18,18 @@ SID=sess-a
 run() { # $1 = tool, $2 = to, $3 = cwd
   jq -n --arg t "$1" --arg to "$2" --arg w "${3:-$CWD}" --arg s "$SID" '{tool_name:$t,session_id:$s,cwd:$w,tool_input:{to:$to,message:"hi"}}' | "$HOOK"
 }
-spawn() { # $1 = subagent name, as Claude Code sends PreToolUse for Agent(name: ...); the Agent call is never denied
+OKRESP='{"content":[{"type":"text","text":"done"}]}'
+spawn() { # $1 = subagent name; $2 = event (PostToolUse); $3 = tool_response JSON: an Agent(name: ...) call that ran
   local out
-  out="$(jq -n --arg n "$1" --arg w "$CWD" --arg s "$SID" '{tool_name:"Agent",session_id:$s,cwd:$w,tool_input:{name:$n,prompt:"p"}}' | "$HOOK")"
+  out="$(jq -n --arg n "$1" --arg w "$CWD" --arg s "$SID" --arg e "${2:-PostToolUse}" --argjson r "${3:-$OKRESP}" \
+    '{hook_event_name:$e,tool_name:"Agent",session_id:$s,cwd:$w,tool_input:{name:$n,prompt:"p"},tool_response:$r}' | "$HOOK")"
   [ -z "$out" ] || { echo "FAIL Agent call produced output: $out"; fail=1; }
 }
+REC="$TMPDIR/cm-msg-guard/sess-a.names"
+rec_has() { [ -f "$REC" ] && grep -qxF -- "$1" "$REC"; }
+rec_lines() { if [ -f "$REC" ]; then wc -l < "$REC" | tr -d ' '; else echo 0; fi; }
+# ledger workers name sessions: their ids and lanes are never recorded and never pass
+printf '{"workers":{"research-cache":{"lane":"ops-db"},"w-dev-1":{"lane":"dev-1"}}}\n' > "$CM_HOME/ledger.json"
 want() { # $1 = deny|allow, $2 = tool, $3 = to, $4 = cwd (optional)
   local out got=allow
   out="$(run "$2" "$3" "${4:-}")"
@@ -57,8 +64,29 @@ want allow SendMessage 'test-engineer'
 want deny SendMessage 'research-cache'
 want deny SendMessage 'host:bad'
 want deny SendMessage 'two words'
-check_rec() { grep -qxF "$1" "$TMPDIR/cm-msg-guard/sess-a.names" && [ -n "$(find "$TMPDIR/cm-msg-guard" -maxdepth 0 -perm 0700)" ]; }
-check_rec reviewer && ! grep -q 'host:bad\|two words' "$TMPDIR/cm-msg-guard/sess-a.names" && echo "ok   the record holds valid names only, in a 0700 directory" || { echo "FAIL record contents or mode"; fail=1; }
+rec_has reviewer && [ -n "$(find "$TMPDIR/cm-msg-guard" -maxdepth 0 -perm 0700)" ] && [ "$(rec_lines)" = 2 ] && echo "ok   the record holds the two valid names only, in a 0700 directory" || { echo "FAIL record contents or mode"; fail=1; }
+# never recorded: a lane-shaped, w-, self-named, ledger or configured name; a PreToolUse Agent call; a spawn that failed;
+# a name carrying a newline or a tab (one Agent call must never write two record lines)
+for n in dev-sweeper rs-lead-g w-dev-1 w-x concertmaster-2 research-cache ops-db dev-1 dev-1-9c; do spawn "$n"; done
+spawn pre-only PreToolUse
+spawn failed-one PostToolUse '{"is_error":true,"content":"boom"}'
+spawn err-two PostToolUse '{"error":"agent failed"}'
+spawn $'reviewer\nuds:x'; spawn $'ok\nw-dev-sweeper'; spawn $'tab\tname'; spawn $'trail\n'
+[ "$(rec_lines)" = 2 ] && ! rec_has dev-sweeper && ! rec_has ok && ! rec_has 'uds:x' && ! rec_has trail && ! rec_has pre-only && ! rec_has failed-one \
+  && echo "ok   lane, ledger, self, PreToolUse, failed and control-character names are never recorded" || { echo "FAIL record took a refused name: $(tr '\n' ' ' < "$REC")"; fail=1; }
+for n in dev-sweeper w-dev-1 research-cache ops-db concertmaster-2 ok pre-only failed-one trail; do want deny SendMessage "$n"; done
+# a recipient with a control character is denied even when its first line is a recorded name
+want deny SendMessage $'reviewer\nuds:x'
+want deny SendMessage $'reviewer\n'
+want deny SendMessage $'revi\tewer'
+want deny SendMessage $'reviewer\r'
+# a record line that was written by hand but is lane-shaped still does not pass: the denylist runs at check time too
+printf 'dev-sweeper\n' >> "$REC"; want deny SendMessage 'dev-sweeper'
+# a ledger that exists but does not parse: no plain name passes, a recorded one neither
+cp "$CM_HOME/ledger.json" "$CM_HOME/ledger.keep"; printf '{not json' > "$CM_HOME/ledger.json"
+want deny SendMessage 'reviewer'
+mv "$CM_HOME/ledger.keep" "$CM_HOME/ledger.json"
+want allow SendMessage 'reviewer'
 # another session's spawned name is not this session's subagent
 SID=sess-b
 want deny SendMessage 'reviewer'
