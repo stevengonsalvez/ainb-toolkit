@@ -71,10 +71,22 @@ for n in dev-sweeper rs-lead-g w-dev-1 w-x concertmaster-2 research-cache ops-db
 spawn pre-only PreToolUse
 spawn failed-one PostToolUse '{"is_error":true,"content":"boom"}'
 spawn err-two PostToolUse '{"error":"agent failed"}'
+spawn str-fail PostToolUse '"Error: the agent could not be started"'   # a failed call: tool_response is the error text
+spawn null-resp PostToolUse 'null'; spawn arr-resp PostToolUse '[]'
+spawn async-noid PostToolUse '{"status":"async_launched","description":"d"}'
+spawn obj-err PostToolUse '{"status":"async_launched","agentId":"a9","error":"launch failed"}'
+spawn fail-event PostToolUseFailure '{"error":"boom","is_interrupt":false}'
+spawn empty-obj PostToolUse '{}'
 spawn $'reviewer\nuds:x'; spawn $'ok\nw-dev-sweeper'; spawn $'tab\tname'; spawn $'trail\n'
-[ "$(rec_lines)" = 2 ] && ! rec_has dev-sweeper && ! rec_has ok && ! rec_has 'uds:x' && ! rec_has trail && ! rec_has pre-only && ! rec_has failed-one \
+[ "$(rec_lines)" = 2 ] && ! rec_has str-fail && ! rec_has null-resp && ! rec_has arr-resp && ! rec_has async-noid && ! rec_has obj-err && ! rec_has fail-event && ! rec_has empty-obj && ! rec_has dev-sweeper && ! rec_has ok && ! rec_has 'uds:x' && ! rec_has trail && ! rec_has pre-only && ! rec_has failed-one \
   && echo "ok   lane, ledger, self, PreToolUse, failed and control-character names are never recorded" || { echo "FAIL record took a refused name: $(tr '\n' ' ' < "$REC")"; fail=1; }
-for n in dev-sweeper w-dev-1 research-cache ops-db concertmaster-2 ok pre-only failed-one trail; do want deny SendMessage "$n"; done
+for n in dev-sweeper w-dev-1 research-cache ops-db concertmaster-2 ok pre-only failed-one trail str-fail async-noid obj-err; do want deny SendMessage "$n"; done
+# a background launch (PostToolUse at launch: status async_launched with an agentId) records, under Agent or legacy Task
+spawn bg-worker PostToolUse '{"status":"async_launched","agentId":"a1b2","description":"d","prompt":"p","outputFile":"/tmp/o","resolvedModel":"m"}'
+want allow SendMessage 'bg-worker'
+spawn_task() { jq -n --arg n "$1" --arg w "$CWD" --arg s "$SID" --argjson r "$OKRESP" '{hook_event_name:"PostToolUse",tool_name:"Task",session_id:$s,cwd:$w,tool_input:{name:$n,prompt:"p"},tool_response:$r}' | "$HOOK" >/dev/null; }
+spawn_task legacy-task
+want allow SendMessage 'legacy-task'
 # a recipient with a control character is denied even when its first line is a recorded name
 want deny SendMessage $'reviewer\nuds:x'
 want deny SendMessage $'reviewer\n'

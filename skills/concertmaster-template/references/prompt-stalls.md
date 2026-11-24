@@ -89,7 +89,7 @@ Rollback: restore `settings.json.bak-rmguard`.
 Owner rule: leads and the concertmaster coordinate ONLY through the fleet CLI (`plugly terminal send`,
 the `cm:` worktree comment, the ledger). A written rule alone did not hold: a 14-day log scan of one
 host found thousands of `SendMessage` calls to named sessions and to `uds:/run/user/<uid>/cc-socks/*.sock`
-targets. `scripts/hooks/msg-guard-hook.sh` (PreToolUse matcher `SendMessage`, PostToolUse matcher `Agent`) denies
+targets. `scripts/hooks/msg-guard-hook.sh` (PreToolUse matcher `SendMessage`, PostToolUse matcher `Agent|Task`) denies
 those with the fix. After an `Agent` spawn that ran (PostToolUse, no error) it records the subagent name in this
 session's record, `${TMPDIR:-/tmp}/cm-msg-guard/<session_id>.names` (directory 0700), only when it is a plain name:
 no control character, `^[a-z0-9][a-z0-9_-]{0,63}$`, and not lane-shaped, `w-<id>`, the concertmaster's own name, a
@@ -118,7 +118,7 @@ jq --arg h "$HOOK" '
   .hooks.PreToolUse = ((.hooks.PreToolUse // []) | drop($h)
     + [{"matcher":"SendMessage","hooks":[{"type":"command","command":$h,"timeout":5}]}])
   | .hooks.PostToolUse = ((.hooks.PostToolUse // []) | drop($h)
-    + [{"matcher":"Agent","hooks":[{"type":"command","command":$h,"timeout":5}]}])' \
+    + [{"matcher":"Agent|Task","hooks":[{"type":"command","command":$h,"timeout":5}]}])' \
   "$SETTINGS" > "$SETTINGS.new" && mv "$SETTINGS.new" "$SETTINGS"
 # verify: must print "deny" (use a cwd that matches your worktrees.path_match)
 printf '%s' "{\"tool_name\":\"SendMessage\",\"cwd\":\"$PWD\",\"tool_input\":{\"to\":\"some-lane-4f\"}}" | "$HOOK" | jq -r .hookSpecificOutput.permissionDecision

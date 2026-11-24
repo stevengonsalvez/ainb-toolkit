@@ -6,7 +6,10 @@
 # fleet CLI, the worktree comment and the ledger, so nothing records it and a resumed or
 # rebooted session loses it. A denial with the fix costs the agent one turn.
 #
-# PostToolUse Agent (a spawn that ran: tool_response present, no error): tool_input.name, lowercased and trimmed, is
+# PostToolUse Agent (Task is its legacy name) for a spawn that ran: tool_response an object with no error, and either a
+# background launch (status async_launched with an agentId) or a foreground result (an agentId, content or result).
+# A string tool_response (the error text of a failed call), null or an array never records. tool_input.name,
+# lowercased and trimmed, is
 # appended to this session's record, ${TMPDIR:-/tmp}/cm-msg-guard/<session_id>.names (the directory 0700 and ours),
 # only when it is a plain name: no control character, the whole string ^[a-z0-9][a-z0-9_-]{0,63}$, and not a session
 # name (lane-shaped, w-<anything>, the concertmaster's own name, a configured lane, a ledger worker id or lane). An
@@ -28,7 +31,7 @@ command -v jq >/dev/null 2>&1 || exit 0
 # newline is kept and caught below
 jfield() { JV="$(printf '%s' "$input" | jq -j "($1) // \"\" | tostring" 2>/dev/null; printf x)"; JV="${JV%x}"; }
 jfield .tool_name; tool="$JV"; jfield .hook_event_name; event="$JV"
-case "$tool" in SendMessage|Agent) ;; *) exit 0 ;; esac
+case "$tool" in SendMessage|Agent|Task) ;; *) exit 0 ;; esac
 jfield .session_id; sid="$JV"
 REC_DIR="${TMPDIR:-/tmp}/cm-msg-guard"
 NAME_RE='^[a-z0-9][a-z0-9_-]{0,63}$'
@@ -76,10 +79,14 @@ NAMES
 
 # Agent: record the name only after a spawn that ran (PostToolUse with a tool_response and no error), never on
 # PreToolUse, where a later hook or the user can still refuse the call.
-if [ "$tool" = Agent ]; then
+if [ "$tool" = Agent ] || [ "$tool" = Task ]; then
   [ "$event" = PostToolUse ] || exit 0
-  printf '%s' "$input" | jq -e '(.tool_response // null) as $r | $r != null
-      and (($r | type) != "object" or (($r.is_error // false) != true and ($r.error // null) == null))' >/dev/null 2>&1 || exit 0
+  printf '%s' "$input" | jq -e '.tool_response as $r
+      | if ($r | type) != "object" then false
+        else ((($r.agentId // "") | tostring) != "") as $id
+          | ($r.is_error // false) != true and ($r.error // null) == null
+            and (if $r.status == "async_launched" then $id else ($id or $r.content != null or $r.result != null) end)
+        end' >/dev/null 2>&1 || exit 0
   jfield .tool_input.name; n="$JV"
   case "$n" in *[[:cntrl:]]*) exit 0 ;; esac
   n="$(lowtrim "$n")"
