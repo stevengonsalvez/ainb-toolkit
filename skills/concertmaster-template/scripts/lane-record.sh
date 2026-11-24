@@ -77,8 +77,8 @@ resp="$(cm_timeout "$GH_TIMEOUT" gh api -X POST "$api" -f body="cm:state $lane $
 at="$(printf '%s' "$resp" | jq -r '.created_at // empty' 2>/dev/null)"
 [ -n "$at" ] || at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-# updatedAt never falls behind the comment, so the rebuild check reads this ledger as current
-cm_ledger_write '.lanes[$l].recordedState = $s | .lanes[$l].recordedAt = $at | .updatedAt = ([$now, $at, (.updatedAt // "")] | max)' \
+# recordedAt is GitHub's created_at: ledger-rebuild.sh compares it with the issue, never a host clock
+cm_ledger_write '.lanes[$l].recordedState = $s | .lanes[$l].recordedAt = $at | .updatedAt = $now' \
   --arg l "$lane" --arg s "$line" --arg at "$at" --arg now "$now" \
   || die "posted to $CM_ORG/$rrepo#$issue but the ledger was not written: the next tick may post it again" 1
 printf 'lane-record: %s posted %s\n' "$lane" "$(printf '%s' "$resp" | jq -r '.html_url // "(no url)"' 2>/dev/null)"

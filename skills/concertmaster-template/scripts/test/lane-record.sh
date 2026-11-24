@@ -46,7 +46,6 @@ lr post lane-a "running lead=w-lane-a"
 [ "$(cat "$STUB/gh.log")" = "POST repos/AcmeOrg/acme-app/issues/11/comments" ] && ok "...in github.main_repo when record_repo is unset" || bad "post path" "$(cat "$STUB/gh.log")"
 [ "$(recorded)" = "running lead=w-lane-a" ] && [ "$(jq -r '.lanes["lane-a"].recordedAt' "$CM_HOME/ledger.json")" = 2026-11-24T10:00:00Z ] \
   && ok "...and records recordedState and recordedAt in the ledger" || bad "recorded" "$(recorded)"
-[ "$(jq -r '.updatedAt' "$CM_HOME/ledger.json")" \> 2026-11-24T09:59:59Z ] && ok "...and the ledger updatedAt is not older than the comment" || bad "updatedAt" "$(jq -r .updatedAt "$CM_HOME/ledger.json")"
 
 lr post lane-a "running lead=w-lane-a"
 [ "$RC" = 0 ] && [ "$OUT" = "lane-record: lane-a unchanged" ] && [ "$(calls)" = 1 ] && ok "the same line again: unchanged, no gh call" || bad "dedupe" "rc=$RC calls=$(calls) $OUT"
