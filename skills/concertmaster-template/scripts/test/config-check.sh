@@ -31,7 +31,13 @@ doctor() {
 # variant <name> <sed expression>: the example config with one edit
 variant() { sed -e "$2" "$EXAMPLE" > "$ROOT/$1.yaml"; }
 
-doctor "config.example.yaml passes every check"                 "$EXAMPLE" 0 'config-check: 0 failed'
+# The example leaves backup.host empty on purpose (the owner picks the peer): a verbatim copy fails on it and on
+# nothing else. Every other case runs on the example with a peer set.
+doctor "config.example.yaml as shipped fails on backup.host"    "$EXAMPLE" 1 'FAIL backup.host is empty or missing: set it to the ssh alias of another host'
+doctor "...and on nothing else"                                 "$EXAMPLE" 1 'config-check: 1 failed'
+sed -e 's/^  host: "" /  host: backup-peer /' "$EXAMPLE" > "$ROOT/example.yaml"
+EXAMPLE="$ROOT/example.yaml"
+doctor "the example with a backup peer passes every check"      "$EXAMPLE" 0 'config-check: 0 failed'
 printf 'schema: concertmaster.config/v1\n' > "$ROOT/bare.yaml"
 doctor "a bare config is missing the required keys"             "$ROOT/bare.yaml" 1 'FAIL project.name'
 
@@ -43,6 +49,10 @@ variant bad-schema 's/concertmaster.config\/v1/other/'
 doctor "wrong schema fails"                                     "$ROOT/bad-schema.yaml" 1 'FAIL schema'
 variant no-self 's/^  self_name: .*/  self_gone: x/'
 doctor "missing worktrees.self_name fails"                      "$ROOT/no-self.yaml" 1 'FAIL worktrees.self_name'
+variant empty-backup 's/^  host: backup-peer /  host: "" /'
+doctor "an empty backup.host fails and names the fix"           "$ROOT/empty-backup.yaml" 1 'FAIL backup.host is empty or missing: set it to the ssh alias of another host'
+variant no-backup '/^  host: backup-peer /d'
+doctor "a missing backup.host fails"                            "$ROOT/no-backup.yaml" 1 'FAIL backup.host is empty or missing'
 
 variant bad-window 's/^  deploy_windows: .*/  deploy_windows: ["25:99"]/'
 doctor "a deploy window that is not HH:MM fails"                "$ROOT/bad-window.yaml" 1 'FAIL schedule.deploy_windows'
@@ -66,6 +76,12 @@ variant bad-adapter 's/^    adapter: wacli .*/    adapter: pigeon/'
 doctor "an unknown owner_digest adapter fails"                  "$ROOT/bad-adapter.yaml" 1 'FAIL messaging.owner_digest.adapter'
 variant bad-agent 's/{ name: ops-sweeper, standing: true,  spawn_at: 2, agent: claude/{ name: ops-sweeper, standing: true,  spawn_at: 2, agent: other/'
 doctor "a lane with an unknown agent fails"                     "$ROOT/bad-agent.yaml" 1 'FAIL lanes: each has'
+variant lane-issue 's/{ name: ops-sweeper, standing: true,/{ name: ops-sweeper, issue: 260, standing: true,/'
+doctor "a lane with an issue number passes"                     "$ROOT/lane-issue.yaml" 0 'config-check: 0 failed'
+variant bad-lane-issue 's/{ name: ops-sweeper, standing: true,/{ name: ops-sweeper, issue: "#260", standing: true,/'
+doctor "a lane issue that is not a number fails"                "$ROOT/bad-lane-issue.yaml" 1 'FAIL lanes: an issue is a whole number'
+variant bad-record-repo 's|^  record_repo: null .*|  record_repo: AcmeOrg/records|'
+doctor "a github.record_repo with an owner part fails"          "$ROOT/bad-record-repo.yaml" 1 'FAIL github.record_repo is a repo name'
 variant dup-lane 's/{ name: ops-sweeper,/{ name: dev-sweeper,/'
 doctor "a duplicate lane name fails"                            "$ROOT/dup-lane.yaml" 1 'FAIL lanes: names are unique'
 variant nt-lane 's/^  never_touch: \[\].*/  never_touch: [pr-sweeper]/'

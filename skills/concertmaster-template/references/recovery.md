@@ -20,7 +20,9 @@ before a worktree goes: its local Supabase stack and leftover codex processes.
 `scripts/backup-offhost.sh` copies the part of `$CM_HOME` that cannot be rebuilt from git to a peer
 host over ssh + rsync, nightly. Peer and directory come from `config.yaml` (`backup.host`,
 `backup.remote_dir`, `backup.keep`). **The owner chooses the target host: `backup.host` has no
-default in `config.example.yaml`.** A config with no host makes the script exit 2 with
+default (`config.example.yaml` leaves it empty).** It is required: `scripts/config-check.sh`
+fails on an empty or missing `backup.host`, so boot stops until it is set (a host lost with an empty one
+took its ledger with it, with no copy anywhere). A config with no host makes the script exit 2 with
 `backup.host is not set: the owner chooses the target host`. Nothing runs nightly until the cron
 line below is installed on the concertmaster host.
 
@@ -115,8 +117,13 @@ while is harmless, repeated means a hung run.
 4. Re-provide what the backup never carries: `mc.env`, anything under `~/.secrets`, and the cron line
    above. `briefs/` are regenerated from `references/lanes.md`; `inbox/`, `salvage/` and the outbox are
    gone by design, the work is in git and PRs.
-5. Continue with `SKILL.md` § First boot; the first census reconciles the restored ledger with what is
+5. Run `scripts/ledger-rebuild.sh`: the copy is up to a night old, so a lane record on GitHub newer than it
+   makes the dry run print the merged ledger; read it and run `--apply`. `ledger current` means nothing moved.
+6. Continue with `SKILL.md` § First boot; the first census reconciles the restored ledger with what is
    actually running.
+
+With no copy on the peer at all, skip steps 2 and 3 and run `scripts/ledger-rebuild.sh` then `--apply`: it rebuilds
+lanes, hosts and workers from the lane issues and the fleet (`references/ledger.md` § Rebuild).
 
 ## Leftover local Supabase stacks
 

@@ -11,7 +11,7 @@
 # next to SKILL.md, else $CM_HOME/config.yaml (config.example.yaml is never read
 # unless named with --config).
 # Required: schema, project.name, project.owner.name and id, github.org and
-# main_repo, worktrees.orca_repo and self_name, hosts.home. Optional keys are
+# main_repo, worktrees.orca_repo and self_name, hosts.home, backup.host. Optional keys are
 # checked only when set: the shape of the schedule, merge, messaging, lanes,
 # telemetry, ci, unlinked_prs and health blocks. Run it after every config edit.
 # shellcheck disable=SC2016  # the single-quoted filters are jq programs, not shell
@@ -62,6 +62,9 @@ req "github.main_repo"                          ".github.main_repo | $nonempty_s
 req "worktrees.orca_repo"                       ".worktrees.orca_repo | $nonempty_str"
 req "worktrees.self_name"                       ".worktrees.self_name | $nonempty_str"
 req "hosts.home"                                ".hosts.home | $nonempty_str"
+# The off-host copy is the only way back for a ledger whose host is lost: an empty peer means no copy at all.
+if printf '%s' "$JSON" | jq -e ".backup.host | $nonempty_str" >/dev/null 2>&1; then ok "backup.host"
+else bad "backup.host is empty or missing: set it to the ssh alias of another host (references/recovery.md § Off-host backup); without it the ledger dies with this host"; fi
 
 opt "github.exclude_repo_patterns is a list of strings" '.github.exclude_repo_patterns' 'type == "array" and all(.[]; type == "string" and length > 0)'
 opt "worktrees.never_touch is a list of strings"        '.worktrees.never_touch' 'type == "array" and all(.[]; type == "string" and length > 0)'
@@ -85,6 +88,8 @@ opt "outward_messages values are autonomous or draft_first" '.outward_messages' 
 opt "lanes: each has a name, a boolean standing and a known agent" '.lanes' \
   'type == "array" and all(.[]; (.name | type == "string" and length > 0) and (.standing | type == "boolean") and ((.agent // "claude") | IN("claude", "codex", "agy")))'
 opt "lanes: names are unique"                           '.lanes' '(map(.name) | length) == (map(.name) | unique | length)'
+opt "lanes: an issue is a whole number, 1 or more"      '.lanes' 'all(.[]; (.issue // null) == null or (.issue | type == "number" and . >= 1 and . == floor))'
+opt "github.record_repo is a repo name"                 '.github.record_repo' 'type == "string" and test("^[A-Za-z0-9._-]+$")'
 req "no never_touch name is a lane name" \
   '((.worktrees.never_touch // []) | map(ascii_downcase)) as $nt
    | ([(.lanes // [])[] | .name | ascii_downcase] | map(select(. as $k | $nt | index($k))) | length) == 0'

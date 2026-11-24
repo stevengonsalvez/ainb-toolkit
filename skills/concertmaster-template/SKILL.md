@@ -1,7 +1,7 @@
 ---
 name: concertmaster-template
 description: "Template of the concertmaster fleet-orchestrator skill, project-agnostic. Copy this directory into a project as `.agents/skills/concertmaster`, rename the frontmatter name to `concertmaster`, copy config.example.yaml to config.yaml and fill it. Once filled it runs as the master orchestrator for one GitHub org across every Orca host: adopts every in-scope worktree, session and agent, classifies them, keeps the pipe clean (teardown of merged single-task work; standing lanes are never torn down and nothing with open beads is done), spawns standing lane leads and single-task workers on claude, codex or agy, drives PRs from any author to merged under a strict merge gate, ships to production in configured deploy windows, and reports to the owner in a turn-end table plus a scheduled digest. Never writes code. See README.md for the adoption checklist."
-argument-hint: "[boot|tick|status|resume|hand <work>|digest|intake <chat> [--since <time>]]"
+argument-hint: "[boot [--rebuild]|tick|status|resume|hand <work>|digest|intake <chat> [--since <time>]]"
 ---
 
 # Concertmaster (template)
@@ -58,7 +58,9 @@ The lane set above is the default; `cfg.lanes` is the list in use.
    reads state, decides, spawns, nudges, merges (via pr-sweeper), tears down, reports.
 2. **Ledger is truth.** Re-read `$CM_HOME/ledger.json` at the start of
    every tick (`references/ledger.md`). After compaction or restart: re-read,
-   rediscover, continue.
+   rediscover, continue. It is also a cache of what outlives a host: each lane's state is recorded on its
+   GitHub issue (tick step 4, Lane record), and `scripts/ledger-rebuild.sh` rebuilds a lost or older ledger from it.
+   On a conflict only a lane's state yields, and only to a record newer than the ledger's (`references/ledger.md` § Rebuild).
 3. **Never type into an AskUserQuestion menu.** Before any `terminal send`, read
    the pane with `--screen`. If it shows `Enter to select`, `Tab/Arrow keys`,
    or a numbered question, do not send text: answer with menu keys only when the
@@ -354,14 +356,23 @@ worktree.
    not `HH:MM`, an unknown merge strategy, a token where a path belongs) or
    secret-looking text. Missing or failing: stop and ask the owner to fix it.
 3b. Run `scripts/cm-worktree-sync.sh` (the boot check of hard rule 30, the same script as tick step 1; it keeps its own 80 s budget and defers the fast-forward when under 20 s remain): the worktree must be level with its remote before anything is read from it. Silent is good; a `BLOCKED` line is a blocker row from the first table on, and an `ff` line means re-read this file now.
-4. Read the ledger. Missing: this is **first boot** (below). Present: print the
-   fleet table from it.
+4. Read the ledger. **Rebuild check** (always on `boot --rebuild`, and on every boot where the ledger is missing):
+   run `scripts/ledger-rebuild.sh` (a dry run). `ledger current` means go on. Otherwise it prints the ledger it would
+   write, rebuilt from the lane issues (`cfg.lanes[].issue`, newest `cm:state`), the fleet CLI host list and
+   `worktree list` on every reachable host, matched to lanes by the classify ownership rules; read it, then run it
+   with `--apply` (written through `cm_ledger_write`). A missing ledger with copies in `ledger.bak/` is restored
+   first (exit 1 prints the command), never rebuilt over. It never takes a ledger file from another host
+   (`references/ledger.md` § Rebuild). A rebuilt ledger has no `firstBoot.completedAt`: the kill list is asked again
+   (§ First boot steps 3 to 5) before any autonomous teardown. Exit 4 (missing, and no lane issue holds a record):
+   this is **first boot** (below). Any other non-zero exit (1, 2, 3): report it and stop the boot. Present: print the
+   fleet table.
 5. After a restart, run `resume` (§ Resume) before the first tick (skip it on first
    boot: no ledger, nothing to resume). Then run one tick (below).
 6. Arm the loop: `/loop /concertmaster tick` with no interval (dynamic,
    self-paced). Each tick ends by scheduling the next wake.
 
-Arguments: `boot` (steps 1 to 6), `tick` (one tick), `status` (read-only:
+Arguments: `boot` (steps 1 to 6), `boot --rebuild` (the same, with the rebuild check of step 4 run whatever the
+ledger looks like), `tick` (one tick), `status` (read-only:
 ledger + discover + classify, report, schedule nothing new; it opens with the `/cm-status` view,
 `scripts/cm-status.sh`, `companions/cm-status.md`), `resume` (§ Resume:
 bring dead lanes back from the roster), `hand <work>` (§ Handing work), `digest`
@@ -517,6 +528,12 @@ BEFORE asking, and only when the rule below allows it. A blocking picker also wa
    lead flagged `LEAD-DEAD` is respawned in place (§ Ownership).
 4. **Act**, in this order, each bounded:
    - **Fleet state (`cm:state`), every tick.** Refresh the one shared line in YOUR OWN worktree comment: `scripts/fleet-state.sh write` (a field not given keeps its last value, else comes from the ledger `freeze` and `deployWindows`). Do it every tick, and in the SAME call as any change: a freeze flip (`write --freeze on --window <window> --push`, § Deploy windows: the push is one `orca terminal send` to each lane matching `fleet_state.push_match`, default every `-sweeper` lane, pr-sweeper included; freeze-off needs none) or a finished deploy (`write --prod <tag>`). It keeps every other line and goes last, so a leading `cm:merge-ready` stays first. A comment edit made AFTER the write (a status line, a `cm:merge-ready`) must keep the `cm:state` line: re-run `write` as the last comment edit of the tick, or an older copy of the comment brings back a previous `freeze=off` line that is still fresh. A failed write (non-zero) is a `cm:blocked` for the tick: lanes treat a stale line (older than 2 ticks of the slowest tick delay: 60 minutes with the quiet delay of 1800 s, never under 30) as `freeze=on`. Leads and sweepers read it each tick with `scripts/fleet-state.sh check --apply` (`references/lanes.md` Lead charter 1a and the pr-sweeper brief): no merge ask or deploy while `freeze=on`; a missing, stale or ambiguous line is acted on as `freeze=on` with `cm:blocked cm:state stale`; ambiguous = more than one worktree answers to the concertmaster name, or more than one `cm:state` line is present, valid or damaged, and the newest is never trusted over the others. Run `check` with `--apply` every tick: only `--apply` removes an override a fresh line has ended. Manual toggle: on the owner's word, type `cm:override continue <reason>` into the stalled lead's terminal (`orca terminal send`); the lead records `cm:override continue until=<UTC>` (2 h or the first fresh line), lifts the stale rule only and journals it.
+   - **Lane record, every lane whose state changed.** `scripts/lane-record.sh post <lane> "<lanes.<lane>.state> lead=<lead id or ->"`
+     for each lane with a `cfg.lanes[].issue`: one `cm:state <lane> <line>` comment on the lane issue, the record that
+     survives the loss of any host (`references/ledger.md` § Rebuild). It compares the line with `lanes.<lane>.recordedState`
+     and makes no gh call when it is the same, so calling it for an unchanged lane is free. A non-zero exit (a gh error,
+     a refused line, the ledger not written) is a report row, never a stop. Not the fleet `cm:state freeze=...` line
+     above: that one lives in your worktree comment, this one on a GitHub issue and names a lane.
    - **Asks and blockers.** Run `scripts/asks.sh` ONCE per tick first: it reads EVERY line of
      EVERY lane's comment on EVERY host (each line also split on " | ") for `cm:ask`,
      `cm:blocked` and `cm:waiting-owner`, lists unreachable hosts instead of treating them as
@@ -1596,6 +1613,10 @@ shellcheck clean.
 | `scripts/codemode-recover.sh --terminal <h> --lane <id> --text <nudge> [--host <h>] [--dry-run]` | closes the Claude Code Code Mode opt-in dialog a host reboot leaves every resumed lane on: matches ONLY a footer line that BEGINS with "Enter to confirm" or "Esc to start without it" (a sentence that quotes the words does not match) with "Enter to confirm" beside it, "Code Mode" within 8 lines above and not past the dialog top border, nothing but borders below (never a permission prompt or other menu, never old scrollback); sends ONE Esc (the one script that sends an Escape to a Code Mode dialog), reads again, then one nudge only with the dialog gone, a Claude footer last and no menu or mid-turn marker; at most 2 Esc keys per terminal in 6 h from the last one, kept through recoveries, reserved under a lock and read back (a count that cannot be recorded means no Esc); every send goes to the handle `cm_lane_handle` returns for `--lane` (a missing or stale file is re-checked live through `lane-handles.sh --worker` first; a dead, still-stale, other-terminal or other-host file is `held`; this script never writes a lane handle); one recovery per terminal at a time (a mkdir lock); resume.lock is checked before the Esc and before the nudge; `--host` goes out as `--environment`; one line `result<TAB>detail` (`none`, `would-recover`, `recovered`, `closed`, `menu`, `held`, `unreadable`, `send-failed`) |
 | `scripts/tick-emit.sh [--classify <file>] [--status s] [--task t] [--extra <json>]` | tick step 5: fleet summary from classify JSON (stdin or file) plus the `unlinked-prs.json` count, then `mc-emit.sh --tick` (`MC_NO_FLUSH=1`) and the concertmaster `--fleet-upsert` (flushes); `CM_AGENT_ID`, `CM_WORKSPACE`; always exits 0, prints one line about its own two lines (sent, queued, dead, skipped or refused), never the token or tenant |
 | `scripts/backup-offhost.sh [--check\|--dry-run]` | nightly off-host copy of the ledger, its ring and `handovers/` after the secret scan; `--check` tests the config and the ssh BatchMode link to the peer and writes nothing; a finished run writes `$CM_HOME/cache/backup-offhost.json` (`references/recovery.md` § Off-host backup) |
+| `scripts/lane-record.sh post <lane> <line>\|read <lane>` | tick step 4, the lane record: `post` puts one `cm:state <lane> <line>` comment on the lane's issue (`lanes[].issue` in `github.record_repo`, default `main_repo`) when the line differs from the ledger's `lanes.<lane>.recordedState`, then records it; the first word is a lane state, one line, no `@`, nothing credential-shaped. `read` prints `<created_at> <comment>` for the newest one by an OWNER, MEMBER or COLLABORATOR. gh errors exit 1 and are reported, never fatal |
+| `scripts/ledger-rebuild.sh [--apply]` | Start step 4, `boot --rebuild`: due when the ledger is missing or a lane record (`lane-record.sh read`) is newer than that lane's `recordedAt`; rebuilds lanes (issue, state, recordedState, lead), hosts (host list, seeded from `cfg.hosts`) and workers (`worktree list` per reachable host through `fleet-read.sh`, lanes from `classify.sh` ownership, orphans left to the tick, state from each worktree's first comment line, `cm:asleep` kept asleep, a lane-shaped `cm:child` claim never standing false). Dry run prints the ledger; `--apply` writes it through `cm_ledger_write` (`--init` when missing, else a merge that only adds, tightens to asleep, and takes a lane's state from a newer record). Exit 1 on any unreadable lane issue or a ring to restore, 4 when there is nothing to rebuild (first boot). Never reads a ledger on another host |
+| `scripts/test/ledger-rebuild.sh` | the recovery drill: stub gh and fleet CLI, a ledger recorded through `lane-record.sh`, moved aside with its ring, rebuilt, then lanes, issues, states, leads, hosts and the worker-to-lane mapping diffed against the saved one; a current ledger reads no fleet, merge keeps unknown fields, a not-newer lane state and a live successor lead, a restored copy gets the newer state and goes back to asleep, a lane-shaped `cm:child` claim stays standing unknown, a ring refuses, a gh failure judges nothing, no record exits 4, a foreign ledger exits 3 |
+| `scripts/test/lane-record.sh` | stub gh (`test/fixtures/gh-issue-comments`), temp ledger: one comment per change, none for a repeat, recordedState kept, gh failure records nothing, bad line and issue-less lane refused, no ledger posts nothing, read skips untrusted, two-line and other-lane comments, `record_repo` picks the repo |
 | `scripts/backup-stale.sh [--dry-run]` | tick step, backup check: alerts once per episode when that stamp is older than `backup.max_age_hours` (default 50), reads one local file, no network |
 | `scripts/ci-queue-alert.sh [--dry-run]` | alerts when too many workflow runs stay queued, once per episode (`references/ci-capacity.md`) |
 | `scripts/cred-check.sh [--dry-run] [--publish [FILE]]` | weekly validity probe of the credentials in a names-only index (`references/credentials.md`) |
