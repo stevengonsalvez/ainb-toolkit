@@ -25,7 +25,8 @@ spawn() { # $1 = subagent name; $2 = event (PostToolUse); $3 = tool_response JSO
     '{hook_event_name:$e,tool_name:"Agent",session_id:$s,cwd:$w,tool_input:{name:$n,prompt:"p"},tool_response:$r}' | "$HOOK")"
   [ -z "$out" ] || { echo "FAIL Agent call produced output: $out"; fail=1; }
 }
-REC="$TMPDIR/cm-msg-guard/sess-a.names"
+RECD="$TMPDIR/cm-msg-guard-$(id -u)"
+REC="$RECD/sess-a.names"
 rec_has() { [ -f "$REC" ] && grep -qxF -- "$1" "$REC"; }
 rec_lines() { if [ -f "$REC" ]; then wc -l < "$REC" | tr -d ' '; else echo 0; fi; }
 # ledger workers name sessions: their ids and lanes are never recorded and never pass
@@ -64,7 +65,7 @@ want allow SendMessage 'test-engineer'
 want deny SendMessage 'research-cache'
 want deny SendMessage 'host:bad'
 want deny SendMessage 'two words'
-rec_has reviewer && [ -n "$(find "$TMPDIR/cm-msg-guard" -maxdepth 0 -perm 0700)" ] && [ "$(rec_lines)" = 2 ] && echo "ok   the record holds the two valid names only, in a 0700 directory" || { echo "FAIL record contents or mode"; fail=1; }
+rec_has reviewer && [ -n "$(find "$RECD" -maxdepth 0 -perm 0700)" ] && [ "$(rec_lines)" = 2 ] && echo "ok   the record holds the two valid names only, in a 0700 directory" || { echo "FAIL record contents or mode"; fail=1; }
 # never recorded: a lane-shaped, w-, self-named, ledger or configured name; a PreToolUse Agent call; a spawn that failed;
 # a name carrying a newline or a tab (one Agent call must never write two record lines)
 for n in dev-sweeper rs-lead-g w-dev-1 w-x concertmaster-2 research-cache ops-db dev-1 dev-1-9c; do spawn "$n"; done
@@ -104,13 +105,16 @@ SID=sess-b
 want deny SendMessage 'reviewer'
 SID=sess-a
 # an unreadable record, a record directory that is not 0700, or no session_id: denied
-chmod 000 "$TMPDIR/cm-msg-guard/sess-a.names"
+chmod 000 "$RECD/sess-a.names"
 if [ "$(id -u)" != 0 ]; then want deny SendMessage 'reviewer'; fi
-chmod 600 "$TMPDIR/cm-msg-guard/sess-a.names"
-chmod 755 "$TMPDIR/cm-msg-guard"; want deny SendMessage 'reviewer'; chmod 700 "$TMPDIR/cm-msg-guard"
+chmod 600 "$RECD/sess-a.names"
+chmod 755 "$RECD"; want deny SendMessage 'reviewer'
+WARN="$(run SendMessage reviewer 2>&1 >/dev/null)"
+[ "$(printf '%s\n' "$WARN" | grep -c 'is not a directory of ours with mode 0700')" = 1 ] && echo "ok   a record directory that fails the check gives one stderr warning" || { echo "FAIL record directory warning: $WARN"; fail=1; }
+chmod 700 "$RECD"
 SID=''; want deny SendMessage 'reviewer'; SID=sess-a
 SID='../sess-a'; want deny SendMessage 'reviewer'; SID=sess-a
-rm -rf -- "${TMPDIR:?}/cm-msg-guard"; want deny SendMessage 'reviewer'
+rm -rf -- "${RECD:?}"; want deny SendMessage 'reviewer'
 # deny: socket, path and URL forms whatever the case or padding
 want deny SendMessage 'UDS:/run/user/1000/cc-socks/1.sock'
 want deny SendMessage ' uds:/run/user/1000/x'
@@ -122,6 +126,14 @@ want deny SendMessage 'https://example.test/session'
 want allow Bash 'rs-lead-g-4f'
 want allow SendMessage 'rs-lead-g-4f' /home/user/other-project
 [ -z "$(jq -n --arg w "$CWD" '{tool_name:"SendMessage",cwd:$w,tool_input:{message:"hi"}}' | "$HOOK")" ] && echo "ok   allow: no recipient" || { echo "FAIL no recipient"; fail=1; }
+# a broadcast type denies whatever `to` holds; a recipient of only spaces is never a subagent; empty `to` is no recipient
+bcto() { jq -n --arg w "$CWD" --arg s "$SID" --arg to "$1" --arg ty "$2" '{tool_name:"SendMessage",session_id:$s,cwd:$w,tool_input:{to:$to,type:$ty,message:"hi"}}' | "$HOOK" | jq -r '.hookSpecificOutput.permissionDecision // "allow"' 2>/dev/null; }
+spawn reviewer
+for c in '  |broadcast' '|broadcast' 'reviewer|broadcast' 'reviewer| Broadcast ' '   |' ' |message'; do
+  got="$(bcto "${c%%|*}" "${c#*|}")"; [ -n "$got" ] || got=allow
+  if [ "$got" = deny ]; then echo "ok   deny: to '${c%%|*}' type '${c#*|}'"; else echo "FAIL want deny got $got: to '${c%%|*}' type '${c#*|}'"; fail=1; fi
+done
+got="$(bcto 'reviewer' message)"; [ "${got:-allow}" = allow ] && echo "ok   allow: a spawned name with type message" || { echo "FAIL spawned name with type message: $got"; fail=1; }
 # a broadcast payload has type "broadcast" and no recipient: denied in scope, allowed outside
 bc() { jq -n --arg w "$1" '{tool_name:"SendMessage",cwd:$w,tool_input:{type:"broadcast",message:"hi"}}' | "$HOOK"; }
 [ "$(bc "$CWD" | jq -r '.hookSpecificOutput.permissionDecision' 2>/dev/null)" = deny ] && echo "ok   deny: type broadcast, no recipient" || { echo "FAIL broadcast type"; fail=1; }

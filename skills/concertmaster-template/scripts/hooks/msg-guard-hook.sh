@@ -10,7 +10,7 @@
 # background launch (status async_launched with an agentId) or a foreground result (an agentId, content or result).
 # A string tool_response (the error text of a failed call), null or an array never records. tool_input.name,
 # lowercased and trimmed, is
-# appended to this session's record, ${TMPDIR:-/tmp}/cm-msg-guard/<session_id>.names (the directory 0700 and ours),
+# appended to this session's record, ${TMPDIR:-/tmp}/cm-msg-guard-<uid>/<session_id>.names (the directory 0700 and ours),
 # only when it is a plain name: no control character, the whole string ^[a-z0-9][a-z0-9_-]{0,63}$, and not a session
 # name (lane-shaped, w-<anything>, the concertmaster's own name, a configured lane, a ledger worker id or lane). An
 # Agent call is never denied, and PreToolUse Agent records nothing.
@@ -33,15 +33,19 @@ jfield() { JV="$(printf '%s' "$input" | jq -j "($1) // \"\" | tostring" 2>/dev/n
 jfield .tool_name; tool="$JV"; jfield .hook_event_name; event="$JV"
 case "$tool" in SendMessage|Agent|Task) ;; *) exit 0 ;; esac
 jfield .session_id; sid="$JV"
-REC_DIR="${TMPDIR:-/tmp}/cm-msg-guard"
+# one directory per user: on a shared host a directory another user made first is not ours and fails the check
+REC_DIR="${TMPDIR:-/tmp}/cm-msg-guard-$(id -u)"
 NAME_RE='^[a-z0-9][a-z0-9_-]{0,63}$'
 AGENT_ID_RE='^(a?[0-9a-f]{8,}|a([a-z0-9_-]{1,63}-)?[0-9a-f]{16})$'
 lowtrim() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed 's/^ *//; s/ *$//'; }
 # names_file: this session's record path, only for a plain session_id and a record directory that is ours, 0700, no symlink
 names_file() {
   case "$sid" in ''|*[!A-Za-z0-9_-]*) return 1 ;; esac
-  [ "${#sid}" -le 128 ] && [ -d "$REC_DIR" ] && [ ! -L "$REC_DIR" ] && [ -O "$REC_DIR" ] || return 1
-  [ -n "$(find "$REC_DIR" -maxdepth 0 -perm 0700 2>/dev/null)" ] || return 1
+  [ "${#sid}" -le 128 ] && [ -e "$REC_DIR" ] || return 1
+  if [ ! -d "$REC_DIR" ] || [ -L "$REC_DIR" ] || [ ! -O "$REC_DIR" ] || [ -z "$(find "$REC_DIR" -maxdepth 0 -perm 0700 2>/dev/null)" ]; then
+    printf 'msg-guard-hook.sh: %s is not a directory of ours with mode 0700: no subagent name is recorded or allowed\n' "$REC_DIR" >&2
+    return 1
+  fi
   printf '%s/%s.names\n' "$REC_DIR" "$sid"
 }
 load_lib() {
@@ -99,15 +103,16 @@ fi
 [ "$event" = "" ] || [ "$event" = PreToolUse ] || exit 0
 [ "${CM_ALLOW_SENDMESSAGE:-0}" = 1 ] && exit 0
 jfield '.tool_input.to // .tool_input.recipient // .tool_input.target'; to="$JV"
-if [ -z "$to" ]; then
-  # a broadcast carries type "broadcast" and no recipient: it reaches every session
-  jfield .tool_input.type; [ "$JV" = broadcast ] && to='*'
-fi
+# a broadcast (type "broadcast", any case or padding) reaches every session, whatever `to` holds; a type with a control
+# character is treated the same
+jfield .tool_input.type
+case "$JV" in *[[:cntrl:]]*) to='*' ;; *) [ "$(lowtrim "$JV")" = broadcast ] && to='*' ;; esac
+# no recipient at all (absent or empty `to`) and no broadcast: not a message to a session, allowed as before
 [ -n "$to" ] || exit 0
 # compared lowercased and trimmed: UDS:..., " uds:...", padded names are the same recipient; a control character
-# (newline, tab, ...) is never a subagent name
+# (newline, tab, ...) is never a subagent name, and a recipient of only spaces is never one either
 case "$to" in *[[:cntrl:]]*) low='*' ;; *) low="$(lowtrim "$to")" ;; esac
-[ -n "$low" ] || exit 0
+[ -n "$low" ] || low='*'
 case "$low" in
   *[:/*]*|*cc-socks*|*.sock) ;;   # a socket, path or URL form (uds:..., /tmp/x.sock) or a broadcast: never a subagent
   *) [[ $low =~ $AGENT_ID_RE ]] && exit 0 ;;   # an agent id (plain or named): the caller's own subagent

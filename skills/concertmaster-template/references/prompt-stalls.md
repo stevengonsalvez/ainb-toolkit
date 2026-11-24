@@ -91,7 +91,7 @@ the `cm:` worktree comment, the ledger). A written rule alone did not hold: a 14
 host found thousands of `SendMessage` calls to named sessions and to `uds:/run/user/<uid>/cc-socks/*.sock`
 targets. `scripts/hooks/msg-guard-hook.sh` (PreToolUse matcher `SendMessage`, PostToolUse matcher `Agent|Task`) denies
 those with the fix. After an `Agent` spawn that ran (PostToolUse, no error) it records the subagent name in this
-session's record, `${TMPDIR:-/tmp}/cm-msg-guard/<session_id>.names` (directory 0700), only when it is a plain name:
+session's record, `${TMPDIR:-/tmp}/cm-msg-guard-<uid>/<session_id>.names` (directory 0700), only when it is a plain name:
 no control character, `^[a-z0-9][a-z0-9_-]{0,63}$`, and not lane-shaped, `w-<id>`, the concertmaster's own name, a
 configured lane or a ledger worker id or lane. On `SendMessage` it denies by default: a control character, any
 recipient holding `:`, `/` or `*` (sockets, paths, URLs, broadcast; case and padding ignored) and any plain name that
