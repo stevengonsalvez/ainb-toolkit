@@ -508,6 +508,10 @@ world hb
 printf 't_rcm\tlocal\tclaude\t-\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$CM_HOME/lanes/w-rcm/handle" 2>/dev/null || { mkdir -p "$CM_HOME/lanes/w-rcm"; printf 't_rcm\tlocal\tclaude\t-\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$CM_HOME/lanes/w-rcm/handle"; }
 CT="$("$HERE/../codemode-recover.sh" --terminal t_rcm --lane w-rcm --host remote-host --text hello 2>/dev/null)"
 check "a lane file that names another HOST than the destination: held, no Esc" "$(printf '%s' "$CT" | cut -f1)/$(esc2 t_rcm)" "held/0"
+CT="$("$HERE/../codemode-recover.sh" --terminal t_rcm --lane w-rcm --host "Build Box" --text hello 2>/dev/null)"; RCB=$?
+check "an environment name with a space is a valid destination (not 'bad host', exit 2): the lane file names another host, so held, no Esc" "$RCB/$(printf '%s' "$CT" | cut -f1)/$(esc2 t_rcm)" "0/held/0"
+"$HERE/../codemode-recover.sh" --terminal t_rcm --lane w-rcm --host "-bad" --text hello >/dev/null 2>&1; check "a host name that starts with a dash is still refused, exit 2" "$?" "2"
+"$HERE/../codemode-recover.sh" --terminal t_rcm --lane w-rcm --host "$(printf 'a\tb')" --text hello >/dev/null 2>&1; check "a host name with a control byte is still refused, exit 2" "$?" "2"
 world mf
 CT="$(direct t_cm1 w-cm1)"
 check "a missing lane file is re-checked live (lane-handles.sh --worker) and then accepted for this terminal" "$(printf '%s' "$CT" | cut -f1)/$(esc2 t_cm1)" "recovered/1"

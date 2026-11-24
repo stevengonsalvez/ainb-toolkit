@@ -87,7 +87,9 @@ done
 if [[ "$TEXT" == *[[:cntrl:]]* ]]; then printf 'send-failed\t--text holds a control byte (one line of plain text is the contract): nothing was read or sent\n'; exit 0; fi
 [ -n "${TEXT//[[:space:]]/}" ] || { cm_warn "codemode-recover.sh: --text must not be empty"; exit 2; }
 cm_handle_ok "$TERM_H" || { cm_warn "codemode-recover.sh: bad terminal handle"; exit 2; }
-[ -z "$HOST" ] || cm_handle_ok "$HOST" || { cm_warn "codemode-recover.sh: bad host"; exit 2; }
+# An environment name may hold a space (cm_cli_host_into keeps it one argument), so it is not validated as a terminal handle.
+host_name_ok() { [[ -n "$1" && ${#1} -le 128 && "$1" != -* && "$1" != *[[:cntrl:]]* ]]; }
+[ -z "$HOST" ] || host_name_ok "$HOST" || { cm_warn "codemode-recover.sh: bad host"; exit 2; }
 cm_lane_dir "$LANE" >/dev/null 2>&1 || { cm_warn "codemode-recover.sh: bad lane name"; exit 2; }
 command -v jq >/dev/null 2>&1 || { cm_warn "codemode-recover.sh: missing dependency: jq"; exit 0; }
 
