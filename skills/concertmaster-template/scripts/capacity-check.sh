@@ -13,7 +13,7 @@
 # Cap, in the order queue.sh resolves it: hosts.per_host.<host>.maxWorkers, the ledger's hosts.<host>.maxWorkers,
 # hosts.defaults.maxWorkers, else CM_CAPACITY_DEFAULT_CAP only when it is set. A host with NO cap anywhere is not counted against a
 # guessed number: it is a CHECK INCOMPLETE row naming it. A host that is counted against the shared defaults cap (no per_host entry of
-# its own) gets a WARN row saying so. Two hosts with an identical non-zero count that are one machine (same hostname, health.host_aliases
+# its own) gets a WARN row saying so. Two hosts with an identical non-zero count that are one machine (same hostname, hosts.same_machine
 # or a shared terminal handle) get a WARN row too (the counts are left as read). Over cap means count > cap.
 #
 # Teardown candidates, only for a host over its cap, only terminals of this project (path matches worktrees.path_match), one row
@@ -161,30 +161,44 @@ jq -sc --slurpfile t "$TMP/terms.ndjson" '
 NOVER="$(jq 'map(select(.over)) | length' "$TMP/counts.json")"
 
 # Same machine under two names (a live pair of hosts that each reported 29): two hosts that report an IDENTICAL non-zero count AND
-# are the same machine by the config (the same hosts.per_host.<h>.hostname, or one in the other's health.host_aliases) or by
+# are the same machine by the config (the same hosts.per_host.<h>.hostname, or one group of hosts.same_machine) or by
 # the evidence (a terminal handle both lists hold). A WARN row, never a merge: the counts stand as read. Mirrors queue.sh, which also
 # says when the config names a host the census does not and the census names one the config does not.
 # shellcheck disable=SC2016  # the jq program is single-quoted on purpose
 printf '%s' "$CM_CFG_JSON" | jq -r --slurpfile c "$TMP/counts.json" --slurpfile t "$TMP/terms.ndjson" '
   . as $cfg
   | ($c[0]) as $cnt
-  | (($cfg.health.host_aliases // []) | if type == "object" then [to_entries[] | [.key] + (.value | if type == "array" then . else [.] end)]
-      elif type == "array" then [.[] | if type == "array" then . else empty end] else [] end) as $groups
+  | def groups($v): $v | if type == "array" then [.[] | arrays] else [] end;
+    groups($cfg.hosts.same_machine) as $sm
+  # deprecated: health.host_aliases as a list of name lists meant hosts.same_machine (its map form is hostname aliases only)
+  | groups($cfg.health.host_aliases) as $legacy
   | def hn($h): ($cfg.hosts.per_host[$h].hostname // null);
-    def aliased($a; $b): any($groups[]; (index($a) != null) and (index($b) != null));
+    def together($gs; $a; $b): any($gs[]; (index($a) != null) and (index($b) != null));
     def shared($a; $b): ([ $t[] | select(.host == $a and .handle != "") | .handle ] as $ha
                          | any($t[]; .host == $b and .handle != "" and (.handle | IN($ha[]))));
   [ range(0; $cnt | length) as $i | range($i + 1; $cnt | length) as $j | $cnt[$i] as $x | $cnt[$j] as $y
     | select($x.count > 0 and $x.count == $y.count)
     | (if (hn($x.host) != null and hn($x.host) == hn($y.host)) then "the same hostname \(hn($x.host))"
-       elif aliased($x.host; $y.host) then "health.host_aliases"
+       elif together($sm; $x.host; $y.host) then "hosts.same_machine"
+       elif together($legacy; $x.host; $y.host) then "health.host_aliases, deprecated"
        elif shared($x.host; $y.host) then "a terminal handle both lists hold"
        else empty end) as $why
     | "\($y.host)\t\($x.host) and \($y.host) both report \($x.count) agent terminals and look like ONE machine (\($why)): counted twice, so the over-cap total is overstated; list one of them or fix the names (the counts are left as read)" ] | .[],
   ( ($cfg.hosts.per_host // {} | keys) as $cn | ([ $cnt[].host ]) as $rn
     | (($cn - $rn)) as $miss | (($rn - $cn - ["local"])) as $extra
     | select(($miss | length) > 0 and ($extra | length) > 0)
-    | "(host names)\tconfig hosts \($miss | join(",")) were not read, read hosts \($extra | join(",")) are not in hosts.per_host: check the hosts.per_host names against the fleet host list" )
+    | "(host names)\tconfig hosts \($miss | join(",")) were not read, read hosts \($extra | join(",")) are not in hosts.per_host: check the hosts.per_host names against the fleet host list" ),
+  # an old same-machine entry in the map form ({ build-box: [build-box-2] }, the old example): once per entry whose
+  # hosts report the same non-zero count and are not already in one hosts.same_machine group (an empty list is none)
+  ( select(($cfg.health.host_aliases | type) == "object")
+    | $cfg.health.host_aliases | to_entries[] | .key as $k | ([.key] + [.value | if type == "array" then .[] else . end | strings]) as $g
+    | first([ range(0; $cnt | length) as $i | range($i + 1; $cnt | length) as $j | $cnt[$i] as $x | $cnt[$j] as $y
+              | select($x.count > 0 and $x.count == $y.count and ($g | index($x.host)) != null and ($g | index($y.host)) != null
+                       and (together($sm; $x.host; $y.host) | not))
+              | [$x.host, $y.host, $x.count] ][])
+    | "(config)\thealth.host_aliases.\($k) names \(.[0]) and \(.[1]), which both report \(.[2]) agent terminals: health.host_aliases is now only the names hostname -s answers as, so they are no longer treated as one machine; if they are, list them in hosts.same_machine" ),
+  ( select(($legacy | length) > 0)
+    | "(config)\thealth.host_aliases as a list of name lists is deprecated: move it to hosts.same_machine (health.host_aliases is a map of host to the names hostname -s answers as)" )
 ' >> "$TMP/warn.tsv" 2>/dev/null || printf '%s\t%s\n' "(warnings)" "the same-machine check could not run" >> "$TMP/warn.tsv"
 jq -R -s -c 'split("\n") | map(select(length > 0) | split("\t") | {name: .[0], warning: (.[1] // "")})' "$TMP/warn.tsv" > "$TMP/warn.json" 2>/dev/null || echo '[]' > "$TMP/warn.json"
 

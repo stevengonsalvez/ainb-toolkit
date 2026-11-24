@@ -119,7 +119,7 @@ ACT_PROBE_S="$(cfgint "${CM_HEALTH_ACTION_PROBE_S:-}" .health.action_probe_secon
 [ "$ACT_PROBE_S" -le "$PROBE_S" ] || ACT_PROBE_S="$PROBE_S"
 # health.host_aliases: configured host name -> the other names `hostname -s` may answer as there
 HOST_ALIASES_CFG="$(cm_cfg_json .health.host_aliases '{}')"
-printf '%s' "$HOST_ALIASES_CFG" | jq -e 'type == "object"' >/dev/null 2>&1 || { cm_warn "lane-health.sh: health.host_aliases must be a map of host name to a list of names: ignored"; HOST_ALIASES_CFG='{}'; }
+printf '%s' "$HOST_ALIASES_CFG" | jq -e 'type == "object"' >/dev/null 2>&1 || { cm_warn "lane-health.sh: health.host_aliases must be a map of host name to a list of names (fleet names of one machine go in hosts.same_machine): ignored"; HOST_ALIASES_CFG='{}'; }
 CLOUD="${CM_HEALTH_CLOUD:-$(cm_cfg .health.cloud none)}"
 case "$CLOUD" in gce|none) ;; *) cm_warn "lane-health.sh: health.cloud must be gce or none (got '$CLOUD'): using none"; CLOUD=none ;; esac
 UNITS="${CM_HEALTH_DAEMON_UNITS-$(cm_cfg .health.daemon_units)}"

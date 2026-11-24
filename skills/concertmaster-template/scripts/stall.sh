@@ -156,13 +156,81 @@ act_append() { # <json line>: append under a lock
     ) 9>>"$lock"
     return
   fi
-  until mkdir "$lock.d" 2>/dev/null; do
-    i=$((i + 1)); [ "$i" -gt 50 ] && { cm_warn "stall.sh: $lock.d busy: nothing recorded"; return 1; }
+  # no flock (stock macOS): a mkdir lock holding its owner pid, held for one append. The codemode-recover.sh take_lock
+  # pattern: a lock over a minute old whose owner is gone was left by a killed run and is reclaimed under a reclaim lock
+  # (one reclaimer at a time), judged twice, retired by rename and judged again on the tombstone; a live lock moved by
+  # mistake is never deleted. The holder re-reads its pid right before the append: a lock taken away records nothing.
+  local d="$lock.d" own=0 rcl p id rc
+  while :; do
+    if mkdir "$d" 2>/dev/null; then own=1; break; fi
+    rcl=0
+    act_sweep "$d"; act_sweep "$d.reclaim"
+    act_clear_reclaim "$d.reclaim"
+    if mkdir "$d.reclaim" 2>/dev/null; then
+      printf '%s\n' "$$" > "$d.reclaim/pid" 2>/dev/null
+      p="$(act_pid "$d")"; id="$(act_dir_id "$d")"
+      if [ "$(act_pid "$d.reclaim")" = "$$" ] && act_lock_stale "$d" && [ "$(act_pid "$d")" = "$p" ] \
+         && act_lock_stale "$d" && [ "$(act_dir_id "$d")" = "$id" ]; then
+        act_retire "$d" "$p" "$id" && rcl=1
+      fi
+      rm -f -- "$d.reclaim/pid"; rmdir "$d.reclaim" 2>/dev/null
+    fi
+    [ "$rcl" = 1 ] && continue
+    i=$((i + 1)); [ "$i" -gt 50 ] && { cm_warn "stall.sh: $d busy: nothing recorded"; return 1; }
     sleep 0.1
   done
-  printf '%s\n' "$line" >> "$ACTIONS"; local rc=$?
-  rmdir "$lock.d" 2>/dev/null || true
+  act_test_hook made "$d"
+  if ! printf '%s\n' "$$" > "$d/pid" 2>/dev/null; then
+    [ "$own" = 1 ] && { rm -f -- "$d/pid" 2>/dev/null; rmdir "$d" 2>/dev/null; }
+    cm_warn "stall.sh: cannot write the owner pid into $d: nothing recorded"; return 1
+  fi
+  act_test_hook held "$d"
+  if [ "$(act_pid "$d")" != "$$" ]; then cm_warn "stall.sh: $d was taken over while held: nothing recorded"; return 1; fi
+  printf '%s\n' "$line" >> "$ACTIONS"; rc=$?
+  if [ "$own" = 1 ] && [ "$(act_pid "$d")" = "$$" ]; then rm -f -- "$d/pid"; rmdir "$d" 2>/dev/null || true; fi
   return "$rc"
+}
+act_pid() { cat -- "$1/pid" 2>/dev/null || true; }
+# act_dir_id <dir>: inode and mtime (GNU stat, then BSD stat), empty when unreadable
+act_dir_id() { stat -c '%i:%Y' "$1" 2>/dev/null || stat -f '%i:%m' "$1" 2>/dev/null || true; }
+# act_lock_stale <dir>: over a minute old and its owner pid (or no pid at all) names no live process
+act_lock_stale() {
+  local p
+  [ -d "$1" ] && [ -n "$(find "$1" -maxdepth 0 -mmin +1 2>/dev/null)" ] || return 1
+  p="$(act_pid "$1")"
+  [ -z "$p" ] || ! kill -0 "$p" 2>/dev/null
+}
+# act_retire <dir> <pid judged> <identity judged>: rename to a private tombstone, delete only when it still is what was
+# judged (pid, identity, stale); anything else stays as a tombstone, its owner finds the lock gone at its re-read
+act_retire() {
+  local d="$1" t="$1.dead.$$"
+  [ -n "$3" ] && [ ! -e "$t" ] || return 1
+  act_test_hook retire "$d"
+  mv "$d" "$t" 2>/dev/null || return 1
+  if [ "$(act_pid "$t")" = "$2" ] && act_lock_stale "$t" && [ "$(act_dir_id "$t")" = "$3" ]; then
+    rm -f -- "$t/pid"; rmdir "$t" 2>/dev/null; return 0
+  fi
+  return 1
+}
+# act_sweep <dir>: drop its tombstones that are stale (a live owner's is never touched)
+act_sweep() {
+  local t
+  for t in "$1".dead.*; do if act_lock_stale "$t"; then rm -f -- "$t/pid"; rmdir "$t" 2>/dev/null; fi; done
+  return 0
+}
+# act_clear_reclaim <reclaim dir>: a reclaim lock is held for milliseconds, so a stale one was left by a killed run:
+# retired the same way (judged, renamed, judged again)
+act_clear_reclaim() {
+  local p id
+  act_lock_stale "$1" || return 0
+  p="$(act_pid "$1")"; id="$(act_dir_id "$1")"
+  act_lock_stale "$1" && [ "$(act_pid "$1")" = "$p" ] && act_retire "$1" "$p" "$id"
+  return 0
+}
+# act_test_hook <phase> <dir>: tests only (CM_TEST=1): runs CM_TEST_ACT_LOCK_HOOK to stage a lock race at made, retire
+# or held
+act_test_hook() {
+  if [ "${CM_TEST:-}" = 1 ] && [ -n "${CM_TEST_ACT_LOCK_HOOK:-}" ]; then sh -c "$CM_TEST_ACT_LOCK_HOOK" _ "$1" "$2" || true; fi
 }
 
 do_act() { # <kind> <name> <verb> <text> <host|""> <path|"">

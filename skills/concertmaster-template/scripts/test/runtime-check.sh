@@ -245,6 +245,10 @@ echo '{"ok":false}' > "$LIST"
 : > "$STUB_DIR/calls.log"
 OUT="$("$SCRIPT" 2>/dev/null)"
 check "terminal list failing: one unreadable row, nothing sent, ledger untouched" "$(printf '%s\n' "$OUT" | awk -F'\t' '$4=="unreadable"' | wc -l | tr -d ' ')/$(sends)" "1/0"
+echo '{"ok":true,"result":{"terminals":[],"totalCount":700}}' > "$LIST"
+: > "$STUB_DIR/calls.log"
+OUT="$("$SCRIPT" 2>/dev/null)"
+check "terminal list cut off (totalCount above its rows): one unreadable row, nothing sent, asked with --limit 500" "$(printf '%s\n' "$OUT" | awk -F'\t' '$4=="unreadable"' | wc -l | tr -d ' ')/$(sends)/$(grep -c '^terminal list --limit 500' "$STUB_DIR/calls.log")" "1/0/1"
 # ---- Code Mode dialog recovery : scripts/codemode-recover.sh through runtime-check.sh -------------------------------------
 # A host reboot leaves each resumed lane on the Claude Code Code Mode opt-in dialog. The pane text is neutral fixture text. A second
 # stub serves panes from files, counts the Esc keys it receives and swaps in an "after Esc" pane when one is set; a remote host
@@ -261,7 +265,7 @@ while [ $# -gt 0 ]; do
   shift
 done
 case "$cmd" in
-  "terminal list") case "$env" in remote-host) cat "$LIST_R" ;; bad-host) echo '{"ok":false}' ;; *) cat "$LIST2" ;; esac ;;
+  "terminal list") case "$env" in remote-host) cat "$LIST_R" ;; bad-host) echo '{"ok":false}' ;; cut-host) jq '.result.truncated = true' "$LIST_R" ;; *) cat "$LIST2" ;; esac ;;
   "terminal read")
     n="$(cat "$P2/reads.$h" 2>/dev/null || echo 0)"; n=$((n + 1)); echo "$n" > "$P2/reads.$h"
     [ -f "$P2/lock-on-read.$h" ] && : > "$CM_HOME/resume.lock"
@@ -323,6 +327,7 @@ ledger2() {
  "w-rcm": {"standing":true,"host":"remote-host","path":"$(wt rcm)","terminal":"t_rcm"},
  "w-rcw": {"standing":false,"host":"remote-host","path":"$(wt rcw)","terminal":"t_rcw"},
  "w-bad": {"standing":true,"host":"bad-host","path":"$(wt bad)","terminal":"t_bad"},
+ "w-cut": {"standing":true,"host":"cut-host","path":"$(wt rcm)","terminal":"t_rcm"},
  "w-gone2": {"standing":true,"host":"remote-host","path":"$(wt rcm)","terminal":"t_old","state":"gone"},
  "concertmaster": {"standing":true,"host":"local","path":"$CMWT","terminal":"t_cm"}
 }}
@@ -386,6 +391,7 @@ check "remote lane: the host's terminal list was read with --environment" "$(gre
 check "local lanes never carry --environment on read or send" "$(grep -E '^terminal (read|send) --terminal t_(cm1|cm3|ctl) ' "$STUB_DIR/calls2.log" | grep -c -- '--environment' || true)" "0"
 check "remote worker with a stubborn dialog: menu, one Esc, no nudge" "$(res w-rcw)/$(esc2 t_rcw)/$(nudges2 t_rcw)" "menu/1/0"
 check "a host whose terminal list fails: the lane gets an unreadable row (not silence), nothing is sent to it" "$(res w-bad)/$(grep -c 't_bad' "$STUB_DIR/calls2.log" || true)" "unreadable/0"
+check "a host whose terminal list is cut off (truncated): unreadable row, its list asked with --limit 500, nothing sent to it" "$(res w-cut)/$(grep -c '^terminal list --environment cut-host --limit 500' "$STUB_DIR/calls2.log")/$(grep -- '--environment cut-host' "$STUB_DIR/calls2.log" | grep -vc '^terminal list' || true)" "unreadable/1/0"
 check "a dead (gone) remote row at the same path adds nothing" "$(printf '%s\n' "$OUT" | grep -c 'w-gone2')" "0"
 check "exactly six Esc keys in all (cm1 cm2 cm3 cm4 rcm rcw), one each" "$(for h in t_cm1 t_cm2 t_cm3 t_cm4 t_rcm t_rcw; do esc2 $h; done | tr '\n' ' ')" "1 1 1 1 1 1 "
 

@@ -138,3 +138,11 @@ jq --arg cmd '$HOME/.concertmaster/bin/mc-worker-hook.sh' '
 
 Queued lines in `~/.concertmaster/outbox.jsonl` are harmless and can be left or
 deleted.
+
+## The SendMessage guard
+
+`scripts/hooks/msg-guard-hook.sh` is a separate PreToolUse hook, installed by the snippet in
+`references/prompt-stalls.md` ("The SendMessage guard"). It needs two entries: PreToolUse with matcher
+`SendMessage` and PostToolUse with matcher `Agent|Task` (`Task` is the tool's legacy name). The PostToolUse `Agent` call records the subagent names this
+session spawned, and `SendMessage` to a plain name is allowed only for one of them. Without the PostToolUse entry
+every named subagent is denied.

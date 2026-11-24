@@ -89,6 +89,16 @@ variant empty-delegated 's/^  delegated_classes: .*/  delegated_classes: ["store
 doctor "a delegated class that matches the empty text fails"     "$ROOT/empty-delegated.yaml" 1 'FAIL drive.delegated_classes'
 variant class-delegated 's/^  delegated_classes: .*/  delegated_classes: ["beta go[ .-]?live", "over[ -]?the[ -]?air", "ota (release|bundle)"]/'
 doctor "a dot inside a bracket class is not a wildcard"          "$ROOT/class-delegated.yaml" 0 'ok   drive.delegated_classes'
+variant golive-delegated 's/^  delegated_classes: .*/  delegated_classes: ["go[ .-]?live"]/'
+doctor "one optional bracket class between literal text (go[ .-]?live) passes" "$ROOT/golive-delegated.yaml" 0 'ok   drive.delegated_classes'
+# a bracket class with a repeat, or a negated class, absorbs free words: "ship the store foo bar baz build to production"
+# ...and chained bracket classes (each one optional or not) and the any-character escapes \N \X \O \H \R
+for frag in 'store [a-z ]+' 'ship [^x]*' 'ship [^x]' 'store [a-z ]{0,40}' 'store([a-z ])*' 'store\\s+build' \
+            'store[a-z ]?[a-z ]?[a-z ]?build' 'store [a-z][a-z][a-z] build' 'store ([a-z ])?([a-z ])? build' \
+            'store \\N build' 'store \\X build' 'store \\O build' 'store \\H build' 'store \\R build'; do
+  yq ".drive.delegated_classes = [\"store build\", \"$frag\"]" "$EXAMPLE" > "$ROOT/rep-delegated.yaml"
+  doctor "a delegated class that can absorb free words fails ($frag)" "$ROOT/rep-delegated.yaml" 1 'FAIL drive.delegated_classes'
+done
 variant bad-outward 's/^  everything_else: draft_first.*/  everything_else: whenever/'
 doctor "an unknown outward_messages value fails"                "$ROOT/bad-outward.yaml" 1 'FAIL outward_messages'
 variant bad-since 's/^  since: .*/  since: "last week"/'
@@ -186,6 +196,16 @@ yq '.hosts.per_host.local.hostname = "box-main"' "$ROOT/ident-base.yaml" > "$ROO
 doctor "local's own hostname alone passes"                       "$ROOT/ident-local-ok.yaml" 0 'config-check: 0 failed'
 yq '.health.host_aliases.host-b = "beta-alt"' "$ROOT/ident-base.yaml" > "$ROOT/alias-notlist.yaml"
 doctor "an alias value that is not a list fails"                 "$ROOT/alias-notlist.yaml" 1 'FAIL health.host_aliases'
+# health.host_aliases has one shape (host -> names hostname -s answers as); fleet names of one machine are hosts.same_machine
+yq '.health.host_aliases = [["host-a", "host-b"]]' "$ROOT/ident-base.yaml" > "$ROOT/alias-listform.yaml"
+doctor "health.host_aliases as a list of name lists fails, pointing at hosts.same_machine" "$ROOT/alias-listform.yaml" 1 'FAIL health.host_aliases maps a host name to a list of host names (a list of name lists belongs in hosts.same_machine)'
+doctor "...and the identity check still reads the config (no 'unreadable')" "$ROOT/alias-listform.yaml" 1 'ok   no host name (key, hostname, alias, ledger hostname) belongs to two hosts'
+yq '.hosts.same_machine = [["host-a", "host-b"]]' "$ROOT/ident-base.yaml" > "$ROOT/same-ok.yaml"
+doctor "hosts.same_machine as a list of name lists passes"      "$ROOT/same-ok.yaml" 0 'ok   hosts.same_machine is a list of fleet name lists'
+yq '.hosts.same_machine = [["host-a"]]' "$ROOT/ident-base.yaml" > "$ROOT/same-one.yaml"
+doctor "a hosts.same_machine group of one name fails"           "$ROOT/same-one.yaml" 1 'FAIL hosts.same_machine'
+yq '.hosts.same_machine = {"host-a": ["host-b"]}' "$ROOT/ident-base.yaml" > "$ROOT/same-map.yaml"
+doctor "hosts.same_machine as a map fails"                      "$ROOT/same-map.yaml" 1 'FAIL hosts.same_machine'
 mkdir -p "$CM_HOME"
 printf '{"schema":"concertmaster.ledger/v1","workers":{},"hosts":{"host-b":{"hostname":"alpha"}}}\n' > "$CM_HOME/ledger.json"
 doctor "a ledger hosts.<h>.hostname equal to another host's hostname fails" "$ROOT/ident-base.yaml" 1 "FAIL no host name .*alpha"

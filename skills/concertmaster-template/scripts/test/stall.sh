@@ -1425,6 +1425,18 @@ check "F22 an invalid fragment is dropped, the valid class still counts: laddere
 check "F22 an invalid fragment is dropped: a deploy ask of the valid class ladders" "$(exr e-dep)$(field e-dep rung)" "absent1"
 check "F22 an invalid fragment is dropped: free wording is still the owner's" "$(exr e-any)$(field e-any rung)" "ownerabsent"
 check "F22 an invalid fragment does not stop the run (rows are listed)" "$(jq -r '.rows | length > 0' <<<"$OUT")" "true"
+# F22b a fragment config-check refuses (a bracket class with a repeat) is dropped at runtime too, with a warning: it would
+# let a free-wording release ask pass as the class ("ship the store foo bar baz build to production")
+{ sed '/^drive:/,$d' "$ROOT/config.yaml"; printf 'drive:\n  delegated_classes:\n    - "store [a-z ]+"\n    - "ship [^x]*"\n    - "store build"\n'; } > "$ROOT/config-repfrag.yaml"
+reset; W="$ROOT/f22b"
+LED="$(jq -nc --arg f "$(ago 95)" '{workers: {}, asks: [
+    {id: "e-wide", kind: "release", askedAt: $f, question: "ship the store foo bar baz build to production", state: "open"},
+    {id: "e-rel", kind: "release", askedAt: $f, question: "ship the store build", state: "open"}]}')"
+gen "$W"
+CM_CONFIG="$ROOT/config-repfrag.yaml" runj "$W"
+check "F22b a repeated bracket class is dropped: a free-wording release ask is the owner's" "$(exr e-wide)$(field e-wide rung)" "ownerabsent"
+check "F22b ...the valid class still ladders" "$(exr e-rel)$(field e-rel rung)" "absent1"
+has "F22b ...and the dropped fragments are named in a warning" "$(cat "$W/err")" "dropped, not a class phrase (scripts/config-check.sh): store [a-z ]+, ship [^x]*"
 
 # ---- 13b. an ask climbs the ladder and its resolution reaches the ledger ----------------------------------------------
 # F23 rung 2 of an ask has a non-closing action (escalate), so the ladder reaches the rung 3 verdict; close-ask and verdict
@@ -1472,6 +1484,55 @@ check "F24 a long kebab lane name is shown, not withheld" "$(field "$LONG" name)
 check "F24 an ask with a fresh verdict claim is held, not laddered" "$(exr d-claim)$(field d-claim rung)" "heldabsent"
 check "F24 an ask whose claim expired ladders again" "$(exr d-old)$(field d-old rung)" "absent1"
 check "F24 the held ask reason names the claim" "$(jq -r '.exempt[] | select(.name == "d-claim") | .reason | contains("verdict claimed")' <<<"$OUT")" "true"
+
+# ---- 13c. the mkdir fallback lock of --act (no flock, stock macOS) -------------------------------------------------------
+# F25 a lock a killed run left (over a minute old, owner pid gone) is reclaimed and the action recorded; a lock whose owner is
+# alive stays busy and nothing is recorded. PATH holds every tool but flock, so the fallback runs.
+NOFLOCK="$ROOT/noflock"; mkdir -p "$NOFLOCK"
+IFS=: read -r -a _pdirs <<<"$PATH"
+for _d in "${_pdirs[@]}"; do for _f in "$_d"/*; do
+  _n="${_f##*/}"; [ "$_n" = flock ] || [ -e "$NOFLOCK/$_n" ] || ln -s "$_f" "$NOFLOCK/$_n" 2>/dev/null
+done; done
+DEADPID="$(sh -c 'echo $$')"
+reset; W="$ROOT/f24"; LED='{"workers":{}}'; gen "$W"; mkdir -p "$W/cm"
+mkdir "$W/cm/stall-actions.lock.d"; echo "$DEADPID" > "$W/cm/stall-actions.lock.d/pid"; touch -t 202001010000 "$W/cm/stall-actions.lock.d"
+PATH="$NOFLOCK" act "$W" "$T0" lane l60 nudge "nudged: after a killed run"; RCA=$?
+check "F25 a stale lock (old, owner dead) is reclaimed: recorded, lock released" "$RCA/$(wc -l < "$W/cm/stall-actions.ndjson" | tr -d ' ')/$(find "$W/cm" -maxdepth 1 -name "stall-actions.lock.d*" | wc -l | tr -d ' ')" "0/1/0"
+mkdir "$W/cm/stall-actions.lock.d"; echo "$$" > "$W/cm/stall-actions.lock.d/pid"; touch -t 202001010000 "$W/cm/stall-actions.lock.d"
+PATH="$NOFLOCK" act "$W" "$T0" lane l90 nudge "nudged: lock held"; RCA=$?
+check "F25 an old lock whose owner is alive stays busy: nothing recorded, the lock is left" "$RCA/$(wc -l < "$W/cm/stall-actions.ndjson" | tr -d ' ')/$(cat "$W/cm/stall-actions.lock.d/pid")" "1/1/$$"
+has "F25 ...and the refusal says busy" "$(cat "$W/act.err")" "busy: nothing recorded"
+rm -rf -- "${W:?}/cm/stall-actions.lock.d"
+
+# F26 the reclaim race: the stale lock is judged, then (staged at the rename) a killed lock is replaced by a live
+# owner's fresh one, so the rename moves the live lock. The tombstone is judged again: not the lock judged, so it is
+# kept, never deleted, and the run retries before it enters. A holder whose lock was taken away records nothing.
+sleep 120 & LIVE=$!
+LOCKD="$W/cm/stall-actions.lock.d"
+mkdir "$LOCKD"; echo "$DEADPID" > "$LOCKD/pid"; touch -t 202001010000 "$LOCKD"
+: > "$W/cm/stall-actions.ndjson"
+# shellcheck disable=SC2016  # the hook is an sh -c program: its $1 and $2 are its own
+CM_TEST=1 CM_TEST_ACT_LOCK_HOOK='[ "$1" = retire ] && [ ! -e "$2.c" ] && rm -rf -- "$2" && mkdir "$2" && echo '"$LIVE"' > "$2/pid" && : > "$2.c"' \
+  PATH="$NOFLOCK" act "$W" "$T0" lane l60 nudge "nudged: after a reclaim race"; RCA=$?
+TOMB="$(find "$W/cm" -maxdepth 1 -name 'stall-actions.lock.d.dead.*' | head -n 1)"
+check "F26 a live lock moved by a racing reclaim is kept as a tombstone with its owner pid, never deleted" "$([ -n "$TOMB" ] && cat "$TOMB/pid")" "$LIVE"
+check "F26 ...the run retried and entered only after the move: one line, lock released" "$RCA/$(wc -l < "$W/cm/stall-actions.ndjson" | tr -d ' ')/$([ -e "$LOCKD" ] && echo held || echo free)" "0/1/free"
+rm -rf -- "${LOCKD:?}" "$LOCKD.c" "$W"/cm/stall-actions.lock.d.dead.*
+# shellcheck disable=SC2016  # the hook is an sh -c program: its $1 and $2 are its own
+CM_TEST=1 CM_TEST_ACT_LOCK_HOOK='[ "$1" = held ] && mv "$2" "$2.away" && mkdir "$2" && echo '"$LIVE"' > "$2/pid"' \
+  PATH="$NOFLOCK" act "$W" "$T0" lane l60 nudge "nudged: lock taken away"; RCA=$?
+check "F26 a holder whose lock was taken over records nothing and leaves the new owner's lock" "$RCA/$(wc -l < "$W/cm/stall-actions.ndjson" | tr -d ' ')/$(cat "$LOCKD/pid")" "1/1/$LIVE"
+has "F26 ...and says so" "$(cat "$W/act.err")" "was taken over while held: nothing recorded"
+kill "$LIVE" 2>/dev/null; wait "$LIVE" 2>/dev/null
+rm -rf -- "${LOCKD:?}" "$LOCKD.away"
+# F27 the owner pid cannot be written: the append fails and says why, and the lock it made is released
+if [ "$(id -u)" != 0 ]; then
+  # shellcheck disable=SC2016  # the hook is an sh -c program: its $1 and $2 are its own
+  CM_TEST=1 CM_TEST_ACT_LOCK_HOOK='[ "$1" = made ] && chmod 500 "$2"' \
+    PATH="$NOFLOCK" act "$W" "$T0" lane l60 nudge "nudged: pid unwritable"; RCA=$?
+  check "F27 an unwritable owner pid: nothing recorded, the lock released" "$RCA/$(wc -l < "$W/cm/stall-actions.ndjson" | tr -d ' ')/$([ -e "$LOCKD" ] && echo held || echo free)" "1/1/free"
+  has "F27 ...and the reason is given" "$(cat "$W/act.err")" "cannot write the owner pid into"
+fi
 
 # ---- 14. no fleet CLI, no gh --------------------------------------------------------------------------------------------
 check "orca, plugly, gh and ssh were never called" "$(wc -l < "$CALLS" | tr -d ' ')" "0"
