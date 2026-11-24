@@ -1,7 +1,7 @@
 ---
 name: concertmaster-template
 description: "Template of the concertmaster fleet-orchestrator skill, project-agnostic. Copy this directory into a project as `.agents/skills/concertmaster`, rename the frontmatter name to `concertmaster`, copy config.example.yaml to config.yaml and fill it. Once filled it runs as the master orchestrator for one GitHub org across every Orca host: adopts every in-scope worktree, session and agent, classifies them, keeps the pipe clean (teardown of merged single-task work; standing lanes are never torn down and nothing with open beads is done), spawns standing lane leads and single-task workers on claude, codex or agy, drives PRs from any author to merged under a strict merge gate, ships to production in configured deploy windows, and reports to the owner in a turn-end table plus a scheduled digest. Never writes code. See README.md for the adoption checklist."
-argument-hint: "[boot|tick|status|resume|hand <work>|digest|intake <chat> [--since <time>]]"
+argument-hint: "[boot [--rebuild]|tick|status|resume|hand <work>|digest|intake <chat> [--since <time>]]"
 ---
 
 # Concertmaster (template)
@@ -58,7 +58,8 @@ The lane set above is the default; `cfg.lanes` is the list in use.
    reads state, decides, spawns, nudges, merges (via pr-sweeper), tears down, reports.
 2. **Ledger is truth.** Re-read `$CM_HOME/ledger.json` at the start of
    every tick (`references/ledger.md`). After compaction or restart: re-read,
-   rediscover, continue.
+   rediscover, continue. It is also a cache of what outlives a host: each lane's state is recorded on its
+   GitHub issue (tick step 4, Lane record), and `scripts/ledger-rebuild.sh` rebuilds a lost or older ledger from it.
 3. **Never type into an AskUserQuestion menu.** Before any `terminal send`, read
    the pane with `--screen`. If it shows `Enter to select`, `Tab/Arrow keys`,
    or a numbered question, do not send text: answer with menu keys only when the
@@ -354,14 +355,22 @@ worktree.
    not `HH:MM`, an unknown merge strategy, a token where a path belongs) or
    secret-looking text. Missing or failing: stop and ask the owner to fix it.
 3b. Run `scripts/cm-worktree-sync.sh` (the boot check of hard rule 30, the same script as tick step 1; it keeps its own 80 s budget and defers the fast-forward when under 20 s remain): the worktree must be level with its remote before anything is read from it. Silent is good; a `BLOCKED` line is a blocker row from the first table on, and an `ff` line means re-read this file now.
-4. Read the ledger. Missing: this is **first boot** (below). Present: print the
-   fleet table from it.
+4. Read the ledger. **Rebuild check** (always on `boot --rebuild`, and on every boot where the ledger is missing):
+   run `scripts/ledger-rebuild.sh` (a dry run). `ledger current` means go on. Otherwise it prints the ledger it would
+   write, rebuilt from the lane issues (`cfg.lanes[].issue`, newest `cm:state`), the fleet CLI host list and
+   `worktree list` on every reachable host, matched to lanes by the classify ownership rules; read it, then run it
+   with `--apply` (written through `cm_ledger_write`). A missing ledger with copies in `ledger.bak/` is restored
+   first (`references/ledger.md` § Write rules), never rebuilt over. It never takes a ledger file from another host
+   (`references/ledger.md` § Rebuild). A rebuilt ledger has no `firstBoot.completedAt`: the kill list is asked again
+   (§ First boot steps 3 to 5) before any autonomous teardown. Missing with nothing to rebuild from (no lane issue
+   holds a record): this is **first boot** (below). Present: print the fleet table from it.
 5. After a restart, run `resume` (§ Resume) before the first tick (skip it on first
    boot: no ledger, nothing to resume). Then run one tick (below).
 6. Arm the loop: `/loop /concertmaster tick` with no interval (dynamic,
    self-paced). Each tick ends by scheduling the next wake.
 
-Arguments: `boot` (steps 1 to 6), `tick` (one tick), `status` (read-only:
+Arguments: `boot` (steps 1 to 6), `boot --rebuild` (the same, with the rebuild check of step 4 run whatever the
+ledger looks like), `tick` (one tick), `status` (read-only:
 ledger + discover + classify, report, schedule nothing new; it opens with the `/cm-status` view,
 `scripts/cm-status.sh`, `companions/cm-status.md`), `resume` (§ Resume:
 bring dead lanes back from the roster), `hand <work>` (§ Handing work), `digest`
@@ -1603,6 +1612,8 @@ shellcheck clean.
 | `scripts/tick-emit.sh [--classify <file>] [--status s] [--task t] [--extra <json>]` | tick step 5: fleet summary from classify JSON (stdin or file) plus the `unlinked-prs.json` count, then `mc-emit.sh --tick` (`MC_NO_FLUSH=1`) and the concertmaster `--fleet-upsert` (flushes); `CM_AGENT_ID`, `CM_WORKSPACE`; always exits 0, prints one line about its own two lines (sent, queued, dead, skipped or refused), never the token or tenant |
 | `scripts/backup-offhost.sh [--check\|--dry-run]` | nightly off-host copy of the ledger, its ring and `handovers/` after the secret scan; `--check` tests the config and the ssh BatchMode link to the peer and writes nothing; a finished run writes `$CM_HOME/cache/backup-offhost.json` (`references/recovery.md` § Off-host backup) |
 | `scripts/lane-record.sh post <lane> <line>\|read <lane>` | tick step 4, the lane record: `post` puts one `cm:state <lane> <line>` comment on the lane's issue (`lanes[].issue` in `github.record_repo`, default `main_repo`) when the line differs from the ledger's `lanes.<lane>.recordedState`, then records it; the first word is a lane state, one line, no `@`, nothing credential-shaped. `read` prints `<created_at> <comment>` for the newest one by an OWNER, MEMBER or COLLABORATOR. gh errors exit 1 and are reported, never fatal |
+| `scripts/ledger-rebuild.sh [--apply]` | Start step 4, `boot --rebuild`: due when the ledger is missing or its `updatedAt` is older than the newest lane record (`lane-record.sh read`); rebuilds lanes (issue, state, recordedState, lead), hosts (host list, seeded from `cfg.hosts`) and workers (`worktree list` per reachable host through `fleet-read.sh`, lanes from `classify.sh` ownership, state from each worktree's first comment line, `cm:asleep` kept asleep). Dry run prints the ledger; `--apply` writes it through `cm_ledger_write` (`--init` when missing, else a merge that only replaces what GitHub answered and adds what the ledger lacks). A lane issue gh cannot read: `--apply` writes nothing. Never reads a ledger on another host |
+| `scripts/test/ledger-rebuild.sh` | the recovery drill: stub gh and fleet CLI, a ledger recorded through `lane-record.sh`, moved aside with its ring, rebuilt, then lanes, issues, states, leads, hosts and the worker-to-lane mapping diffed against the saved one; current ledger reads nothing, merge keeps unknown fields, a restored copy gets the newer state, a ring refuses `--init`, a gh failure writes nothing, a foreign ledger exits 3 |
 | `scripts/test/lane-record.sh` | stub gh (`test/fixtures/gh-issue-comments`), temp ledger: one comment per change, none for a repeat, recordedState kept, gh failure records nothing, bad line and issue-less lane refused, no ledger posts nothing, read skips untrusted, two-line and other-lane comments, `record_repo` picks the repo |
 | `scripts/backup-stale.sh [--dry-run]` | tick step, backup check: alerts once per episode when that stamp is older than `backup.max_age_hours` (default 50), reads one local file, no network |
 | `scripts/ci-queue-alert.sh [--dry-run]` | alerts when too many workflow runs stay queued, once per episode (`references/ci-capacity.md`) |

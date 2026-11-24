@@ -117,8 +117,13 @@ while is harmless, repeated means a hung run.
 4. Re-provide what the backup never carries: `mc.env`, anything under `~/.secrets`, and the cron line
    above. `briefs/` are regenerated from `references/lanes.md`; `inbox/`, `salvage/` and the outbox are
    gone by design, the work is in git and PRs.
-5. Continue with `SKILL.md` § First boot; the first census reconciles the restored ledger with what is
+5. Run `scripts/ledger-rebuild.sh`: the copy is up to a night old, so a lane record on GitHub newer than it
+   makes the dry run print the merged ledger; read it and run `--apply`. `ledger current` means nothing moved.
+6. Continue with `SKILL.md` § First boot; the first census reconciles the restored ledger with what is
    actually running.
+
+With no copy on the peer at all, skip steps 2 and 3 and run `scripts/ledger-rebuild.sh` then `--apply`: it rebuilds
+lanes, hosts and workers from the lane issues and the fleet (`references/ledger.md` § Rebuild).
 
 ## Leftover local Supabase stacks
 

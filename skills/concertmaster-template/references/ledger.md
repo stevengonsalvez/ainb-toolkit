@@ -37,7 +37,8 @@ Host-local, outside git. The directory is `cfg.state_dir` (default
 - Times are UTC ISO-8601 without fractions: `2026-10-04T11:00:00Z`.
 - Unknown is `null`, never an invented value.
 - Missing file on boot means first boot (SKILL.md § First boot), but only when `ledger.bak/`
-  holds no copies. A missing or empty ledger WITH backups was lost: restore it (below).
+  holds no copies and no lane issue holds a `cm:state` record. A missing or empty ledger WITH backups was lost:
+  restore it (below). One with lane records and no backups is rebuilt (§ Rebuild).
 
 `cm_ledger_write [--init] <jq-filter> [jq args...]` runs the filter against the current
 `$CM_HOME/ledger.json` and replaces the ledger with the result. It returns non-zero, leaves the
@@ -97,6 +98,41 @@ replaced `ledger.json`, with no copy of the old one to restore. The checks above
 codes, and the ring keeps a way back.
 
 Test: `scripts/test/ledger-write.sh`.
+
+## Rebuild (the lane record and the fleet)
+
+The ledger lives on one host. What outlives that host is GitHub and the fleet itself, so the state that must
+survive is written there first: every state change of a lane with `cfg.lanes[].issue` becomes one comment
+`cm:state <lane> <line>` on that issue (`scripts/lane-record.sh post`, tick step 4; `<line>` starts with the lane
+state). `scripts/ledger-rebuild.sh` turns them back into a ledger (SKILL.md § Start step 4, `boot --rebuild`).
+
+```text
+ lane state change ─▶ lane issue comment (cm:state) ─▶ ledger lanes.<lane>.recordedState
+                              │
+ ledger lost or older ◀───────┘ ledger-rebuild.sh: lanes from the issues, hosts from the host list,
+                                workers from worktree list on every reachable host (classify ownership)
+```
+
+| rebuilt | from |
+|---|---|
+| `lanes.<lane>` | `issue` from the config; `state` = first word of the newest trusted `cm:state` comment, `recordedState`, `recordedAt`; `lead` = the one standing worker classify names that lane's lead |
+| `hosts.<name>` | the fleet CLI host list; `reachable` = the worktree list answered; `role`, `maxWorkers`, `hostname` seeded from `cfg.hosts` |
+| `workers.<id>` | each in-scope worktree on a reachable host: `lane` from classify's owner, `state` from its own first comment line (`cm:asleep` stays `asleep`, so a lead put to sleep is never revived; then the `followups.sh` table), `standing` true for a lead, false for a `cm:child` claim, else null, `adopted: true`, `rebuiltAt`. The id is `w-<worktree name>` (`-<host>` on a clash), the concertmaster's own row `worktrees.self_name`, and a worktree a present ledger already holds keeps its key |
+| not rebuilt | `prs`, `asks`, `followUps`, `deployWindows`, `killList`, `firstBoot`, beads epics and parents: the tick refills PR state, `followups.sh reconcile` refills parents, children and `epic=` ids, and the kill list is asked again before any autonomous teardown |
+
+Due when the ledger is missing or its `updatedAt` is older than the newest record. A missing ledger is written
+whole (`cm_ledger_write --init`, so a ring of backups blocks it: restore instead). A present, older one is merged:
+the lane fields GitHub answered replace the ledger's, hosts and worktrees it does not know are added, nothing is
+removed or rewritten otherwise. Unreachable hosts are listed and left out (the tick adopts their worktrees once they
+answer). A lane issue gh could not read makes `--apply` write nothing.
+
+**Never a ledger from another host.** The rebuild reads GitHub and the fleet CLI only. A `ledger.json` found on
+another host (an off-host backup generation, an older state dir) is a stale snapshot, a night old at best: adopting
+it silently would bring back lane states the record has moved past and workers since torn down. An operator restores
+one on purpose (`references/recovery.md` § Restore onto a fresh host), and the rebuild then lays the newer record
+over it.
+
+Test: `scripts/test/lane-record.sh`, `scripts/test/ledger-rebuild.sh` (the drill).
 
 ## Lane journal
 
@@ -281,6 +317,7 @@ may have leaked should run `scripts/ledger-guard.sh` before it.
 | `lanes.<lane>.state` | `absent`, `spawning`, `running`, `idle` (queue empty, lead kept: lanes are standing and never torn down), `draining` (legacy: treat as `idle`), `gone` |
 | `lanes.<lane>.queue` | items handed by the owner not yet given to a worker |
 | `lanes.<lane>.issue` | the lane's GitHub issue number (`cfg.lanes[].issue`), where its state is recorded; null when the lane has none |
+| `rebuiltAt`, `workers.<id>.rebuiltAt` | set by `scripts/ledger-rebuild.sh --apply` on the ledger and on each worker row it added (§ Rebuild) |
 | `lanes.<lane>.recordedState`, `.recordedAt` | the last line `scripts/lane-record.sh post` put on the lane issue as `cm:state <lane> <line>`, and that comment's `created_at`; a post with the same line makes no gh call |
 | `workers.<id>.state` | `queued`, `spawning`, `running`, `stuck`, `blocked-on-owner`, `asleep` (stopped on purpose by `scripts/lane-health.sh sleep`: process stopped, terminal closed, worktree, branch, transcript and row kept; never resumed by `roster.sh`, `resume.sh`, `boot-sweep.sh`, `runtime-check.sh` or `lane-health.sh`, only by `lane-health.sh wake`; SKILL.md hard rule 27), `done`, `retired` (agent terminal closed, worktree kept), `teardown`, `gone` (only when its host was reached and the row is absent) |
 | `workers.<id>.asleepAt`, `.asleepFrom` | set by `lane-health.sh sleep`: when, and the state `wake` restores |
