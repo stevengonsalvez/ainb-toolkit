@@ -57,7 +57,6 @@ programme-rollup.sh	((.value.state // "") != "gone")	a lane is dropped only for 
 programme-rollup.sh	(($W[$ld].state // "running") | cm_state_dead | not)	a null, false or garbled state reads as running through the default, and cm_state_dead then says not dead: the row is kept (the protective direction); this read only decides dead or not dead
 programme-rollup.sh	((.value.state // "running") | cm_state_dead | not)	a null, false or garbled state reads as running through the default, and cm_state_dead then says not dead: the row is kept (the protective direction); this read only decides dead or not dead
 queue-audit.sh	(.issue // "" | tostring)	display of a queue item issue number in the audit row; nothing is decided from it
-runtime-check.sh	((.value.state // "") | IN("gone", "torn-down", "repurposed", "asleep"))	KNOWN GAP, reported to the owner: the Code Mode pass skips only these exact states, so a row with an unknown or wrong-typed state is NOT held here (pass 1 holds it); what it can reach is bounded by codemode-recover.sh, which presses Esc and nudges only on a narrowly matched Code Mode dialog, at most twice per terminal in 6 hours
 stall.sh	$l.freeze | if . == null then empty	the typed ledger check of the stall classifier (v_type, seam covered)
 stall.sh	else (.ttl | v_type("ledger"; ".freeze.ttl"; S))	typed ttl, seam covered
 stall.sh	freeze: ($L0.freeze | s_obj)	typed through s_obj, seam covered

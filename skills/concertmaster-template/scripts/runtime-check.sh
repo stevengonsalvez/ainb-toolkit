@@ -165,8 +165,11 @@ codemode_pass() {
   cm_started="$(date +%s)"; cm_budget="${CM_CODEMODE_BUDGET_S:-300}"; case "$cm_budget" in ''|*[!0-9]*) cm_budget=300 ;; esac
   [ -e "$CM_HOME/resume.lock" ] && return 0
   [ -x "$CODEMODE" ] || { cm_warn "runtime-check.sh: $CODEMODE is missing or not executable: Code Mode dialogs not checked"; return 0; }
-  rows="$(jq -r '.workers // {} | to_entries[] | select(.value | type == "object")
-      | select((((.value.state // "") | IN("gone", "torn-down", "repurposed", "asleep")) | not))
+  # a row is in this pass only when it is a live, known-state row of the right types (the same gate as pass 1): a dead or asleep row, a row whose state is no known word,
+  # and a row with a field of the wrong type (a state that is not text, a host or path that is not text) is never typed into; pass 1 reports it
+  rows="$(jq -r "$CM_JQ_STATE_DEFS$CM_JQ_NAME_DEFS"' .workers // {} | to_entries[] | select(.value | type == "object")
+      | select(((.value.state | cm_state_dead) | not) and ((.value.state | cm_state_asleep) | not) and ((.value.state | cm_state_unknown) | not))
+      | select((.key | cm_name_ok) and (.value | cm_row_fields_ok))
       | .value as $w | [.key, ($w.host // "local"), ($w.path // $w.worktree // $w.worktreePath // ""), (if $w.standing == true then "1" else "0" end)]
       | join("\u001f")' "$LEDGER" 2>/dev/null)"
   [ -n "$rows" ] || return 0

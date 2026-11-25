@@ -361,6 +361,16 @@ OUT="$("$SCRIPT" --dry-run)"
 check "dry-run: a lane on the dialog would be recovered" "$(res w-cm1)" "would-recover"
 check "dry-run: a remote lane on the dialog would be recovered" "$(res w-rcm)" "would-recover"
 check "dry-run sends nothing and writes no Esc state" "$(sends2)/$([ -e "$CM_HOME/cache/codemode-recover.tsv" ] && echo state || echo none)" "0/none"
+# a row whose state is not a live known word is never typed into by the Code Mode pass (pass 1 reports it): control = a known live state is reached
+jq '.workers["w-cm1"].state = "running"' "$CM_HOME/ledger.json" > "$CM_HOME/l.tmp" && mv "$CM_HOME/l.tmp" "$CM_HOME/ledger.json"
+OUT="$("$SCRIPT" --dry-run)"
+check "code mode: a lane with a known live state (running) would be recovered" "$(res w-cm1)" "would-recover"
+for bad in '"Asleep"' '"asleep"' '"gone"' '"torn-down"' '"frobnicated"' '7' 'false' '{"x":1}' '["running"]'; do
+  jq --argjson b "$bad" '.workers["w-cm1"].state = $b' "$CM_HOME/ledger.json" > "$CM_HOME/l.tmp" && mv "$CM_HOME/l.tmp" "$CM_HOME/ledger.json"
+  OUT="$("$SCRIPT" --dry-run)"
+  check "code mode: state $bad is held, the lane is not recovered or typed into" "$(printf '%s\n' "$OUT" | grep -c 'w-cm1.*Code Mode')/$(res w-cm1 | grep -c would-recover)/$(sends2)" "0/0/0"
+done
+ledger2
 mkdir -p "$CM_HOME" && : > "$CM_HOME/resume.lock"
 OUT="$("$SCRIPT")"
 check "resume.lock: not one key is sent while a resume runs" "$(sends2)" "0"
