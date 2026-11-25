@@ -496,7 +496,7 @@ def PRN: ["number", "string"];
                          (if type == "object" then keys[] | select(. != gsub("^\\s+|\\s+$"; "")) | "ledger: .workers[\(tojson)] is a worker id with surrounding white space, ids are matched exactly" else empty end)) end),
      ($l.asks | if . == null then empty
                 else (v_rows("ledger"; ".asks"; {id: S, state: S, lane: S, worker: S, worktree: S, path: S, askedAt: ["string", "number"],
-                                                  kind: S, scope: S, question: S, topic: S, noCode: ["boolean"], pr: PRN, followUp: S, files: ["array"]}),
+                                                  kind: S, scope: S, question: S, topic: S, noCode: ["boolean"], pr: PRN, followUp: S, files: ["array"], verdictStartedAt: ["string", "number"]}),
                       v_nearrows("ledger"; ".asks"; cm_ask_states),
                       # an OPEN ask with no id (missing, null, blank) cannot be named, found or closed, yet it may hold a lane or a PR: it is a reason (input contract, decision 3), never "an ask that holds nothing"
                       (if type == "array" then to_entries[] | .key as $i | .value | select(type == "object" and .state == "open" and (.id == null or ((.id | type) == "string" and (.id | test("\\S") | not))))

@@ -2025,6 +2025,16 @@ check "F24 a long kebab lane name is shown, not withheld" "$(field "$LONG" name)
 check "F24 an ask with a fresh verdict claim is held, not laddered" "$(exr d-claim)$(field d-claim rung)" "heldabsent"
 check "F24 an ask whose claim expired ladders again" "$(exr d-old)$(field d-old rung)" "absent1"
 check "F24 the held ask reason names the claim" "$(jq -r '.exempt[] | select(.name == "d-claim") | .reason | contains("verdict claimed")' <<<"$OUT")" "true"
+# F24b a verdict claim of the wrong type is not "no claim": it would erase the hold and let the same ask get a second verdict. It is a gap: exit 3, the ask is never laddered
+for bad in true '{"at": 1}' '["x"]'; do
+  reset; W="$ROOT/f24b"; rm -rf -- "${W:?}"
+  ITEMS="$(arr "$(item lc idle 95)")"
+  LED="$(jq -nc --argjson c "$bad" --arg f "$(ago 120)" '{workers: {}, asks: [{id: "d-bad", kind: "code", issue: 5, lane: "lc", askedAt: $f, verdictStartedAt: $c, question: "split it?", noCode: true, state: "open"}]}')"
+  gen "$W"; runj "$W"
+  check "F24b verdictStartedAt = $bad: exit 3, never a clean check" "$RC" "3"
+  check "F24b verdictStartedAt = $bad: the ask is never laddered" "$(field d-bad rung)" "absent"
+  has "F24b verdictStartedAt = $bad: the gap names it" "$(jq -r '.gaps | join(";")' <<<"$OUT")" ".asks[0].verdictStartedAt is not text or a number"
+done
 
 # ---- 13c. the mkdir fallback lock of --act (no flock, stock macOS) -------------------------------------------------------
 # F25 a lock a killed run left (over a minute old, owner pid gone) is reclaimed and the action recorded; a lock whose owner is

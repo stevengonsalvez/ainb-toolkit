@@ -92,6 +92,7 @@ led	asks.*.topic	string	A	an ask holds its lane and PR; read by the ask owner sc
 led	asks.*.followUp	string	A	an ask holds its lane and PR; a follow-up ask holds no lane
 led	asks.*.askedAt	string,number	A	an ask with no readable time is unverified and frees its lane and PR
 led	asks.*.noCode	boolean	A	a noCode ask has no files and no PR
+led	asks.*.verdictStartedAt	string,number	A	a fresh verdict claim holds the ask so a second verdict is not started; a wrong type would read as no claim
 led	asks.*.pr	number,string	A	the PR the ask holds
 led	asks.*.files	array	A	the changed paths of an own-scope ask
 led	asks.*.files.*	string	A	a path

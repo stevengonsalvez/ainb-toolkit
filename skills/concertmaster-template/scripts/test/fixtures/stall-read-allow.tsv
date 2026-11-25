@@ -36,4 +36,3 @@ dup	program-built: the trimmed worker ids that two keys of the workers map share
 ws	program-built: the workers map with its keys trimmed (ask_wsnorm)
 CM_ASK_OWNER_LABEL	program-built: the owner label read from the environment by ask_owner_why (ask-deny.sh), not a field of an input document
 issue	read by the shared ask_owner_why of ask-deny.sh: its type holds are checked by scripts/test/ask-timeout.sh and the fields inventory asktimeout-fields.tsv
-verdictStartedAt	read by the shared ask_owner_why of ask-deny.sh: its type holds are checked by scripts/test/ask-timeout.sh and the fields inventory asktimeout-fields.tsv

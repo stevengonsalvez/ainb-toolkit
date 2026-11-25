@@ -81,7 +81,7 @@ mkbase() { # mkbase <dir> <freeze json>
      asks: [row("l-ask"; "cm:ask"), row("l-cb"; "cm:blocked")]}' > "$d/asks.json"
   jq -n --arg a95 "$(ago 95)" --arg a5 "$(ago 5)" --arg ttl "$(ago -600)" --argjson fz "$2" '
     def ask($id; $k): {id: $id, state: "open", kind: $k, scope: null, question: "merge it?", topic: null, lane: null, worker: null,
-      worktree: null, path: null, files: null, noCode: null, pr: null, followUp: null, issue: null, askedAt: $a95};
+      worktree: null, path: null, files: null, noCode: null, pr: null, followUp: null, issue: null, askedAt: $a95, verdictStartedAt: null};
     def worker($path; $st): {path: $path, host: "local", state: $st, lane: "dev-sweeper", worktreeId: null, pr: null};
     {workers: {"w-bo": worker("/w/acme/l-bo"; "blocked-on-owner"),
                "w-park": worker("/w/acme/l-park"; "parked"),
