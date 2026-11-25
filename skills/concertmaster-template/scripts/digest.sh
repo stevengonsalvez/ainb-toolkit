@@ -204,20 +204,9 @@ gh_json() {
     printf 'null'
   fi
 }
+# gh_prs <gh pr list args>: the PR rows of the one repository this digest reads (CM_ORG/CM_REPO), or null when the read failed:
+# a repository that cannot be read is never shown as having no PRs. Only that one repository is read.
 gh_prs() { gh_json array pr list -R "$GH_REPO" "$@"; }
-# gh_prs_all <gh pr list args>: the main repo's rows, then each extra managed repo's rows (config github.extra_repos), the
-# extra ones tagged with "repo". null when ANY read failed: a repo that cannot be read is never shown as having no PRs.
-gh_prs_all() {
-  local out rows r
-  out="$(gh_prs "$@")"
-  [ "$out" != null ] || { printf 'null'; return; }
-  for r in $(if declare -F cm_managed_repos >/dev/null 2>&1; then cm_managed_repos | tail -n +2; fi); do
-    rows="$(gh_json array pr list -R "$CM_ORG/$r" "$@")"
-    [ "$rows" != null ] || { printf 'null'; return; }
-    out="$(jq -cs --arg r "$r" '.[0] + (.[1] | map(. + {repo: $r}))' <(printf '%s' "$out") <(printf '%s' "$rows") 2>/dev/null)" || { printf 'null'; return; }
-  done
-  printf '%s' "$out"
-}
 # The group text also needs each PR's changed files (to tell tooling PRs from product ones); --full lists
 # every PR, so it only needs the open count. The open list is always read: an open tooling PR must show
 # even when none merged in the window.
@@ -228,8 +217,8 @@ else
   MERGED_FIELDS=number,title,mergedAt,author,url,files
   OPEN_FIELDS=number,title,isDraft,reviewDecision,files
 fi
-MERGED_JSON="$(gh_prs_all --state merged --search "merged:>=$CUTOFF" --json "$MERGED_FIELDS" --limit "$MERGED_LIMIT")"
-OPEN_JSON="$(gh_prs_all --state open --json "$OPEN_FIELDS" --limit "$OPEN_LIMIT")"
+MERGED_JSON="$(gh_prs --state merged --search "merged:>=$CUTOFF" --json "$MERGED_FIELDS" --limit "$MERGED_LIMIT")"
+OPEN_JSON="$(gh_prs --state open --json "$OPEN_FIELDS" --limit "$OPEN_LIMIT")"
 # A row that is not an object with a numeric number is a malformed answer: a failed read, never a PR.
 printf '%s' "$OPEN_JSON" | jq -e 'type == "array" and all(.[]; type == "object" and (.number | type == "number"))' >/dev/null 2>&1 || OPEN_JSON=null
 
@@ -373,7 +362,7 @@ REPORT="$(TZ="$CM_TZ" jq -r $JQ_FLAGS --argjson sinceH "$SINCE_H" --argjson sinc
              ((now - $t) / 60 | floor) as $m
              | if $m >= 60 then "\($m / 60 | floor)h\($m % 60)m" else "\($m)m" end end;
   def ref: if . == null or . == "" then "?" else "#\(.)" end;
-  # a PR row: #N for the main repo, Repo#N for an extra managed repo
+  # a PR row: #N (a row that carries a repo name is shown as Repo#N; the digest reads one repository, so none does today)
   def pref: (.number | ref) as $r | if (.repo // "") == "" then $r else "\(.repo)\($r)" end;
   def section($title; $lines): ("\($title) (\($lines | length))"),
     (if ($lines | length) == 0 then "- none" else ($lines[] | "- " + .) end), "";
