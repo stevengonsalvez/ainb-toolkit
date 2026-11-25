@@ -572,17 +572,17 @@ has "an old issue with other wording is linked by lane and id" "$out" "linked: [
 for e in true false '{}' '[]' '""'; do
   seed; jq --argjson e "$e" '(.followUps[] | select(.id == "has-issue")) |= (. + {issue: $e}) | del(.followUps[] | select(.id == "leaky" or .id == "path-leak"))' "$L" > "$ROOT/p.json" && cp "$ROOT/p.json" "$L"
   out="$("$FU" escalate 2>&1)"
-  has "dry run: issue $e is not an escalation, the item is a candidate" "$out" "would create: [ops-sweeper/has-issue]"
-  only="ops-sweeper/has-issue@$(fpof has-issue)"
+  has "dry run: issue $e is not an escalation, the item is a candidate" "$out" "would create: [lane-a/has-issue]"
+  only="lane-a/has-issue@$(fpof has-issue)"
   "$FU" escalate --create --only "$only" >/dev/null 2>&1
   [ "$(creates)" = 1 ] && [ "$(fu_issue has-issue)" = 100 ] && ok "create: issue $e is replaced by a real issue number" || bad "create issue $e" "creates=$(creates) issue=$(fu_issue has-issue)"
   seed; jq --argjson e "$e" --arg o30 "$(ago 30)" '(.followUps[] | select(.id == "old-same")) |= (. + {issue: $e, escalatingAt: "2026-10-01T00:00:00Z-1"}) | del(.followUps[] | select(.id == "leaky" or .id == "path-leak"))' "$L" > "$ROOT/p.json" && cp "$ROOT/p.json" "$L"
   out="$("$FU" escalate 2>&1)"
-  has "stale claim: issue $e does not hide the claim from verify by hand" "$out" "verify by hand ops-sweeper/old-same"
+  has "stale claim: issue $e does not hide the claim from verify by hand" "$out" "verify by hand lane-a/old-same"
 done
 seed; jq '(.followUps[] | select(.id == "old-same")) |= (. + {issue: true, issueUrl: "https://github.com/AcmeOrg/acme-app/issues/9"}) | del(.followUps[] | select(.id == "leaky" or .id == "path-leak"))' "$L" > "$ROOT/p.json" && cp "$ROOT/p.json" "$L"
 out="$("$FU" escalate 2>&1)"
-lacks "control: issue true beside a real issueUrl is escalated, not a candidate" "$out" "[ops-sweeper/old-same]"
+lacks "control: issue true beside a real issueUrl is escalated, not a candidate" "$out" "[lane-a/old-same]"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]
