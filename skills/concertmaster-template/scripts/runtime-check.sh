@@ -167,15 +167,22 @@ codemode_pass() {
   [ -x "$CODEMODE" ] || { cm_warn "runtime-check.sh: $CODEMODE is missing or not executable: Code Mode dialogs not checked"; return 0; }
   # a row is in this pass only when it is a live, known-state row of the right types (the same gate as pass 1): a dead or asleep row, a row whose state is no known word,
   # and a row with a field of the wrong type (a state that is not text, a host or path that is not text) is never typed into; pass 1 reports it
-  rows="$(jq -r "$CM_JQ_STATE_DEFS$CM_JQ_NAME_DEFS"' .workers // {} | to_entries[] | select(.value | type == "object")
+  # a row whose HOST is not usable text is listed with the host "?unknown-host", which no environment name can be: the host loop below reports it unreadable instead of reading false as local
+  rows="$(jq -r "$CM_JQ_STATE_DEFS$CM_JQ_NAME_DEFS"'def cm_host_val: if . == null then "local" elif type == "string" and test("\\S") and (test("[[:cntrl:]]") | not) and (. == (sub("^\\s+"; "") | sub("\\s+$"; ""))) then . else "?unknown-host" end;
+      .workers // {} | to_entries[] | select(.value | type == "object")
       | select(((.value.state | cm_state_dead) | not) and ((.value.state | cm_state_asleep) | not) and ((.value.state | cm_state_unknown) | not))
-      | select((.key | cm_name_ok) and (.value | cm_row_fields_ok))
-      | .value as $w | [.key, ($w.host // "local"), ($w.path // $w.worktree // $w.worktreePath // ""), (if $w.standing == true then "1" else "0" end)]
+      | .value as $w
+      | ($w | cm_row_fields_ok) as $fok
+      | (($w.path // $w.worktree // $w.worktreePath // "") | if type == "string" then . else "" end) as $ps
+      | select((.key | cm_name_ok) and ($ps | cm_name_ok) and ($fok or (($w.host | cm_host_val) == "?unknown-host")))
+      | [.key, (if $fok then ($w.host | cm_host_val) else "?unknown-host" end), $ps, (if $fok and $w.standing == true then "1" else "0" end)]
       | join("\u001f")' "$LEDGER" 2>/dev/null)"
   [ -n "$rows" ] || return 0
   hosts="$(printf '%s\n' "$rows" | awk -F"$US" 'NF >= 3 && !seen[$2]++ { print $2 }')"
   while IFS= read -r host; do
     [ -n "$host" ] || continue
+    # a host that is not usable text can name no environment: its rows are reported unreadable, never read as local and never sent to a CLI
+    if [ "$host" = "?unknown-host" ]; then cm_unreadable_host "$host" "host is not usable text (no usable --environment): its Code Mode dialogs were not checked"; continue; fi
     if [ "$host" = local ]; then hl="$tl"
     else
       # a remote terminal list can take 60 s: the budget is checked before each one as well as before each lane
