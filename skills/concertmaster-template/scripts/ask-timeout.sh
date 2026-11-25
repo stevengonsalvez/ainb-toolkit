@@ -23,6 +23,10 @@
 #     the allowlist (default: src/, tests, e2e, docs, public and root *.md; config
 #     away.allow_paths) and not on the never-list (CLAUDE.md, AGENTS.md, .env,
 #     any auth/rls/stripe/payment path, plus config away.never_paths).
+# A protective field is never read with jq `//` (false would read as absent) and never coerced to text: a kind, scope, id,
+# question, topic, lane, worker or path that is not text, a pr that is not a number or text, files that is not a list of text, a worker
+# row or workers map that is not an object, a worker lane that is not text, a timeoutAt or verdictStartedAt that is stated but does
+# not parse, is never (stays with the owner); a verdictRef or state of the wrong type is not an open ask.
 # Every failed condition says why. Fail closed: no kind, an unknown kind, a pr
 # without files, a non-text question, topic, lane, worker or path, or those fields
 # over 4000 characters as JSON, is never. The concertmaster runs ONE independent
@@ -74,13 +78,19 @@ while [ $# -gt 0 ]; do
     --claim) [ $# -ge 2 ] || { cm_warn "--claim needs <ask-id>"; exit 2; }; MODE=claim; ID="$2"; shift 2 ;;
     --record) [ $# -ge 3 ] || { cm_warn "--record needs <ask-id> <comment-url>"; exit 2; }
               MODE=record; ID="$2"; REF="$3"; shift 3 ;;
-    -h|--help) sed -n '2,59p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,63p' "$0"; exit 0 ;;
     *) cm_warn "unknown arg: $1"; exit 2 ;;
   esac
 done
 command -v jq >/dev/null 2>&1 || { cm_warn "jq missing"; exit 1; }
 if ! { [ -s "$LEDGER" ] && jq -e 'type == "object"' "$LEDGER" >/dev/null 2>&1; }; then
   cm_warn "ledger $LEDGER missing or unreadable"; exit 1
+fi
+# A key written twice in one object (jq keeps the LAST: "kind":"merge","kind":"design" reads as a design ask) cannot be read as the value the writer meant. The scan names the
+# path of every repeat; a row with a repeat is HELD below (never, "repeated key: stays with the owner"), and a ledger the scan cannot read (two documents, truncated, python3 missing)
+# is not judged at all (references/input-contract.md, G).
+if ! dl="$(cm_input_dupkeys "$LEDGER" 2>/dev/null)" || ! DUPS="$(printf '%s' "$dl" | jq -sc '.' 2>/dev/null)"; then
+  cm_warn "ledger $LEDGER: the repeated-key scan could not read it (more than one JSON document, truncated, or no python3): nothing judged, every ask stays with the owner"; exit 1
 fi
 
 MIN="${CM_AWAY_TIMEOUT_MIN:-$(cm_cfg .away.timeout_minutes 30)}"
@@ -110,54 +120,78 @@ DEFS="$CM_ASK_DENY_DEFS"'def ts: if . == null then null else (tostring
                    | if $o[0:1] == "+" then $base - $off else $base + $off end end end)
       end;
       def iso: todate;
-      def isopen: (.state // "") == "open" and (.verdictRef // null) == null;
-      def due($min): (.timeoutAt | ts) // (if (.askedAt | ts) == null then null else (.askedAt | ts) + $min * 60 end);
+      # `//` reads false as absent, so no protective field is read with it here: a field is compared with null, then typed.
+      # A verdictRef that is present but not null (false included) is a decided ask, not an open one.
+      def isopen: .state == "open" and .verdictRef == null;
+      def aid: if (.id | type) == "string" then .id else "?" end;
+      # a repeated key in this ask row (path ["asks", i, ...]), a repeat of `asks` or `workers` itself, makes the row unreadable (jq reads the last of two equal keys)
+      def rowdup($c; $i): $c.dupAll or (($c.dupAsk | index($i)) != null);
+      def wrow($c): $c.ws[((if .worker == null then "" else .worker end) | gsub("^\\s+|\\s+$"; ""))];
+      # the workers map is read with its keys trimmed (a padded key " w-z " is the worker w-z, as the ask names it by its trimmed id), and two keys
+      # that trim to one id are no row at all: the ask of that worker stays with the owner (dupTrim)
+      # a stated timeoutAt that does not parse (text, number, false, object) is NOT an absent one: it never times out
+      def due($min): if .timeoutAt != null then (.timeoutAt | ts)
+                     else (if (.askedAt | ts) == null then null else (.askedAt | ts) + $min * 60 end) end;
       def classify($now; $min; $claimMin; $own; $c):
         # a malformed or over-long ask never times out, and nothing that normalises or scans its text runs on it:
         # question, topic, lane, worker and path must be text, files a list of text, and those fields as JSON at
         # most 4000 characters (a gsub over tens of thousands of characters stalls the run)
-        (if ([.question, .topic, .lane, .worker, .path] | any(. != null and type != "string")) then "non-text field: stays with \($c.owner)"
-         elif (.files // null) != null and ((.files | type) != "array" or any(.files[]; type != "string")) then "files[] invalid: stays with \($c.owner)"
+        (if $c.rowDup then "repeated key: stays with \($c.owner)"
+         elif ([.id, .kind, .scope, .question, .topic, .lane, .worker, .path] | any(. != null and type != "string")) then "non-text field: stays with \($c.owner)"
+         elif (.id == null or (.id | test("\\S") | not)) then "no usable id (missing or blank): it cannot be claimed or recorded, stays with \($c.owner)"
+         elif .files != null and ((.files | type) != "array" or any(.files[]; type != "string")) then "files[] invalid: stays with \($c.owner)"
          elif ([.question, .topic, .lane, .worker, .path, .files] | tojson | length) > 4000 then "over-long ask text: stays with \($c.owner)"
+         elif .pr != null and ((.pr | type) != "number" and (.pr | type) != "string") then "pr is not a number or text: stays with \($c.owner)"
+         elif $c.wsBad then "workers is not an object: stays with \($c.owner)"
+         elif (.worker != null and (.worker | type) == "string" and ((.worker | gsub("^\\s+|\\s+$"; "")) as $wk | ($c.dupWorkers | index($wk)) != null)) then "repeated key in the worker row: stays with \($c.owner)"
+         elif (.worker != null and (.worker | type) == "string" and ((.worker | gsub("^\\s+|\\s+$"; "")) as $wk | ($c.dupTrim | index($wk)) != null)) then "two worker rows share this id once padding is trimmed: stays with \($c.owner)"
+         elif (.worker != null and (.worker | type) == "string" and (.worker | test("\\S") | not)) then "blank worker id: stays with \($c.owner)"
+         elif (.worker != null and ((.worker | gsub("^\\s+|\\s+$"; "")) as $wk | $c.ws | has($wk)) and (wrow($c) | type) != "object") then "worker row is not an object: stays with \($c.owner)"
+         elif (wrow($c) | . != null and type != "object") then "worker row is not an object: stays with \($c.owner)"
+         elif (wrow($c) | . != null and .lane != null and (.lane | type) != "string") then "worker lane is not text: stays with \($c.owner)"
          else null end) as $bad
         | if $bad != null then
-            ((.kind // .scope // "") | if type == "string" then ascii_downcase else "" end) as $bk
-            | {id: (.id // "?"), kind: (if $bk == "" then "-" else $bk end), issue: (.issue // null), question: "",
+            ask_kind as $bk
+            | {id: aid, kind: (if $bk == "" then "-" else $bk end), issue: (if (.issue | type) == "number" then .issue else null end), question: "",
                overdue: null, class: "never", why: $bad}
           else
         due($min) as $due
-        | ((.kind // .scope // "") | tostring | ascii_downcase) as $k
+        | ask_kind as $k
         # the worker id is trimmed before the lookup, so a padded " wc " is the worker wc (its lane, its PR)
-        | (($c.ws[(.worker // "") | tostring | gsub("^\\s+|\\s+$"; "")]) // null) as $w
-        | ((.lane // ($w | if . == null then null else .lane end) // "") | tostring | ascii_downcase | gsub("^\\s+|\\s+$"; "")) as $lane
-        | (.files // null) as $files
+        | wrow($c) as $w
+        | ((if .lane != null then .lane else ($w | if . == null then null else .lane end) end) | if . == null then "" else . end
+           | ascii_downcase | gsub("^\\s+|\\s+$"; "")) as $lane
+        | .files as $files
         | (($files | type) == "array" and all($files[]; type == "string" and length > 0)) as $filesOk
         | ask_files as $fs
         | ask_text as $text
         | ask_hits($c.deny; $c.squash) as $hits
         | ask_bad_files($c.allow; $c.neverPaths) as $badFiles
         | (.verdictStartedAt | ts) as $claimed
-        | {id: (.id // "?"), kind: (if $k == "" then "-" else $k end),
-           issue: (.issue // null), question: ((.question // "") | tostring | ask_norm),
+        | {id: aid, kind: (if $k == "" then "-" else $k end),
+           issue: (if (.issue | type) == "number" then .issue else null end), question: ((.question // "") | tostring | ask_norm),
            overdue: (if $due == null then null else (($now - $due) / 60 | floor) end)}
         + (if $due == null then
-             {class: "never", why: (if .askedAt == null then "no askedAt: never times out"
+             {class: "never", why: (if .timeoutAt != null then "timeoutAt unparseable: never times out"
+                                    elif .askedAt == null then "no askedAt: never times out"
                                     else "askedAt unparseable: never times out" end)}
            elif $now < $due then {class: "waiting", why: "due \($due | iso)"}
            elif ($own | index($k)) == null then
              {class: "never", why: (if $k == "" then "no kind: stays with \($c.owner)" else "\($k): stays with \($c.owner)" end)}
-           elif ((.id // "?") as $me | $c.dups | index($me)) != null then {class: "never", why: "duplicate ask id: fix the ledger"}
+           elif (aid as $me | $c.dups | index($me)) != null then {class: "never", why: "duplicate ask id: fix the ledger"}
            elif ask_scope_why($lane; $c.owner) != null then {class: "never", why: ask_scope_why($lane; $c.owner)}
            elif ($text | explode | any(. > 127)) then {class: "never", why: "non-ASCII text: stays with \($c.owner)"}
            elif $files != null and ($filesOk | not) then {class: "never", why: "files[] invalid: stays with \($c.owner)"}
            elif ($fs | length) == 0 and .noCode != true then
              {class: "never", why: "files[] missing: list the changed paths, or set noCode"}
-           elif ($fs | length) == 0 and ((.pr // ($w | if . == null then null else .pr end)) != null) then
+           elif ($fs | length) == 0 and ((if .pr != null then .pr else ($w | if . == null then null else .pr end) end) != null) then
              {class: "never", why: "noCode but the worker has a PR: list its files"}
            elif ($badFiles | length) > 0 then
              {class: "never", why: "touches \($badFiles[0]): stays with \($c.owner)"}
            elif ($hits | length) > 0 then
              {class: "never", why: "names \($hits | join(",")): stays with \($c.owner)"}
+           elif .verdictStartedAt != null and $claimed == null then
+             {class: "never", why: "verdictStartedAt unparseable: check the issue for a verdict first"}
            elif $claimed != null and $now < $claimed + $claimMin * 60 then
              {class: "in-progress", why: "verdict claimed \($claimed | iso)"}
            elif $claimed != null then
@@ -171,13 +205,20 @@ case "$NOW" in
 esac
 NOW_ISO="$(jq -rn --argjson n "$NOW" '$n | todate')"
 CARGS=(--argjson now "$NOW" --argjson min "$MIN" --argjson claimMin "$CLAIM_MIN" --arg kinds "$KINDS"
-       --arg deny "$CM_ASK_DENY" --arg squash "$CM_ASK_SQUASH" --arg allow "$CM_ASK_ALLOW" --arg neverPaths "$CM_ASK_NEVER_PATHS"
+       --argjson dupkeys "$DUPS" --arg deny "$CM_ASK_DENY" --arg squash "$CM_ASK_SQUASH" --arg allow "$CM_ASK_ALLOW" --arg neverPaths "$CM_ASK_NEVER_PATHS"
        --arg owner "$OWNER")
 # shellcheck disable=SC2016  # jq program, not shell
 OWN='($kinds | split(" ") | map(select(. != ""))) as $own
      | {deny: $deny, squash: $squash, allow: $allow, neverPaths: $neverPaths, owner: $owner,
-        ws: ((.workers // {}) | if type == "object" then . else {} end),
-        dups: ([.asks // [] | .[] | .id // "?"] | group_by(.) | map(select(length > 1) | .[0]))} as $c'
+        ws: (if (.workers | type) == "object"
+             then reduce (.workers | to_entries[]) as $e ({}; .[($e.key | gsub("^\\s+|\\s+$"; "")) as $t | if $t == "" then $e.key else $t end] = $e.value)
+             else {} end),
+        dupTrim: (if (.workers | type) == "object" then [.workers | keys[] | gsub("^\\s+|\\s+$"; "") | select(. != "")] | group_by(.) | map(select(length > 1) | .[0]) else [] end),
+        wsBad: (.workers != null and (.workers | type) != "object"),
+        dupAll: ($dupkeys | any(length == 1 and (.[0] == "asks" or .[0] == "workers"))),
+        dupAsk: [$dupkeys[] | select(.[0] == "asks" and length > 1) | .[1]],
+        dupWorkers: [$dupkeys[] | select(.[0] == "workers" and length > 1) | .[1] | gsub("^\\s+|\\s+$"; "")],
+        dups: ([.asks // [] | .[] | aid] | group_by(.) | map(select(length > 1) | .[0]))} as $c'
 
 write_ledger() { # write_ledger <jq-program> [jq args...]: guarded atomic rewrite (cm_ledger_write, lib.sh)
   local prog="$1"; shift
@@ -186,9 +227,9 @@ write_ledger() { # write_ledger <jq-program> [jq args...]: guarded atomic rewrit
 # class_of <id>: the class of one ask, computed in-process (missing, closed, or a class).
 class_of() {
   # shellcheck disable=SC2016  # jq program, not shell
-  jq -r "${CARGS[@]}" --arg id "$1" "$DEFS $OWN"' | [.asks // [] | .[] | select(.id == $id)] as $m
-    | if ($m | length) != 1 then "missing" elif ($m[0] | isopen | not) then "closed"
-      else $m[0] | classify($now; $min; $claimMin; $own; $c) | .class end' "$LEDGER"
+  jq -r "${CARGS[@]}" --arg id "$1" "$DEFS $OWN"' | [.asks // [] | to_entries[] | select(.value.id == $id)] as $m
+    | if ($m | length) != 1 then "missing" elif ($m[0].value | isopen | not) then "closed"
+      else $m[0] | .key as $i | .value | classify($now; $min; $claimMin; $own; ($c + {rowDup: rowdup($c; $i)})) | .class end' "$LEDGER"
 }
 
 # Writes hold the ledger lock (cm_ledger_lock in lib.sh: a mkdir, stolen after 2 minutes, a crashed holder).
@@ -250,11 +291,15 @@ case "$MODE" in
     echo "recorded $ID verdictRef $REF"; exit 0 ;;
 esac
 
+# test seam (scripts/test/field-reads.sh): CM_TEST=1 with CM_TEST_JQ_FLAGS=--debug-dump-disasm puts the compiled classifier on
+# stdout (and nothing else) so the static check can list every field it reads
+JQ_FLAGS=""; if [ "${CM_TEST:-}" = 1 ]; then JQ_FLAGS="${CM_TEST_JQ_FLAGS:-}"; fi
 # list: one JSON row per open ask.
-# shellcheck disable=SC2016  # jq program, not shell
-ROWS="$(jq -c "${CARGS[@]}" "$DEFS $OWN"' | .asks // [] | .[] | select(isopen)
-          | classify($now; $min; $claimMin; $own; $c)' "$LEDGER")" \
+# shellcheck disable=SC2016,SC2086  # jq program, not shell; JQ_FLAGS is empty or one flag word
+ROWS="$(jq -c $JQ_FLAGS "${CARGS[@]}" "$DEFS $OWN"' | .asks // [] | to_entries[] | .key as $i | .value | select(isopen)
+          | classify($now; $min; $claimMin; $own; ($c + {rowDup: rowdup($c; $i)}))' "$LEDGER")" \
   || { cm_warn "could not read the asks in $LEDGER"; exit 1; }
+if [ -n "$JQ_FLAGS" ]; then printf '%s\n' "$ROWS"; exit 0; fi
 
 count() { printf '%s\n' "$ROWS" | jq -s --arg c "$1" '[.[] | select(.class == $c)] | length'; }
 echo "due=$(count verdict-due) never=$(count never) waiting=$(count waiting) inprogress=$(count in-progress) at $NOW_ISO"

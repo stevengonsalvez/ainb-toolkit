@@ -1,0 +1,26 @@
+# asktimeout-read-allow.tsv: a field NAME the compiled classifier of scripts/ask-timeout.sh reads that is not a field of the ledger inventory (scripts/test/fixtures/asktimeout-fields.tsv). scripts/test/field-reads.sh fails when the program reads a name that is in neither.
+# name	why
+ws	program-built: the workers map the classifier keeps in its context object ($c.ws)
+wsBad	program-built: whether the workers value is not an object ($c.wsBad)
+dups	program-built: the ids that occur twice ($c.dups)
+deny	program-built: the deny pattern in the context object ($c.deny)
+squash	program-built: the squash pattern in the context object ($c.squash)
+allow	program-built: the changed-path allowlist in the context object ($c.allow)
+neverPaths	program-built: the never-path pattern in the context object ($c.neverPaths)
+b	jq builtin: the named capture of the ISO timestamp parser (capture)
+z	jq builtin: the named capture of the ISO timestamp parser (capture)
+captures	jq builtin: a key jq itself reads inside match
+length	jq builtin: a key jq itself reads inside match
+name	jq builtin: a key jq itself reads inside match
+offset	jq builtin: a key jq itself reads inside match
+previous	jq builtin: a key jq itself reads inside match
+result	jq builtin: a key jq itself reads inside match
+string	jq builtin: a key jq itself reads inside match
+dupAll	program-built: whether the asks or workers key is written twice ($c.dupAll)
+dupAsk	program-built: the ask positions whose row writes a key twice ($c.dupAsk)
+dupWorkers	program-built: the worker ids whose row writes a key twice ($c.dupWorkers)
+rowDup	program-built: whether this ask row writes a key twice (rowdup, added to the context object)
+key	jq builtin: the key of an entry from to_entries or with_entries
+value	jq builtin: the value of an entry from to_entries or with_entries
+dupTrim	program-built: the trimmed worker ids that two keys of the workers map share ($c.dupTrim)
+owner	program-built: the owner label of the context object ($c.owner, config project.owner.name)
