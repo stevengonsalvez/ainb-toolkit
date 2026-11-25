@@ -1799,7 +1799,7 @@ op_case "ops-sweeper ask (lane on the ask)" ops-sweeper "{\"workers\":{},\"asks\
 op_case "ops-sweeper ask (lane only on the worker row)" ops-sweeper "{\"workers\":{\"w-ops\":{\"lane\":\"ops-sweeper\",\"path\":\"/w/wt/ops-sweeper\",\"host\":\"local\",\"state\":\"running\"}},\"asks\":[{\"id\":\"a1\",\"worker\":\"w-ops\",$OPSASK,$OA}]}"
 op_case "epic lead ask" epic-cm-upgrade "{\"workers\":{},\"asks\":[{\"id\":\"a1\",\"lane\":\"epic-cm-upgrade\",$OPSASK,$OA}]}"
 op_case "pr-sweep lane ask" pr-sweeper "{\"workers\":{},\"asks\":[{\"id\":\"a1\",\"lane\":\"pr-sweeper\",$OPSASK,$OA}]}"
-op_case "plan ready approval from a dev lane" dev-sweeper "{\"workers\":{},\"asks\":[{\"id\":\"a1\",\"lane\":\"dev-sweeper\",\"kind\":\"design\",\"state\":\"open\",\"question\":\"plan ready: approve the epic plan?\",\"files\":[\"docs/plan.md\"],$OA}]}"
+op_case "plan ready approval from a dev lane" dev-sweeper "{\"workers\":{},\"asks\":[{\"id\":\"a1\",\"lane\":\"dev-sweeper\",\"kind\":\"design\",\"issue\":5,\"state\":\"open\",\"question\":\"plan ready: approve the epic plan?\",\"files\":[\"docs/plan.md\"],$OA}]}"
 op_case "(a) no lane on the ask or its worker row" dev-sweeper "{\"workers\":{},\"asks\":[{\"id\":\"a1\",$OPSASK,$OA}]}"
 op_case "(b) a blank worker id" dev-sweeper "{\"workers\":{},\"asks\":[{\"id\":\"a1\",\"lane\":\"dev-sweeper\",\"worker\":\"  \",$OPSASK,$OA}]}"
 op_case "control: an already owner-only merge ask" dev-sweeper "{\"workers\":{},\"asks\":[{\"id\":\"a1\",\"lane\":\"dev-sweeper\",\"kind\":\"merge\",\"state\":\"open\",\"question\":\"merge it?\",$OA}]}"
@@ -1818,6 +1818,8 @@ import sys,re
 p,key=sys.argv[1],sys.argv[2]
 t=open(p).read()
 if key=='pr-sweep': t=t.replace(' or ($lane | startswith("pr-sweep"))',' or false')
+elif key=='plan approval': t=t.replace(r'elif ((.question // "") | tostring | test("^\\s*(cm:blocked\\s+)?plan ready"; "i")) then','elif false then',1)
+elif key=='no lane': t=t.replace('elif $lane == "" then','elif false then',1)
 elif key=='ops': t=t.replace('elif ($lane | startswith("ops")) or ($lane | startswith("epic"))','elif false or ($lane | startswith("epic"))')
 else:
     out=[]
@@ -1839,13 +1841,13 @@ r4_case() { # <label> <hold key> <item name> <ledger json>
 r4_case "ops lane (on the ask)" ops ops-sweeper "{\"workers\":{},\"asks\":[{\"id\":\"a1\",\"lane\":\"ops-sweeper\",$OPSASK,$OA}]}"
 r4_case "ops lane (only on the worker row)" ops ops-sweeper "{\"workers\":{\"w-ops\":{\"lane\":\"ops-sweeper\",\"path\":\"/w/wt/ops-sweeper\",\"host\":\"local\",\"state\":\"running\"}},\"asks\":[{\"id\":\"a1\",\"worker\":\"w-ops\",$OPSASK,$OA}]}"
 r4_case "pr-sweep lane" pr-sweep pr-sweeper "{\"workers\":{},\"asks\":[{\"id\":\"a1\",\"lane\":\"pr-sweeper\",$OPSASK,$OA}]}"
-r4_case "plan ready approval" "that is an epic plan approval" dev-sweeper "{\"workers\":{},\"asks\":[{\"id\":\"a1\",\"lane\":\"dev-sweeper\",\"kind\":\"design\",\"state\":\"open\",\"question\":\"plan ready: approve the epic plan?\",\"files\":[\"docs/plan.md\"],$OA}]}"
-r4_case "(a) no lane" "with no lane on the ask" dev-sweeper "{\"workers\":{},\"asks\":[{\"id\":\"a1\",$OPSASK,$OA}]}"
+r4_case "plan ready approval" "plan approval" dev-sweeper "{\"workers\":{},\"asks\":[{\"id\":\"a1\",\"lane\":\"dev-sweeper\",\"kind\":\"design\",\"issue\":5,\"state\":\"open\",\"question\":\"plan ready: approve the epic plan?\",\"files\":[\"docs/plan.md\"],$OA}]}"
+r4_case "(a) no lane" "no lane" dev-sweeper "{\"workers\":{},\"asks\":[{\"id\":\"a1\",$OPSASK,$OA}]}"
 r4_case "(b) blank worker id" "with a blank worker id" dev-sweeper "{\"workers\":{},\"asks\":[{\"id\":\"a1\",\"lane\":\"dev-sweeper\",\"worker\":\"  \",$OPSASK,$OA}]}"
 # round 6: a padded workers key is the worker its trimmed id names (its PR is seen), and two keys that trim to one id are no row, so a noCode ask of such a worker is the owner's. A padded key is also an input gap
 # (exit 3), so the ask is never a ladder row either way; what the mutant changes is the exemption: with the exact-key lookup the ask is judged as an ask a worker with no PR could have asked, and it is "unverified", not "owner"
 R6W='"path":"/w/wt/dev-sweeper","host":"local","state":"running"'
-R6A='"kind":"code","state":"open","question":"split the card?","noCode":true,"lane":"dev-sweeper"'
+R6A='"kind":"code","issue":5,"state":"open","question":"split the card?","noCode":true,"lane":"dev-sweeper"'
 r6_ask() { jq -c '[[.exempt[] | select(.kind == "ask") | .code], [.rows[] | select(.kind == "ask") | .name]]' <<<"$OUT"; }
 r6_case() { # <label> <ledger json> <want> [<old text> <new text> to mutate ask-deny.sh with]
   local sv="$SCRIPT"
@@ -1896,8 +1898,11 @@ check "B4 O2 a standing-unknown-state lane is unverified and never laddered" "$(
 for wst in Parked Blocked-On-Owner ' parked ' RUNNING; do
   f22base; LED="$(jq -nc --arg st "$wst" '{workers: {"w1": {path: "/w/wt/la", host: "local", state: $st}}}')"; f22chk "G worker state '$wst'" "ledger: .workers.w1.state is a near miss of a known state"
 done
+# the template's legacy map is torn-down=gone (lib.sh CM_STATES_LEGACY): a dead worker row holds nothing, so la ladders (rung 1, exit 4) exactly as it does for gone, and neither is a gap
+f22base; LED='{"workers":{"w1":{"path":"/w/wt/la","host":"local","state":"gone"}}}'; gen "$W"; runj "$W"; GONE="$(jq -c '[.gaps, [.rows[] | {name, rung}], [.exempt[] | {name, code}]]' <<<"$OUT") $RC"
 f22base; LED='{"workers":{"w1":{"path":"/w/wt/la","host":"local","state":"torn-down"}}}'; gen "$W"; runj "$W"
-check "F23 G control: a legacy spelling (torn-down) is a known state, read as gone: no gap, exit 0" "$(jq -r ".gaps | length" <<<"$OUT")$RC" "00"
+check "F23 G control: a legacy spelling (torn-down) is a known state, read as gone: no gap, la ladders, exit 4" "$(jq -r ".gaps | length" <<<"$OUT")$(field la rung)$RC" "014"
+check "F23 G control: torn-down gives the same report as gone" "$(jq -c '[.gaps, [.rows[] | {name, rung}], [.exempt[] | {name, code}]]' <<<"$OUT") $RC" "$GONE"
 for qst in Queued GRANTED ' queued'; do
   f22base; LED="$(jq -nc --arg st "$qst" '{workers: {}, queue: {items: [{id: "q1", lane: "dev-sweeper", state: $st}]}}')"; f22chk "G queue item state '$qst'" "ledger: .queue.items[0].state is a near miss of a known state"
 done
