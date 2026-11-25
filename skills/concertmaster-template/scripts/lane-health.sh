@@ -862,7 +862,7 @@ def base: split("/") | map(select(length > 0)) | last // "";
 def hhmm: if . == null then "?" else (localtime | strflocaltime("%H:%M")) end;
 def healthyw: IN("running", "idle", "waiting on you");
 def markof: {"running": "●", "idle": "○", "waiting on you": "?", "stuck": "⚠", "stopped": "✗", "asleep": "z", "unknown": "·"}[.] // "·";
-def shouldrun: IN("asleep", "retired", "done", "teardown", "queued", "unknown") | not;
+def shouldrun: IN("asleep", "retired", "done", "teardown", "queued", "parked", "spawning", "unknown") | not;   # the states with no session to resume (lib.sh CM_STATES_NORESUME) plus spawning
 def leadlike($n): ($n | ascii_downcase) as $l | (($laneNames | index($l)) != null) or ($l | test($laneRe)) or ($l == ($self | ascii_downcase));
 $ST[0].names as $standingNames | $ST[0].sids as $standingSids
 | $S[0] as $store | $RW[0] as $rows | $HS[0] as $hosts | $PN[0] as $panes | $CO[0] as $comments | $MK[0] as $marks
