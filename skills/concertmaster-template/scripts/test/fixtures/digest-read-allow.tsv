@@ -34,3 +34,4 @@ mtime	file doc: a field of the wrapper digest.sh puts around a file it reads who
 workersRaw	program-built: the .workers map as the ledger has it, kept beside the cleaned map so ask_owner_why sees a worker row that is not an object
 dup	program-built: the trimmed worker ids that two keys of the workers map share (ask_wsnorm)
 ws	program-built: the workers map with its keys trimmed (ask_wsnorm)
+CM_ASK_OWNER_LABEL	program-built: the owner label read from the environment by ask_owner_why (ask-deny.sh), not a key of the ledger
