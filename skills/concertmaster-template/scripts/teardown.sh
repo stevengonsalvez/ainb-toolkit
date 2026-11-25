@@ -1314,11 +1314,12 @@ elif [ -n "$WT" ]; then
   elif ! jq -se 'length == 1 and (.[0] | type == "object" and ((.workers // null) | type) == "object")' "$LEDGER" >/dev/null 2>&1; then
     check ledger "UNKNOWN ($LEDGER is not an object with a workers object)"
     gate "ledger unreadable or malformed: standing and beads state unknown"
-  elif ! CANDS="$(jq -r --arg h "$HOST" "$CM_JQ_STATE_DEFS"' .workers | to_entries[]
+  elif ! CANDS="$(jq -r --arg h "$HOST" "$CM_JQ_STATE_DEFS $CM_JQ_NAME_DEFS"' .workers | to_entries[]
           | select(.value | type == "object")
-          | select(.value.host == null or .value.host == $h)
+          | select((.value | cm_host_may_be($h)) or ((.value.host | type == "string") and (.value.host | cm_strip) == $h) or (.value | cm_wild))
           | select((.value.state | cm_state_dead) | not)
-          | "\(.value.path // "")\t\(.key)\t\(.value.worktreeId // "")"' "$LEDGER" 2>/dev/null)"; then
+          | (if (.key | cm_name_ok) and (.value | cm_row_names_ok) and ((.value | cm_wild) | not) then . else error("a live row with a control character in a name, or a host or path that is not text") end)
+          | "\(.value.path // "")\t\(.key)\t\(.value.worktreeId // "")"' "$LEDGER" 2>/dev/null)"; then   # a live row whose path, key or worktree id holds a control character (a tab or newline would forge a column or a row), or whose host or path is not text, is UNKNOWN, never skipped
     check ledger "UNKNOWN (jq could not read $LEDGER)"
     gate "ledger unreadable: standing and beads state unknown"
   else
@@ -1346,7 +1347,7 @@ EOF_K
       if [ -z "$LIDS" ]; then
         check ledger "no live worker for this path"
         gate "standing state unknown: no live ledger worker for $HOST:$WT (adopt it with standing true or false first)"
-      elif LW="$(printf '%s\n' "$LIDS" | jq -R . | jq -cs --slurpfile L "$LEDGER" "$CM_JQ_STATE_DEFS"'
+      elif LW="$(printf '%s\n' "$LIDS" | jq -R . | jq -cs --slurpfile L "$LEDGER" "$CM_JQ_STATE_DEFS $CM_JQ_NAME_DEFS"'
               (. | unique) as $ids | $L[0] as $r
               | [ $ids[] as $k | $r.workers[$k] + {id: $k} ] as $ws
               | [ ($r.lanes // {})[]? | .lead? // empty ] as $leads
@@ -1362,11 +1363,18 @@ EOF_K
                            | select(.value.parent as $p | ($p | type) == "string" and ($f | index($p)) != null) | .key ] | unique - $s) as $new
                       | {seen: ($s + $new), frontier: $new})
                   | .seen ) as $fam
+              # a live row of the target, its twins or its family whose fields are not the types the contract says, or a live row anywhere whose parent is not text (it could be a child of the target): unknown, nothing is removed
+              | ( ( [ $fam[] as $k | $r.workers[$k] as $row
+                      | select(($row | type) != "object" or ((($row.state | cm_state_dead) | not) and (($row | cm_row_typed_ok) | not)))
+                      | $k ]
+                    + [ $r.workers | to_entries[] | select((.value | type) == "object" and ((.value.state | cm_state_dead) | not)
+                                                          and .value.parent != null and (.value.parent | type) != "string") | .key ] ) | unique ) as $rowBad
               | { ids: [ $ws[].id ],
                   standingTrue: [ $ws[] | select(.standing == true) | .id ],
                   standingUnknown: [ $ws[] | select((.standing | type) != "boolean") | .id ],
                   lead: [ $ws[].id as $k | $k | select($leads | index($k)) ],
                   leadsBad: $leadsBad,
+                  rowBad: $rowBad,
                   epicConflict: [ $ws[] | select(((if .epicConflict == null then [] elif (.epicConflict | type) == "array" then .epicConflict else error("epicConflict is not a list") end) | length) > 0) | .id ],
                   badEpic: [ $ws[] | select(.beadsEpic != null and ((.beadsEpic | type) != "string" or .beadsEpic == "")) | .id ],
                   epics: ([ $ws[] | .beadsEpic | select(type == "string" and . != "") ] | unique),
@@ -1518,6 +1526,12 @@ if [ -n "$LW" ]; then
   BAD_EPIC="$(lw '.badEpic | join(",")')"
 elif [ "$OWNER_MODE" -eq 1 ]; then
   EPICS="$(printf '%s\n' "$OWNER_EPICS" | grep . | sort -u || true)"
+fi
+ROW_BAD=""
+[ -z "$LW" ] || ROW_BAD="$(lw '.rowBad | join(",")')"
+if [ -n "$ROW_BAD" ]; then
+  check ledger "UNKNOWN (a field of $ROW_BAD is not the type the ledger contract says)"
+  gate "ledger row(s) $ROW_BAD have a field that is not the type the contract says (or a parent that is not text): which rows own this worktree is unknown, nothing is removed. Fix the row (references/input-contract.md)"
 fi
 EPIC_CONFLICT=""
 [ -z "$LW" ] || EPIC_CONFLICT="$(lw '.epicConflict | join(",")')"
