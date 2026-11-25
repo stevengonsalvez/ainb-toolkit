@@ -93,6 +93,10 @@ LEDGER="${CM_LEDGER:-$CM_HOME/ledger.json}"
 # Data of ledger, classification or discover size is NEVER an argument (Linux caps one argument at 128 KiB: the live ledger is
 # several times that and jq died with "Argument list too long"): it goes to jq as a file (--slurpfile or a file operand).
 LFILE="$TMP/ledger.json"; echo '{}' > "$LFILE"
+# A ledger that is not one JSON object, a workers that is not an object (false and [] included), an unparseable or truncated file and a repeated key under workers are UNREADABLE
+# (lib.sh cm_workers_gate): no candidate is listed, whatever the rest says. Read as "{}" they listed a standing ledger lane as a candidate to close.
+LEDGER_BAD=""
+if [ -e "$LEDGER" ]; then LEDGER_BAD="$(cm_workers_gate "$LEDGER")" || LEDGER_BAD="${LEDGER_BAD:-the ledger cannot be read}"; fi
 if [ -r "$LEDGER" ]; then
   if ! jq -c 'if type == "object" then . else {} end' "$LEDGER" > "$LFILE.new" 2>/dev/null; then
     printf '%s\t%s\n' "(ledger)" "the ledger could not be parsed: caps come from config only" >> "$TMP/bad.tsv"
@@ -222,13 +226,25 @@ fi
 # exemption inputs, as in unlinked-worktrees.sh
 cm_lane_names | jq -R . | jq -sc . > "$TMP/lanes.json" 2>/dev/null || echo '[]' > "$TMP/lanes.json"
 [ -s "$TMP/lanes.json" ] || echo '[]' > "$TMP/lanes.json"
-jq -c '[(.workers // {}) | to_entries[] | .value | select(type == "object" and .standing == true) | (.path // .worktree // .worktreePath // empty) | select(type == "string") | sub("/+$"; "")]' "$LFILE" > "$TMP/stand.json" 2>/dev/null || echo '[]' > "$TMP/stand.json"
+# a standing-path list that could not be computed exempts nothing: it is counted below as unreadable, never read as "no standing lane"
+STAND_UNREAD=0
+jq -c "$CM_JQ_STATE_DEFS"'[(.workers // {}) | to_entries[] | .value | select(type == "object" and (.standing | cm_standing_any)) | (.path, .worktree, .worktreePath) | select(type == "string" and . != "") | sub("/+$"; "")]' "$LFILE" > "$TMP/stand.json" 2>/dev/null || { echo '[]' > "$TMP/stand.json"; STAND_UNREAD=1; }
 [ -s "$TMP/stand.json" ] || echo '[]' > "$TMP/stand.json"
+# A standing row (or a row that is not an object, or whose host or path is not text) with NO path that is text cannot exempt its worktree: its path is read as "nothing there", and the
+# lane would be listed as a candidate to close. It is counted here and the candidate pass is not run while there is one (the typed boundary: a wrong-typed row is held, never dropped).
+STAND_BAD="$(jq -r "$CM_JQ_STATE_DEFS $CM_JQ_NAME_DEFS"'[(.workers // {}) | if type == "object" then to_entries[] else empty end
+    | select((.value | type) != "object" or (((.value.state | cm_state_dead) | not) and ((.value | cm_wild) or ((.value.standing | cm_standing_any) and ([.value.path, .value.worktree, .value.worktreePath] | all(type != "string" or . == ""))))))] | length' "$LFILE" 2>/dev/null)"
+# no number back means the count could not be computed (a ledger whose workers is not a map, a jq failure): that is unreadable (1), never "no bad row" (0)
+[ -n "$STAND_BAD" ] || STAND_BAD=1
+# anything but ONE whole number (a ledger of two JSON documents prints one count per document: "0" and "0") is unreadable too, never "none"
+case "$STAND_BAD" in ''|*[!0-9]*) STAND_BAD=1 ;; esac
+[ -z "$LEDGER_BAD" ] || [ "$STAND_BAD" != 0 ] || STAND_BAD=1
+[ "$STAND_UNREAD" = 0 ] || [ "$STAND_BAD" != 0 ] || STAND_BAD=1
 SELFPATH="${CM_SELF_PATH:-$(cm_cfg .worktrees.self_path "")}"; SELFPATH="${SELFPATH%/}"
 
 # candidates, for the hosts over cap (one jq pass over the per-host rows)
 # shellcheck disable=SC2016  # the jq program is single-quoted on purpose
-if jq -c --slurpfile t "$TMP/terms.ndjson" --slurpfile clsf "$CFILE" --arg defer "$NOCAND" --arg self "$(cm_lower "$CM_SELF_WORKTREE")" --arg selfpath "$SELFPATH" \
+if [ "$STAND_BAD" = 0 ] && jq -c --slurpfile t "$TMP/terms.ndjson" --slurpfile clsf "$CFILE" --arg defer "$NOCAND" --arg self "$(cm_lower "$CM_SELF_WORKTREE")" --arg selfpath "$SELFPATH" \
       --arg shape "$CM_LANE_SHAPE_RE" --slurpfile lanesf "$TMP/lanes.json" --slurpfile standf "$TMP/stand.json" '
   ($clsf[0]) as $cls | ($lanesf[0]) as $lanes | ($standf[0]) as $stand |
   def base: (. | sub("/+$"; "") | split("/") | last // "");
@@ -264,8 +280,13 @@ if jq -c --slurpfile t "$TMP/terms.ndjson" --slurpfile clsf "$CFILE" --arg defer
         | $c + {candidates: $cand, candidatesState: (if ($cand | length) > 0 then "listed" else "none-safe" end)}
       end)' "$TMP/counts.json" > "$TMP/res.json" 2>"$TMP/res.err"; then :; else
   # the candidate pass failed: the counts still stand (an over-cap host is still over), the candidates are unknown, and it is said
-  printf '%s\t%s\n' "(candidates)" "the candidate pass failed ($(head -c 100 "$TMP/res.err" | tr '\t\n' '  ')): none listed" >> "$TMP/bad.tsv"
-  CLSWHY="candidate pass failed"
+  if [ "$STAND_BAD" != 0 ]; then
+    printf '%s\t%s\n' "(ledger)" "$STAND_BAD ledger worker row(s) cannot be read (a row that is not an object, a host or path that is not text, or a standing row with no path that is text)${LEDGER_BAD:+; the ledger itself: $LEDGER_BAD}: a standing lane could be listed as a candidate, so none is listed, fix the ledger" >> "$TMP/bad.tsv"
+    CLSWHY="a ledger worker row cannot be read"
+  else
+    printf '%s\t%s\n' "(candidates)" "the candidate pass failed ($(head -c 100 "$TMP/res.err" | tr '\t\n' '  ')): none listed" >> "$TMP/bad.tsv"
+    CLSWHY="candidate pass failed"
+  fi
   jq -c 'map(. + {candidates: [], candidatesState: (if .over then "unknown" else "none-needed" end)})' "$TMP/counts.json" > "$TMP/res.json" 2>/dev/null || echo '[]' > "$TMP/res.json"
 fi
 # no host at all (every host unread) is never an all-clear

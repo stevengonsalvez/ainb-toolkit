@@ -80,9 +80,12 @@ OWNER_ID="$(cm_lower "$CM_OWNER_ID")"   # project.owner.id: the owner= value tha
 need_ledger() { [ -s "$LEDGER" ] || { cm_warn "followups.sh: no ledger at $LEDGER"; exit 1; }; }
 
 # shellcheck disable=SC2016  # jq programs, not shell
-DEFS='
-def cm_state_dead: IN("gone", "repurposed");
+DEFS="$CM_JQ_STATE_DEFS $CM_JQ_NAME_DEFS"'
 def live: ((.state // "") | cm_state_dead | not);
+# escalated = a real issue: a number, non-empty text, or a non-empty issueUrl text. A value of any other type (true, an object, a
+# list, empty text) is NOT one, and jq `//` would have read it as one (or false as absent): such a follow-up stays open and unescalated
+def fu_esc: cm_fu_esc;
+def pth: if type == "string" then . else "" end;   # a path that is not text names no worktree (for-worktree holds on a live row like that before it gets here)
 def npath: (. // "") | sub("/+$"; "");
 def base: npath | split("/") | last // "";
 def clean: tostring | gsub("[[:cntrl:]]+"; " ");
@@ -376,17 +379,21 @@ case "$cmd" in
     jq -e '(.followUps // []) | type == "array"' "$LEDGER" >/dev/null 2>&1 || { cm_warn "followups.sh: ledger followUps is not an array"; exit 1; }
     # exit 3 means "nothing is known about this worktree": only true of a sound ledger, never of a broken one
     jq -e 'type == "object" and ((.workers | type) == "object")' "$LEDGER" >/dev/null 2>&1 || { cm_warn "followups.sh: ledger has no workers object"; exit 1; }
+    # A live worker row whose host or path (or worktree, worktreePath, worktreeId) is present and not text could be ANY worktree: it cannot be matched by path, so
+    # "no worker owns this worktree" (exit 3) would be a guess. Exit 1 says the ledger cannot answer: the caller (salv3.sh) reports the follow-ups as unavailable.
+    WILD="$(jq -r "$DEFS"'cm_wild_rows | map(cm_strip) | join(" ")' "$LEDGER" 2>/dev/null)" || { cm_warn "followups.sh: for-worktree: the ledger workers could not be read"; exit 1; }
+    [ -z "$WILD" ] || { cm_warn "followups.sh: for-worktree: worker row(s) with a host or path that is not text, so none can be said to own this worktree: $WILD (fix the ledger row)"; exit 1; }
     OWN="$(jq -r --arg t "$1" "$DEFS"'
       (.workers // {}) as $W
       | [ $W | to_entries[] | select(.value | type == "object")
-          | select(((.value.path | npath) == ($t | npath) and ($t | npath) != "") or (.value.path | base) == $t or .key == $t) | .key ] | length' "$LEDGER")"
+          | select((((.value.path | pth) | npath) == ($t | npath) and ($t | npath) != "") or ((.value.path | pth) | base) == $t or .key == $t) | .key ] | length' "$LEDGER")"
     [ "$OWN" -gt 0 ] || exit 3
     jq -r --arg t "$1" "$DEFS"'
       (.workers // {}) as $W
       | [ $W | to_entries[] | select(.value | type == "object")
-          | select(((.value.path | npath) == ($t | npath) and ($t | npath) != "") or (.value.path | base) == $t or .key == $t) | .key ] as $own
+          | select((((.value.path | pth) | npath) == ($t | npath) and ($t | npath) != "") or ((.value.path | pth) | base) == $t or .key == $t) | .key ] as $own
       | [ $W | keys[] | . as $k | select(ups($W; $k) | any(. as $a | $own | index($a) != null)) ] as $fam
-      | (.followUps // [])[] | select(.state != "done" and ((.issue // .issueUrl) == null) and (.worker as $w | $fam | index($w) != null))
+      | (.followUps // [])[] | select(.state != "done" and (fu_esc | not) and (.worker as $w | $fam | index($w) != null))
       | [.id, .worker, .lane, .owner, .openedAt, .text] | map(. // "" | clean) | @tsv' "$LEDGER"
     ;;
 
@@ -461,7 +468,7 @@ case "$cmd" in
     TOK="$NOW-$$"
     # A claim (escalatingAt) with no issue is an earlier run that died, or timed out, between asking GitHub and
     # recording the answer: the issue may exist. Say so every run; never create a second one for it.
-    jq -r --arg tok "$TOK" '(.followUps // [])[] | select(type == "object" and .state != "done" and .issue == null and .issueUrl == null
+    jq -r --arg tok "$TOK" "$DEFS"'(.followUps // [])[] | select(type == "object" and .state != "done" and (fu_esc | not)
         and .escalatingAt != null and .escalatingAt != $tok)
       | "followups: escalate verify by hand \(.lane | tostring | gsub("[[:cntrl:]]+"; " "))/\(.id | tostring | gsub("[[:cntrl:]]+"; " ")): a claim from \(.escalatingAt | tostring | gsub("[[:cntrl:]]+"; " ")) has no issue number, look for an existing GitHub issue before creating one"' "$LEDGER"
     # shellcheck disable=SC2016
@@ -479,7 +486,7 @@ case "$cmd" in
             | if $l != null then $l
               else ([ $W | to_entries[] | select((.key | lc) == ($o | lc)) | (.value.lane // .key) ] | first // null) end end;
       (.followUps // [])[]
-      | select(type == "object" and .state != "done" and ((.issue // .issueUrl // .escalatingAt) == null)
+      | select(type == "object" and .state != "done" and (fu_esc | not) and .escalatingAt == null
                and (.id | type) == "string" and (.lane | type) == "string")
       | . as $f
       | ((.openedAt // null) | if type == "string" then ts else null end) as $t
@@ -622,7 +629,7 @@ case "$cmd" in
       apply '
         (.followUps | map(.lane == $lane and .id == $id and .state != "done") | index(true)) as $i
         | if $i == null then .
-          elif (.followUps[$i].issue // .followUps[$i].issueUrl // .followUps[$i].escalatingAt) != null then .
+          elif (.followUps[$i] | fu_esc or .escalatingAt != null) then .
           elif ((.followUps[$i].owner // "") != $owner or (.followUps[$i].text // "") != $text) then .   # reconcile changed it since the candidate was read
           else (.followUps[$i] |= (. + {escalatingAt: $tok}) | .updatedAt = $now) end' --arg lane "$rlane" --arg id "$rid" --arg tok "$TOK" --arg now "$NOW" --argjson owner "$rowner" --argjson text "$rtext" \
         || { failed=1; break; }

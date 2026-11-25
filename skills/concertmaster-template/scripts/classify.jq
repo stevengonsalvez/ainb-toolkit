@@ -41,6 +41,8 @@
 #   standing-dead      standing lane with no agent at all (no agent pane, no
 #                      live terminal, or git-only): respawn in place with
 #                      `claude --continue` in its worktree; never teardown
+#   standing-unknown-state  standing lane with no agent whose ledger state is present and not a known state (a near miss "Asleep", false, 7):
+#                      never respawned, resumed, retired or torn down, and not a dead lead; the owner fixes the ledger row
 #   standing-idle      long-lived lane with nothing to do: hand it work; never
 #                      retire, teardown or stuck-respawn. An open PR is still
 #                      handed to the pr-sweeper.
@@ -103,7 +105,6 @@
 #
 # Timestamps are epoch ms; any of them may be null on remote rows.
 
-include "claims";
 def live_states: ["working", "waiting", "permission", "blocked", "running"];
 
 # Epoch-ms values before 2020 are placeholders (Orca reports 0 or tiny values
@@ -122,8 +123,13 @@ def nrm: ascii_downcase | gsub("[^a-z0-9]"; "-");
     | select(.value | type == "object") | select(.value.lead | type == "string")
     | . as $e | (($L.workers // {}) | if type == "object" then . else {} end)[$e.value.lead]
     | select(type == "object") | select(.path | type == "string")
-    | select(((.state // "") | IN("gone", "repurposed")) | not)
-    | {name: (.path | normpath | split("/") | last // ""), label: $e.key, host: (.host // null)} ] as $ledgerLeads
+    | select((.state | cm_state_dead) | not)
+    | {name: (.path | normpath | split("/") | last // ""), label: $e.key, host: (.host // null), unknown: (.state | cm_state_unknown)} ] as $ledgerLeads
+# a live ledger row that is not an object, or whose path or worktree id is present and not text (path false, worktreeId 7) is matched to a worktree by neither, so it could be
+# the row of ANY worktree here and no worktree can be ruled out as standing: every worktree is standing-unknown (no retire, no teardown) until the row is fixed. It is never
+# dropped from the match as "a row for another path". (A host that is not text is different: such a row is matched by its path and counts for it, cm_host_may_be.)
+| ([ (($L.workers // {}) | if type == "object" then . else {} end) | to_entries[]
+    | select((.value | type) != "object" or (([.value.path, .value.worktreeId] | any(. != null and type != "string")) and ((.value.state | cm_state_dead) | not))) ] | length > 0) as $wildRows
 | .generatedAtMs as $now
 | ($scope // null) as $scope
 | (.hosts // []) as $hosts
@@ -158,12 +164,12 @@ def nrm: ascii_downcase | gsub("[^a-z0-9]"; "-");
          or ([$w.agents[]? | .paneKey] | unique | length) > 1) as $childAgent
       | [ (($L.workers // {}) | if type == "object" then . else {} end) | to_entries[]
           | select(.value | type == "object")
-          | select(((.value.state // "") | IN("gone", "repurposed")) | not)
-          | select(.value.host == null or .value.host == $w.host)
+          | select((.value.state | cm_state_dead) | not)
+          | select(.value | cm_host_may_be($w.host | if type == "string" then . else "" end))   # a host that cannot be read may be this host: the row still counts
           | select((($w.worktreeId // "") != "" and .value.worktreeId == $w.worktreeId)
                    or ((.value.path | normpath) != "" and (.value.path | normpath) == ($w.path | normpath))) ] as $lw
       | (any($lw[]; .value.standing == true) or any($lw[]; .key as $k | $leads | index($k))) as $standing
-      | (($standing | not) and (($lw | length) == 0 or any($lw[]; (.value.standing | type) != "boolean"))) as $standingUnknown
+      | (($standing | not) and (($lw | length) == 0 or $wildRows or any($lw[]; (.value.standing | type) != "boolean"))) as $standingUnknown
       | ([ $lw[] | .value.beadsEpic // empty | select(type == "string") ] | unique) as $epics
       | ((($w.comment // "") | startswith("cm:idle"))
          and ([ $w.agents[]? | select(.state == "working") ] | length) == 0) as $cmIdle
@@ -235,7 +241,15 @@ def nrm: ascii_downcase | gsub("[^a-z0-9]"; "-");
                 else null end end) as $oopWhy
       | (if $scope == null or $w.isMainWorktree then false
          else (($w.repo // "") | lc) == (($scope.repo // "") | lc) end) as $oopSameRepo
-      | (if $standing and $noAgent
+      # a standing row (standing true, or named as a lane lead) whose state is not a known state ("Asleep", "asleep ", false, 7, {}): exact matching
+      # means it is not dead either. It is shown as unknown and never suggested for a respawn (a typo must not revive a lead put to sleep)
+      | (any($lw[]; (.value.standing == true or (.key as $k | $leads | index($k)) != null) and (.value.state | cm_state_unknown))) as $stateUnknown
+      | (if $standing and $noAgent and $stateUnknown
+            and (["idle", "done-merged", "done-selfreported", "orphan-git-only", "dirty-or-unpushed"] | index($c0.class)) then
+           {class: "standing-unknown-state", reason: ("standing lane whose ledger state is not a known state; " + $c0.reason),
+            suggest: ((if $prState == "OPEN" then "hand PR #\($w.pr.number) to pr-sweeper; " else "" end)
+                      + "fix the ledger row (states are matched exactly); never respawn, resume, retire or teardown until it reads a known state")}
+         elif $standing and $noAgent
             and (["idle", "done-merged", "done-selfreported", "orphan-git-only", "dirty-or-unpushed"] | index($c0.class)) then
            {class: "standing-dead", reason: ("standing lane, no live agent; " + $c0.reason),
             suggest: ((if $prState == "OPEN" then "hand PR #\($w.pr.number) to pr-sweeper; " else "" end)
@@ -259,7 +273,7 @@ def nrm: ascii_downcase | gsub("[^a-z0-9]"; "-");
          elif ($epics | length) > 0 and (["done-merged", "done-selfreported"] | index($c0.class)) then
            $c0 + {suggest: ("beads gate first: every bead under \($epics | join(",")) closed (teardown.sh dry run); then " + $c0.suggest)}
          else $c0 end) as $c1
-      | (if $childAgent and (["done-merged", "done-selfreported", "orphan-git-only", "idle", "standing-idle", "standing-dead"] | index($c1.class))
+      | (if $childAgent and (["done-merged", "done-selfreported", "orphan-git-only", "idle", "standing-idle", "standing-dead", "standing-unknown-state"] | index($c1.class))
          then $c1 + {suggest: "investigate: child agent present; never teardown"}
          else $c1 end) as $cPre
       | ($gitKnown and ($dirty | not) and ($unpushed | not)) as $gitClean   # proven clean, whatever class a live agent gave the row
@@ -339,7 +353,7 @@ def nrm: ascii_downcase | gsub("[^a-z0-9]"; "-");
                               then "; with no claim after 2 ticks and the lead's loop interval, tear down per the teardown gates (SKILL.md § Ownership)"
                               else "; never teardown on this class (SKILL.md § Ownership)" end))} end
           end ] as $owned
-    | ([ $ledgerLeads[] | {key: (.name | lc), value: .host} ] | from_entries) as $ledgerHost
+    | ([ $ledgerLeads[] | select(.unknown | not) | {key: (.name | lc), value: .host} ] | from_entries) as $ledgerHost
     | [ $leadList[] | . as $ld
         | ([ $owned[] | select(inscope and (.name | lc) == $ld.name) ]) as $rows
         # Open work is counted per lead, not per label: an item another lead's comment
@@ -359,14 +373,14 @@ def nrm: ascii_downcase | gsub("[^a-z0-9]"; "-");
         | ($ledgerHost[$ld.name] // null) as $lh
         | (($lh != null) and ([$hosts[] | select(.name == $lh and .reachable and (.truncated != true))] | length) > 0) as $hostOk
         | select(($open | length) > 0)
-        | select((($rows | length) > 0 and all($rows[]; .noAgent)) or (($rows | length) == 0 and $hostOk))
+        | select((($rows | length) > 0 and all($rows[]; .noAgent) and (all($rows[]; .class == "standing-unknown-state") | not)) or (($rows | length) == 0 and $hostOk))
         | {lane: $ld.label, lead: $ld.name, hosts: ($rows | map(.host)),
            reason: (if ($rows | length) == 0 then "lead worktree not in the census (ledger lead, its host answered in full)" else "lead session gone" end),
            open: ($open | map(.name) | unique)} ] as $dead
     | {owned: ([ $owned[] | . as $i
           | if (.owner != null) and ([$dead[] | select(.lead == ($i.name | lc))] | length) > 0 and ($i | inscope) then
               .flags += ["LEAD-DEAD"]
-              | if .class == "standing-dead" then .
+              | if .class == "standing-dead" or .class == "standing-unknown-state" then .
                 else .suggest += "; LEAD-DEAD: lane \(.owner) lead session is gone while it owns \([$dead[] | select(.lead == ($i.name | lc)) | .open | length] | first) open item(s): respawn in place (claude --continue in its worktree) else hand the items to another lead; never leave them unwatched" end
             else . end ]),
        dead: $dead} end) as $O2

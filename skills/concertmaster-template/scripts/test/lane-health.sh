@@ -616,6 +616,25 @@ check "wake --apply resumes the same session id, sets the state back and drops t
   '[ "$(creates)" = 1 ] && grep "terminal create" "$STUB/calls.log" | grep -q -- "--resume $SID_A --model claude-x-1-0" && [ "$(jq -r ".workers[\"w-lead-a\"].state" "$CM_HOME/ledger.json")" = running ] \
    && [ "$(jq -r ".result.worktrees[0].comment" "$STUB/wl-local.json")" = '"'"'cm:running plan\ncm:child task-1'"'"' ]' "$OUT"
 
+# a state that is a near miss of asleep ("Asleep", "asleep ") or a wrong type (false, 7) is UNKNOWN: never resumed (--act creates nothing,
+# kills nothing), never shown as stopped or asleep, and its row says why. A standing that is the text "true" is still a lead (isLead).
+: > "$STUB/calls.log"
+for bad in '"Asleep"' '"asleep "' false 7 '{}'; do
+  reset_world
+  ledger "{\"w-lead-a\":$(row "$LEAD_A" '{"standing":true,"lane":"lead-a","asleepAt":"2026-11-10T09:00:00Z","lastStopCause":"sleep","live":{"sessionId":"'"$SID_A"'","runtime":"orca"}}' | jq -c --argjson v "$bad" '.state = $v')}"
+  wlrow "$LEAD_A" 'cm:running plan\ncm:child task-1' > "$STUB/wl-local.json"
+  transcript "$LEAD_A" "$SID_A" $((NOW - 7200))
+  OUT="$(lhj --all --act)"
+  check "state $bad on a lead with no process: unknown, never resumed or killed" \
+    '[ "$(word "$OUT" w-lead-a)" = unknown ] && [ "$(creates)" = 0 ] && ! grep -q "^kill" "$STUB/calls.log" && meaning "$OUT" w-lead-a | grep -q "not a known state"' "$OUT"
+  check "state $bad: roster.sh leaves it out and says so" '"$SCRIPTS/roster.sh" --stdout | grep -q "^# state not a known state, so NOT listed and never resumed (fix the ledger row): w-lead-a"'
+done
+reset_world
+ledger "{\"w-lead-a\":$(row "$LEAD_A" '{"standing":"true","lane":"lead-a"}')}"
+wlrow "$LEAD_A" 'cm:running plan' > "$STUB/wl-local.json"
+OUT="$(lhj --all)"
+check "a standing that is the text true: the row is still a lead (never skipped as done or retired)" '[ "$(jq -r ".sessions[] | select(.name == \"lead-a\" or .key == \"w-lead-a\") | .isLead" <<<"$OUT")" = true ]' "$OUT"
+
 LEAD_A="$W/lead-a"
 echo "--- remote hosts"
 reset_world

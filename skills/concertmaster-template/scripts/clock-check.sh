@@ -112,6 +112,13 @@ fin() { case "$1" in done|skipped|stopped) return 0 ;; esac; return 1; }
 if [ "$ledger_ok" = 1 ] && ! jq -e '(.deployWindows // []) | type == "array" and all(.[]; type == "object")' "$led" >/dev/null 2>&1; then
   unknown "deployWindows in the ledger is not a list of window rows: unfinished rows cannot be ruled out"
 fi
+# an unfinished row whose worker is present but not text or a number (a list, an object, true, false; a numeric id is read as text) cannot be matched to a live worker, and
+# left out of worker_rows it would hide that row's claim on the worker (one worker would then cover two windows): unknown
+if [ "$ledger_ok" = 1 ] && jq -e '[.deployWindows[]? | select(type == "object")
+      | select(((.state // "") | tostring | IN("done", "skipped", "stopped")) | not)
+      | select(.worker != null and ((.worker | type) | IN("string", "number") | not))] | length > 0' "$led" >/dev/null 2>&1; then
+  unknown "an unfinished deployWindows row names a worker that is not text or a number: its claim on the worker cannot be counted"
+fi
 nrow=0
 R_id=(); R_at=(); R_st=(); R_wk=(); R_tag=(); R_prod=(); R_sha=(); R_ep=()
 if [ "$ledger_ok" = 1 ]; then

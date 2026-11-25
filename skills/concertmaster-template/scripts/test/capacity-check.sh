@@ -136,6 +136,74 @@ check "a standing lane (configured name) is NEVER listed, nor its bare shell" '!
 check "an ownership lead (buildboss) bare shell is NEVER listed" '! grep -q "t-shell-lead" <<<"$OUT"' "$OUT"
 check "the concertmaster own worktree is NEVER listed, nor its bare shell" '! grep -qE "t-cm|t-shell-cm" <<<"$OUT"' "$OUT"
 check "a ledger standing worker is NEVER listed" '! grep -q "t-ledger" <<<"$OUT"' "$OUT"
+# a standing that is not the boolean is read as standing: never listed as a candidate; control: standing false is listed
+cp "$CM_HOME/ledger.json" "$ROOT/ledger.at-b"
+for bad in '"true"' 1 '{}' '[]' '"yes"'; do
+  jq --argjson v "$bad" '.workers["w-led"].standing = $v' "$ROOT/ledger.at-b" > "$CM_HOME/ledger.json"; run "$S" --classified "$CLS"
+  check "standing $bad: a ledger worker is still NEVER listed" '! grep -q "t-ledger" <<<"$OUT"' "$OUT"
+done
+jq '.workers["w-led"].standing = false' "$ROOT/ledger.at-b" > "$CM_HOME/ledger.json"; run "$S" --classified "$CLS"
+check "control: standing false is listed" 'grep -qF "  CANDIDATE local t-ledger " <<<"$OUT"' "$OUT"
+# a path that is not text must not hide a valid worktree key of the same standing row (the lane keeps its exemption)
+jq '.workers["w-led"] |= (. + {worktree: .path} | .path = 7)' "$ROOT/ledger.at-b" > "$CM_HOME/ledger.json"; run "$S" --classified "$CLS"
+check "a path of 7 does not hide the worktree key: the ledger worker is still NEVER listed" '! grep -q "t-ledger" <<<"$OUT"' "$OUT"
+# Typed boundary: a ledger row that cannot be read (not an object, a host or path that is not text, a standing row with no path that is text) can exempt no worktree, and
+# it was read as "no such lane": the lane was listed as a candidate to close. Now no candidate is listed while there is one, and the report says why. Controls: a dead record
+# with a wrong-typed path holds nothing, and the same ledger with standing false lists the worker.
+for patch in '.workers["w-led"].path = false' '.workers["w-led"].path = ["/x"]' '.workers["w-led"].standing = false | .workers["w-junk"] = false' '.workers["w-led"].standing = false | .workers["w-junk"] = null' \
+             '.workers["w-led"].standing = false | .workers["w-junk"] = {host: ["local"], path: "/elsewhere"}' '.workers["w-led"].standing = false | .workers["w-junk"] = {host: "local", path: false, standing: true}'; do
+  jq "$patch" "$ROOT/ledger.at-b" > "$CM_HOME/ledger.json"; run "$S" --classified "$CLS"
+  check "typed boundary ($patch): no candidate is listed" '! grep -q "^  CANDIDATE " <<<"$OUT"' "$OUT"
+  check "typed boundary ($patch): the report says a ledger row cannot be read" 'grep -q "CHECK INCOMPLETE" <<<"$OUT" && grep -q "cannot be read" <<<"$OUT"' "$OUT"
+done
+jq '.workers["w-led"].standing = false | .workers["w-junk"] = {host: "local", path: false, standing: true, state: "gone"}' "$ROOT/ledger.at-b" > "$CM_HOME/ledger.json"; run "$S" --classified "$CLS"
+check "typed boundary control: a gone record with a path of the wrong type holds nothing, the worker is listed" 'grep -qF "  CANDIDATE local t-ledger " <<<"$OUT"' "$OUT"
+# mutant: a copy that does not count the unreadable rows lists the lane again, so the cases above are caught
+mkdir -p "$ROOT/mut-tb/scripts" && cp "$SKILL"/scripts/lib.sh "$SKILL"/scripts/capacity-check.sh "$SKILL"/scripts/jdupkeys "$ROOT/mut-tb/scripts/"
+sed -i 's/^\[ -n "\$STAND_BAD" \] || STAND_BAD=1$/STAND_BAD=0/' "$ROOT/mut-tb/scripts/capacity-check.sh"
+if ! cmp -s "$SKILL/scripts/capacity-check.sh" "$ROOT/mut-tb/scripts/capacity-check.sh"; then
+  jq '.workers["w-led"].standing = false | .workers["w-junk"] = false' "$ROOT/ledger.at-b" > "$CM_HOME/ledger.json"; run "$ROOT/mut-tb/scripts/capacity-check.sh" --classified "$CLS"
+  if grep -qF '  CANDIDATE local t-ledger ' <<<"$OUT"; then pass "mutant: with the unreadable-row count off the worker is listed again, the typed-boundary case is caught"; else fail "mutant typed boundary" "the mutated script still listed no candidate: $OUT"; fi
+else fail "mutant typed boundary" "the sed no longer matches capacity-check.sh"; fi
+# a ledger that cannot be read as ONE object with a worker map must hold every candidate, never read as "no standing lane" (it listed the ledger-standing lane to close).
+# false, [], "x", 7, true as workers; [], null, "x" as the whole ledger; a truncated and an empty file; a key written twice in a row (jq keeps the last: standing false,...,true).
+# Every one: no candidate is listed and the report says the ledger cannot be read. Control: workers null/absent is a ledger with no rows and still lists.
+badledger() { # <label> <ledger text>
+  printf '%s\n' "$2" > "$CM_HOME/ledger.json"; run "$S" --classified "$CLS"
+  check "unreadable ledger ($1): no candidate is listed" '! grep -q "^  CANDIDATE " <<<"$OUT"' "$OUT"
+  check "unreadable ledger ($1): the report says a ledger row cannot be read" 'grep -q "CHECK INCOMPLETE" <<<"$OUT" && grep -q "cannot be read" <<<"$OUT"' "$OUT"
+}
+for bad in false '[]' '"x"' 7 true; do badledger "workers $bad" "{\"workers\": $bad}"; done
+for bad in '[]' null '"x"' 7 false; do badledger "ledger $bad" "$bad"; done
+badledger "truncated" '{"workers": {"w-led": {"standing": true, "path": "/x'
+badledger "empty file" ''
+DUPL="$(jq -c . "$ROOT/ledger.at-b" | sed 's/"standing":true/"standing":false,"standing":true/')"
+check "the dup fixture really has a repeated key" 'grep -q "\"standing\":false,\"standing\":true" <<<"$DUPL"' "$DUPL"
+badledger "repeated key standing false then true" "$DUPL"
+# a ledger of two JSON documents used to print "(ledger): 0; 0 ledger worker row(s)" (one count per document): it now says what is wrong
+TWODOC="$(jq -c . "$ROOT/ledger.at-b")"$'\n''{"workers":{}}'
+badledger "two JSON documents" "$TWODOC"
+check "two documents: the report says the ledger holds more than one JSON document, with one count" 'grep -q "ledger holds more than one JSON document" <<<"$OUT" && grep -q "1 ledger worker row(s) cannot be read" <<<"$OUT" && ! grep -qF "(ledger): 0; 0" <<<"$OUT"' "$OUT"
+mkdir -p "$ROOT/mut-2d/scripts" && cp -R "$SKILL"/scripts/. "$ROOT/mut-2d/scripts/"
+sed -i '/^case "\$STAND_BAD" in/d' "$ROOT/mut-2d/scripts/capacity-check.sh"
+if ! cmp -s "$SKILL/scripts/capacity-check.sh" "$ROOT/mut-2d/scripts/capacity-check.sh"; then
+  printf '%s\n' "$TWODOC" > "$CM_HOME/ledger.json"; run "$ROOT/mut-2d/scripts/capacity-check.sh" --classified "$CLS"
+  if grep -qF '(ledger): 0; 0' <<<"$OUT"; then pass "mutant: without the count normalisation a two-document ledger prints '0; 0' again, the case is caught"; else fail "mutant two documents" "the mutated script still printed one count: $OUT"; fi
+else fail "mutant two documents" "the sed no longer matches capacity-check.sh"; fi
+printf '{"workers": null}\n' > "$CM_HOME/ledger.json"; run "$S" --classified "$CLS"
+check "control: workers null is a ledger with no rows, candidates are listed" 'grep -q "^  CANDIDATE " <<<"$OUT"' "$OUT"
+# mutant: without the ledger gate every one of them lists again
+mkdir -p "$ROOT/mut-ur/scripts" && cp "$SKILL"/scripts/lib.sh "$SKILL"/scripts/capacity-check.sh "$SKILL"/scripts/jdupkeys "$ROOT/mut-ur/scripts/"
+sed -i 's/^\[ -z "\$LEDGER_BAD" \] || \[ "\$STAND_BAD" != 0 \] || STAND_BAD=1$/:/' "$ROOT/mut-ur/scripts/capacity-check.sh"
+if ! cmp -s "$SKILL/scripts/capacity-check.sh" "$ROOT/mut-ur/scripts/capacity-check.sh"; then
+  for bad in '{"workers": false}' '{"workers": []}' '[]' 'null' '"x"' '{"workers": {"w-led": {"standing": true, "path": "/x'; do
+    printf '%s\n' "$bad" > "$CM_HOME/ledger.json"; run "$ROOT/mut-ur/scripts/capacity-check.sh" --classified "$CLS"
+    if grep -q '^  CANDIDATE ' <<<"$OUT"; then pass "mutant: without the ledger gate '$bad' lists a candidate again, the case is caught"; else fail "mutant unreadable ledger $bad" "the mutated script still listed no candidate"; fi
+  done
+  printf '%s\n' "$DUPL" > "$CM_HOME/ledger.json"; run "$ROOT/mut-ur/scripts/capacity-check.sh" --classified "$CLS"
+  if grep -q '^  CANDIDATE ' <<<"$OUT"; then pass "mutant: without the ledger gate a repeated key lists a candidate again, the case is caught"; else fail "mutant repeated key" "the mutated script still listed no candidate"; fi
+else fail "mutant unreadable ledger" "the sed no longer matches capacity-check.sh"; fi
+cp "$ROOT/ledger.at-b" "$CM_HOME/ledger.json"; run "$S" --classified "$CLS"
 check "a cm:keep worker is NEVER listed" '! grep -q "t-keep" <<<"$OUT"' "$OUT"
 check "a worker with an open PR (running) is NEVER listed, nor its bare shell" '! grep -qE "t-openpr|t-shell-running" <<<"$OUT"' "$OUT"
 check "a done-selfreported worker whose PR is still OPEN is NEVER listed" '! grep -q "t-doneopen" <<<"$OUT"' "$OUT"
@@ -426,7 +494,7 @@ hosts:
     box9:  { maxWorkers: 1 }
 CFG
 export CM_CONFIG="$ROOT/mut.config.yaml"
-mkdir -p "$ROOT/mut/scripts" && cp "$SKILL"/scripts/lib.sh "$SKILL"/scripts/capacity-check.sh "$ROOT/mut/scripts/"
+mkdir -p "$ROOT/mut/scripts" && cp "$SKILL"/scripts/lib.sh "$SKILL"/scripts/capacity-check.sh "$SKILL"/scripts/jdupkeys "$ROOT/mut/scripts/"
 M="$ROOT/mut/scripts/capacity-check.sh"
 run "$S" --classified "$CLS"
 WANT="$OUT"

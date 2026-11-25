@@ -257,6 +257,15 @@ jq -c 'select(.displayName != "lead-b")' "$ROOT/rows2.ndjson" \
 OUT2="$("$HERE/../classify.sh" < "$ROOT/d2.json" 2>/dev/null)"
 got="$(printf '%s' "$OUT2" | jq -r '[.ownership.leadDead[] | select(.lead == "lead-b") | .reason] | first // "none"')"
 eq "ledger lead missing, its host answered in full: LEAD-DEAD" "$got" "lead worktree not in the census (ledger lead, its host answered in full)"
+# a ledger lead whose state is a near miss ("Asleep", "asleep ") or a wrong type (false, 7) is neither asleep nor a dead lead to respawn: unknown,
+# never LEAD-DEAD (a typo must not make the tick respawn a lead put to sleep). Control: running is dead.
+cp "$ROOT/ledger.json" "$ROOT/ledger.o2keep"
+for st in '"Asleep"' '"asleep "' false 7 '{}' '"running"'; do
+  jq --argjson s "$st" '.workers["w-ops"].state = $s' "$ROOT/ledger.o2keep" > "$ROOT/ledger.json"
+  got="$("$HERE/../classify.sh" < "$ROOT/d2.json" 2>/dev/null | jq -r '[.ownership.leadDead[] | select(.lead == "lead-b")] | length')"
+  case "$st" in '"running"') eq "control: lead state running, missing from the census: LEAD-DEAD" "$got" 1 ;; *) eq "lead state $st: never LEAD-DEAD, not respawned" "$got" 0 ;; esac
+done
+cp "$ROOT/ledger.o2keep" "$ROOT/ledger.json"
 got="$(printf '%s' "$OUT2" | jq -r '[.ownership.leadDead[] | select(.lead == "lead-g")] | length')"
 eq "config-only lead with no worktree and a prefixed worker is NOT dead (spawn-at-2)" "$got" 0
 jq -c '.hosts[0].truncated = true' "$ROOT/d2.json" > "$ROOT/d3.json"

@@ -93,3 +93,13 @@ secret_shaped_prefix() {
   _ss_phrase "$1" && return 0
   _ss_blank40 "$1" | grep -Eq "($_SS_PREFIX)"
 }
+
+# secret_gate <text>: 0 when the text COULD be credential-shaped, with no fork (bash regex only). secret_shaped and
+# secret_shaped_prefix can only say yes for a text that holds a token prefix or key block (_SS_PREFIX), a run of 20 or more
+# token characters (every long-run rule needs 40, and every step only removes text: a dash read as a space, a 40-hex blanked)
+# or one of the words the phrase check reads (a raw 0.<uuid> start, bearer, password, passwd, passphrase, login, sign-in,
+# signin, in any case). A text outside the gate is never credential-shaped, so a caller with many short names (scripts/stall.sh
+# scans every name, host, path and reason it prints) runs the full check, which forks several times, only on a hit.
+_SS_WORDS='0\.[0-9A-Fa-f]{8}-|[Bb][Ee][Aa][Rr][Ee][Rr]|[Pp][Aa][Ss][Ss][WwPp]|[Ll][Oo][Gg][Ii][Nn]|[Ss][Ii][Gg][Nn]-?[Ii][Nn]'
+_SS_GATE="$_SS_PREFIX|[A-Za-z0-9_-]{20,}|$_SS_WORDS"
+secret_gate() { [[ "$1" =~ $_SS_GATE ]]; }

@@ -567,5 +567,22 @@ out="$("$FU" escalate --create --only "$only" 2>&1)"
 has "an old issue with other wording is linked by lane and id" "$out" "linked: [lane-a/old-same] https://github.com/AcmeOrg/acme-app/issues/58"
 [ "$(creates)" = 0 ] && [ "$(fu_issue old-same)" = 58 ] && ok "and no second issue is made" || bad "relink" "creates=$(creates) issue=$(fu_issue old-same)"
 
+# an issue that is not a number, non-empty text or a non-empty issueUrl is NOT an escalation: the item is still a candidate,
+# is claimed and gets an issue, and a stale claim beside it is still reported. A real issueUrl beside a wrong issue is escalated.
+for e in true false '{}' '[]' '""'; do
+  seed; jq --argjson e "$e" '(.followUps[] | select(.id == "has-issue")) |= (. + {issue: $e}) | del(.followUps[] | select(.id == "leaky" or .id == "path-leak"))' "$L" > "$ROOT/p.json" && cp "$ROOT/p.json" "$L"
+  out="$("$FU" escalate 2>&1)"
+  has "dry run: issue $e is not an escalation, the item is a candidate" "$out" "would create: [ops-sweeper/has-issue]"
+  only="ops-sweeper/has-issue@$(fpof has-issue)"
+  "$FU" escalate --create --only "$only" >/dev/null 2>&1
+  [ "$(creates)" = 1 ] && [ "$(fu_issue has-issue)" = 100 ] && ok "create: issue $e is replaced by a real issue number" || bad "create issue $e" "creates=$(creates) issue=$(fu_issue has-issue)"
+  seed; jq --argjson e "$e" --arg o30 "$(ago 30)" '(.followUps[] | select(.id == "old-same")) |= (. + {issue: $e, escalatingAt: "2026-10-01T00:00:00Z-1"}) | del(.followUps[] | select(.id == "leaky" or .id == "path-leak"))' "$L" > "$ROOT/p.json" && cp "$ROOT/p.json" "$L"
+  out="$("$FU" escalate 2>&1)"
+  has "stale claim: issue $e does not hide the claim from verify by hand" "$out" "verify by hand ops-sweeper/old-same"
+done
+seed; jq '(.followUps[] | select(.id == "old-same")) |= (. + {issue: true, issueUrl: "https://github.com/AcmeOrg/acme-app/issues/9"}) | del(.followUps[] | select(.id == "leaky" or .id == "path-leak"))' "$L" > "$ROOT/p.json" && cp "$ROOT/p.json" "$L"
+out="$("$FU" escalate 2>&1)"
+lacks "control: issue true beside a real issueUrl is escalated, not a candidate" "$out" "[ops-sweeper/old-same]"
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]

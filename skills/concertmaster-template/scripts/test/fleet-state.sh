@@ -118,6 +118,50 @@ LB="$(cksum < "$CM_HOME/ledger.json")"
 "$F" write >/dev/null 2>&1
 grep -q '^cm:state freeze=on window=2026-11-01T15:00 prod=v1.4.57 at=' "$CMF" && pass "ledger fallback: freeze.state, freeze.window and the newest done deploy tag" || fail "ledger" "$(cat "$CMF")"
 [ "$(cksum < "$CM_HOME/ledger.json")" = "$LB" ] && pass "write never touches the ledger" || fail "ledger touched" "changed"
+# A ledger freeze that cannot be read: a ledger freeze that cannot be read is never read as off (jq // read each of these as "not given", so the old freeze=off stayed)
+aled() { printf '%s\n' "$1" > "$CM_HOME/ledger.json"; }
+for fz in '{"state":"ON"}' '{"state":"on "}' '{"state":true}' '"on"' '{"window":"w1"}' '[]' '{"state":null}' 7 '{"state":["on"]}'; do
+  setcm "$(st off 2026-11-01T15:00Z v1.4.57 2026-11-01T09:55:00Z)"
+  aled "{\"workers\":{},\"freeze\":$fz}"
+  OUT="$("$F" write 2>&1)"; RC=$?
+  [ "$RC" = 0 ] && grep -Eq '^cm:state freeze=on window=[^ ]+ prod=v1.4.57 at=2026-11-01T10:00:00Z$' "$CMF" && grep -q 'publishing freeze=on' <<<"$OUT" \
+    && pass "ledger freeze $fz: published as freeze=on, not kept as the old freeze=off" || fail "freeze $fz" "rc=$RC $(cat "$CMF") / $OUT"
+done
+setcm "$(st off 2026-11-01T15:00Z v1.4.57 2026-11-01T09:55:00Z)"
+printf 'not json' > "$CM_HOME/ledger.json"
+OUT="$("$F" write 2>&1)"; RC=$?
+[ "$RC" = 0 ] && grep -q '^cm:state freeze=on ' "$CMF" && pass "a ledger that cannot be read: freeze=on" || fail "unreadable ledger" "rc=$RC $(cat "$CMF") / $OUT"
+setcm "$(st on 2026-11-01T15:00Z v1.4.57 2026-11-01T09:55:00Z)"
+aled '{"workers":{},"freeze":{"state":"ON"}}'
+"$F" write --freeze off >/dev/null 2>&1; RC=$?
+[ "$RC" = 0 ] && grep -q '^cm:state freeze=off ' "$CMF" && pass "control: an explicit --freeze off is the operator's word and is kept" || fail "explicit flag" "rc=$RC $(cat "$CMF")"
+for fz in '{"state":"on"}' '{"state":"off"}' null; do
+  want=off; [ "$fz" = '{"state":"on"}' ] && want=on
+  setcm "$(st off 2026-11-01T15:00Z v1.4.57 2026-11-01T09:55:00Z)"
+  aled "{\"workers\":{},\"freeze\":$fz}"
+  OUT="$("$F" write 2>&1)"; RC=$?
+  [ "$RC" = 0 ] && grep -q "^cm:state freeze=$want " "$CMF" && ! grep -q 'publishing freeze=on' <<<"$OUT" && pass "control: ledger freeze $fz reads as $want (null keeps the last line)" || fail "control $fz" "rc=$RC $(cat "$CMF") / $OUT"
+done
+aled '{"workers":{}}'
+setcm "$(st off 2026-11-01T15:00Z v1.4.57 2026-11-01T09:55:00Z)"
+"$F" write >/dev/null 2>&1
+grep -q '^cm:state freeze=off ' "$CMF" && pass "control: no ledger freeze keeps the last line (off)" || fail "absent" "$(cat "$CMF")"
+rm -f "$CM_HOME/ledger.json"
+# the read side: a freeze that is not exactly on or off in the comment is an invalid line, never a GO
+for fzl in ON 'on ' true yes 1 ''; do
+  setcm "cm:state freeze=$fzl window=x prod=y at=2026-11-01T09:55:00Z"
+  OUT="$("$F" check 2>&1)"; RC=$?
+  [ "$RC" = 1 ] && ! grep -q '^GO' <<<"$OUT" && pass "check: comment freeze='$fzl' is not read as off: BLOCK" || fail "check freeze=$fzl" "rc=$RC $OUT"
+done
+# the ledger freeze.state is compared in jq, not after `jq -r` (which drops a NUL and would read "off<NUL>" as off and publish freeze=off): any other value is no freeze state.
+# An unreadable freeze with no --freeze flag publishes freeze=on (fail closed) instead of refusing: the comment is never left at an older freeze=off, and is never freeze=off.
+for FZ in '"off\u0000"' '"on\u0000"' '"on\u0009"' '["on"]' 'true' '"ON"'; do
+  setcm "cm:state freeze=off window=x prod=y at=2026-11-01T09:55:00Z"
+  printf '{"workers":{},"freeze":{"state":%s}}
+' "$FZ" > "$CM_HOME/ledger.json"
+  "$F" write >/dev/null 2>&1; RC=$?
+  [ "$RC" = 0 ] && grep -q '^cm:state freeze=on ' "$CMF" && ! grep -q 'freeze=off' "$CMF" && pass "ledger freeze.state $FZ is no freeze state: published as freeze=on, never off" || fail "ledger freeze $FZ" "rc=$RC $(cat "$CMF")"
+done
 rm -f "$CM_HOME/ledger.json"
 setcm "cm:running"
 OUT="$("$F" write --freeze off --dry-run 2>&1)"

@@ -70,8 +70,17 @@ cm_lane_names | jq -R . | jq -sc . > "$TMP/lanes.json" 2>/dev/null; [ -s "$TMP/l
 LEDGER="${CM_LEDGER:-$CM_HOME/ledger.json}"
 echo '[]' > "$TMP/stand.json"
 if [ -r "$LEDGER" ]; then
-  if jq -c '[(.workers // {}) | to_entries[] | .value | select(.standing == true) | ((.host // "local" | ascii_downcase) + "|" + ((.path // .worktree // .worktreePath // empty) | select(type == "string") | sub("/+$"; "")))]' "$LEDGER" > "$TMP/stand.new" 2>/dev/null && [ -s "$TMP/stand.new" ]; then mv -f "$TMP/stand.new" "$TMP/stand.json"
+  if jq -c "$CM_JQ_STATE_DEFS"'[(.workers // {}) | to_entries[] | .value | select(type == "object" and (.standing | cm_standing_any)) | (((.host | if type == "string" then . else "local" end) | ascii_downcase) + "|" + ((.path, .worktree, .worktreePath) | select(type == "string" and . != "") | sub("/+$"; "")))]' "$LEDGER" > "$TMP/stand.new" 2>/dev/null && [ -s "$TMP/stand.new" ]; then mv -f "$TMP/stand.new" "$TMP/stand.json"
   else printf '%s\t%s\n' "(ledger)" "the ledger could not be parsed: ledger standing workers are not exempted" >> "$TMP/bad.tsv"; fi
+  # a row that is not an object, a host or path that is not text, or a standing row with no path that is text exempts nothing: said, never read as "no such lane"
+  sbad="$(jq -r "$CM_JQ_STATE_DEFS $CM_JQ_NAME_DEFS"'[(.workers // {}) | if type == "object" then to_entries[] else empty end
+      | select((.value | type) != "object" or (((.value.state | cm_state_dead) | not) and ((.value | cm_wild) or ((.value.standing | cm_standing_any) and ([.value.path, .value.worktree, .value.worktreePath] | all(type != "string" or . == ""))))))] | length' "$LEDGER" 2>/dev/null)"
+  # no number back means the count could not be computed: that is unreadable, never "none"; a ledger that is not an object with a worker map, or that writes a key twice under workers, is too
+  [ -n "$sbad" ] || sbad=1
+  # anything but ONE whole number (a ledger of two JSON documents prints one count per document: "0" and "0") is unreadable too, never "none"
+  case "$sbad" in ''|*[!0-9]*) sbad=1 ;; esac
+  if ! gwhy="$(cm_workers_gate "$LEDGER")"; then [ "$sbad" != 0 ] || sbad=1; printf '%s\t%s\n' "(ledger)" "the ledger cannot be read as a worker map ($gwhy): ledger standing workers are not exempted" >> "$TMP/bad.tsv"; fi
+  [ "$sbad" = 0 ] || printf '%s\t%s\n' "(ledger)" "$sbad ledger worker row(s) cannot be read (a row that is not an object, a host or path that is not text, or a standing row with no path that is text): a standing lane is not exempted, fix the ledger row" >> "$TMP/bad.tsv"
 fi
 
 # One background job per host, each writing only its own files under $TMP/h/<n>; joined in host order afterwards.
