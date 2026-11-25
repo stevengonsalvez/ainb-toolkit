@@ -296,7 +296,7 @@ def iv_eff_standing($m; $legacy; $action):
   $m.fields.standing as $s
   | if $s.status == "valid" then $s.value elif $s.status == "missing" and $legacy then (if ($s.legacy | has($action)) then $s.legacy[$action] else "unknown" end) else "unknown" end;
 
-def iv_live_states: ["running", "stuck", "blocked-on-owner"];
+def iv_live_states: ["running", "idle", "stuck", "blocked-on-owner"];
 
 # bounded widening: can an unreadable member MIGHT-BE $target? true when no readable key rules it out.
 # $lanes: the lane labels it is known to belong to (readable), compared to the target's readable lane.
@@ -447,7 +447,7 @@ def iv_decide($action; $view; $id; $ctx):
                  (if $state != "unknown" and (iv_live_states + ["done", "retired"] | index($state)) == null then "state " + $state + " is not a candidate" else empty end) ]
              elif $action == "teardown" then
                [ (if $standing == true then "standing: never torn down" else empty end),
-                 (if $state == "asleep" then "state " + $state + " is kept" else empty end),
+                 (if $state == "asleep" or $state == "parked" then "state " + $state + " is kept" else empty end),
                  (if $m.fields.parent.status == "invalid" then "parent is unreadable (" + $m.fields.parent.reason + ")" else empty end),
                  (if $m.fields.beadsEpic.status == "invalid" then "beadsEpic is unreadable" else empty end),
                  (if $m.fields.epicConflict.status == "invalid" then "epicConflict is unreadable" elif ($m.fields.epicConflict.status == "valid" and ($m.fields.epicConflict.value | length) > 0) then "epic conflict recorded" else empty end),
