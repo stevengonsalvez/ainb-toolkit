@@ -458,7 +458,7 @@ resume_dead() {
     nasleep="$(jq -r --arg h "$host" --arg p "$path" "$NORMP$CM_JQ_STATE_DEFS $CM_JQ_NAME_DEFS"'(.workers) as $ws
         | if $ws != null and ($ws | type) != "object" then "0 0 1" else
           def wild: ((.host != null and (.host | type) != "string") or (.host | type) == "string" and (.host | cm_nonblank | not))
-                    or (((.path // .worktree // .worktreePath) | type) != "null" and (((.path // .worktree // .worktreePath) | type) != "string" or ((.path // .worktree // .worktreePath) | cm_nonblank | not)));
+                    or ([.path, .worktree, .worktreePath] | any(. != null and (type != "string" or (cm_nonblank | not))));   # each field on its own: `//` would read a path of false as absent and the row as no row
           [ ($ws // {}) | to_entries[] | select(.value | type == "object") | select(.value.state | cm_state_dead | not)
             | select((.value | wild) or (((.value.host // "local") == $h) and ((.value.path // .value.worktree // .value.worktreePath // "") | normp) == $p)) ] as $r
           | [ ($ws // {}) | to_entries[] | select((.value | type) != "object") ] as $nonobj
