@@ -183,7 +183,7 @@ LEDGER_HOLD=""
 if [ -e "$LEDGER" ]; then LEDGER_HOLD="$(cm_workers_gate "$LEDGER")" || LEDGER_HOLD="${LEDGER_HOLD:-the ledger cannot be read}"; fi
 # The typed boundary decides what a row is: cm_row_fields_ok (a field of the wrong type, a control character in a name) comes from lib.sh. A row that fails it, or that has a state this
 # skill does not know, is never a standing lane to nudge, and it is REPORTED, never read as "no row". A host or path that is not text could be the row of ANY lane: cm_bs_wild.
-BS_DEFS="$CM_JQ_STATE_DEFS $CM_JQ_NAME_DEFS"' def cm_bs_wild: (.host != null and (.host | type) != "string") or ((.path // .worktree // .worktreePath) != null and ((.path // .worktree // .worktreePath) | type) != "string");'
+BS_DEFS="$CM_JQ_STATE_DEFS $CM_JQ_NAME_DEFS"' def cm_bs_wild: (.host != null and (.host | type) != "string") or ([.path, .worktree, .worktreePath] | any(. != null and type != "string"));'
 BS_OK='type == "object" and cm_row_fields_ok and (.standing == true) and ((.state | cm_state_unknown) | not) and ((.state | cm_state_asleep) | not) and ((.host // "local") == "local")'
 CM_LEDGER_PATH="$(jq -r --arg self "$CM_SELF_WORKTREE" "$BS_DEFS"' .workers[$self] // empty | select('"$BS_OK"') | (.path // .worktree // .worktreePath // empty) | select(cm_name_ok)' "$LEDGER" 2>/dev/null | sed -E 's#/\.(/|$)#/#g; s#//+#/#g; s#(.)/+$#\1#' )"
 # The concertmaster row is nudged only when it reads standing true with a known state that is not asleep and every field of the right type. A row that is not an object, has a
