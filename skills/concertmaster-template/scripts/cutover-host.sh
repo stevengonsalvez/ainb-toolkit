@@ -305,21 +305,24 @@ selected() {
 }
 
 # shellcheck disable=SC2016  # a jq program: $h, $shape are jq variables bound by --arg
-WORKERS_JQ="$CM_JQ_STATE_DEFS $CM_JQ_NORMP"'
+WORKERS_JQ="$CM_JQ_STATE_DEFS $CM_JQ_NAME_DEFS $CM_JQ_NORMP"'
   def rank: if ((.id | test("pr-sweeper")) or (.lane | test("pr-sweeper"))) then 2
             elif (.standing or (.id | test($shape)) or (.lane | test($shape))) then 1 else 0 end;
   [ (.workers // {}) | to_entries[] | select(.value | type == "object")
     | select((.value.state // "running") | cm_state_dead | not)
-    | { id: .key, host: (.value.host // "local"), lane: ((.value.lane // .key) | tostring),
+    | { id: .key, wild: (.value | cm_wild), host: ((.value.host | if . == null then "local" else tostring end) | cm_strip), fieldsOk: (.value | cm_row_fields_ok), lane: ((.value.lane // .key) | tostring),
         path: ((.value.path // .value.worktree // .value.worktreePath // "") | tostring),
         term: ((.value.terminal // "") | tostring), model: ((.value.model // "") | tostring),
-        standing: (.value.standing == true), state: ((.value.state // "running") | tostring),
+        standing: (.value.standing | cm_standing_any), state: (if (.value.state | cm_state_unknown) then "unknown" else ((.value.state | cm_state_eff) | tostring) end),
         effort: (if (.value | has("effort")) then ((.value.effort // "") | tostring | if . == "" then "-" else . end) else "" end) }
-    | select(.host == $h and .path != "") ]
-  | map(. + { np: (.path | normp) }) | (group_by(.np) | map(select(length > 1) | .[0].np)) as $dupp
-  | map(. + { dupPath: (.np | IN($dupp[])),
-              ok: (((.id | type) == "string") and (.id | test("\\A[A-Za-z0-9_-][A-Za-z0-9._-]*\\z"))
-                   and (.path | startswith("/")) and ([.lane, .path, .term, .model, .state, .effort] | all(test("[[:cntrl:]]") | not))) })
+    | select(.wild or (.host == $h and .path != "")) ]
+  # the path is read as the same row once a control character is stripped (the host already is): a twin whose path is the lane path plus a NUL or a newline still shares it
+  | map(. + { np: (.path | cm_strip | normp) }) | (group_by(.np) | map(select(length > 1) | .[0].np)) as $dupp
+  | (map(.wild) | any) as $anyWild
+  # a row whose host or path is not text (cm_wild) could be the row of ANY lane here: it is listed on every host as unusable, and every other row counts as sharing its path with it (nothing is moved)
+  | map(. + { dupPath: ((.np | IN($dupp[])) or ($anyWild and (.wild | not))),
+              ok: (((.id | type) == "string") and (.id | test("\\A[A-Za-z0-9_-][A-Za-z0-9._-]*\\z")) and (.wild | not)
+                   and (.path | startswith("/")) and .fieldsOk and (.state != "unknown") and ([.lane, .path, .term, .model, .state, .effort] | all(cm_name_ok))) })
   | sort_by([rank, .id]) | .[]
   | if .ok then [ rank, .id, .lane, .path, .term, .model, (.standing | tostring), .state, (.dupPath | tostring), "true", .effort ] | join("\u001f")
     else "BAD\u001f" + (.id | @json) end'
@@ -332,7 +335,7 @@ plan_row() { local IFS="$US"; printf '%s\n' "$*" >> "$TMP/plan.us"; }
 while IFS="$US" read -r rank id lane path term model standing state dupp ok eff; do
   [ -n "$id" ] || continue
   if [ "$rank" = BAD ]; then   # a row that cannot be trusted is never split into fields: only its quoted id is shown
-    plan_row 3 "$id" - - - - false - - - skip "ledger row is not usable (worker id, path or a field has a control character)" "$(selected "$id" && echo 1 || echo 0)" - -
+    plan_row 3 "$id" - - - - false - - - skip "ledger row is not usable (worker id, path or a field has a control character, or its state is not a known state)" "$(selected "$id" && echo 1 || echo 0)" - -
     continue
   fi
   sel=1; selected "$id" || sel=0

@@ -385,6 +385,43 @@ jq '(.followUps[] | select(.id == "p-item")) += {issue: 7, issueUrl: "https://gi
 out="$("$FU" for-worktree /w/ops-p 2>&1)"
 [ "$(printf '%s\n' "$out" | cut -f1 | tr '\n' ' ')" = "c-item " ] && ok "for-worktree: an escalated item is not listed" || bad "for-worktree escalated" "$out"
 case "$out" in *null*) bad "for-worktree: a missing field printed as null" "$out" ;; *) ok "for-worktree: a missing field prints empty" ;; esac
+# only a number, non-blank text or a non-blank issueUrl is an escalation: any other issue value (blank text included) leaves the item listed
+for e in true false '{}' '[]' '""' '" "' '"   "' '["x"]'; do
+  jq --argjson e "$e" '(.followUps[] | select(.id == "p-item")) |= (. + {issue: $e}) | (.followUps[] | select(.id == "c-item")) |= (. + {issue: $e})' "$L" > "$ROOT/p.json" && cp "$L" "$ROOT/keep.json" && cp "$ROOT/p.json" "$L"
+  jq 'del(.followUps[] | select(.id == "p-item") | .issueUrl) | del(.followUps[] | select(.id == "c-item") | .issueUrl)' "$L" > "$ROOT/p.json" && cp "$ROOT/p.json" "$L"
+  out="$("$FU" for-worktree /w/ops-p 2>&1)"
+  [ "$(printf '%s\n' "$out" | cut -f1 | sort | tr '\n' ' ')" = "c-item p-item " ] && ok "for-worktree: issue $e is not an escalation, both items listed" || bad "for-worktree issue $e" "$out"
+  cp "$ROOT/keep.json" "$L"
+done
+jq '(.followUps[] | select(.id == "p-item")) += {issue: true, issueUrl: "https://github.com/AcmeOrg/acme-app/issues/7"} | (.followUps[] | select(.id == "c-item")) |= del(.openedAt)' "$L" > "$ROOT/p.json" && cp "$L" "$ROOT/keep.json" && cp "$ROOT/p.json" "$L"
+out="$("$FU" for-worktree /w/ops-p 2>&1)"
+[ "$(printf '%s\n' "$out" | cut -f1 | tr '\n' ' ')" = "c-item " ] && ok "for-worktree control: issue true beside a real issueUrl is escalated" || bad "for-worktree control" "$out"
+cp "$ROOT/keep.json" "$L"
+# typed boundary: a LIVE worker row whose host or path is present and not text could own ANY worktree. "no worker owns it" (exit 3, untracked) would read that row as
+# "nothing there": the ledger cannot answer, exit 1, and the row is named. A control (no such row) and a DEAD wild row do not change the answer.
+cp "$L" "$ROOT/keep.json"
+for w in 'path: false' 'path: 7' 'path: ["/w/nowhere"]' 'host: false' 'host: {}' 'worktreeId: 7'; do
+  jq --argjson x "$(jq -cn "{state: \"running\", lane: \"ops-sweeper\", host: \"local\", path: \"/w/ops-wild\"} + {$w}")" '.workers["w-wild"] = $x' "$ROOT/keep.json" > "$L"
+  out="$("$FU" for-worktree /w/nowhere 2>&1)"; rc=$?
+  if [ "$rc" = 1 ] && printf '%s' "$out" | grep -q 'w-wild'; then ok "typed boundary: for-worktree with a live row ($w) is exit 1 and names the row, not 3 (untracked)"; else bad "typed boundary for-worktree ($w)" "rc=$rc $out"; fi
+  "$FU" for-worktree /w/ops-p >/dev/null 2>&1; rc=$?
+  [ "$rc" = 1 ] && ok "typed boundary: for-worktree on a tracked worktree is held too while a row ($w) cannot be read" || bad "typed boundary for-worktree tracked ($w)" "rc=$rc"
+done
+jq '.workers["w-wild"] = {state: "gone", lane: "ops-sweeper", host: "local", path: 7}' "$ROOT/keep.json" > "$L"
+"$FU" for-worktree /w/nowhere >/dev/null 2>&1; rc=$?
+[ "$rc" = 3 ] && ok "typed boundary control: a DEAD row with a path that is not text does not hold the answer (untracked, exit 3)" || bad "typed boundary dead wild row" "rc=$rc"
+out="$("$FU" for-worktree /w/ops-p 2>&1)"; rc=$?
+if [ "$rc" = 0 ] && ! printf '%s' "$out" | grep -qi 'error'; then ok "typed boundary control: a dead odd row does not break the walk for a tracked worktree (no jq error)"; else bad "typed boundary dead wild row, tracked" "rc=$rc $out"; fi
+cp "$ROOT/keep.json" "$L"
+# mutant: without the hold the live odd row reads as "nothing owns it"
+MFU="$ROOT/mut-fu"; rm -rf "${MFU:?}"; mkdir -p "$MFU"; cp -R "$HERE/.."/. "$MFU"/ 2>/dev/null
+sed -i.bak 's/^    \[ -z "\$WILD" \] || {/    true || {/' "$MFU/followups.sh"
+if cmp -s "$HERE/../followups.sh" "$MFU/followups.sh"; then bad "mutant for-worktree: the sed no longer matches followups.sh" "update this test"; else
+  jq '.workers["w-wild"] = {state: "running", lane: "ops-sweeper", host: "local", path: false}' "$ROOT/keep.json" > "$L"
+  "$MFU/followups.sh" for-worktree /w/nowhere >/dev/null 2>&1; rc=$?
+  [ "$rc" = 3 ] && ok "mutant: without the hold a live odd row is read as 'untracked' (caught)" || bad "mutant for-worktree not caught" "rc=$rc"
+  cp "$ROOT/keep.json" "$L"
+fi
 
 echo "== child adoption (cm:child names a worktree with no ledger row)"
 # lane-a posts its children; child rows carry their own comment, host-a style synthetic names

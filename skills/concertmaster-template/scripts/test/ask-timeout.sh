@@ -296,8 +296,19 @@ jq '(.asks[] | select(.id == "b-srcok")).filesAt = "2026-10-17T18:45:00Z"' "$L2"
 check "claim with filesAt 15 min old: refused" \
   "$(CM_NOW=2026-10-17T19:00:00Z "$SCRIPT" --ledger "$L2" --claim b-srcok >/dev/null 2>&1; echo $?)" "2"
 jq '(.asks[] | select(.id == "b-srcok")).filesAt = "2026-10-17T18:55:00Z"' "$L2" > "$L2.tmp" && mv "$L2.tmp" "$L2"
+cp "$L2" "$ROOT/l-pre-claim.json"
 check "claim with filesAt 5 min old: ok" \
   "$(CM_NOW=2026-10-17T19:00:00Z "$SCRIPT" --ledger "$L2" --claim b-srcok >/dev/null 2>&1; echo $?)" "0"
+# AT-F: filesAt is read by the claim mode's own small program (not the classifier, so not in the field inventory): a wrong-typed filesAt
+# (a number, true, an object, a list, a list holding the fresh time, text that is not a time) is never fresh: the claim is refused (exit 2) and
+# the ask is left unclaimed. Controls: the same ask with its fresh text time is claimed; noCode true needs no filesAt.
+for bad in 1792263300 true '{}' '[]' '["2026-10-17T18:55:00Z"]' '"now"' '""'; do
+  jq --argjson v "$bad" '(.asks[] | select(.id == "b-srcok")).filesAt = $v' "$ROOT/l-pre-claim.json" > "$ROOT/l-fat.json"
+  check "AT-F claim with filesAt $bad: refused, exit 2" "$(CM_NOW=2026-10-17T19:00:00Z "$SCRIPT" --ledger "$ROOT/l-fat.json" --claim b-srcok >/dev/null 2>&1; echo $?)" "2"
+  check "AT-F claim with filesAt $bad: the ask is not marked claimed" "$(jq -r '(.asks[] | select(.id == "b-srcok")).verdictStartedAt // "none"' "$ROOT/l-fat.json")" "none"
+done
+cp "$ROOT/l-pre-claim.json" "$ROOT/l-fat.json"
+check "AT-F control: filesAt as the fresh text time is claimed" "$(CM_NOW=2026-10-17T19:00:00Z "$SCRIPT" --ledger "$ROOT/l-fat.json" --claim b-srcok >/dev/null 2>&1; echo $?)" "0"
 
 # the ledger lock: a held lock refuses a write; a stale one is stolen
 mkdir "$L2.lock"
@@ -315,6 +326,7 @@ cm_warn() { printf 'concertmaster: %s\n' "$*" >&2; }
 cm_cfg() { printf '%s' "${2:-}"; }
 cm_cfg_json() { printf '%s' "${2:-null}"; }
 cm_lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
+cm_input_dupkeys() { return 0; }
 CM_HOME="${CM_HOME:-/nonexistent}"; CM_ORG=AcmeOrg; CM_REPO=acme-app; CM_OWNER_NAME=owner
 EOF2
 cp "$ROOT/l3.json" "$ROOT/l4.json"
@@ -323,9 +335,194 @@ check "no cm_ledger_write: the message names it" "$(bash "$ROOT/nolib/ask-timeou
 check "no cm_ledger_write: ledger untouched" "$(cmp -s "$ROOT/l3.json" "$ROOT/l4.json" && echo same)" "same"
 check "no cm_ledger_write: list still works" "$(bash "$ROOT/nolib/ask-timeout.sh" --ledger "$ROOT/l4.json" --all | awk '$1 == "c-src" { print $2 }')" "verdict-due"
 
+# wrong-typed values are not absent ones (`//` reads false as absent): every protective field the classifier reads
+# is compared with null, then typed, and a wrong type is "never" (the ask stays with Owner One), never a verdict-due.
+# AT-K kind/scope, AT-P pr, AT-F files, AT-W worker lane/row and workers, AT-V verdictRef, AT-T timeoutAt, AT-I id.
+L4="$ROOT/ledger4.json"
+jq -n '{workers: {"w-oparr": {lane: ["ops-sweeper"]}, "w-opsfalse": {lane: false}, "w-ops": {lane: "ops-sweeper"},
+                  "w-pr": {lane: "dev-sweeper", pr: 77}, "w-prfalse": {lane: "dev-sweeper", pr: false}, "w-null": null},
+  asks: ([
+  {id: "ctl-kind", kind: "code"},
+  {id: "k-false", kind: false, scope: "code"}, {id: "k-true", kind: true, scope: "code"}, {id: "k-7", kind: 7, scope: "code"},
+  {id: "k-obj", kind: {}, scope: "code"}, {id: "k-arr", kind: [], scope: "code"}, {id: "k-arrcode", kind: ["code"]},
+  {id: "ctl-scope-null-kind", kind: null, scope: "code"}, {id: "ctl-scope-only", scope: "code"},
+  {id: "s-false", scope: false}, {id: "s-arr", scope: ["code"]}, {id: "k-false-only", kind: false},
+  {id: "ks-badscope", kind: "code", scope: false},
+  {id: "ctl-kind-padded", kind: " Code "},
+  {id: "ctl-pr-null", kind: "code", pr: null},
+  {id: "p-false", kind: "code", pr: false}, {id: "p-true", kind: "code", pr: true}, {id: "p-7", kind: "code", pr: 7},
+  {id: "p-obj", kind: "code", pr: {}}, {id: "p-arr", kind: "code", pr: []}, {id: "p-text", kind: "code", pr: "#7"},
+  {id: "ctl-p-files", kind: "code", pr: 7, files: ["src/a.ts"], noCode: false},
+  {id: "p-false-files", kind: "code", pr: false, files: ["src/a.ts"], noCode: false},
+  {id: "f-false", kind: "code", files: false}, {id: "f-true", kind: "code", files: true}, {id: "f-7", kind: "code", files: 7},
+  {id: "f-obj", kind: "code", files: {}}, {id: "ctl-f-empty", kind: "code", files: []},
+  {id: "w-arr", kind: "code", lane: null, worker: "w-oparr"}, {id: "w-lanefalse", kind: "code", lane: null, worker: "w-opsfalse"},
+  {id: "ctl-w-ops", kind: "code", lane: null, worker: "w-ops"},
+  {id: "ctl-w-pr", kind: "code", lane: null, worker: "w-pr", files: ["src/a.ts"], noCode: false},
+  {id: "w-null-lane", kind: "code", lane: "dev-sweeper", worker: "w-null"}, {id: "w-null-nolane", kind: "code", lane: null, worker: "w-null"},
+  {id: "w-blank", kind: "code", lane: "dev-sweeper", worker: "  "},
+  {id: "w-pr-nofiles", kind: "code", lane: null, worker: "w-pr"}, {id: "w-prfalse-nofiles", kind: "code", lane: null, worker: "w-prfalse"},
+  {id: "v-false", kind: "code", verdictRef: false}, {id: "v-7", kind: "code", verdictRef: 7}, {id: "ctl-v-null", kind: "code", verdictRef: null},
+  {id: "t-false", kind: "code", timeoutAt: false}, {id: "t-7", kind: "code", timeoutAt: 7}, {id: "t-soon", kind: "code", timeoutAt: "soon"},
+  {id: "t-obj", kind: "code", timeoutAt: {}}, {id: "ctl-t-future", kind: "code", timeoutAt: "2026-10-17T20:00:00Z"},
+  {id: false, kind: "code"}, {id: 7, kind: "code"}, {id: "ctl-id", kind: "code"}
+  ] | map({issue: 1, askedAt: "2026-10-17T17:00:00Z", timeoutAt: "2026-10-17T17:30:00Z", state: "open", lane: "dev-sweeper", question: "split the card?", noCode: true} + .))}' > "$L4"
+G4="$("$SCRIPT" --ledger "$L4" --all 2>&1)"
+row4() { awk -v id="$1" '$1 == id { print $2 }' <<<"$G4"; }
+check "AT: list over a wrong-typed ledger exits 0" "$("$SCRIPT" --ledger "$L4" >/dev/null 2>&1; echo $?)" "0"
+for c in ctl-kind ctl-scope-null-kind ctl-scope-only ctl-kind-padded ctl-pr-null ctl-p-files ctl-f-empty ctl-w-pr ctl-v-null; do
+  check "AT control $c: verdict-due" "$(row4 $c)" "verdict-due"
+done
+check "AT control ctl-w-ops: ops worker lane stays never" "$(row4 ctl-w-ops)" "never"
+check "AT control ctl-t-future: a stated future timeoutAt waits" "$(row4 ctl-t-future)" "waiting"
+for c in k-false k-true k-7 k-obj k-arr k-arrcode s-false s-arr k-false-only ks-badscope; do
+  check "AT-K $c: wrong-typed kind or scope never reads as absent or as text" "$(row4 $c)" "never"
+done
+check "AT-K k-false names a non-text field" "$(grep -c '^k-false .*non-text field: stays with Owner One' <<<"$G4")" "1"
+for c in p-false p-true p-obj p-arr; do check "AT-P $c: wrong-typed pr is never (noCode with a PR)" "$(row4 $c)" "never"; done
+check "AT-P p-false: says the pr is not a number or text" "$(grep -c '^p-false .*pr is not a number or text' <<<"$G4")" "1"
+check "AT-P p-7: a PR number on a noCode ask is never" "$(row4 p-7)" "never"
+check "AT-P p-text: a PR given as text on a noCode ask is never" "$(row4 p-text)" "never"
+check "AT-P p-false-files: a wrong-typed pr is never even with files" "$(row4 p-false-files)" "never"
+for c in f-false f-true f-7 f-obj; do check "AT-F $c: files that is not a list is never, not absent" "$(row4 $c)" "never"; done
+check "AT-F f-false: says files[] invalid" "$(grep -c '^f-false .*files\[\] invalid' <<<"$G4")" "1"
+check "AT-W w-arr: a worker lane that is a list holding an ops lane is never" "$(row4 w-arr)" "never"
+check "AT-W w-arr: says the worker lane is not text" "$(grep -c '^w-arr .*worker lane is not text' <<<"$G4")" "1"
+check "AT-W w-lanefalse: a worker lane false is never" "$(row4 w-lanefalse)" "never"
+# B4 C5: the worker row of the ask is present but null (damaged): it is not "no worker", so its PR cannot be ruled out. A blank worker id names nothing
+for c in w-null-lane w-null-nolane w-blank; do check "B4 C5 $c: a null or blank worker row is never, the ask stays with Owner One" "$(row4 $c)" "never"; done
+check "B4 C5 w-null-lane: says the worker row is not an object" "$(grep -c '^w-null-lane .*worker row is not an object' <<<"$G4")" "1"
+check "B4 C5 w-blank: says the worker id is blank" "$(grep -c '^w-blank .*blank worker id' <<<"$G4")" "1"
+check "AT-W w-pr-nofiles: a worker PR on a noCode ask is never" "$(row4 w-pr-nofiles)" "never"
+check "AT-W w-prfalse-nofiles: a worker pr false is a PR, never absent" "$(row4 w-prfalse-nofiles)" "never"
+for c in v-false v-7; do check "AT-V $c: a verdictRef that is present is a decided ask, not listed" "$(row4 $c)" ""; done
+for c in t-false t-7 t-soon t-obj; do check "AT-T $c: a stated timeoutAt that does not parse never times out" "$(row4 $c)" "never"; done
+# Typed boundary: an ask with no usable id (missing, null, empty, blank text) cannot be named, claimed or recorded: it never times out and says why, never "a due verdict" that nothing can
+# close. (A non-text id, false or 7, was already never.) Control: the same ask with an id is verdict-due.
+L5="$ROOT/ledger5.json"
+jq -n '{schema: "concertmaster.ledger/v1", workers: {}, asks: ([
+  {kind: "code"}, {id: null, kind: "code"}, {id: "", kind: "code"}, {id: "  ", kind: "code"}, {id: "ctl-id5", kind: "code"}
+  ] | map({issue: 1, askedAt: "2026-10-17T17:00:00Z", timeoutAt: "2026-10-17T17:30:00Z", state: "open", lane: "dev-sweeper", question: "split the card?", noCode: true} + .))}' > "$L5"
+G5="$("$SCRIPT" --ledger "$L5" --all 2>&1)"
+check "TB blank or missing ids: four asks are never, each names the missing id" "$(grep -c 'no usable id (missing or blank)' <<<"$G5")" "4"
+check "TB blank or missing ids: the due count holds only the ask that has an id" "$(head -n 1 <<<"$G5" | grep -c 'due=1 never=4')" "1"
+check "TB control: the ask with an id is verdict-due" "$(awk '$1 == "ctl-id5" { print $2 }' <<<"$G5")" "verdict-due"
+# mutant: a copy without the id check reads the four asks as due
+MUT5="$ROOT/mut5"; rm -rf -- "${MUT5:?}"; mkdir -p "$MUT5/skill" && cp -R "$HERE/.." "$MUT5/skill/scripts"
+sed -i '/no usable id (missing or blank)/d' "$MUT5/skill/scripts/ask-timeout.sh"
+if ! cmp -s "$SCRIPT" "$MUT5/skill/scripts/ask-timeout.sh"; then
+  GM="$("$MUT5/skill/scripts/ask-timeout.sh" --ledger "$L5" --all 2>&1)"
+  check "TB mutant: without the id check the blank-id asks are not all never, so the case above is caught" "$([ "$(grep -c 'no usable id' <<<"$GM")" = 0 ] && echo caught || echo missed)" "caught"
+else check "TB mutant: the sed no longer matches ask-timeout.sh (update this test)" "no" "yes"; fi
+check "AT-T t-false: says timeoutAt unparseable" "$(grep -c '^t-false .*timeoutAt unparseable: never times out' <<<"$G4")" "1"
+check "AT-I: ids false and 7 are never, listed as ?" "$(awk '$1 == "?" { print $2 }' <<<"$G4" | sort | uniq -c | tr -s ' ' | tr '\n' ',')" " 2 never,"
+check "AT-I: an ordinary id beside them stays verdict-due" "$(row4 ctl-id)" "verdict-due"
+# workers wrong-typed or one worker row wrong-typed: only the asks it can touch are never, the rest still list
+L5="$ROOT/ledger5.json"
+jq '.workers = false' "$L4" > "$L5"
+check "AT-W workers false: every ask is never, none verdict-due" \
+  "$("$SCRIPT" --ledger "$L5" --all | awk 'NR > 1 && $2 == "verdict-due"' | wc -l | tr -d ' ')" "0"
+check "AT-W workers false: ctl-kind is never and says why" "$("$SCRIPT" --ledger "$L5" --all | grep -c '^ctl-kind .*workers is not an object')" "1"
+L6="$ROOT/ledger6.json"
+jq '.workers["w-row7"] = 7 | .asks += [{id: "w-row7", kind: "code", lane: null, worker: "w-row7", issue: 1, askedAt: "2026-10-17T17:00:00Z", timeoutAt: "2026-10-17T17:30:00Z", state: "open", question: "x", noCode: true}]' "$L4" > "$L6"
+check "AT-W a worker row that is a number: list exits 0, not a jq error" "$("$SCRIPT" --ledger "$L6" --all >/dev/null 2>&1; echo $?)" "0"
+check "AT-W a worker row that is a number: its ask is never" "$("$SCRIPT" --ledger "$L6" --all | awk '$1 == "w-row7" { print $2 }')" "never"
+check "AT-W a worker row that is a number: the other asks still list" "$("$SCRIPT" --ledger "$L6" --all | awk '$1 == "ctl-kind" { print $2 }')" "verdict-due"
+check "AT: claim and record refuse a wrong-typed ask" \
+  "$(for c in k-false p-false f-false w-arr t-false; do "$SCRIPT" --ledger "$L4" --claim $c >/dev/null 2>&1; echo -n $?; done)" "22222"
+check "AT: the wrong-typed ledger was never written by list" "$(jq -c '[.asks[] | select(.verdictStartedAt != null)] | length' "$L4")" "0"
+
 # unreadable ledger
 echo 'not json' > "$L"
 check "unreadable ledger: exit 1" "$("$SCRIPT" >/dev/null 2>&1; echo $?)" "1"
+
+# B2: a key written twice in an ask row. jq keeps the LAST of the two, so each of these flipped an ask from never to verdict-due (an autonomous verdict plus --record decided). A repeated key
+# in an ask row, or in the worker row it names, is "repeated key: stays with Owner One": never, never listed as due, never claimed, never recorded.
+LD="$ROOT/dup.json"
+ASKB='"id":"d1","askedAt":"2026-10-17T18:20:00Z","timeoutAt":"2026-10-17T18:50:00Z","issue":4847,"noCode":true,"state":"open"'
+dupcase() { # <label> <ask members after the common ones> [worker rows json]  : prints the class and why of d1, then the class of a clean sibling d2
+  printf '{"schema":"concertmaster.ledger/v1","project":"acme","workers":%s,"asks":[{%s,%s},{"id":"d2","askedAt":"2026-10-17T18:20:00Z","timeoutAt":"2026-10-17T18:50:00Z","issue":4847,"noCode":true,"state":"open","lane":"dev-sweeper","kind":"design","question":"table or list?"}]}\n' "${3:-{\}}" "$ASKB" "$2" > "$LD"
+}
+dd1() { "$SCRIPT" --ledger "$LD" --all | awk '$1 == "d1" { print $2 }'; }
+dwhy() { "$SCRIPT" --ledger "$LD" --all | awk '$1 == "d1" { $1=$2=$3=$4=$5=""; sub(/^ +/, ""); print }'; }
+dupcase ctl '"lane":"dev-sweeper","kind":"design","question":"table or list?"'
+check "B2 control: a single-key own-scope ask is verdict-due" "$(dd1)" "verdict-due"
+for dc in 'kind merge then design|"lane":"dev-sweeper","kind":"merge","kind":"design","question":"table or list?"' \
+          'lane ops-sweeper then dev-sweeper|"lane":"ops-sweeper","lane":"dev-sweeper","kind":"design","question":"table or list?"' \
+          'deny question written twice|"lane":"dev-sweeper","kind":"design","question":"drop the migration column?","question":"table or list?"' \
+          'files migration first then src|"lane":"dev-sweeper","kind":"design","question":"table or list?","files":["supabase/migrations/x.sql"],"files":["src/a.ts"],"filesAt":"2026-10-17T18:55:00Z"' \
+          'state open twice|"lane":"dev-sweeper","kind":"design","question":"table or list?","state":"open"'; do
+  IFS='|' read -r dl dm <<<"$dc"
+  dupcase x "$dm"
+  check "B2 $dl: never, stays with Owner One" "$(dd1) $(dwhy)" "never repeated key: stays with Owner One"
+  check "B2 $dl: a clean sibling ask is still listed due" "$("$SCRIPT" --ledger "$LD" --all | awk '$1 == "d2" { print $2 }')" "verdict-due"
+  check "B2 $dl: --claim refused (rc 2)" "$("$SCRIPT" --ledger "$LD" --claim d1 >/dev/null 2>&1; echo $?)" "2"
+done
+dupcase x '"lane":"dev-sweeper","kind":"design","question":"table or list?"' '{"wk":{"lane":"dev-sweeper","state":"running","state":"parked"}}'
+sed -i 's/"id":"d1",/"id":"d1","worker":"wk",/' "$LD"
+check "B2 a repeated key in the worker row an ask names: never, stays with Owner One" "$(dd1) $(dwhy)" "never repeated key in the worker row: stays with Owner One"
+printf '{"schema":"concertmaster.ledger/v1","project":"acme","workers":{},"asks":[{%s,"lane":"dev-sweeper","kind":"design","question":"q"}],"asks":[]}\n' "$ASKB" > "$LD"
+check "B2 the asks key itself written twice: no ask is due" "$("$SCRIPT" --ledger "$LD" | head -n 1 | cut -d' ' -f1)" "due=0"
+printf '{"schema":"concertmaster.ledger/v1","workers":{}}{"asks":[]}\n' > "$LD"
+check "B2 two JSON documents: exit 1, nothing judged" "$("$SCRIPT" --ledger "$LD" >/dev/null 2>&1; echo $?)" "1"
+# mutant (cp -R so scripts/jdupkeys comes along): the row hold removed, so the LAST value wins again and d1 is verdict-due: the harm
+mkdir -p "$ROOT/mut-b2" && cp -R "$HERE"/../. "$ROOT/mut-b2"/
+perl -pi -e 's/\(if \$c\.rowDup then/(if false then/; s/\(\$c\.dupWorkers \| index\(\$wk\)\) != null/false/' "$ROOT/mut-b2/ask-timeout.sh"
+if ! cmp -s "$SCRIPT" "$ROOT/mut-b2/ask-timeout.sh"; then
+  MUT="$ROOT/mut-b2/ask-timeout.sh"
+  dupcase x '"lane":"dev-sweeper","kind":"merge","kind":"design","question":"table or list?"'
+  check "B2 mutant: without the row hold the kind merge-then-design ask is verdict-due again (the harm)" "$("$MUT" --ledger "$LD" --all | awk '$1 == "d1" { print $2 }')" "verdict-due"
+  dupcase x '"lane":"dev-sweeper","kind":"design","question":"table or list?","files":["supabase/migrations/x.sql"],"files":["src/a.ts"],"filesAt":"2026-10-17T18:55:00Z"'
+  check "B2 mutant: the migration-then-src files ask is verdict-due again (the harm)" "$("$MUT" --ledger "$LD" --all | awk '$1 == "d1" { print $2 }')" "verdict-due"
+  dupcase x '"lane":"dev-sweeper","kind":"design","question":"table or list?"' '{"wk":{"lane":"dev-sweeper","state":"running","state":"parked"}}'
+  sed -i 's/"id":"d1",/"id":"d1","worker":"wk",/' "$LD"
+  check "B2 mutant: the repeated-key worker row no longer holds its ask (the harm)" "$("$MUT" --ledger "$LD" --all | awk '$1 == "d1" { print $2 }')" "verdict-due"
+else check "B2 mutant: the perl edit matches ask-timeout.sh" "no" "yes"; fi
+
+# round 6: the workers map is read with its keys trimmed, as the ask names its worker by the trimmed id. A padded key is the worker, its PR
+# and its lane are seen, and two keys that trim to one id are no row at all (the ask stays with Owner One, no row is picked)
+L6="$ROOT/ledger6.json"
+jq -n '{workers: {"w-ex": {lane: "dev-sweeper", pr: 7}, " w-pp ": {lane: "dev-sweeper", pr: 8}, "  w-po": {lane: "ops-sweeper"},
+                  "w-d": {lane: "dev-sweeper", pr: 9}, " w-d ": {lane: "dev-sweeper"}, "w-ok ": {lane: "dev-sweeper"}},
+  asks: ([
+  {id: "r6-exact", worker: "w-ex", lane: "dev-sweeper"}, {id: "r6-pad", worker: "w-pp", lane: "dev-sweeper"}, {id: "r6-pad-askpad", worker: " w-pp ", lane: "dev-sweeper"},
+  {id: "r6-padops", worker: "w-po", lane: null}, {id: "r6-two", worker: "w-d"}, {id: "r6-two-askpad", worker: " w-d "},
+  {id: "r6-ctl-nopr", worker: "w-ok"}
+  ] | map({kind: "code", issue: 1, askedAt: "2026-10-17T17:00:00Z", timeoutAt: "2026-10-17T17:30:00Z", state: "open", lane: null, question: "split the card?", noCode: true} + .))}' > "$L6"
+G6="$("$SCRIPT" --ledger "$L6" --all 2>&1)"
+row6() { awk -v id="$1" '$1 == id { print $2 }' <<<"$G6"; }
+check "R6 control: the exact worker key with a PR on a noCode ask is never" "$(row6 r6-exact)" "never"
+check "R6 a padded workers key with a PR on a noCode ask is never, like the exact key" "$(row6 r6-pad)" "never"
+check "R6 the same with the ask worker id padded too" "$(row6 r6-pad-askpad)" "never"
+check "R6 a padded key says the worker has a PR" "$(grep -c '^r6-pad .*noCode but the worker has a PR' <<<"$G6")" "1"
+check "R6 a padded workers key of an ops-sweeper lane is never (its lane is seen)" "$(row6 r6-padops)" "never"
+check "R6 two keys that trim to one id: the ask is never" "$(row6 r6-two)" "never"
+check "R6 two keys that trim to one id and a padded ask worker id: never" "$(row6 r6-two-askpad)" "never"
+check "R6 two keys that trim to one id: says so" "$(grep -c '^r6-two .*two worker rows share this id' <<<"$G6")" "1"
+check "R6 control: a padded key with no PR and a dev lane does not over-hold (verdict-due)" "$(row6 r6-ctl-nopr)" "verdict-due"
+# mutants (cp -R, so scripts/jdupkeys comes along): the workers map read by the exact key again, and the two-key hold removed
+r6_mut() { # <name> <python replace: old> <new>
+  local m="$ROOT/mut-r6-$1"; mkdir -p "$m" && cp -R "$HERE"/../. "$m"/
+  python3 - "$m/ask-timeout.sh" "$2" "$3" <<'PY'
+import sys
+p,old,new=sys.argv[1:4]
+t=open(p).read()
+if old in t: open(p,'w').write(t.replace(old,new,1))
+PY
+  if cmp -s "$SCRIPT" "$m/ask-timeout.sh"; then check "R6 mutant $1: the edit changed ask-timeout.sh" "no" "yes"; return 1; fi
+  R6MUT="$m/ask-timeout.sh"
+}
+# shellcheck disable=SC2016  # jq text in single quotes, not shell
+if r6_mut exactkey 'then reduce (.workers | to_entries[]) as $e ({}; .[($e.key | gsub("^\\s+|\\s+$"; "")) as $t | if $t == "" then $e.key else $t end] = $e.value)' 'then .workers'; then
+  M6="$("$R6MUT" --ledger "$L6" --all 2>&1)"
+  check "R6 mutant exact key: the padded key's PR is not seen, the ask is verdict-due again (the harm)" "$(awk '$1 == "r6-pad" { print $2 }' <<<"$M6")" "verdict-due"
+  check "R6 mutant exact key: the padded ask worker id fares the same (the harm)" "$(awk '$1 == "r6-pad-askpad" { print $2 }' <<<"$M6")" "verdict-due"
+fi
+# shellcheck disable=SC2016  # jq text in single quotes, not shell
+if r6_mut twokeys '($c.dupTrim | index($wk)) != null' 'false'; then
+  M6="$("$R6MUT" --ledger "$L6" --all 2>&1)"
+  check "R6 mutant two keys: without the hold the last row wins and the ask is verdict-due again (the harm)" "$(awk '$1 == "r6-two" { print $2 }' <<<"$M6")" "verdict-due"
+fi
 
 echo "passed=$PASS failed=$FAIL"
 [ "$FAIL" = 0 ]

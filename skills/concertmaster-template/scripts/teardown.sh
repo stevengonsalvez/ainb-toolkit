@@ -1314,11 +1314,12 @@ elif [ -n "$WT" ]; then
   elif ! jq -se 'length == 1 and (.[0] | type == "object" and ((.workers // null) | type) == "object")' "$LEDGER" >/dev/null 2>&1; then
     check ledger "UNKNOWN ($LEDGER is not an object with a workers object)"
     gate "ledger unreadable or malformed: standing and beads state unknown"
-  elif ! CANDS="$(jq -r --arg h "$HOST" '.workers | to_entries[]
+  elif ! CANDS="$(jq -r --arg h "$HOST" "$CM_JQ_STATE_DEFS $CM_JQ_NAME_DEFS"' .workers | to_entries[]
           | select(.value | type == "object")
-          | select(.value.host == null or .value.host == $h)
-          | select(((.value.state // "") | IN("gone", "repurposed")) | not)
-          | "\(.value.path // "")\t\(.key)\t\(.value.worktreeId // "")"' "$LEDGER" 2>/dev/null)"; then
+          | select((.value | cm_host_may_be($h)) or ((.value.host | type == "string") and (.value.host | cm_strip) == $h) or (.value | cm_wild))
+          | select((.value.state | cm_state_dead) | not)
+          | (if (.key | cm_name_ok) and (.value | cm_row_names_ok) and ((.value | cm_wild) | not) then . else error("a live row with a control character in a name, or a host or path that is not text") end)
+          | "\(.value.path // "")\t\(.key)\t\(.value.worktreeId // "")"' "$LEDGER" 2>/dev/null)"; then   # a live row whose path, key or worktree id holds a control character (a tab or newline would forge a column or a row), or whose host or path is not text, is UNKNOWN, never skipped
     check ledger "UNKNOWN (jq could not read $LEDGER)"
     gate "ledger unreadable: standing and beads state unknown"
   else
@@ -1346,30 +1347,49 @@ EOF_K
       if [ -z "$LIDS" ]; then
         check ledger "no live worker for this path"
         gate "standing state unknown: no live ledger worker for $HOST:$WT (adopt it with standing true or false first)"
-      elif LW="$(printf '%s\n' "$LIDS" | jq -R . | jq -cs --slurpfile L "$LEDGER" '
+      elif LW="$(printf '%s\n' "$LIDS" | jq -R . | jq -cs --slurpfile L "$LEDGER" "$CM_JQ_STATE_DEFS $CM_JQ_NAME_DEFS"'
               (. | unique) as $ids | $L[0] as $r
               | [ $ids[] as $k | $r.workers[$k] + {id: $k} ] as $ws
               | [ ($r.lanes // {})[]? | .lead? // empty ] as $leads
+              # a lane whose row or lead cannot be read names no worker we can match: standing is then unknown, never "no lead"
+              | (($r.lanes != null and ($r.lanes | type) != "object")
+                 or (($r.lanes // {}) | if type == "object" then any(.[]; (type != "object") or (.lead != null and (.lead | cm_nonblank | not))) else false end)) as $leadsBad
+              # followUps: null or absent is none; any other non-array is unreadable (false would read as none through `//`)
+              | (if $r.followUps == null then [] else $r.followUps end) as $fu
+              | ( {seen: $ids, frontier: $ids}
+                  | until(.frontier | length == 0;
+                      .seen as $s | .frontier as $f
+                      | ([ $r.workers | to_entries[] | select((.value | type) == "object")
+                           | select(.value.parent as $p | ($p | type) == "string" and ($f | index($p)) != null) | .key ] | unique - $s) as $new
+                      | {seen: ($s + $new), frontier: $new})
+                  | .seen ) as $fam
+              # a live row of the target, its twins or its family whose fields are not the types the contract says, or a live row anywhere whose parent is not text (it could be a child of the target): unknown, nothing is removed
+              | ( ( [ $fam[] as $k | $r.workers[$k] as $row
+                      | select(($row | type) != "object" or ((($row.state | cm_state_dead) | not) and (($row | cm_row_typed_ok) | not)))
+                      | $k ]
+                    + [ $r.workers | to_entries[] | select((.value | type) == "object" and ((.value.state | cm_state_dead) | not)
+                                                          and .value.parent != null and (.value.parent | type) != "string") | .key ] ) | unique ) as $rowBad
               | { ids: [ $ws[].id ],
                   standingTrue: [ $ws[] | select(.standing == true) | .id ],
                   standingUnknown: [ $ws[] | select((.standing | type) != "boolean") | .id ],
                   lead: [ $ws[].id as $k | $k | select($leads | index($k)) ],
-                  epicConflict: [ $ws[] | select(((.epicConflict // []) | length) > 0) | .id ],
+                  leadsBad: $leadsBad,
+                  rowBad: $rowBad,
+                  epicConflict: [ $ws[] | select(((if .epicConflict == null then [] elif (.epicConflict | type) == "array" then .epicConflict else error("epicConflict is not a list") end) | length) > 0) | .id ],
                   badEpic: [ $ws[] | select(.beadsEpic != null and ((.beadsEpic | type) != "string" or .beadsEpic == "")) | .id ],
                   epics: ([ $ws[] | .beadsEpic | select(type == "string" and . != "") ] | unique),
                   lanes: [ $ws[] | (.lane // .id) ],
                   wids: [ $ws[] | .worktreeId | select(type == "string" and . != "") ],
-                  fuBad: ((($r.followUps // []) | type) != "array" or any(($r.followUps // [])[]; type != "object")),
-                  fuOpen: (if ((($r.followUps // []) | type) != "array") then [] else
-                      ( {seen: $ids, frontier: $ids}
-                        | until(.frontier | length == 0;
-                            .seen as $s | .frontier as $f
-                            | ([ $r.workers | to_entries[] | select((.value | type) == "object")
-                                 | select(.value.parent as $p | ($p | type) == "string" and ($f | index($p)) != null) | .key ] | unique - $s) as $new
-                            | {seen: ($s + $new), frontier: $new})
-                        | .seen ) as $fam
-                      | [ ($r.followUps // [])[] | select(type == "object" and .state != "done" and ((.issue // .issueUrl) == null) and (.worker as $w | $fam | index($w)) != null)
-                          | "\(.worker):\(.id)" ] end) }' 2>/dev/null)" \
+                  fuBad: (($fu | type) != "array" or any($fu[]; type != "object")),
+                  fuOpen: (if (($fu | type) != "array") then [] else
+                      [ $fu[] | select(type == "object" and .state != "done" and (cm_fu_esc | not) and (.worker | type) == "string" and (.worker as $w | $fam | index($w)) != null)
+                          | "\(.worker):\(.id)" ] end),
+                  # an open, unescalated item whose worker (or the parent of that worker) cannot be read cannot be placed in the family of this worker
+                  fuUnk: (if (($fu | type) != "array") then [] else
+                      [ $fu[] | select(type == "object" and .state != "done" and (cm_fu_esc | not)) | . as $f | $f.worker as $wk
+                        | select((($wk | cm_nonblank) | not)
+                                 or (($r.workers[$wk]? // null) as $wr | $wr != null and (($wr | type) != "object" or ($wr.parent != null and ($wr.parent | cm_nonblank | not)))))
+                        | "\(if ($f.worker | type) == "string" then $f.worker else "?" end):\($f.id // "?" | tostring)" ] end) }' 2>/dev/null)" \
            && [ -n "$LW" ]; then
         LEDGER_OK=1
         check ledger "live worker(s) $(printf '%s' "$LW" | jq -r '.ids | join(",")')"
@@ -1386,12 +1406,13 @@ fi
 lw() { printf '%s' "$LW" | jq -r "$1"; }
 # ask_ok <ask-id> <kind>: the ledger holds that ask, answered and approved,
 # of that kind, for this host and this path (or a live worker on it), unused.
+# Unused means usedAt is null or absent: a usedAt of false (jq `//` would read it as absent) or any other value is a used ask.
 ask_ok() {
   [ "$LEDGER_OK" -eq 1 ] || return 1
   [ "$(jq -r --arg a "$1" --arg k "$2" --arg h "$HOST" --arg wt "$WT" \
         --argjson ids "$(lw '.ids')" '
       any((.asks // [])[]?; .id == $a and .kind == $k and .state == "answered"
-          and .decision == "approved" and (.usedAt // null) == null and .host == $h
+          and .decision == "approved" and .usedAt == null and .host == $h
           and (.path == $wt or ((.worker // null) as $w | $w != null and ($ids | index($w)))))' \
       "$LEDGER" 2>/dev/null)" = true ]
 }
@@ -1425,11 +1446,15 @@ elif [ -n "$LW" ]; then
   ST_TRUE="$(lw '.standingTrue | join(",")')"
   ST_UNK="$(lw '.standingUnknown | join(",")')"
   LEADS="$(lw '.lead | join(",")')"
+  LEADS_BAD="$(lw '.leadsBad')"
   [ -z "$ST_TRUE" ] || WHY="ledger standing:true ($ST_TRUE)"
   [ -z "$LEADS" ] || WHY="${WHY:+$WHY, }ledger lane lead $LEADS"
   if [ -z "$WHY" ] && [ -n "$ST_UNK" ]; then
     check standing "UNKNOWN (standing not true/false on $ST_UNK)"
     gate "standing state unknown on ledger worker(s) $ST_UNK: record standing true or false first"
+  elif [ -z "$WHY" ] && [ "$LEADS_BAD" = true ]; then
+    check standing "UNKNOWN (a ledger lane or its lead cannot be read)"
+    gate "standing state unknown: a ledger lane or its lead is not readable (lane lead unreadable); fix lanes.<lane>.lead in the ledger first"
   elif [ -z "$WHY" ]; then
     DNAME=""
     [ -z "$ROW" ] || DNAME="$(printf '%s' "$ROW" | jq -r '.displayName // ""')"
@@ -1501,6 +1526,12 @@ if [ -n "$LW" ]; then
   BAD_EPIC="$(lw '.badEpic | join(",")')"
 elif [ "$OWNER_MODE" -eq 1 ]; then
   EPICS="$(printf '%s\n' "$OWNER_EPICS" | grep . | sort -u || true)"
+fi
+ROW_BAD=""
+[ -z "$LW" ] || ROW_BAD="$(lw '.rowBad | join(",")')"
+if [ -n "$ROW_BAD" ]; then
+  check ledger "UNKNOWN (a field of $ROW_BAD is not the type the ledger contract says)"
+  gate "ledger row(s) $ROW_BAD have a field that is not the type the contract says (or a parent that is not text): which rows own this worktree is unknown, nothing is removed. Fix the row (references/input-contract.md)"
 fi
 EPIC_CONFLICT=""
 [ -z "$LW" ] || EPIC_CONFLICT="$(lw '.epicConflict | join(",")')"
@@ -2060,6 +2091,9 @@ elif [ -n "$LW" ]; then
   if [ "$(lw '.fuBad')" = true ]; then
     check followups "UNKNOWN (ledger followUps is not an array of objects)"
     gate "ledger followUps is not an array of objects: follow-up state unknown"
+  elif [ -n "$(lw '.fuUnk | join(", ")')" ]; then
+    check followups "UNKNOWN (open follow-up with an unreadable worker or parent: $(lw '.fuUnk | join(", ")'))"
+    gate "open follow-up(s) unattributable ($(lw '.fuUnk | join(", ")')): the follow-up worker or its parent in the ledger is not readable, so teardown cannot tell whether it is this worker's; fix the ledger row first"
   elif [ -n "$FU_OPEN" ]; then
     check followups "OPEN: $FU_OPEN"
     gate "open follow-up(s) ($FU_OPEN): finish them, hand them to another owner, or close with cm:followup-done <id> (scripts/followups.sh close <id>) before teardown"
@@ -2088,8 +2122,8 @@ elif [ -n "$LW" ]; then
       if [ -z "$LIVE_IDS" ]; then
         check followups "UNKNOWN (live comment ids could not be read)"
         gate "live comment ids unreadable: open follow-up state unknown"
-      elif LIVE_OPEN="$(jq -r --argjson ids "$LIVE_IDS" --argjson lanes "$(lw '.lanes')" '
-          . as $L | [ $ids[] | . as $x | select(any(($L.followUps // [])[]?; type == "object" and .id == $x.id and (.state == "done" or (.issue // .issueUrl) != null) and (.text // "") == $x.text and (.lane as $l | $lanes | index($l)) != null) | not) | .id ] | join(", ")' "$LEDGER" 2>/dev/null)"; then
+      elif LIVE_OPEN="$(jq -r --argjson ids "$LIVE_IDS" --argjson lanes "$(lw '.lanes')" "$CM_JQ_STATE_DEFS"'
+          . as $L | [ $ids[] | . as $x | select(any(($L.followUps // [])[]?; type == "object" and .id == $x.id and (.state == "done" or cm_fu_esc) and (.text // "") == $x.text and (.lane as $l | $lanes | index($l)) != null) | not) | .id ] | join(", ")' "$LEDGER" 2>/dev/null)"; then
         if [ -n "$LIVE_OPEN" ]; then
           check followups "OPEN in the live comment: $LIVE_OPEN"
           gate "open follow-up(s) in live comment ($LIVE_OPEN): not in the ledger as done (or escalated to a GitHub issue) with the same text (a closed id reused for a new item counts as open); run scripts/followups.sh reconcile, then finish or close them, and post a new item under a new id"

@@ -6,7 +6,7 @@
 #
 # The roster is a short view of ACTIVE work only: one row per live standing
 # lane or live worker (ledger worker state not queued, spawning, gone,
-# repurposed, retired, teardown, done or asleep: none of those is resumed; an asleep
+# repurposed, retired, teardown, done or asleep, or a state that is not a known state: none of those is resumed; an asleep
 # lead was stopped on purpose and only `lane-health.sh wake` brings it back).
 # The ledger stays the truth; the roster is rewritten whole every tick and
 # read by `/concertmaster resume` (references/resume.md).
@@ -43,10 +43,17 @@ if ! { [ -s "$LEDGER" ] && jq -e 'type == "object"' "$LEDGER" >/dev/null 2>&1; }
   exit 1
 fi
 
+# workers that is false, a list or text, or a key written twice under workers, is not a worker map: the roster would be EMPTY (every lane gone) or built from the last of two equal keys.
+# The existing roster is left untouched and the reason is said (lib.sh cm_workers_gate).
+if ! GATE_WHY="$(cm_workers_gate "$LEDGER")"; then
+  cm_warn "roster.sh: ledger $LEDGER cannot be read as a worker map ($GATE_WHY); roster left as is"
+  exit 1
+fi
+
 NOW="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 render() {
-  jq -r --arg now "$NOW" '
+  jq -r --arg now "$NOW" "$CM_JQ_STATE_DEFS $CM_JQ_NAME_DEFS"'
     def scrub: if type == "string"
       then gsub("(sbp_|sk_live_|sk_test_|ghp_|gho_|github_pat_|sb_secret_|sb_publishable_|whsec_|rk_live_|rk_test_|ghs_|ghu_|ghr_|glpat-|xapp-|xoxa-|xoxe-|AKIA|AIza|eyJ)[A-Za-z0-9_.-]{8,}|\\bBearer +[A-Za-z0-9_.=-]{12,}|\\bsk-[A-Za-z0-9_-]{16,}|\\bxox[bp]-[A-Za-z0-9-]{8,}"; "[redacted]")
            | gsub("[\r\n\t]+"; " ") | .[0:200]
@@ -55,7 +62,8 @@ render() {
     | (if ($L.prs | type) == "object" then $L.prs else {} end) as $prs
     | [ (if ($L.workers | type) == "object" then $L.workers else {} end) | to_entries[]
         | select(.value | type == "object")
-        | select((.value.state // "running") | IN("queued", "spawning", "gone", "repurposed", "retired", "teardown", "done", "asleep") | not)
+        | select(.value.state | cm_state_resumable)
+        | select(.value | cm_row_typed_ok)   # a row with a field of the wrong type (host ["local"], agent ["claude"]) is not passed on: resume.sh reads the roster through a reader that joins an array into text
         | .key as $id | .value as $w
         | { lane: ($w.lane // null),
             host: ($w.host // null),
@@ -72,8 +80,11 @@ render() {
             state: (($w.lastComment // $w.state // null) | scrub),
             updatedAt: ($w.updatedAt // $L.updatedAt // $now) } ]
     | sort_by(.lane // "", .host // "", .worktree // "") as $rows
+    | ([ (if ($L.workers | type) == "object" then $L.workers else {} end) | to_entries[] | select(.value | type == "object")
+         | select(.value.state | cm_state_unknown) | .key | tostring | gsub("[[:cntrl:]]+"; " ") ]) as $unk
     | "# concertmaster roster: active work only, rewritten each tick from ledger.json. Do not edit.",
       "# generated \($now)",
+      (if ($unk | length) > 0 then "# state not a known state, so NOT listed and never resumed (fix the ledger row): \($unk | join(", "))" else empty end),
       (if ($rows | length) == 0 then "[]" else
         ($rows[] |
           "- lane: \(.lane | tojson)",
@@ -90,6 +101,9 @@ render() {
           "  updatedAt: \(.updatedAt | tostring | tojson)") end)' "$LEDGER"
 }
 
+# a row left out above is named here (ids only, cut to printable text), so the lane does not just vanish
+BADROWS="$(jq -r "$CM_JQ_STATE_DEFS $CM_JQ_NAME_DEFS"' [ (.workers // {}) | if type == "object" then to_entries[] else empty end | select((.value | type == "object") and (.value.state | cm_state_resumable) and ((.value | cm_row_typed_ok) | not)) | .key | cm_strip ] | join(" ")' "$LEDGER" 2>/dev/null)"
+[ -z "$BADROWS" ] || cm_warn "roster.sh: worker row(s) with a field of the wrong type left out of the roster, fix them in the ledger: $BADROWS"
 if [ "$STDOUT" = 1 ]; then
   render
   exit 0

@@ -48,6 +48,19 @@ ledger "$OTHER" "{\"project\": \"Project-A\", $W}"
 guard "$OTHER"; RC=$?
 check "matching field (case-insensitive) is accepted at any path"  '[ "$RC" = 0 ]'
 
+# a project that is false or 0 is a present, wrong project, not "no field" (jq // read both as absent: the guard saw a legacy file)
+for pj in false 0 '[]' '{}' true; do
+  ledger "$OTHER" "{\"project\": $pj, $W}"
+  guard "$OTHER"; RC=$?
+  check "project $pj in a foreign dir: refused with exit 3, not read as an unstamped legacy file" '[ "$RC" = 3 ] && grep -q "belongs to project" "$ROOT/err"'
+done
+ledger "$MINE" "{\"project\": false, $W}"
+guard "$MINE"; RC=$?
+check "project false in this project's own dir: refused too" '[ "$RC" = 3 ]'
+ledger "$MINE" "{\"project\": \"project-a\", $W}"
+guard "$MINE"; RC=$?
+check "control: the matching project text is accepted" '[ "$RC" = 0 ]'
+
 # ---- the path --------------------------------------------------------------------------------------------
 ledger "$OTHER" "{$W}"
 guard "$OTHER"; RC=$?

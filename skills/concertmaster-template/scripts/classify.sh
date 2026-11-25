@@ -41,8 +41,14 @@ esac
 LEDGER="${CM_HOME:-$HOME/.concertmaster}/ledger.json"
 # A ledger of another project is never read (cm_ledger_guard, lib.sh): exit 3 with the reason.
 cm_ledger_guard "$LEDGER" || exit 3
+LEDGER_WHY=""
 if [ -s "$LEDGER" ] && jq -e 'type == "object"' "$LEDGER" >/dev/null 2>&1; then
-  LEDGER_ARGS=(--slurpfile ledger "$LEDGER")
+  # a workers that is false or a list, or a key written twice under workers (jq keeps the last), cannot say which lane stands: held and SAID (lib.sh cm_workers_gate)
+  if LEDGER_WHY="$(cm_workers_gate "$LEDGER")"; then LEDGER_ARGS=(--slurpfile ledger "$LEDGER")
+  else
+    printf 'classify.sh: ledger %s cannot be read as a worker map (%s): every item standing-unknown\n' "$LEDGER" "${LEDGER_WHY:-unreadable}" >&2
+    LEDGER_ARGS=(--argjson ledger '[]')
+  fi
 else
   printf 'classify.sh: ledger %s missing or unreadable: every item standing-unknown\n' "$LEDGER" >&2
   LEDGER_ARGS=(--argjson ledger '[]')
@@ -84,7 +90,7 @@ SCOPE="$(printf '%s' "$CM_CFG_JSON" | jq -c '{repo: .worktrees.orca_repo, neverT
   | select(.repo | type == "string" and length > 0)' 2>/dev/null || true)"
 [ -n "$SCOPE" ] || SCOPE=null
 
-OUT="$(jq -L "$HERE" --argjson scope "$SCOPE" --argjson stuckMin "${CM_STUCK_MIN:-45}" --argjson forbidden "$FORBIDDEN" --argjson own "$OWN" --arg ownErr "$OWN_ERR" "${LEDGER_ARGS[@]}" -f "$HERE/classify.jq")"
+OUT="$(jq -L "$HERE" --argjson scope "$SCOPE" --argjson stuckMin "${CM_STUCK_MIN:-45}" --argjson forbidden "$FORBIDDEN" --argjson own "$OWN" --arg ownErr "$OWN_ERR" "${LEDGER_ARGS[@]}" -f <(printf 'include "claims";\n%s\n' "$CM_JQ_STATE_DEFS"; cat "$HERE/classify.jq"))"
 
 if [ "$MODE" = json ]; then
   printf '%s\n' "$OUT"

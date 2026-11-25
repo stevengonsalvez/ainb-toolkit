@@ -83,6 +83,13 @@ NUDGE_QUIET="Status check from the concertmaster: you have had no turn for longe
 norm() { sed -E 's#/\.(/|$)#/#g; s#//+#/#g; s#(.)/+$#\1#'; }
 row() { printf '%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5"; } # lane handle age result detail
 
+# The ledger must be ONE object whose workers is a map with no key written twice (lib.sh cm_workers_gate): a workers that is false, [], text or a number, a truncated file or a repeated key
+# (jq keeps the last of two equal keys) used to give "no lane here" and rc 0. It is reported and nothing is sent.
+if ! WHY="$(cm_workers_gate "$LEDGER")"; then
+  cm_warn "runtime-check.sh: $WHY: nothing checked, nothing sent"
+  row - - - unreadable "$WHY; nothing checked this tick"; exit 1
+fi
+
 # list_whole <terminal-list JSON>: a whole list; a cut-off one (truncated, or totalCount above its rows) is unreadable, never "no terminal"
 list_whole() { printf '%s' "$1" | jq -e '(.result.terminals | type == "array") and ((.result.truncated // false) != true)
     and ((.result.totalCount // 0) <= (.result.terminals | length))' >/dev/null 2>&1; }
@@ -94,13 +101,20 @@ fi
 terms="$(printf '%s' "$tl" | jq -r --arg re "$CM_PATH_MATCH" '.result.terminals[]? | select((.worktreePath // "") | test($re)) | select((.agentIdentity // "") == "claude") | [.handle, .worktreePath] | @tsv')"
 
 CFG_LANES="$(printf '%s' "$CM_CFG_JSON" | jq -c '[(.lanes // [])[]? | select(type == "object") | {name, loop_minutes}]' 2>/dev/null || echo '[]')"
-lanes="$(jq -r --argjson cfg "$CFG_LANES" '.workers // {} | to_entries[] | select(.value | type == "object")
-    | select(.value.standing == true and ((.value.host // "local") == "local") and (((.value.state // "") | IN("gone", "repurposed", "asleep")) | not))
+# Which rows are in scope: every live worker row that reads standing true OR whose standing is not a boolean, on this machine. A row that cannot be read (a field of the wrong type, a control
+# character in a name) is LISTED with the reason (code 3), never dropped: dropping it would read a wrong-typed row as "no lane here" and erase the protection the check gives.
+lanes="$(jq -r --argjson cfg "$CFG_LANES" "$CM_JQ_STATE_DEFS$CM_JQ_NAME_DEFS"' .workers // {} | to_entries[] | if (.value | type) != "object" then [(.key | cm_strip), "", "", "", "0", "3"] | join("\u001f") else (
+    select(((.value.state | cm_state_dead) | not) and ((.value.state | cm_state_asleep) | not))
     | .value as $w
     | .key as $k
-    | ((($w.loopIntervalMin // ([$cfg[] | select(.name == ($w.lane // $k) or .name == $k or .name == ($k | sub("^w-"; ""))) | .loop_minutes][0]) // "") | tostring)) as $iv
+    | select(($w.standing | cm_standing_any) and (($w.host == null) or ($w.host == "local")))
+    | (($k | cm_name_ok) and ($w | cm_row_fields_ok) and ([($w.path // $w.worktree // $w.worktreePath // ""), ($w.terminal // "")] | map(tostring | cm_name_ok) | all)) as $rowok
+    | if ($rowok | not) then [($k | cm_strip), "", "", "", "0", (if ($w.state | cm_state_unknown) then "2" elif ($w.standing | cm_standing_bad) then "1" else "3" end)] | join("\u001f")
+      else
+    ((($w.loopIntervalMin // ([$cfg[] | select(.name == ($w.lane // $k) or .name == $k or .name == ($k | sub("^w-"; ""))) | .loop_minutes][0]) // "") | tostring)) as $iv
     | ((try ($w.terminalChurnAt | fromdateiso8601) catch 0) // 0 | tostring) as $ca
-    | [$k, ($w.path // $w.worktree // $w.worktreePath // ""), ($w.terminal // ""), $iv, $ca] | join("\u001f")' "$LEDGER")"
+    | [$k, ($w.path // $w.worktree // $w.worktreePath // ""), ($w.terminal // ""), $iv, $ca, (if ($w.state | cm_state_unknown) then "2" elif ($w.standing | cm_standing_bad) then "1" else "0" end)] | join("\u001f") end) end' "$LEDGER")" \
+  || { cm_warn "runtime-check.sh: the ledger workers could not be read: nothing checked, nothing sent"; row - - - unreadable "the ledger workers could not be read; nothing checked this tick"; exit 1; }
 
 # rc_ledger_write <jq filter> [jq args...]: rewrite the ledger through the filter. Uses lib.sh's cm_ledger_write
 # when it exists; otherwise the same safe sequence inline (mkdir lock with stale steal, temp file, refuse a
@@ -151,14 +165,24 @@ codemode_pass() {
   cm_started="$(date +%s)"; cm_budget="${CM_CODEMODE_BUDGET_S:-300}"; case "$cm_budget" in ''|*[!0-9]*) cm_budget=300 ;; esac
   [ -e "$CM_HOME/resume.lock" ] && return 0
   [ -x "$CODEMODE" ] || { cm_warn "runtime-check.sh: $CODEMODE is missing or not executable: Code Mode dialogs not checked"; return 0; }
-  rows="$(jq -r '.workers // {} | to_entries[] | select(.value | type == "object")
-      | select((((.value.state // "") | IN("gone", "torn-down", "repurposed", "asleep")) | not))
-      | .value as $w | [.key, ($w.host // "local"), ($w.path // $w.worktree // $w.worktreePath // ""), (if $w.standing == true then "1" else "0" end)]
+  # a row is in this pass only when it is a live, known-state row of the right types (the same gate as pass 1): a dead or asleep row, a row whose state is no known word,
+  # and a row with a field of the wrong type (a state that is not text, a host or path that is not text) is never typed into; pass 1 reports it
+  # a row whose HOST is not usable text is listed with the host "?unknown-host", which no environment name can be: the host loop below reports it unreadable instead of reading false as local
+  rows="$(jq -r "$CM_JQ_STATE_DEFS$CM_JQ_NAME_DEFS"'def cm_host_val: if . == null then "local" elif type == "string" and test("\\S") and (test("[[:cntrl:]]") | not) and (. == (sub("^\\s+"; "") | sub("\\s+$"; ""))) then . else "?unknown-host" end;
+      .workers // {} | to_entries[] | select(.value | type == "object")
+      | select(((.value.state | cm_state_dead) | not) and ((.value.state | cm_state_asleep) | not) and ((.value.state | cm_state_unknown) | not))
+      | .value as $w
+      | ($w | cm_row_fields_ok) as $fok
+      | (($w.path // $w.worktree // $w.worktreePath // "") | if type == "string" then . else "" end) as $ps
+      | select((.key | cm_name_ok) and ($ps | cm_name_ok) and ($fok or (($w.host | cm_host_val) == "?unknown-host")))
+      | [.key, (if $fok then ($w.host | cm_host_val) else "?unknown-host" end), $ps, (if $fok and $w.standing == true then "1" else "0" end)]
       | join("\u001f")' "$LEDGER" 2>/dev/null)"
   [ -n "$rows" ] || return 0
   hosts="$(printf '%s\n' "$rows" | awk -F"$US" 'NF >= 3 && !seen[$2]++ { print $2 }')"
   while IFS= read -r host; do
     [ -n "$host" ] || continue
+    # a host that is not usable text can name no environment: its rows are reported unreadable, never read as local and never sent to a CLI
+    if [ "$host" = "?unknown-host" ]; then cm_unreadable_host "$host" "host is not usable text (no usable --environment): its Code Mode dialogs were not checked"; continue; fi
     if [ "$host" = local ]; then hl="$tl"
     else
       # a remote terminal list can take 60 s: the budget is checked before each one as well as before each lane
@@ -215,8 +239,12 @@ NUDGE_CODEMODE_WORKER="Status check from the concertmaster after a restart: your
 plan="$(mktemp "${TMPDIR:-/tmp}/cm-runtime.XXXXXX")" || exit 0
 trap 'rm -f -- "${plan:?}"; if declare -F cm_ledger_unlock >/dev/null; then cm_ledger_unlock; fi' EXIT
 refresh=""   # id<TAB>handle lines for the ledger write
-while IFS="$US" read -r id path rec interval churnat; do
+while IFS="$US" read -r id path rec interval churnat standbad; do
   [ -n "$id" ] || continue
+  # standing present but not a boolean: the lane is listed, never nudged from here (boot-sweep.sh says the same)
+  if [ "$standbad" = 2 ]; then row "$id" - - unknown "ledger state is not a known state (a near miss or a wrong type): not checked, not nudged, fix the ledger row"; continue; fi
+  if [ "$standbad" = 1 ]; then row "$id" - - unknown "ledger standing is not a boolean (true or false): not checked, not nudged, record it"; continue; fi
+  if [ "$standbad" = 3 ]; then row "$id" - - unknown "ledger row cannot be read (a field of the wrong type, a host or path that is not text, or a control character in a name): not checked, not nudged, fix the ledger row"; continue; fi
   np="$(printf '%s' "$path" | norm)"
   [ -n "$np" ] || { row "$id" - - unknown "ledger row has no worktree path"; continue; }
   if [ "$id" = concertmaster ] || grep -qE "$CM_PATH_RE" <<<"$np"; then continue; fi   # the tick itself, never nudged from here

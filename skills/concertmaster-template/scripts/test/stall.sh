@@ -111,6 +111,13 @@ act() { # act <dir> <at> <kind> <name> <verb> <text> [--host H] [--path P]
   CM_HOME="$d/cm" CM_NOW="$at" bash "$SCRIPT" --act "$1" "$2" "$3" "$4" --ledger "$d/led.json" "${@:5}" >/dev/null 2>"$d/act.err"
 }
 reset() { ITEMS='[]'; PRS='[]'; WTS='[]'; ASKS='[]'; UNREACH='[]'; HREAD='["local"]'; HOSTS=''; LED=''; DEAD='[]'; ERRS='[]'; GEN="$T0"; }
+f22base() { reset; W="$ROOT/f22"; rm -rf -- "${W:?}"; ITEMS="$(arr "$(item la idle 95)")"; }
+f22chk() { # f22chk <label> <gap text>: exit 3, la unverified (never laddered, never exempt as held), the gap names the field
+  gen "$W"; runj "$W"
+  check "F22 $1: exit 3" "$RC" "3"
+  check "F22 $1: la is unverified, never laddered and never held" "$(exr la)$(field la rung)" "unverifiedabsent"
+  has "F22 $1: the gap names it" "$(jq -r '.gaps | join(";")' <<<"$OUT")" "$2"
+}
 
 # ---- 1. rung boundaries, no action yet ----------------------------------------------------------------------------
 reset; W="$ROOT/c1"
@@ -479,7 +486,6 @@ LED="$(jq -nc --arg f "$(ago 95)" '{workers: {}, asks: [
     {id: "c-file", kind: "code", issue: 5, lane: "dev-1", askedAt: $f, question: "keep the helper?", files: ["db/migrations/1_x.sql"], state: "open"},
     {id: "c-outside", kind: "test", issue: 5, lane: "dev-1", askedAt: $f, question: "keep the helper?", files: ["scripts/x.sh"], state: "open"},
     {id: "c-okfile", kind: "test", issue: 5, lane: "dev-1", askedAt: $f, question: "keep the helper?", files: ["src/components/Card.tsx"], state: "open"},
-    {id: "c-badfiles", kind: "code", issue: 5, lane: "dev-1", askedAt: $f, question: "keep the helper?", files: "src/a.ts", state: "open"},
     {id: "c-uni", kind: "scope", issue: 5, lane: "dev-1", askedAt: $f, question: "drop the m\u0456gration step?", noCode: true, state: "open"},
     {id: "c-nofiles", kind: "code", issue: 5, lane: "dev-1", askedAt: $f, question: "split the card list into two components?", state: "open"},
     {id: "c-emptyfiles", kind: "code", issue: 5, lane: "dev-1", askedAt: $f, question: "split the card list into two components?", files: [], state: "open"},
@@ -497,7 +503,6 @@ check "F1c a design ask with a split word (se-cret): exempt owner" "$(exr c-spli
 check "F1c a code ask listing a migration file: exempt owner" "$(exr c-file)$(field c-file rung)" "ownerabsent"
 check "F1c a test ask listing a file outside the allowlist: exempt owner" "$(exr c-outside)$(field c-outside rung)" "ownerabsent"
 check "F1c a test ask listing an allowlisted file: laddered (rung 1)" "$(exr c-okfile)$(field c-okfile rung)" "absent1"
-check "F1c a code ask with files[] not a list: exempt owner" "$(exr c-badfiles)$(field c-badfiles rung)" "ownerabsent"
 check "F1c a scope ask with a homoglyph: exempt owner" "$(exr c-uni)$(field c-uni rung)" "ownerabsent"
 check "F1c a product ask whose topic names checkout: exempt owner" "$(exr c-topic)$(field c-topic rung)" "ownerabsent"
 
@@ -741,9 +746,6 @@ LED="$(jq -nc --arg f "$(ago 95)" --arg keyid "$KEYID_T" --arg hash "$HASH_T" --
     {id: "a13", kind: "release", askedAt: $f, question: "switch on chat widget for team one using the kubeconfig", state: "open"},
     {id: "at1", kind: "release", askedAt: $f, topic: "OTA release plus the kubeconfig", state: "open"},
     {id: "at2", kind: "deploy", askedAt: $f, topic: "deploy window via the transcrypt pass", state: "open"},
-    {id: "n1", kind: "release", askedAt: $f, question: ["paste the kubeconfig and rotate everything"], topic: "store build", state: "open"},
-    {id: "n2", kind: "release", askedAt: $f, question: {"do": "set the PWMGR_CLIENTID, then upload"}, topic: "OTA release", state: "open"},
-    {id: "n3", kind: "release", askedAt: $f, question: 42, topic: "native release", state: "open"},
     {id: "q1", kind: "release", askedAt: $f, question: "store build 1.5.2", state: "open"},
     {id: "q2", kind: "release", askedAt: $f, question: "OTA release 1.5.3 to production channel", state: "open"},
     {id: "q3", kind: "deploy", askedAt: $f, question: "production deploy window tonight", state: "open"},
@@ -872,8 +874,7 @@ has "F14 a word split over two lines is still that word (w8 names a secret)" "$(
 check "F14 a class phrase with a word spelled out letter by letter (w9): exempt owner" "$(exr w9)$(field w9 rung)" "ownerabsent"
 # an allowlist of the shape: anything but one class phrase is the owner's, a non-text question or topic too
 for k in a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 at1 at2; do check "F14 class phrase plus anything else ($k): exempt owner" "$(exr "$k")$(field "$k" rung)" "ownerabsent"; done
-for k in n1 n2 n3; do check "F14 a non-text question with a class topic ($k): exempt owner" "$(exr "$k")$(field "$k" rung)" "ownerabsent"; done
-has "F14 the non-text reason is given" "$(jq -r '.exempt[] | select(.name == "n2") | .reason' <<<"$OUT")" "non-text question or topic"
+
 for k in q1 q2 q3 q4 q5; do check "F14 one class phrase ($k): laddered (rung 1)" "$(exr "$k")$(field "$k" rung)" "absent1"; done
 check "F14 CM_ASK_DELEGATED_ASK is built from CM_ASK_DELEGATED_CLASSES (no drift)" \
   "$(bash -c '. "$1/lib.sh"; . "$1/ask-deny.sh"; [ -n "$CM_ASK_DELEGATED_CLASSES" ] && case "$CM_ASK_DELEGATED_ASK" in *"($CM_ASK_DELEGATED_CLASSES)"*) echo yes ;; *) echo no ;; esac' _ "$HERE/..")" "yes"
@@ -922,16 +923,120 @@ LED="$(jq -nc --arg f "$(ago 95)" --arg sp "$SP80" --arg dots "$DOTS80" --arg l5
     {id: "g4", kind: "code", issue: 5, askedAt: $f, lane: ["x"], question: "split the card?", noCode: true, state: "open"},
     {id: "g5", kind: "code", issue: 5, askedAt: $f, question: "split the card?", lane: $l5, noCode: true, state: "open"},
     {id: "g6", kind: "code", issue: 5, lane: "dev-1", askedAt: $f, question: "split the card?", files: "src/a.ts", state: "open"},
-    {id: "g7", kind: "code", issue: 5, lane: "dev-1", askedAt: $f, question: "split the card?", noCode: true, state: "open"}]}')"
+    {id: "g7", kind: "code", issue: 5, lane: "dev-1", askedAt: $f, question: "split the card?", noCode: true, state: "open"},
+    {id: "g8", kind: "code", issue: 5, lane: "dev-1", askedAt: $f, question: "split the card?", path: $sp, noCode: true, state: "open"},
+    {id: "g9", kind: "code", issue: 5, askedAt: $f, question: "split the card?", lane: $sp, noCode: true, state: "open"},
+    {id: "g10", kind: "code", issue: 5, lane: "dev-1", askedAt: $f, question: ["split the card?"], worker: "concertmaster", noCode: true, state: "open"}]}')"
 gen "$W"; T0S=$(date +%s)
 OUT="$(CM_HOME="$W/cm" timeout 60 bash "$SCRIPT" --classify "$W/cls.json" --discover "$W/disc.json" --asks "$W/asks.json" --ledger "$W/led.json" --since "$SINCE" --json 2>"$W/err")"; RC=$?
 T1S=$(date +%s)
-for k in g1 g2 g3 g4 g5 g6; do check "F14c malformed or over-long own-scope ask ($k): exempt owner" "$(exr "$k")$(field "$k" rung)" "ownerabsent"; done
+for k in g1 g2 g3 g4 g5 g6 g8 g9 g10; do check "F14c malformed or over-long own-scope ask ($k): exempt owner" "$(exr "$k")$(field "$k" rung)" "ownerabsent"; done
 has "F14c a non-text question is named" "$(jq -r '.exempt[] | select(.name == "g1") | .reason' <<<"$OUT")" "non-text question or topic"
 has "F14c a non-text lane is named" "$(jq -r '.exempt[] | select(.name == "g4") | .reason' <<<"$OUT")" "non-text field"
 has "F14c an over-long lane is named" "$(jq -r '.exempt[] | select(.name == "g5") | .reason' <<<"$OUT")" "over-long ask text"
-check "F14c a plain own-scope ask still ladders" "$(exr g7)$(field g7 rung)" "absent1"
+# ask_bad runs before the own-worktree check: a malformed ask from the concertmaster's own worktree is the owner's
+# (never held), and an 80000-character path or lane never reaches the path and name trimming of that check
+has "F14c a malformed ask from the own worktree is the owner's, not held" "$(jq -r '.exempt[] | select(.name == "g10") | .reason' <<<"$OUT")" "non-text question or topic"
+has "F14c an over-long path is named" "$(jq -r '.exempt[] | select(.name == "g8") | .reason' <<<"$OUT")" "over-long ask text"
+check "F14c with a non-text lane in the ledger (g4) no delegated ask is judged: g7 is unverified" "$(exr g7)$(field g7 rung)" "unverifiedabsent"
+check "F14c and the run exits 3" "$RC" "3"
 check "F14c and the run is fast (under 30 seconds, 80000-character values included; the unguarded run took over 80)" "$([ $((T1S - T0S)) -lt 30 ] && echo yes || echo "no ($((T1S - T0S))s, rc $RC)")" "yes"
+LED="$(jq -nc --arg f "$(ago 95)" '{workers: {}, asks: [{id: "g7", kind: "code", issue: 5, lane: "dev-sweeper", askedAt: $f, question: "split the card?", noCode: true, state: "open"}]}')"
+rm -rf -- "${W:?}"; gen "$W"; runj "$W"
+check "F14c a plain own-scope ask on its own still ladders" "$(exr g7)$(field g7 rung)" "absent1"
+
+# F14e a ledger .asks of the wrong type is unreadable, never "no asks": an open ask that holds a lane or a PR cannot be
+# ruled out, so no lane and no PR is judged this tick (unverified, never laddered) and the summary names the gap. An
+# absent or empty .asks still ladders
+for bad in '{"x": {"id": "m1", "kind": "merge", "state": "open", "question": "merge it?"}}' '"corrupt"' '7'; do
+  reset; W="$ROOT/f14e"; rm -rf -- "${W:?}"
+  ITEMS="$(arr "$(item idle95 idle 95)")"; PRS="$(arr "$(pr 7 aaaa111 180)")"
+  LED="$(jq -nc --argjson a "$bad" '{workers: {}, asks: $a}')"
+  gen "$W"; runj "$W"
+  check "F14e .asks = $bad: the lane is unverified, not laddered" "$(exr idle95)$(field idle95 rung)" "unverifiedabsent"
+  check "F14e .asks = $bad: the PR is unverified, not laddered" "$(exr '#7')$(field '#7' rung)" "unverifiedabsent"
+  has "F14e .asks = $bad: the gap names it" "$(jq -r '.gaps | join(";")' <<<"$OUT")" ".asks is not a list"
+  check "F14e .asks = $bad: exit 3, never a clean check" "$RC" "3"
+  run "$W"
+  has "F14e .asks = $bad: the stall line names it" "$OUT" "ledger: .asks is not a list, unreadable: no lane or PR judged this tick"
+done
+reset; W="$ROOT/f14e"; rm -rf -- "${W:?}"
+ITEMS="$(arr "$(item idle95 idle 95)")"; LED='{"workers": {}, "asks": []}'
+gen "$W"; runj "$W"
+check "F14e an empty .asks still ladders the lane" "$(field idle95 rung)" "1"
+check "F14e an empty .asks: not exit 3" "$([ "$RC" -ne 3 ] && echo judged || echo "exit $RC")" "judged"
+
+# F14f a ledger .workers that is not an object (a list, a string, a number) is unreadable, never "no workers": a
+# blocked-on-owner lane, the PR it holds and the noCode ask of its worker would lose their protection, so no lane, PR or
+# delegated ledger ask is judged that tick and the summary names the gap. A null .workers still ladders
+for bad in '[{"id": "w-z", "lane": "lz", "state": "blocked-on-owner", "path": "/w/wt/lz", "host": "local", "pr": 7}]' '"corrupt"' '7'; do
+  reset; W="$ROOT/f14f"; rm -rf -- "${W:?}"
+  ITEMS="$(arr "$(item lz idle 95 local prefix '{"number": 7, "state": "OPEN"}')")"; PRS="$(arr "$(pr 7 aaaa111 180)")"
+  LED="$(jq -nc --argjson w "$bad" --arg f "$(ago 95)" '{workers: $w, asks: [{id: "a-nc", kind: "code", state: "open",
+          question: "split the card list?", noCode: true, worker: "w-z", askedAt: $f}]}')"
+  gen "$W"; runj "$W"
+  check "F14f .workers = $bad: the lane is unverified, not laddered" "$(exr lz)$(field lz rung)" "unverifiedabsent"
+  check "F14f .workers = $bad: the PR is unverified, not laddered" "$(exr '#7')$(field '#7' rung)" "unverifiedabsent"
+  # the ask is owner-only (ask-timeout.sh holds an ask when workers is not an object), so it is never relayed; the tick is still exit 3 below
+  check "F14f .workers = $bad: the noCode ask stays the owner's, not relayed" "$(exr a-nc)$(field a-nc rung)" "ownerabsent"
+  has "F14f .workers = $bad: the gap names it" "$(jq -r '.gaps | join(";")' <<<"$OUT")" "ledger: .workers is not an object, unreadable: no lane or PR judged this tick"
+  check "F14f .workers = $bad: exit 3, never a clean check" "$RC" "3"
+done
+reset; W="$ROOT/f14f"; rm -rf -- "${W:?}"
+ITEMS="$(arr "$(item lz idle 95)")"; LED='{"workers": null, "asks": []}'
+gen "$W"; runj "$W"
+check "F14f a null .workers still ladders the lane" "$(field lz rung)" "1"
+check "F14f a null .workers: not exit 3" "$([ "$RC" -ne 3 ] && echo judged || echo "exit $RC")" "judged"
+
+# F14g a merge freeze in any shape but an object whose state is "on" or "off" (SKILL.md step 17) cannot rule a freeze
+# out: no PR is judged that tick (unverified, never laddered) and the summary names the gap. A PR whose labels are an
+# object, not a list, cannot rule out do-not-merge: that PR is unverified. The written shapes still work
+for bad in '"on"' '{"state": "ON"}' '{"state": "on "}' '{"state": true}' '{"window": "w1"}'; do
+  reset; W="$ROOT/f14g"; rm -rf -- "${W:?}"
+  PRS="$(arr "$(pr 7 aaaa111 180)")"; LED="$(jq -nc --argjson f "$bad" '{workers: {}, freeze: $f}')"
+  gen "$W"; runj "$W"
+  check "F14g freeze = $bad: the PR is unverified, not laddered" "$(exr '#7')$(field '#7' rung)" "unverifiedabsent"
+  has "F14g freeze = $bad: the gap names it" "$(jq -r '.gaps | join(";")' <<<"$OUT")" "ledger: .freeze is not an object with state on or off"
+  check "F14g freeze = $bad: exit 3, never a clean check" "$RC" "3"
+done
+reset; W="$ROOT/f14g"; rm -rf -- "${W:?}"
+PRS="$(arr "$(pr 7 aaaa111 180)")"; LED='{"workers": {}, "freeze": {"state": "off", "window": "w1"}}'
+gen "$W"; runj "$W"
+check "F14g a freeze that is off: the PR ladders" "$(exr '#7')$(field '#7' rung)" "absent1"
+check "F14g a freeze that is off: not exit 3" "$([ "$RC" -ne 3 ] && echo judged || echo "exit $RC")" "judged"
+LED="$(jq -nc --arg t "$(ago -60)" '{workers: {}, freeze: {state: "on", window: "w1", ttl: $t}}')"; rm -rf -- "${W:?}"
+gen "$W"; runj "$W"
+check "F14g a freeze that is on: the PR is held by it" "$(exr '#7')" "freeze"
+reset; W="$ROOT/f14g"; rm -rf -- "${W:?}"
+PRS="$(arr "$(pr 7 aaaa111 180 null alice '{"name": "do-not-merge"}')" "$(pr 8 bbbb222 180)")"
+gen "$W"; runj "$W"
+check "F14g labels that are an object: the PR is unverified, not laddered" "$(exr '#7')$(field '#7' rung)" "unverifiedabsent"
+check "F14g and every other PR is unverified too (one unreadable input holds them all)" "$(exr '#8')$(field '#8' rung)" "unverifiedabsent"
+has "F14g labels that are an object: the gap names it" "$(jq -r '.gaps | join(";")' <<<"$OUT")" "discover: .prs.open[0].labels is not a list"
+check "F14g labels that are an object: exit 3" "$RC" "3"
+# a failed open PR list in discover is the same family: PRs unverified, the gap named, exit 3 (redo discover)
+reset; W="$ROOT/f14g"; rm -rf -- "${W:?}"
+PRS="$(arr "$(pr 7 aaaa111 180)")"; ERRS='[{"where": "gh pr list open"}]'
+gen "$W"; runj "$W"
+check "F14g a failed open PR list: the PR is unverified" "$(exr '#7')" "unverified"
+check "F14g a failed open PR list: exit 3" "$RC" "3"
+run "$W"
+has "F14g a failed open PR list: the text output names the gap" "$OUT" "discover: open PR list failed, PRs not judged"
+has "F14g and stderr says exit 3" "$(cat "$W/err")" "not every lane and PR was judged (exit 3)"
+
+# F14h a release or deploy ask that names a webhook or a PAT is the owner's because it names a credential, not only
+# because it misses the allowlist: the reason says so, so dropping either word from the secret scan fails here
+reset; W="$ROOT/f14h"; rm -rf -- "${W:?}"
+LED="$(jq -nc --arg f "$(ago 95)" '{workers: {}, asks: [
+    {id: "wh1", kind: "deploy", askedAt: $f, question: "rotate the payments webhook", state: "open"},
+    {id: "wh2", kind: "release", askedAt: $f, question: "register the store webhooks", state: "open"},
+    {id: "pat1", kind: "release", askedAt: $f, question: "paste the new PAT", state: "open"},
+    {id: "pat2", kind: "deploy", askedAt: $f, question: "use the GH pats", state: "open"}]}')"
+gen "$W"; runj "$W"
+for k in wh1 wh2 pat1 pat2; do
+  check "F14h $k: owner-only, never laddered" "$(exr "$k")$(field "$k" rung)" "ownerabsent"
+  has "F14h $k: the reason is the credential, not the allowlist" "$(jq -r --arg n "$k" '.exempt[] | select(.name == $n) | .reason' <<<"$OUT")" "naming a secret or an account-wide key"
+done
 
 # F14d one row with an out-of-range time holds only itself: an askedAt of twenty digits, 1e300, -5 or "0" is unreadable
 # (that ask is unverified, never laddered from a meaningless time), an idleMinutes of 1e300 is no idle time, a PR
@@ -1007,8 +1112,8 @@ check "F17 asks[].pr padded #n: that PR exempt" "$(exr '#82')$(field '#82' rung)
 check "F17 a PR no ask names: still stalled" "$(field '#83' rung)" "1"
 LED="$(jq -nc --arg f "$(ago 95)" '{workers: {}, asks: [{id: "u-bad", kind: "secrets", pr: {n: 81}, askedAt: $f, question: "q", state: "open"}]}')"
 gen "$W"; runj "$W"
-check "F17 an unreadable asks[].pr: every PR held (fail safe)" "$(exr '#81')$(exr '#83')$(field '#83' rung)" "askaskabsent"
-has "F17 an unreadable asks[].pr: listed in gaps" "$(jq -r '.gaps | join(";")' <<<"$OUT")" "unreadable asks[].pr"
+check "F17 an unreadable asks[].pr: every PR unverified (fail safe), none laddered" "$(exr '#81')$(exr '#83')$(field '#83' rung)" "unverifiedunverifiedabsent"
+has "F17 an unreadable asks[].pr: listed in gaps" "$(jq -r '.gaps | join(";")' <<<"$OUT")" "ledger: .asks[0].pr is not a number or text"
 
 # F18 a ledger ask with a live worker maps to that worker worktree only (on its host); asks[].lane applies only with
 # no worker, and names no host, so it holds a lane of that name on every host
@@ -1045,25 +1150,44 @@ check "F18b the standing lane (the child workers ownership label): not held, run
 check "F18b its PR: not held, rung 1" "$(exr '#77')$(field '#77' rung)" "absent1"
 check "F18b the stalled standing lane is due: exit 4" "$RC" "4"
 
-# F18c (R8) only a ledger ask with a non-empty string id is judged or holds anything (no subarray match on an array id)
+# F18c (R8) only a ledger ask with a non-empty string id is judged or holds anything (no subarray match on an array id).
+# An OPEN ask whose id is missing or blank is no longer "an ask that holds nothing" (input contract, decision 3: it cannot be named or closed
+# yet it may hold its lane and PR): it is an unreadable input, so nothing is judged (exit 3) and the PRs it may hold are unverified, never laddered.
+# A decided or answered ask with no id holds nothing and is not a gap (control).
 reset; W="$ROOT/f18c"
-ITEMS="$(arr "$(item lm-arr idle 95)" "$(item lm-num idle 95)" "$(item lm-obj idle 95)")"
-PRS="$(arr "$(pr 88 s88 200)" "$(pr 89 s89 200)" "$(pr 90 s90 200)" "$(pr 86 s86 200)" "$(pr 87 s87 200)")"
+ITEMS="$(arr "$(item lm-none idle 95)")"
+PRS="$(arr "$(pr 89 s89 200)" "$(pr 90 s90 200)")"
 LED="$(jq -nc --arg f "$(ago 95)" '{workers: {}, asks: [
     {id: "live", kind: "merge", askedAt: $f, question: "q", state: "open"},
-    {id: ["live"], kind: "code", pr: 88, lane: "lm-arr", askedAt: $f, question: "q", state: "open"},
-    {id: 5, kind: "merge", pr: 86, lane: "lm-num", askedAt: $f, question: "q", state: "open"},
-    {id: {a: 1}, kind: "merge", pr: 87, lane: "lm-obj", askedAt: $f, question: "q", state: "open"},
     {kind: "merge", pr: 89, askedAt: $f, question: "q", state: "open"},
     {id: "", kind: "merge", pr: 90, askedAt: $f, question: "q", state: "open"}]}')"
 gen "$W"; runj "$W"
-check "F18c an ask with an array id holds no PR" "$(exr '#88')$(field '#88' rung)" "absent1"
-check "F18c an ask with no id holds no PR" "$(exr '#89')$(field '#89' rung)" "absent1"
-check "F18c an ask with an empty id holds no PR" "$(exr '#90')$(field '#90' rung)" "absent1"
-check "F18c the string-id ask: exempt owner" "$(exr live)" "owner"
-check "F18c an ask with a numeric id holds no PR" "$(exr '#86')$(field '#86' rung)" "absent1"
-check "F18c an ask with an object id holds no PR" "$(exr '#87')$(field '#87' rung)" "absent1"
-for l in lm-arr lm-num lm-obj; do check "F18c a malformed-id ask holds no lane ($l)" "$(exr "$l")$(field "$l" rung)" "absent1"; done
+check "F18c an open ask with no id: its PR is unverified, not laddered" "$(exr '#89')$(field '#89' rung)" "unverifiedabsent"
+check "F18c an open ask with an empty id: its PR is unverified, not laddered" "$(exr '#90')$(field '#90' rung)" "unverifiedabsent"
+check "F18c the string-id ask: exempt owner when it can be judged" "$(exr live)" "owner"
+check "F18c an open ask with a missing or empty id is an unreadable input: exit 3" "$RC" "3"
+has "F18c the missing id is a named gap" "$(jq -r '.gaps | join(";")' <<<"$OUT")" "ledger: .asks[1].id is missing or blank on an open ask"
+has "F18c the empty id is a named gap" "$(jq -r '.gaps | join(";")' <<<"$OUT")" "ledger: .asks[2].id is missing or blank on an open ask"
+reset; W="$ROOT/f18c-decided"
+ITEMS="$(arr "$(item lm-none idle 95)")"
+PRS="$(arr "$(pr 89 s89 200)")"
+LED="$(jq -nc --arg f "$(ago 95)" '{workers: {}, asks: [
+    {id: "live", kind: "merge", askedAt: $f, question: "q", state: "open"},
+    {kind: "merge", pr: 89, askedAt: $f, question: "q", state: "decided"},
+    {id: "", kind: "merge", pr: 89, askedAt: $f, question: "q", state: "answered"}]}')"
+gen "$W"; runj "$W"
+check "F18c control: decided and answered asks with no id are not a gap, exit 4" "$RC" "4"
+check "F18c control: a decided ask with no id holds no PR" "$(exr '#89')$(field '#89' rung)" "absent1"
+for idv in '["live"]' '5' '{"a":1}'; do
+  reset; W="$ROOT/f18c-bad"; rm -rf -- "${W:?}"
+  ITEMS="$(arr "$(item lm idle 95)")"
+  PRS="$(arr "$(pr 88 s88 200)")"
+  LED="$(jq -nc --arg f "$(ago 95)" --argjson id "$idv" '{workers: {}, asks: [{id: $id, kind: "merge", pr: 88, lane: "lm", askedAt: $f, question: "q", state: "open"}]}')"
+  gen "$W"; runj "$W"
+  check "F18c an ask with the id $idv is unreadable: exit 3" "$RC" "3"
+  check "F18c an ask with the id $idv: its PR and its lane are unverified, never laddered" "$(exr '#88')$(field '#88' rung)$(exr lm)$(field lm rung)" "unverifiedabsentunverifiedabsent"
+  has "F18c an ask with the id $idv: the gap names it" "$(jq -r '.gaps | join(";")' <<<"$OUT")" "ledger: .asks[0].id is not text"
+done
 
 # F18e (R7b) a follow-up ask (scripts/followups.sh writes the ownership label in asks[].lane) whose worker is gone,
 # repurposed or no longer in the ledger never holds the standing lane of that label, nor its PR
@@ -1270,13 +1394,18 @@ reset; W="$ROOT/f20"
 ASKS="$(jq -nc --arg f "$(ago 65)" --arg t "$TOK" '[{host: "local", worktree: {a: $t}, tag: "cm:ask", text: $t, firstSeen: $f}]')"
 LED="$(jq -nc --arg f "$(ago 95)" --arg t "$TOK" '{workers: {}, asks: [{id: "m-q", kind: "release", askedAt: $f, question: {x: $t}, state: "open"}]}')"
 gen "$W"; runj "$W"
-check "F20 malformed rows: judged (exit 0, the release ask with no text names no class), not exit 3" "$RC" "0"
+# the comment ask with an object worktree does not say which lane asks, so nothing can be ruled out: unreadable, exit 3
+# (it was read as "?" and the run exited 0); the ledger ask with no text is the owner's on its own
+check "F20 malformed rows: the comment ask worktree is unreadable, exit 3 (it names no lane to hold)" "$RC" "3"
 case "$OUT$(cat "$W/err")" in *abcdefghij*) check "F20 the token reaches neither --json nor stderr" "present" "absent" ;; *) check "F20 the token reaches neither --json nor stderr" "absent" "absent" ;; esac
 check "F20 the comment ask with an object worktree: exempt owner as ?/ask" "$(jq -r '[.exempt[] | select(.kind == "ask" and (.name | startswith("?/ask@"))) | .code] | first // "absent"' <<<"$OUT")" "owner"
 
 # F21 fuzz: ONE value of the wrong shape, at every top-level and second-level field this script reads in the ledger,
 # classify, discover, asks, seen and actions inputs, holds only itself: the run judges (exit 0 or 4) and never exits 3,
-# and a mutated seen file is rewritten clean, so the run after it is not 3 either. Deterministic, no network, bounded
+# and a mutated seen file is rewritten clean, so the run after it is not 3 either. The exceptions are the values the
+# validation stage of stall.sh reads to protect a lane or PR (a row, its host, path, name, class, owner, state, lane,
+# the freeze, the hosts read): those exit 3 by design and must, with nothing judged (F14e-g, scripts/test/stall-fuzz.sh).
+# Deterministic, no network, bounded
 reset; W="$ROOT/fz"
 ITEMS="$(arr "$(item la idle 95 local prefix '{"number":41,"state":"OPEN"}')" "$(item dev-sweeper standing-idle 95)" "$(item kid idle 95 local 'comment:la')")"
 PRS="$(arr "$(pr 41 s41 200)" "$(pr 42 s42 200 null author-2 '[{"name":"x"}]')")"
@@ -1331,12 +1460,15 @@ FZ
 FZN="$(wc -l < "$ROOT/fz-jobs.tsv" | tr -d ' ')"
 tr '\t\n' '\0\0' < "$ROOT/fz-jobs.tsv" | timeout 300 xargs -0 -n 3 -P 8 bash "$ROOT/fz-one.sh" "$W" "$SCRIPT" "$SINCE" > "$ROOT/fz-out.txt" 2>/dev/null
 check "F21 fuzz: every mutation ran inside the bound ($FZN)" "$(wc -l < "$ROOT/fz-out.txt" | tr -d ' ')" "$FZN"
-check "F21 fuzz: no mutation exits 3 or fails to finish" "$(awk '$1 != 0 && $1 != 4' "$ROOT/fz-out.txt" | head -3 | tr '\n' ';')" ""
+# the mutations that only time or print a row (or touch the state files) hold only themselves: exit 0 or 4
+F21_OK='^(cls \.items\[0\]\.idleMinutes|led \.asks\[0\]\.askedAt|disc \.prs\.open\[0\]\.(updatedAt|number|author)|disc \.prs\.open\[1\]\.labels\[0\]|seen |act )'
+check "F21 fuzz: a timing or display value, or a state file, holds only itself (exit 0 or 4)" "$(awk '{print $3, $4, $1}' "$ROOT/fz-out.txt" | grep -E "$F21_OK" | awk '$3 != 0 && $3 != 4' | head -3 | tr '\n' ';')" ""
+check "F21 fuzz: every protective value of the wrong type exits 3, nothing judged" "$(awk '{print $3, $4, $1}' "$ROOT/fz-out.txt" | grep -Ev "$F21_OK" | awk '$3 != 3' | head -3 | tr '\n' ';')" ""
 check "F21 fuzz: a mutated seen file is rewritten clean, the next run is not 3 either" "$(awk '$3 == "seen" && $2 != 0 && $2 != 4' "$ROOT/fz-out.txt" | head -3 | tr '\n' ';')" ""
 
-# F21b sanitising never widens: a value of the wrong type that would read as null where null matches MORE (a worker
-# or comment-ask host, an action host or path) drops its row or matches nothing, so it cannot park, block or exempt a
-# real lane on every host
+# F21b sanitising never widens: a worker or comment-ask host of the wrong type never reads as null (which would match
+# every host and park, block or exempt a real lane everywhere): it is an unreadable input, so nothing is judged and the
+# run exits 3; a null comment-ask host still exempts nothing; an action host or path of the wrong type is dropped
 fzh() { jq -r --arg n "$1" --arg h "$2" '([.exempt[] | select(.name == $n and .host == $h) | .code] | first // "absent") + ([.rows[] | select(.name == $n and .host == $h) | .rung | tostring] | first // "absent")' <<<"$OUT"; }
 for st in parked blocked-on-owner; do
   for hv in 5 '["hb"]' false; do
@@ -1345,9 +1477,9 @@ for st in parked blocked-on-owner; do
     ITEMS="$(arr "$(item la idle 95 local)" "$(item la idle 95 hb)")"
     LED="$(jq -nc --arg st "$st" --argjson h "$hv" '{workers: {"w1": {path: "/w/wt/la", host: $h, state: $st}}}')"
     gen "$W"; runj "$W"
-    check "F21b a $st worker with host $hv: la@local still ladders" "$(fzh la local)" "absent1"
-    check "F21b a $st worker with host $hv: la@hb still ladders" "$(fzh la hb)" "absent1"
-    check "F21b a $st worker with host $hv: exit 4" "$RC" "4"
+    check "F21b a $st worker with host $hv: la@local is unverified, never parked or held" "$(fzh la local)" "unverifiedabsent"
+    check "F21b a $st worker with host $hv: la@hb is unverified, never parked or held" "$(fzh la hb)" "unverifiedabsent"
+    check "F21b a $st worker with host $hv: exit 3" "$RC" "3"
   done
 done
 reset; W="$ROOT/f21b-local"
@@ -1359,9 +1491,12 @@ check "F21b a parked worker on host local: only la@local is parked" "$(fzh la lo
 # a comment ask with no or a wrong-typed host is unverified and exempts no lane on any host
 reset; W="$ROOT/f21b-ask"
 ITEMS="$(arr "$(item lq idle 95 local)")"
-ASKS="$(jq -nc --arg f "$(ago 65)" '[{host: null, worktree: "lq", tag: "cm:ask", text: "t", firstSeen: $f}, {host: 5, worktree: "lq", tag: "cm:ask", text: "t", firstSeen: $f}]')"
+ASKS="$(jq -nc --arg f "$(ago 65)" '[{host: null, worktree: "lq", tag: "cm:ask", text: "t", firstSeen: $f}]')"
 gen "$W"; runj "$W"
-check "F21b comment asks with a null or numeric host: the lane still ladders" "$(fzh lq local)" "absent1"
+check "F21b a comment ask with a null host: the lane still ladders" "$(fzh lq local)" "absent1"
+ASKS="$(jq -nc --arg f "$(ago 65)" '[{host: 5, worktree: "lq", tag: "cm:ask", text: "t", firstSeen: $f}]')"
+rm -rf -- "${W:?}"; gen "$W"; runj "$W"
+check "F21b a comment ask with a numeric host: unreadable, the lane is unverified, exit 3" "$(fzh lq local)$RC" "unverifiedabsent3"
 # an action whose host or path is not text is dropped, never read as no host (which would match the lane by name)
 reset; W="$ROOT/f21b-act"
 ITEMS="$(arr "$(item lu idle 95 local)")"
@@ -1371,31 +1506,442 @@ runj "$W"
 check "F21b an action with host false: dropped, the lane still ladders" "$(fzh lu local)" "absent1"
 
 # F21c a wrong-typed value never becomes null where null defaults to a real value: a repo would default to the main
-# repo (and collide with a real PR), a lane path would match any action path, an owner would fall back to the lane name
+# repo (and collide with a real PR), a lane path would match any action path, an owner would fall back to the lane name.
+# Each is an unreadable input now: nothing is judged on a guess, the run exits 3
 reset; W="$ROOT/f21c-pr"
 PRS="$(jq -nc --arg u "$(ago 200)" --arg n "$(ago 0)" '[
   {number: 41, title: "t41", isDraft: false, createdAt: $u, updatedAt: $u, url: "u", headRefName: "b41", headRefOid: "s41", author: "author-1", repo: null, labels: []},
   {number: 41, title: "twin", isDraft: false, createdAt: $n, updatedAt: $n, url: "u", headRefName: "bz", headRefOid: "zz", author: "author-1", repo: 5, labels: []}]')"
 gen "$W"; runj "$W"
-check "F21c an open PR with a numeric repo is dropped: the real #41 ladders (rung 1, exit 4)" "$(field '#41' rung)$RC" "14"
+check "F21c an open PR with a numeric repo: #41 is unverified, exit 3" "$(exr '#41')$RC" "unverified3"
 runj "$W"
-check "F21c and on the second run (the seen file was not taken over by the twin)" "$(field '#41' rung)$RC" "14"
+check "F21c and on the second run (the seen file was not taken over by the twin)" "$(exr '#41')$RC" "unverified3"
 reset; W="$ROOT/f21c-item"
 ITEMS="$(arr "$(item ly idle 95 local prefix '{"number":41,"state":"OPEN"}')" "$(item lx idle 95 local prefix '{"number":41,"state":"OPEN"}' | jq -c '.repo = 5')")"
 PRS="$(arr "$(pr 41 s41 200)")"
 LED='{"workers":{"wx":{"path":"/w/wt/lx","host":"local","state":"parked"}}}'
 gen "$W"; runj "$W"
-check "F21c a lane with a numeric repo does not claim the main repo PR: #41 ladders (rung 1, exit 4)" "$(field '#41' rung)$RC" "14"
+check "F21c a lane with a numeric repo never claims the main repo PR: #41 is unverified, exit 3" "$(exr '#41')$RC" "unverified3"
 reset; W="$ROOT/f21c-path"
 ITEMS="$(arr "$(item lp idle 95 local | jq -c '.path = 5')")"
 gen "$W"; mkdir -p "$W/cm"
 act "$W" "$(ago 1)" lane lp blocked "waiting on the console" --host local --path /w/wt/lp
 runj "$W"
-check "F21c a lane with a numeric path is not matched by an action recorded for a real path: it ladders" "$(exr lp)$(field lp rung)" "absent1"
+check "F21c a lane with a numeric path is never matched by an action for a real path: unverified, exit 3" "$(exr lp)$(field lp rung)$RC" "unverifiedabsent3"
 reset; W="$ROOT/f21c-owner"
 ITEMS="$(arr "$(item lo standing-idle 95 local standing null dev-sweeper | jq -c '.owner = 5')")"
 gen "$W"; runj "$W"
-check "F21c a standing-idle lane whose owner cannot be read is judged, not exempt as idle" "$(exr lo)$(field lo rung)" "absent1"
+check "F21c a standing-idle lane whose owner cannot be read is never exempt as idle: unverified, exit 3" "$(exr lo)$(field lo rung)$RC" "unverifiedabsent3"
+
+# F22 a value of the wrong type in a field that PROTECTS a lane or a PR is unreadable, never "nothing there": the
+# validation stage of stall.sh (V spec) names it in gaps[], marks every lane, PR and delegated ask unverified and exits
+# 3. Each group has a control (the legal value protects: exit 0, exempt) and one named row per field, so reverting the
+# check for a field shows up here (scripts/test/stall-fuzz.sh mutates every field of every input as well)
+# worktree comments (discover .worktrees): a cm:waiting-owner lane must never be nudged
+f22base; WTS0="$(jq -nc '[{host: "local", path: "/w/wt/la", comment: "cm:waiting-owner pick the club"}]')"
+WTS="$WTS0"; gen "$W"; runj "$W"
+check "F22 control: a cm:waiting-owner lane is exempt, exit 0" "$(exr la)$RC" "owner0"
+f22w() { WTS="$(jq -c "$2" <<<"$WTS0")"; f22chk "$1" "$3"; }
+f22w "discover .worktrees as text" '"x"' "discover: .worktrees is not a list"
+f22w "discover .worktrees as an object" '{}' "discover: .worktrees is not a list"
+f22w "a worktree row that is a number" '.[0] = 7' "discover: .worktrees[0] is not an object"
+f22w "a worktree comment that is a list" '.[0].comment = ["cm:waiting-owner"]' "discover: .worktrees[0].comment is not text"
+f22w "a worktree host that is a number" '.[0].host = 7' "discover: .worktrees[0].host is not text"
+f22w "a worktree path that is an object" '.[0].path = {}' "discover: .worktrees[0].path is not text"
+# the hosts asks.sh read: null (or absent) is every host read, anything else that is not a list of text is unreadable
+f22base; WTS='[]'; HREAD='null'; gen "$W"; runj "$W"
+check "F22 control: hostsRead null is every host read, la ladders (rung 1, exit 4)" "$(field la rung)$RC" "14"
+for hv in '"local"' '7' '{}'; do f22base; HREAD="$hv"; f22chk "asks .hostsRead as $hv" "asks: .hostsRead is not a list"; done
+f22base; HREAD='[7]'; f22chk "asks .hostsRead[0] as a number" "asks: .hostsRead[0] is not text"
+# comment asks (asks.json rows)
+f22base; ASKS0="$(jq -nc --arg f "$(ago 65)" '[{host: "local", worktree: "la", tag: "cm:ask", text: "t", firstSeen: $f}]')"
+ASKS="$ASKS0"; gen "$W"; runj "$W"
+check "F22 control: a comment ask holds its lane, exit 0" "$(exr la)$RC" "ask0"
+f22a() { ASKS="$(jq -c "$2" <<<"$ASKS0")"; f22chk "$1" "$3"; }
+f22base; f22a "an asks row that is a number" '.[0] = 7' "asks: .asks[0] is not an object"
+f22base; f22a "an asks row worktree that is a number" '.[0].worktree = 7' "asks: .asks[0].worktree is not text"
+f22base; f22a "an asks row host that is a list" '.[0].host = ["local"]' "asks: .asks[0].host is not text"
+f22base; f22a "an asks row tag that is an object" '.[0].tag = {}' "asks: .asks[0].tag is not text"
+# ledger asks: an open ask that holds its lane
+f22base; LED0="$(jq -nc --arg f "$(ago 95)" '{workers: {}, asks: [{id: "a1", kind: "merge", state: "open", lane: "la", question: "merge it?", askedAt: $f}]}')"
+LED="$LED0"; gen "$W"; runj "$W"
+check "F22 control: an open owner-only ask holds its lane, exit 0" "$(exr la)$RC" "ask0"
+f22l() { LED="$(jq -c "$2" <<<"$LED0")"; f22chk "$1" "$3"; }
+f22base; f22l "a ledger ask row that is a number" '.asks += [7]' "ledger: .asks[1] is not an object"
+f22base; f22l "a ledger ask state that is a list" '.asks[0].state = ["open"]' "ledger: .asks[0].state is not text"
+f22base; f22l "a ledger ask id that is a number" '.asks[0].id = 7' "ledger: .asks[0].id is not text"
+f22base; f22l "a ledger ask lane that is an object" '.asks[0].lane = {}' "ledger: .asks[0].lane is not text"
+f22base; f22l "a ledger ask worker that is a number" '.asks[0].worker = 7' "ledger: .asks[0].worker is not text"
+# a delegated ask (release, on the ladder) holds its lane only while it is judged: an askedAt that is neither text nor a
+# number leaves the ask unverified, which frees the lane, so it is unreadable (exit 3), never a lane that ladders
+f22base; LED0="$(jq -nc --arg f "$(ago 5)" '{workers: {}, asks: [{id: "a2", kind: "release", state: "open", lane: "la", question: "push the OTA release", askedAt: $f}]}')"
+LED="$LED0"; gen "$W"; runj "$W"
+check "F22 control: a delegated ask on the ladder holds its lane, exit 0" "$(exr la)$RC" "ask0"
+f22base; f22l "a ledger ask askedAt that is true" '.asks[0].askedAt = true' "ledger: .asks[0].askedAt is not text or a number"
+f22base; f22l "a ledger ask askedAt that is an object" '.asks[0].askedAt = {}' "ledger: .asks[0].askedAt is not text or a number"
+f22base; f22l "a ledger ask askedAt that is a list" '.asks[0].askedAt = []' "ledger: .asks[0].askedAt is not text or a number"
+# ledger workers: a parked or blocked-on-owner worker holds its lane
+f22base; LED0='{"workers":{"w1":{"path":"/w/wt/la","host":"local","state":"parked"}}}'
+LED="$LED0"; gen "$W"; runj "$W"
+check "F22 control: a parked worker holds its lane, exit 0" "$(exr la)$RC" "parked0"
+f22base; f22l "a worker row that is a list" '.workers["w1"] = []' "ledger: .workers.w1 is not an object"
+f22base; f22l "a worker state that is a list" '.workers.w1.state = ["parked"]' "ledger: .workers.w1.state is not text"
+f22base; f22l "a worker host that is a list" '.workers.w1.host = ["local"]' "ledger: .workers.w1.host is not text"
+f22base; f22l "a worker path that is a number" '.workers.w1.path = 7' "ledger: .workers.w1.path is not text"
+f22base; f22l "a worker lane that is an object" '.workers.w1.lane = {}' "ledger: .workers.w1.lane is not text"
+f22base; f22l "a worker worktreeId that is a number" '.workers.w1.worktreeId = 7' "ledger: .workers.w1.worktreeId is not text"
+# S1: a noCode ask whose worker has a PR is the owner's (ask-timeout.sh gates). The worker row with a host that is not
+# text used to be dropped before the ask check read it, so the ask was relayed at rung 1 and its lane laddered while
+# the digest still listed it under Blocked on you
+reset; W="$ROOT/f22s1"; rm -rf -- "${W:?}"
+ITEMS="$(arr "$(item lz idle 95)")"
+LED0="$(jq -nc --arg f "$(ago 95)" '{workers: {"w-z": {state: "running", path: "/w/wt/lz", host: "local", pr: 7}},
+  asks: [{id: "a-z", kind: "code", noCode: true, worker: "w-z", state: "open", question: "split the card?", askedAt: $f}]}')"
+LED="$LED0"; gen "$W"; runj "$W"
+check "F22 S1 control: a noCode ask whose worker has a PR stays owner-only, never relayed (exit 0)" "$(exr a-z)$(field a-z rung)$RC" "ownerabsent0"
+for hv in 7 '["local"]' '{}'; do
+  LED="$(jq -c --argjson h "$hv" '.workers["w-z"].host = $h' <<<"$LED0")"; gen "$W"; runj "$W"
+  check "F22 S1 worker host $hv: exit 3" "$RC" "3"
+  check "F22 S1 worker host $hv: the ask is never relayed (no ladder row)" "$(field a-z rung)" "absent"
+  check "F22 S1 worker host $hv: the ask stays the owner's, not on the ladder" "$(exr a-z)" "owner"
+  check "F22 S1 worker host $hv: its lane is unverified" "$(exr lz)" "unverified"
+  has "F22 S1 worker host $hv: the gap names the host" "$(jq -r '.gaps | join(";")' <<<"$OUT")" "ledger: .workers.w-z.host is not text"
+done
+LED="$(jq -c '.workers["w-z"] = []' <<<"$LED0")"; gen "$W"; runj "$W"
+# a worker row that is not an object is owner-only for ask-timeout.sh, so the ask is the owner's and never relayed
+check "F22 S1 worker row [] : exit 3, the ask stays the owner's and is never relayed" "$RC$(exr a-z)$(field a-z rung)" "3ownerabsent"
+has "F22 S1 worker row [] : the gap names the row" "$(jq -r '.gaps | join(";")' <<<"$OUT")" "ledger: .workers.w-z is not an object"
+# S2: PR labels whose members are not text or an object with a text name read as no labels, so a do-not-merge PR was nudged
+reset; W="$ROOT/f22s2"; rm -rf -- "${W:?}"
+for lv in '[{"name":["do-not-merge"]}]' '[7]' '[["do-not-merge"]]' '[{"name":7}]'; do
+  PRS="$(arr "$(pr 7 aaaa111 180 null alice "$lv")" "$(pr 8 bbbb222 180)")"; gen "$W"; runj "$W"
+  check "F22 S2 labels $lv: #7 is unverified, never nudged" "$(exr '#7')$(field '#7' rung)" "unverifiedabsent"
+  check "F22 S2 labels $lv: exit 3" "$RC" "3"
+  has "F22 S2 labels $lv: the gap names the label" "$(jq -r '.gaps | join(";")' <<<"$OUT")" "discover: .prs.open[0].labels[0]"
+done
+for lv in '{"name":"do-not-merge"}' '"do-not-merge"' '7'; do
+  PRS="$(arr "$(pr 7 aaaa111 180 null alice "$lv")" "$(pr 8 bbbb222 180)")"; gen "$W"; runj "$W"
+  check "F22 S2 labels $lv (not a list): #7 is unverified, never nudged, exit 3" "$(exr '#7')$(field '#7' rung)$RC" "unverifiedabsent3"
+  has "F22 S2 labels $lv (not a list): the gap names the list" "$(jq -r '.gaps | join(";")' <<<"$OUT")" "discover: .prs.open[0].labels is not a list"
+done
+PRS="$(arr "$(pr 7 aaaa111 180 null alice '[{"name":"do-not-merge"}, null]')")"; gen "$W"; runj "$W"
+check "F22 S2 control: a null label member is legal, the do-not-merge label holds the PR (exit 0)" "$(exr '#7')$RC" "label0"
+# the merge freeze: ttl is text, never epoch seconds (a number would be read as one)
+reset; W="$ROOT/f22fz"; rm -rf -- "${W:?}"
+PRS="$(arr "$(pr 7 aaaa111 180)")"
+LED="$(jq -nc --arg t "$(ago -60)" '{workers: {}, freeze: {state: "on", window: "w1", ttl: $t}}')"; gen "$W"; runj "$W"
+check "F22 control: a freeze with a text ttl holds the PR, exit 0" "$(exr '#7')$RC" "freeze0"
+LED="$(jq -nc '{workers: {}, freeze: {state: "on", window: "w1", ttl: 4102444800}}')"; gen "$W"; runj "$W"
+check "F22 a freeze ttl that is a number (epoch seconds) is unreadable: #7 unverified, exit 3" "$(exr '#7')$RC" "unverified3"
+has "F22 a freeze ttl that is a number: the gap names it" "$(jq -r '.gaps | join(";")' <<<"$OUT")" "ledger: .freeze.ttl is not text"
+# classify items: the class, owner source, owner and name decide whether a lane is held, idle or exempt
+reset; W="$ROOT/f22c"
+f22i() { ITEMS="$(arr "$(item la idle 95 local prefix null dev-sweeper | jq -c "$2")")"; f22chk "$1" "$3"; }
+f22base; ITEMS="$(arr "$(item la idle 95 local self)")"; gen "$W"; runj "$W"
+check "F22 control: the concertmaster own lane is exempt (self), exit 0" "$(exr la)$RC" "self0"
+f22base; f22i "a classify ownerSource that is a list" '.ownerSource = ["self"]' "classify: .items[0].ownerSource is not text"
+f22base; f22i "a classify class that is a number" '.class = 7' "classify: .items[0].class is not text"
+f22base; f22i "a classify owner that is an object" '.owner = {}' "classify: .items[0].owner is not text"
+f22base; f22i "a classify worktreeId that is a list" '.worktreeId = []' "classify: .items[0].worktreeId is not text"
+f22base; f22i "a classify host that is a number" '.host = 7' "classify: .items[0].host is not text"
+f22base; f22i "a classify pr that is text" '.pr = "x"' "classify: .items[0].pr is not an object"
+f22base; ITEMS="$(arr 7 "$(item la idle 95)")"; gen "$W"; runj "$W"
+check "F22 a classify item that is a number: la is unverified, exit 3" "$(exr la)$(field la rung)$RC" "unverifiedabsent3"
+has "F22 a classify item that is a number: the gap names it" "$(jq -r '.gaps | join(";")' <<<"$OUT")" "classify: .items[0] is not an object"
+# exit 3 keeps the NO-ACTION line: a failed open PR list (exit 3) with a due lane prints it in the text report
+reset; W="$ROOT/f22n"; rm -rf -- "${W:?}"
+ITEMS="$(arr "$(item ln idle 95)")"; ERRS='[{"where":"gh pr list open"}]'; gen "$W"; run "$W"
+check "F22 exit 3 (failed PR list) with a due lane: exit 3" "$RC" "3"
+has "F22 exit 3 with a due lane: the text report still prints the NO-ACTION line" "$OUT" "NO-ACTION 1 due row(s)"
+
+# a wrong-typed files is a named gap now (round 5): the whole run is unverified, exit 3, never read as "no files"
+f22base; LED="$(jq -nc --arg f "$(ago 95)" '{workers: {}, asks: [{id: "c-badfiles", kind: "code", lane: "la", askedAt: $f, question: "keep the helper?", files: "src/a.ts", state: "open"}]}')"; f22chk "F1c a code ask with files[] not a list" "ledger: .asks[0].files is not a list"
+# a non-text question is a named gap now (round 5): exit 3, the run is unverified, nothing laddered (was: read as a secret risk)
+for nq in '["paste the kubeconfig and rotate everything"]' '{"do": "set the PWMGR_CLIENTID, then upload"}' '42'; do
+  f22base; LED="$(jq -nc --arg f "$(ago 95)" --argjson q "$nq" '{workers: {}, asks: [{id: "n1", kind: "release", lane: "la", askedAt: $f, question: $q, topic: "store build", state: "open"}]}')"; f22chk "F14 a non-text question ($nq)" "ledger: .asks[0].question is not text"
+done
+# F23 round 5: every field a ledger ask is read by to hold, route or time something is type-checked, and a state that reads
+# like a known one is not. Repro map (H1 to H3 and A to G of the round-5 review): H1/A followUp, H2 pr, H3 kind and scope, B a
+# credential-shaped map key in a gap, C a digit-only freeze ttl, E the queue, lanes, leadDead, unreachable and truncated guards,
+# G a near-miss state and a padded worker key. Each group has its controls (the legal value keeps working).
+f23ask() { # f23ask <label> <ask json patch (jq)> <gap text>: one owner-only merge ask holds lane la; the patch makes it wrong
+  f22base; LED0="$(jq -nc --arg f "$(ago 95)" '{workers: {}, asks: [{id: "a1", kind: "merge", state: "open", lane: "la", question: "merge it?", askedAt: $f}]}')"
+  LED="$(jq -c ".asks[0] |= ($2)" <<<"$LED0")"; f22chk "$1" "$3"
+}
+f22base; LED="$(jq -nc --arg f "$(ago 95)" '{workers: {}, asks: [{id: "a1", kind: "merge", state: "open", lane: "la", question: "merge it?", askedAt: $f, followUp: null}]}')"
+gen "$W"; runj "$W"
+check "F23 H1 control: an owner-only ask with a null followUp holds its lane, exit 0" "$(exr la)$RC" "ask0"
+f22base; LED="$(jq -nc --arg f "$(ago 95)" '{workers: {}, asks: [{id: "a1", kind: "merge", state: "open", lane: "la", question: "merge it?", askedAt: $f, followUp: "fu-1"}]}')"
+gen "$W"; runj "$W"
+check "F23 H1 control: a text followUp (the ownership label of a follow-up ask) releases the lane, which ladders (documented)" "$(field la rung)$RC" "14"
+for fv in 7 true false '{}' '[]'; do
+  f23ask "H1 ledger ask followUp $fv" ".followUp = $fv" "ledger: .asks[0].followUp is not text"
+done
+# the asks.sh rows (asks.json) never read followUp, pr or kind: whatever they carry, the lane stays held and the run is clean
+for f in followUp pr kind scope; do for fv in 7 true false '{}'; do
+  f22base; ASKS="$(jq -nc --arg f "$(ago 65)" --argjson v "$fv" --arg k "$f" '[{host: "local", worktree: "la", tag: "cm:ask", text: "t", firstSeen: $f} + {($k): $v}]')"
+  gen "$W"; runj "$W"
+  check "F23 H1 an asks.json row with an unread $f = $fv still holds its lane (owner, exit 0)" "$(exr la)$RC" "ask0"
+done; done
+# H2: the ask pr is a number or text (#n, repo#n, a pull URL); false read as "no pr" and let the PR ladder
+f23pr() { f22base; PRS="$(arr "$(pr 7 s7 200)")"; LED="$(jq -nc --arg f "$(ago 95)" --argjson p "$1" '{workers: {}, asks: [{id: "a1", kind: "merge", state: "open", lane: "lq", question: "merge it?", askedAt: $f, pr: $p}]}')"; gen "$W"; runj "$W"; }
+f23pr 7; check "F23 H2 control: pr 7 holds PR #7 (exempt ask), exit 4 for the lane lz only" "$(exr '#7')$(field '#7' rung)" "askabsent"
+f23pr '"#7"'; check "F23 H2 control: pr \"#7\" holds PR #7" "$(exr '#7')" "ask"
+f23pr null; check "F23 H2 control: pr null holds nothing, PR #7 ladders" "$(exr '#7')$(field '#7' rung)" "absent1"
+for pv in false true '{}' '[]'; do
+  f23pr "$pv"
+  check "F23 H2 pr $pv: PR #7 is unverified, never laddered" "$(exr '#7')$(field '#7' rung)" "unverifiedabsent"
+  has "F23 H2 pr $pv: the gap names it" "$(jq -r '.gaps | join(";")' <<<"$OUT")" "ledger: .asks[0].pr is not a number or text"
+  check "F23 H2 pr $pv: exit 3" "$RC" "3"
+done
+# H3: kind false read as no kind and fell through to scope (a merge ask with scope release was a delegated release)
+f22base; LED="$(jq -nc --arg f "$(ago 95)" '{workers: {}, asks: [{id: "a1", kind: "merge", scope: "release", state: "open", lane: "la", question: "push the OTA release", askedAt: $f}]}')"
+gen "$W"; runj "$W"
+check "F23 H3 control: kind merge with scope release stays owner-only, never relayed (exit 0)" "$(exr a1)$(field a1 rung)$RC" "ownerabsent0"
+f22base; LED="$(jq -nc --arg f "$(ago 95)" '{workers: {}, asks: [{id: "a1", kind: null, scope: "release", state: "open", lane: "la", question: "push the OTA release", askedAt: $f}]}')"
+gen "$W"; runj "$W"
+check "F23 H3 control: no kind and scope release is the delegated release ask (relay, rung 1)" "$(field a1 rung)$(field a1 action)" "1relay"
+for kv in false true 7 '{}' '[]'; do
+  f22base; LED="$(jq -nc --arg f "$(ago 95)" --argjson k "$kv" '{workers: {}, asks: [{id: "a1", kind: $k, scope: "release", state: "open", lane: "la", question: "push the OTA release", askedAt: $f}]}')"
+  gen "$W"; runj "$W"
+  check "F23 H3 kind $kv with scope release: never relayed, the ask is not on the ladder" "$(field a1 rung)" "absent"
+  has "F23 H3 kind $kv: the gap names it" "$(jq -r '.gaps | join(";")' <<<"$OUT")" "ledger: .asks[0].kind is not text"
+  check "F23 H3 kind $kv: exit 3, la unverified" "$RC$(exr la)" "3unverified"
+done
+f23ask "H3 scope as a number" '.scope = 7' "ledger: .asks[0].scope is not text"
+# the other fields an ask owner scan reads: a wrong type is named, never read as absent
+f23ask "ask question as false" '.question = false' "ledger: .asks[0].question is not text"
+f23ask "ask topic as a number" '.topic = 7' "ledger: .asks[0].topic is not text"
+f23ask "ask noCode as text" '.noCode = "true"' "ledger: .asks[0].noCode is not true or false"
+f23ask "ask files as false" '.files = false' "ledger: .asks[0].files is not a list"
+f23ask "ask files member as a number" '.files = [7]' "ledger: .asks[0].files[0] is not text"
+f22base; LED="$(jq -nc --arg f "$(ago 95)" '{workers: {"w-z": {state: "running", path: "/w/wt/la", host: "local", pr: false}}, asks: []}')"
+gen "$W"; runj "$W"
+check "F23 H2 a worker pr of false is named (a noCode ask whose worker has a PR is the owner's): exit 3" "$RC" "3"
+has "F23 H2 the worker pr gap" "$(jq -r '.gaps | join(";")' <<<"$OUT")" "ledger: .workers.w-z.pr is not a number or text"
+# C: a freeze ttl of digits only is read as epoch seconds (1970, expired): it is unreadable, an ISO time still works
+reset; W="$ROOT/f23c"; rm -rf -- "${W:?}"; PRS="$(arr "$(pr 13 s13 200)")"
+LED="$(jq -nc --arg t "$(ago -60)" '{workers: {}, freeze: {state: "on", window: "w1", ttl: $t}}')"; gen "$W"; runj "$W"
+check "F23 C control: an ISO ttl in the future holds PR #13 (freeze), exit 0" "$(exr '#13')$RC" "freeze0"
+LED="$(jq -nc --arg t "$(ago 60)" '{workers: {}, freeze: {state: "on", window: "w1", ttl: $t}}')"; gen "$W"; runj "$W"
+check "F23 C control: an ISO ttl in the past is an expired freeze, PR #13 ladders" "$(field '#13' rung)" "1"
+for tv in '"7"' '"1700000000"' '"0"'; do
+  LED="$(jq -nc --argjson t "$tv" '{workers: {}, freeze: {state: "on", window: "w1", ttl: $t}}')"; gen "$W"; runj "$W"
+  check "F23 C ttl $tv (digits only, read as epoch seconds): PR #13 is unverified, never laddered, exit 3" "$(exr '#13')$(field '#13' rung)$RC" "unverifiedabsent3"
+  has "F23 C ttl $tv: the gap names it" "$(jq -r '.gaps | join(";")' <<<"$OUT")" "ledger: .freeze.ttl is digits only"
+done
+# G: a state that is a known one in another case or padded is matched exactly, so it read as "not that state"
+f23ask "G ask state Open (near miss of open)" '.state = "Open"' "ledger: .asks[0].state is a near miss of a known state"
+f23ask "G ask state ' open ' (padded)" '.state = " open "' "ledger: .asks[0].state is a near miss of a known state"
+f22base; LED="$(jq -nc --arg f "$(ago 95)" '{workers: {}, asks: [{id: "a1", kind: "merge", state: "answered", lane: "la", question: "merge it?", askedAt: $f}]}')"
+gen "$W"; runj "$W"
+check "F23 G control: a known other state (answered) is legal: the ask holds nothing, la ladders (exit 4)" "$(field la rung)$RC" "14"
+# P1: EVERY documented ask state (references/ledger.md, iv_ask_states in input-view.jq: open answered in-progress decided closed) is legal. A narrower list marked a closed or an
+# in-progress ask unreadable, set anyBad and put the whole judgment at exit 3 every tick. The same ledger with and without a second ask in that state must give the same rows, gaps and exit.
+f22base; LED="$(jq -nc --arg f "$(ago 95)" '{workers: {}, asks: [{id: "a1", kind: "merge", state: "open", lane: "la", question: "merge it?", askedAt: $f}]}')"
+gen "$W"; runj "$W"; ASK_BASE_RC="$RC"; ASK_BASE_OUT="$(jq -c '{rows, gaps, exempt}' <<<"$OUT")"
+for ast in answered in-progress decided closed; do
+  f22base; LED="$(jq -nc --arg f "$(ago 95)" --arg st "$ast" '{workers: {}, asks: [{id: "a1", kind: "merge", state: "open", lane: "la", question: "merge it?", askedAt: $f}, {id: "a2", kind: "merge", state: $st, lane: "lz", question: "old one", askedAt: $f}]}')"
+  gen "$W"; runj "$W"
+  check "P1 documented ask state '$ast' is legal: exit and judgment equal the ledger without it" "$RC $(jq -c '{rows, gaps, exempt}' <<<"$OUT")" "$ASK_BASE_RC $ASK_BASE_OUT"
+done
+# mutant: the narrow list again (open answered decided) must fail the cases above
+mkdir -p "$ROOT/mut-ask" && cp "$HERE"/../*.sh "$HERE"/../*.jq "$ROOT/mut-ask/" 2>/dev/null
+sed -i 's/^CM_ASK_STATES="open answered in-progress decided closed"$/CM_ASK_STATES="open answered decided"/' "$ROOT/mut-ask/lib.sh"
+if ! cmp -s "$HERE/../lib.sh" "$ROOT/mut-ask/lib.sh"; then
+  SAVE_SCRIPT="$SCRIPT"; SCRIPT="$ROOT/mut-ask/stall.sh"
+  f22base; LED="$(jq -nc --arg f "$(ago 95)" '{workers: {}, asks: [{id: "a1", kind: "merge", state: "open", lane: "la", question: "merge it?", askedAt: $f}, {id: "a2", kind: "merge", state: "closed", lane: "lz", question: "old one", askedAt: $f}]}')"
+  gen "$W"; runj "$W"; SCRIPT="$SAVE_SCRIPT"
+  check "P1 mutant: with the narrow ask list a closed ask is unreadable again (exit 3), the case is caught" "$RC" "3"
+else check "P1 mutant: the sed matches lib.sh" "no" "yes"; fi
+# round 2, B3: a key written twice in a worker row or an ask row. jq reads the LAST of the two, so "state":"parked","state":"running" read as a running lane (rung 1, a nudge due,
+# exit 4) where the single "parked" is exempt (exit 0), and an ask "state":"open","state":"answered" freed the lane it holds. The row is unknown: a gap, exit 3, no nudge, no rung.
+f22base; LED='{"workers":{"w1":{"path":"/w/wt/la","host":"local","state":"parked"}}}'; gen "$W"; runj "$W"
+check "B3 control: a single state parked is exempt as parked, exit 0, no rung" "$(exr la)$(field la rung)$RC" "parkedabsent0"
+f22base; LED='{"workers":{"w1":{"path":"/w/wt/la","host":"local","state":"parked","state":"running"}}}'
+f22chk "B3 worker state parked then running" "ledger: .workers.w1.state writes the same key twice"
+check "B3 worker repeat: no nudge is due (exit 3, not 4) and the gap list is not empty" "$RC $(jq -r '.gaps | length > 0' <<<"$OUT")" "3 true"
+f22base; LED='{"workers":{"w1":{"path":"/w/wt/la","host":"local","state":"running","state":"parked"}}}'
+f22chk "B3 worker state running then parked (the other order)" "ledger: .workers.w1.state writes the same key twice"
+f22base; LED='{"workers":{"w1":{"path":"/w/wt/la","host":"local","state":"parked"},"w1":{"path":"/w/wt/zz","host":"local","state":"running"}}}'
+f22chk "B3 the same worker id twice" "ledger: .workers.w1 writes the same key twice"
+B3ASK="{\"id\":\"a1\",\"kind\":\"merge\",\"lane\":\"la\",\"question\":\"merge it?\",\"askedAt\":\"$(ago 95)\""
+f22base; LED="{\"workers\":{},\"asks\":[$B3ASK,\"state\":\"open\"}]}"; gen "$W"; runj "$W"
+check "B3 control: a single open ask holds lane la (not laddered), exit 0" "$(field la rung)$RC" "absent0"
+f22base; LED="{\"workers\":{},\"asks\":[$B3ASK,\"state\":\"open\",\"state\":\"answered\"}]}"
+f22chk "B3 ask state open then answered" "ledger: .asks.0.state writes the same key twice"
+check "B3 ask repeat: the lane is not freed into a nudge (exit 3, not 4)" "$RC" "3"
+f22base; LED="{\"workers\":{},\"asks\":[$B3ASK,\"state\":\"open\",\"kind\":\"design\"}]}"
+f22chk "B3 ask kind written twice" "ledger: .asks.0.kind writes the same key twice"
+# mutant: a copy of the scripts (cp -R, so scripts/jdupkeys comes along) with the new reasons switched off. The lane is laddered again, the harm the cases above pin
+mutcp() { mkdir -p "$1" && cp -R "$HERE"/../. "$1"/; }
+mutcp "$ROOT/mut-b3"
+sed -i 's/select((\.\[0\] | tostring) | IN("workers", "asks", "freeze", "queue", "lanes"))/select(false)/' "$ROOT/mut-b3/stall.sh"
+if ! cmp -s "$HERE/../stall.sh" "$ROOT/mut-b3/stall.sh"; then
+  SAVE_SCRIPT="$SCRIPT"; SCRIPT="$ROOT/mut-b3/stall.sh"
+  f22base; LED='{"workers":{"w1":{"path":"/w/wt/la","host":"local","state":"parked","state":"running"}}}'; gen "$W"; runj "$W"
+  check "B3 mutant (worker repeat): without the reason la is laddered again at rung 1 with a nudge due (exit 4), the harm" "$(field la rung)$(field la action)$RC" "1nudge4"
+  f22base; LED="{\"workers\":{},\"asks\":[$B3ASK,\"state\":\"open\",\"state\":\"answered\"}]}"; gen "$W"; runj "$W"
+  check "B3 mutant (ask repeat): without the reason the answered ask frees la into a nudge (exit 4), the harm" "$(field la rung)$RC" "14"
+  SCRIPT="$SAVE_SCRIPT"
+else check "B3 mutant: the sed matches stall.sh" "no" "yes"; fi
+# rounds 3 and 4: an open own-scope ask that ask-timeout.sh keeps with the owner is OWNER-ONLY for stall too (ask_owner_why in ask-deny.sh): an ops, epic or pr-sweep lane (on the ask or only on its worker row), an epic
+# "plan ready" approval, no lane at all, a blank worker id. The lane is held as "ask" either way, but the ASK ROW changes: owner-only gives an exempt row with code "owner" and no ladder row (exit 0), where the old
+# predicate gave a laddered ask row (rung 1, exit 4) and no exempt row. So every case asserts the ask rows: exempt ask codes == ["owner"] and no ask row. A merge ask (already owner-only) is the control.
+OPSASK='"kind":"code","issue":5,"state":"open","question":"split the card?","files":["src/components/Card.tsx"]'
+op_ask() { jq -c '[[.exempt[] | select(.kind == "ask") | .code], [.rows[] | select(.kind == "ask") | .name]]' <<<"$OUT"; }
+op_case() { # <label> <item name> <ledger json> <want ask exempt+rows json>
+  reset; W="$ROOT/r3"; rm -rf -- "${W:?}"; ITEMS="$(arr "$(item "$2" idle 95)")"; LED="$3"; gen "$W"; runj "$W"
+  check "R3 $1: the ask is exempt as owner and is not a ladder row" "$(op_ask)" "${4:-[[\"owner\"],[]]}"
+}
+OA="\"askedAt\":\"$(ago 95)\""
+op_case "ops-sweeper ask (lane on the ask)" ops-sweeper "{\"workers\":{},\"asks\":[{\"id\":\"a1\",\"lane\":\"ops-sweeper\",$OPSASK,$OA}]}"
+op_case "ops-sweeper ask (lane only on the worker row)" ops-sweeper "{\"workers\":{\"w-ops\":{\"lane\":\"ops-sweeper\",\"path\":\"/w/wt/ops-sweeper\",\"host\":\"local\",\"state\":\"running\"}},\"asks\":[{\"id\":\"a1\",\"worker\":\"w-ops\",$OPSASK,$OA}]}"
+op_case "epic lead ask" epic-cm-upgrade "{\"workers\":{},\"asks\":[{\"id\":\"a1\",\"lane\":\"epic-cm-upgrade\",$OPSASK,$OA}]}"
+op_case "pr-sweep lane ask" pr-sweeper "{\"workers\":{},\"asks\":[{\"id\":\"a1\",\"lane\":\"pr-sweeper\",$OPSASK,$OA}]}"
+op_case "plan ready approval from a dev lane" dev-sweeper "{\"workers\":{},\"asks\":[{\"id\":\"a1\",\"lane\":\"dev-sweeper\",\"kind\":\"design\",\"issue\":5,\"state\":\"open\",\"question\":\"plan ready: approve the epic plan?\",\"files\":[\"docs/plan.md\"],$OA}]}"
+op_case "(a) no lane on the ask or its worker row" dev-sweeper "{\"workers\":{},\"asks\":[{\"id\":\"a1\",$OPSASK,$OA}]}"
+op_case "(b) a blank worker id" dev-sweeper "{\"workers\":{},\"asks\":[{\"id\":\"a1\",\"lane\":\"dev-sweeper\",\"worker\":\"  \",$OPSASK,$OA}]}"
+op_case "control: an already owner-only merge ask" dev-sweeper "{\"workers\":{},\"asks\":[{\"id\":\"a1\",\"lane\":\"dev-sweeper\",\"kind\":\"merge\",\"state\":\"open\",\"question\":\"merge it?\",$OA}]}"
+op_case "control: a dev-sweeper own-scope ask with valid files stays a ladder row (not owner-only)" dev-sweeper "{\"workers\":{},\"asks\":[{\"id\":\"a1\",\"lane\":\"dev-sweeper\",$OPSASK,$OA}]}" '[[],["a1"]]'
+# (c) a worker row that is not an object and (d) a non-text worker lane: ask_owner_why calls them owner-only (digest-report-shape.sh pins that), but stall already stops judging ANY ask that tick on those rows (the
+# input gap: exit 3, every ask unverified), so here the cases only pin that the ask is not laddered and the run says so. No mutant can tell them apart in stall.
+reset; W="$ROOT/r3"; rm -rf -- "${W:?}"; ITEMS="$(arr "$(item dev-sweeper idle 95)")"
+LED="{\"workers\":{\"w-bad\":false},\"asks\":[{\"id\":\"a1\",\"lane\":\"dev-sweeper\",\"worker\":\"w-bad\",$OPSASK,$OA}]}"; gen "$W"; runj "$W"
+check "R3 (c) a worker row that is not an object: exit 3, the ask is not laddered" "$RC $(jq -c '[.rows[] | select(.kind == "ask")] | length' <<<"$OUT")" "3 0"
+LED="{\"workers\":{\"w-nt\":{\"lane\":7,\"path\":\"/w/wt/dev-sweeper\",\"host\":\"local\",\"state\":\"running\"}},\"asks\":[{\"id\":\"a1\",\"lane\":\"dev-sweeper\",\"worker\":\"w-nt\",$OPSASK,$OA}]}"; gen "$W"; runj "$W"
+check "R3 (d) a non-text worker lane: exit 3, the ask is not laddered" "$RC $(jq -c '[.rows[] | select(.kind == "ask")] | length' <<<"$OUT")" "3 0"
+# mutants (cp -R, so scripts/jdupkeys comes along): each owner-only hold turned off alone puts the ask back on the ladder (rung 1, a due row, exit 4), the harm. The python edit turns the one elif that names the hold into false.
+r4_mut() { # <dir> <message fragment of the hold, "pr-sweep", "ops", "plan">
+  python3 - "$1/ask-deny.sh" "$2" <<'PY'
+import sys,re
+p,key=sys.argv[1],sys.argv[2]
+t=open(p).read()
+if key=='pr-sweep': t=t.replace(' or ($lane | startswith("pr-sweep"))',' or false')
+elif key=='plan approval': t=t.replace(r'elif ((.question // "") | tostring | test("^\\s*(cm:blocked\\s+)?plan ready"; "i")) then','elif false then',1)
+elif key=='no lane': t=t.replace('elif $lane == "" then','elif false then',1)
+elif key=='ops': t=t.replace('elif ($lane | startswith("ops")) or ($lane | startswith("epic"))','elif false or ($lane | startswith("epic"))')
+else:
+    out=[]
+    for l in t.split('\n'):
+        if 'elif ' in l and key in l: l=re.sub(r'elif .* then "of kind','elif false then "of kind',l,count=1)
+        out.append(l)
+    t='\n'.join(out)
+open(p,'w').write(t)
+PY
+}
+r4_case() { # <label> <hold key> <item name> <ledger json>
+  local m="$ROOT/mut-r4-${2// /_}"; mkdir -p "$m" && cp -R "$HERE"/../. "$m"/ && r4_mut "$m" "$2"
+  if cmp -s "$HERE/../ask-deny.sh" "$m/ask-deny.sh"; then check "R3 mutant $1: the edit changed ask-deny.sh" "no" "yes"; return; fi
+  SAVE_SCRIPT="$SCRIPT"; SCRIPT="$m/stall.sh"
+  reset; W="$ROOT/r3"; rm -rf -- "${W:?}"; ITEMS="$(arr "$(item "$3" idle 95)")"; LED="$4"; gen "$W"; runj "$W"
+  SCRIPT="$SAVE_SCRIPT"
+  check "R3 mutant $1: with the hold off the ask is a ladder row again (exit 4), the harm" "$RC $(op_ask)" '4 [[],["a1"]]'
+}
+r4_case "ops lane (on the ask)" ops ops-sweeper "{\"workers\":{},\"asks\":[{\"id\":\"a1\",\"lane\":\"ops-sweeper\",$OPSASK,$OA}]}"
+r4_case "ops lane (only on the worker row)" ops ops-sweeper "{\"workers\":{\"w-ops\":{\"lane\":\"ops-sweeper\",\"path\":\"/w/wt/ops-sweeper\",\"host\":\"local\",\"state\":\"running\"}},\"asks\":[{\"id\":\"a1\",\"worker\":\"w-ops\",$OPSASK,$OA}]}"
+r4_case "pr-sweep lane" pr-sweep pr-sweeper "{\"workers\":{},\"asks\":[{\"id\":\"a1\",\"lane\":\"pr-sweeper\",$OPSASK,$OA}]}"
+r4_case "plan ready approval" "plan approval" dev-sweeper "{\"workers\":{},\"asks\":[{\"id\":\"a1\",\"lane\":\"dev-sweeper\",\"kind\":\"design\",\"issue\":5,\"state\":\"open\",\"question\":\"plan ready: approve the epic plan?\",\"files\":[\"docs/plan.md\"],$OA}]}"
+r4_case "(a) no lane" "no lane" dev-sweeper "{\"workers\":{},\"asks\":[{\"id\":\"a1\",$OPSASK,$OA}]}"
+r4_case "(b) blank worker id" "with a blank worker id" dev-sweeper "{\"workers\":{},\"asks\":[{\"id\":\"a1\",\"lane\":\"dev-sweeper\",\"worker\":\"  \",$OPSASK,$OA}]}"
+# round 6: a padded workers key is the worker its trimmed id names (its PR is seen), and two keys that trim to one id are no row, so a noCode ask of such a worker is the owner's. A padded key is also an input gap
+# (exit 3), so the ask is never a ladder row either way; what the mutant changes is the exemption: with the exact-key lookup the ask is judged as an ask a worker with no PR could have asked, and it is "unverified", not "owner"
+R6W='"path":"/w/wt/dev-sweeper","host":"local","state":"running"'
+R6A='"kind":"code","issue":5,"state":"open","question":"split the card?","noCode":true,"lane":"dev-sweeper"'
+r6_ask() { jq -c '[[.exempt[] | select(.kind == "ask") | .code], [.rows[] | select(.kind == "ask") | .name]]' <<<"$OUT"; }
+r6_case() { # <label> <ledger json> <want> [<old text> <new text> to mutate ask-deny.sh with]
+  local sv="$SCRIPT"
+  if [ -n "${4:-}" ]; then
+    local m="$ROOT/mut-r6-${1// /_}"; mkdir -p "$m" && cp -R "$HERE"/../. "$m"/
+    python3 - "$m/ask-deny.sh" "$4" "$5" <<'PY'
+import sys
+p,old,new=sys.argv[1:4]
+t=open(p).read()
+if old in t: open(p,'w').write(t.replace(old,new,1))
+PY
+    if cmp -s "$HERE/../ask-deny.sh" "$m/ask-deny.sh"; then check "R6 mutant $1: the edit changed ask-deny.sh" "no" "yes"; return; fi
+    SCRIPT="$m/stall.sh"
+  fi
+  reset; W="$ROOT/r6"; rm -rf -- "${W:?}"; ITEMS="$(arr "$(item dev-sweeper idle 95)")"; LED="$2"; gen "$W"; runj "$W"
+  SCRIPT="$sv"
+  check "R6 $1" "$RC $(r6_ask)" "$3"
+}
+R6PAD="{\"workers\":{\" w-r6p \":{\"lane\":\"dev-sweeper\",$R6W,\"pr\":5}},\"asks\":[{\"id\":\"a1\",\"worker\":\"w-r6p\",$R6A,$OA}]}"
+R6TWO="{\"workers\":{\"w-r6d\":{\"lane\":\"dev-sweeper\",$R6W,\"pr\":6},\" w-r6d \":{\"lane\":\"dev-sweeper\",$R6W}},\"asks\":[{\"id\":\"a1\",\"worker\":\"w-r6d\",$R6A,$OA}]}"
+r6_case "a noCode ask whose worker is a padded workers key with a PR: exempt owner, no ladder row (exit 3, the padded key is a gap)" "$R6PAD" '3 [["owner"],[]]'
+r6_case "two workers keys that trim to one id: the ask is exempt owner, no ladder row" "$R6TWO" '3 [["owner"],[]]'
+r6_case "mutant exact key: the padded key is not found, the ask is not owner-only (the harm)" "$R6PAD" '3 [["unverified"],[]]' '$wn.ws as $ws' '($workers | if type == "object" then . else {} end) as $ws'
+r6_case "mutant two keys: the last row wins, the ask is not owner-only (the harm)" "$R6TWO" '3 [["unverified"],[]]' '($wn.dup | index($wk)) != null' 'false'
+# B4 C1: a state that is no known state at all (a typo, "", spaces) holds nothing, so a hold keyed on it would vanish: it is named, exit 3
+for ast in weird '' ' ' mystery; do
+  f23ask "B4 C1 ask state '$ast'" ".state = \"$ast\"" "ledger: .asks[0].state is not a known state"
+done
+for wst in mystery '' ' ' 'on-hold'; do
+  f22base; LED="$(jq -nc --arg st "$wst" '{workers: {"w1": {path: "/w/wt/la", host: "local", state: $st}}}')"; f22chk "B4 C1 worker state '$wst'" "ledger: .workers.w1.state is not a known state"
+done
+f22base; LED='{"workers":{"w1":{"path":"/w/wt/la","host":"local"}}}'; gen "$W"; runj "$W"
+check "B4 C1 control: a worker with no state is the legacy running, judged (not exit 3)" "$([ "$RC" -ne 3 ] && echo judged || echo "exit $RC")" "judged"
+# B4 C2: a null member of a list or a map drops the hold it would give: named, exit 3
+f22base; LED='{"workers":{"w1":null}}'; f22chk "B4 C2 workers.w1 null" "ledger: .workers.w1 is null"
+f22base; LED='{"workers":{},"asks":[null]}'; f22chk "B4 C2 asks [null]" "ledger: .asks[0] is null"
+f22base; LED='{"workers":{}}'; ASKS='[null]'; f22chk "B4 C2 asks.json asks [null]" "asks: .asks[0] is null"
+f22base; WTS='[null]'; LED='{"workers":{}}'; f22chk "B4 C2 discover worktrees [null]" "discover: .worktrees[0] is null"
+# B4 C3: a blank id, host, path or class matches nothing, so the hold on it is lost: named, exit 3
+for fld in path host lane worktreeId; do
+  f22base; LED="$(jq -nc --arg f "$fld" '{workers: {"w1": ({path: "/w/wt/la", host: "local", state: "parked"} + {($f): "  "})}}')"; f22chk "B4 C3 parked worker $fld blank" "ledger: .workers.w1.$fld is blank text"
+done
+# (a ledger ask with a blank id, worker or lane is NOT unreadable: F18c and F18e keep it as a documented design, an ask is real only with a non-empty string id)
+f22base; ITEMS="$(arr "$(item la idle 95 | jq -c '.class = ""')")"; f22chk "B4 C3 classification class blank" "classify: .items[0].class is blank text"
+# B4 O2: a standing-unknown-state lane (classify.jq) is never nudged: unverified, never laddered
+f22base; ITEMS="$(arr "$(item la standing-unknown-state 95 local standing)")"; LED='{"workers":{}}'; gen "$W"; runj "$W"
+check "B4 O2 a standing-unknown-state lane is unverified and never laddered" "$(exr la)$(field la rung)" "unverifiedabsent"
+for wst in Parked Blocked-On-Owner ' parked ' RUNNING; do
+  f22base; LED="$(jq -nc --arg st "$wst" '{workers: {"w1": {path: "/w/wt/la", host: "local", state: $st}}}')"; f22chk "G worker state '$wst'" "ledger: .workers.w1.state is a near miss of a known state"
+done
+# the template's legacy map is torn-down=gone (lib.sh CM_STATES_LEGACY): a dead worker row holds nothing, so la ladders (rung 1, exit 4) exactly as it does for gone, and neither is a gap
+f22base; LED='{"workers":{"w1":{"path":"/w/wt/la","host":"local","state":"gone"}}}'; gen "$W"; runj "$W"; GONE="$(jq -c '[.gaps, [.rows[] | {name, rung}], [.exempt[] | {name, code}]]' <<<"$OUT") $RC"
+f22base; LED='{"workers":{"w1":{"path":"/w/wt/la","host":"local","state":"torn-down"}}}'; gen "$W"; runj "$W"
+check "F23 G control: a legacy spelling (torn-down) is a known state, read as gone: no gap, la ladders, exit 4" "$(jq -r ".gaps | length" <<<"$OUT")$(field la rung)$RC" "014"
+check "F23 G control: torn-down gives the same report as gone" "$(jq -c '[.gaps, [.rows[] | {name, rung}], [.exempt[] | {name, code}]]' <<<"$OUT") $RC" "$GONE"
+for qst in Queued GRANTED ' queued'; do
+  f22base; LED="$(jq -nc --arg st "$qst" '{workers: {}, queue: {items: [{id: "q1", lane: "dev-sweeper", state: $st}]}}')"; f22chk "G queue item state '$qst'" "ledger: .queue.items[0].state is a near miss of a known state"
+done
+# G2: a worker id is matched exactly, an ask names its worker trimmed: a padded key is never found, so a noCode ask whose worker
+# has a PR (the owner's) fell through to the ladder
+reset; W="$ROOT/f23g2"; rm -rf -- "${W:?}"; ITEMS="$(arr "$(item lz idle 95)")"
+LED0="$(jq -nc --arg f "$(ago 95)" '{workers: {"w-z": {state: "running", path: "/w/wt/lz", host: "local", pr: 7}},
+  asks: [{id: "a-z", kind: "code", noCode: true, worker: "w-z", state: "open", question: "split the card?", askedAt: $f}]}')"
+LED="$LED0"; gen "$W"; runj "$W"
+check "F23 G2 control: the noCode ask whose worker w-z has a PR stays the owner's (exit 0)" "$(exr a-z)$(field a-z rung)$RC" "ownerabsent0"
+LED="$(jq -c '.workers = {" w-z ": .workers["w-z"]}' <<<"$LED0")"; gen "$W"; runj "$W"
+check "F23 G2 a worker key padded with spaces: exit 3, the ask is never relayed, lz is unverified" "$RC$(field a-z rung)$(exr lz)" "3absentunverified"
+has "F23 G2 the gap names the padded key" "$(jq -r '.gaps | join(";")' <<<"$OUT")" 'ledger: .workers[" w-z "] is a worker id with surrounding white space'
+# B: a map key is part of a gap path and may be a credential: it is withheld from --json, stderr and the text report
+rep() { printf "%${2}s" '' | tr ' ' "$1"; }
+KEY="gh""p_$(rep Q 36)"
+reset; W="$ROOT/f23b"; rm -rf -- "${W:?}"; ITEMS="$(arr "$(item la idle 95)")"
+for shape in workers lanes; do
+  if [ "$shape" = workers ]; then LED="$(jq -nc --arg k "$KEY" '{workers: {($k): {host: 7, path: "/w/wt/la", state: "running"}}}')"
+  else LED="$(jq -nc --arg k "$KEY" '{workers: {}, lanes: {($k): {queue: "x"}}}')"; fi
+  gen "$W"; runj "$W"; J="$OUT"; run "$W"; T="$OUT"
+  check "F23 B a credential-shaped $shape key: exit 3 (the value under it is unreadable)" "$RC" "3"
+  has "F23 B $shape key: the gap is still reported" "$(jq -r '.gaps | join(";")' <<<"$J")" "[withheld: looks like a credential]"
+  case "$J$T$(cat "$W/err")" in *"${KEY:0:12}"*) check "F23 B $shape key: no part of the key is in --json, the text report or stderr" "present" "absent" ;; *) check "F23 B $shape key: no part of the key is in --json, the text report or stderr" "absent" "absent" ;; esac
+done
+LED='{"workers":{"w-plain":{"host":7,"path":"/w/wt/la","state":"running"}}}'; gen "$W"; runj "$W"
+has "F23 B control: a plain worker key is still named in the gap" "$(jq -r '.gaps | join(";")' <<<"$OUT")" "ledger: .workers.w-plain.host is not text"
+# E: each guard has its own named row: removing the guard turns it red (revert-checked in the round-5 report)
+f22base; LED='{"workers":{},"queue":{"items":[7]}}'; f22chk "E queue.items member as a number" "ledger: .queue.items[0] is not an object"
+f22base; LED='{"workers":{},"queue":{"items":[{"lane":7,"state":"queued"}]}}'; f22chk "E queue item lane as a number" "ledger: .queue.items[0].lane is not text"
+f22base; LED='{"workers":{},"lanes":{"dev-sweeper":{"queue":"x"}}}'; f22chk "E lanes.<lane>.queue as text" "ledger: .lanes.dev-sweeper.queue is not a list"
+f22base; DEAD='[{"lead":"lx","open":"kid"}]'; f22chk "E ownership.leadDead[0].open as text" "classify: .ownership.leadDead[0].open is not a list"
+f22base; DEAD='[{"lead":"lx","open":[7]}]'; f22chk "E ownership.leadDead[0].open member as a number" "classify: .ownership.leadDead[0].open[0] is not text"
+f22base; UNREACH='[{"host":7}]'; f22chk "E asks unreachable[0].host as a number" "asks: .unreachable[0].host is not text"
+f22base; HOSTS='[{"name":"local","reachable":true,"truncated":"true"}]'; f22chk "E discover hosts[0].truncated as text (a cut-off worktree list)" "discover: .hosts[0].truncated is not true or false"
+f22base; HOSTS='[{"name":"local","reachable":true,"truncated":true}]'; gen "$W"; runj "$W"
+check "F23 E control: truncated true makes la unverified by the host (no gap, exit 0)" "$(exr la)$RC" "unverified0"
+f22base; HOSTS='[{"name":"local","reachable":true,"truncated":false}]'; gen "$W"; runj "$W"
+check "F23 E control: truncated false: la ladders" "$(field la rung)" "1"
 
 # F22 the delegated classes come from config only: no drive key (or one that is not a list) delegates nothing, so every
 # release or deploy ask is the owner's; a fragment that does not compile is dropped and the others still count
@@ -1484,6 +2030,16 @@ check "F24 a long kebab lane name is shown, not withheld" "$(field "$LONG" name)
 check "F24 an ask with a fresh verdict claim is held, not laddered" "$(exr d-claim)$(field d-claim rung)" "heldabsent"
 check "F24 an ask whose claim expired ladders again" "$(exr d-old)$(field d-old rung)" "absent1"
 check "F24 the held ask reason names the claim" "$(jq -r '.exempt[] | select(.name == "d-claim") | .reason | contains("verdict claimed")' <<<"$OUT")" "true"
+# F24b a verdict claim of the wrong type is not "no claim": it would erase the hold and let the same ask get a second verdict. It is a gap: exit 3, the ask is never laddered
+for bad in true '{"at": 1}' '["x"]'; do
+  reset; W="$ROOT/f24b"; rm -rf -- "${W:?}"
+  ITEMS="$(arr "$(item lc idle 95)")"
+  LED="$(jq -nc --argjson c "$bad" --arg f "$(ago 120)" '{workers: {}, asks: [{id: "d-bad", kind: "code", issue: 5, lane: "lc", askedAt: $f, verdictStartedAt: $c, question: "split it?", noCode: true, state: "open"}]}')"
+  gen "$W"; runj "$W"
+  check "F24b verdictStartedAt = $bad: exit 3, never a clean check" "$RC" "3"
+  check "F24b verdictStartedAt = $bad: the ask is never laddered" "$(field d-bad rung)" "absent"
+  has "F24b verdictStartedAt = $bad: the gap names it" "$(jq -r '.gaps | join(";")' <<<"$OUT")" ".asks[0].verdictStartedAt is not text or a number"
+done
 
 # ---- 13c. the mkdir fallback lock of --act (no flock, stock macOS) -------------------------------------------------------
 # F25 a lock a killed run left (over a minute old, owner pid gone) is reclaimed and the action recorded; a lock whose owner is

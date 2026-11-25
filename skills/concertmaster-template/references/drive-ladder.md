@@ -82,6 +82,20 @@ same write, so `ask-timeout.sh` and `stall.sh` read one state (an ask with a dup
 
 A table (`KIND NAME HOST AGE RUNG DUE ACTED`), one summary line, then a `NO-ACTION` line when flagged; `--json`
 adds `rows[]`, `exempt[]`, `unverified`, `gaps[]`. A name, text, host or path that looks like a credential is
-printed as `[withheld: looks like a credential]`. Exit 0 clean, 4 `NO-ACTION`, 3 an input missing, unparsable or
-older than two ticks (the longest `schedule.tick_delays_s` twice), 2 usage. Every input is sanitised once, so one
-malformed value holds only itself. Test: `scripts/test/stall.sh`.
+printed as `[withheld: looks like a credential]`. Exit 0 clean, 4 `NO-ACTION`, 3 an input missing, unparsable,
+older than two ticks (the longest `schedule.tick_delays_s` twice) or partly unreadable, 2 usage. One validation stage
+checks every input document against a type spec: a present value of the wrong type in a field that protects a lane,
+PR or ask is a named gap (`gaps[]`), every lane, PR and delegated ask is `unverified` and the run exits 3, while a
+value that only times or prints a row holds only its own row. A ledger that is unreadable or empty, or that writes a
+key twice under `workers`, `asks`, `freeze`, `queue` or `lanes` (the only sections `stall.sh` scans), holds the
+reader: `stall.sh` judges nothing that tick and lists a gap (`references/input-contract.md` section 6a). Tests:
+`scripts/test/stall.sh`, `scripts/test/stall-fuzz.sh`, `scripts/test/field-reads.sh`.
+
+## Report shape
+
+A tick prints two tables, "Blocked on you" (feature in one line, what the owner must do; only owner-only items) and
+"Moved this tick" (what, result; at most 5 rows), then one `next:` line (`SKILL.md` § Reporting). The owner-only
+asks in Blocked on you are `ask_owner_why` of `scripts/ask-deny.sh`, the set `scripts/stall.sh` exempts, so the
+ladder and the report never disagree; a secrets ask is always one. A host not read is a Moved row (a fleet-health
+fact the concertmaster acts on), never a Blocked one. The programme table, the census and the item list are still
+read every tick and are printed by `scripts/digest.sh --full`.

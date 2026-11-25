@@ -61,7 +61,8 @@ for bad in false 0 '""' '" "' '{}' '[]' true; do
 done
 d "a legacy spelling reads as its state" "{\"workers\":{\"a\":{$W,\"standing\":false,\"state\":\"torn-down\"}}}" nudge a false "not nudgeable"
 d "retired is not nudged" "{\"workers\":{\"a\":{$W,\"standing\":false,\"state\":\"retired\"}}}" nudge a false "not nudgeable"
-d "a state outside the enum (parked) is unknown" "{\"workers\":{\"a\":{$W,\"standing\":false,\"state\":\"parked\"}}}" nudge a false "state is unknown"
+d "parked is not nudged" "{\"workers\":{\"a\":{$W,\"standing\":false,\"state\":\"parked\"}}}" nudge a false "not nudgeable"
+d "a state outside the enum (bogus) is unknown" "{\"workers\":{\"a\":{$W,\"standing\":false,\"state\":\"bogus\"}}}" nudge a false "state is unknown"
 # --- schemaVersion 2: absent is unknown, nothing defaults
 d "v2: absent state refuses nudge" "{\"schemaVersion\":2,\"workers\":{\"a\":{$W,\"standing\":false}}}" nudge a false "state is unknown"
 d "v2: absent standing refuses nudge" "{\"schemaVersion\":2,\"workers\":{\"a\":{$W,\"state\":\"running\"}}}" nudge a false "standing is unknown"

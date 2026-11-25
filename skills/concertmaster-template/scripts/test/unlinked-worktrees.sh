@@ -122,6 +122,67 @@ check "a ledger worker with standing:false is not exempt" 'grep -q "UNLINKED dev
 check "a main checkout and an archived worktree are exempt" '! grep -qE "main-checkout|old-archived" <<<"$OUT"' "$OUT"
 check "a never_touch path segment (otherproj) is exempt, a path outside path_match is never read" '! grep -qE "otherproj|other-project" <<<"$OUT"' "$OUT"
 check "exit 0 and exactly five rows listed" '[ "$RC" = 0 ] && [ "$(listed)" = 5 ]' "rc=$RC $OUT"
+# a standing that is present and not the boolean is read as standing (a lead is never listed for cleanup on a damaged field);
+# controls: standing false is listed, standing true is exempt
+cp "$CM_HOME/ledger.json" "$ROOT/ledger.at-b"
+for bad in '"true"' 1 '{}' '[]' '"yes"'; do
+  jq --argjson v "$bad" '.workers["w-ledger"].standing = $v' "$ROOT/ledger.at-b" > "$CM_HOME/ledger.json"; run
+  check "standing $bad: still exempt, never listed" '! grep -q "ledger-lane" <<<"$OUT"' "$OUT"
+done
+jq '.workers["w-ledger"].standing = false' "$ROOT/ledger.at-b" > "$CM_HOME/ledger.json"; run
+check "control: standing false is listed" 'grep -q "UNLINKED ledger-lane @ local" <<<"$OUT"' "$OUT"
+jq '.workers["w-ledger"].standing = true' "$ROOT/ledger.at-b" > "$CM_HOME/ledger.json"; run
+check "control: standing true is exempt" '! grep -q "ledger-lane" <<<"$OUT"' "$OUT"
+# one worker row that is not an object (7, null, false, text) must not drop every standing exemption; a path that is not text
+# must not hide a valid worktree key of the same row
+for junk in 7 null false '"x"' '[]'; do
+  jq --argjson j "$junk" '.workers["w-junk"] = $j' "$ROOT/ledger.at-b" > "$CM_HOME/ledger.json"; run
+  check "a worker row $junk beside a standing worker: still exempt, no parse note" '! grep -q "ledger-lane" <<<"$OUT" && ! grep -q "could not be parsed" <<<"$OUT"' "$OUT"
+done
+jq '.workers["w-ledger"] |= (. + {worktree: .path} | .path = 7)' "$ROOT/ledger.at-b" > "$CM_HOME/ledger.json"; run
+check "a path of 7 does not hide the worktree key: still exempt" '! grep -q "ledger-lane" <<<"$OUT"' "$OUT"
+# Typed boundary: a worker row that cannot be read (not an object, a host or path that is not text, a standing row with no path that is text) exempts no worktree. It was read
+# as "no such lane" and nothing said so; now the report says CHECK INCOMPLETE with the count. Controls: readable rows say nothing, and a dead record with a wrong-typed path says nothing.
+for patch in '.workers["w-ledger"].path = false' '.workers["w-ledger"].path = ["x"]' '.workers["w-junk"] = false' '.workers["w-junk"] = null' '.workers["w-junk"] = 7' \
+             '.workers["w-junk"] = {host: ["local"], path: "/elsewhere"}' '.workers["w-junk"] = {host: "local", path: false, standing: true}' '.workers["w-junk"] = {host: "local", path: false, standing: "true"}'; do
+  jq "$patch" "$ROOT/ledger.at-b" > "$CM_HOME/ledger.json"; run
+  check "typed boundary ($patch): the report says a ledger worker row cannot be read" 'grep -q "CHECK INCOMPLETE" <<<"$OUT" && grep -q "ledger worker row(s) cannot be read" <<<"$OUT"' "$OUT"
+done
+for patch in '.workers["w-junk"] = {host: "local", path: false, standing: true, state: "gone"}' '.workers["w-junk"] = {host: "local", path: "/x/ok", standing: false}'; do
+  jq "$patch" "$ROOT/ledger.at-b" > "$CM_HOME/ledger.json"; run
+  check "typed boundary control ($patch): nothing unreadable, no CHECK INCOMPLETE" '! grep -q "cannot be read" <<<"$OUT"' "$OUT"
+done
+# a ledger of two JSON documents used to print "(ledger): 0; 0 ledger worker row(s)" (one count per document): one count, and the reason says what is wrong
+{ jq -c . "$ROOT/ledger.at-b"; printf '{"workers":{}}\n'; } > "$CM_HOME/ledger.json"; run
+check "two JSON documents: CHECK INCOMPLETE, the ledger holds more than one JSON document, one count" 'grep -q "CHECK INCOMPLETE" <<<"$OUT" && grep -q "more than one JSON document" <<<"$OUT" && ! grep -qF "0; 0" <<<"$OUT" && ! grep -qE "\(ledger\)[[:space:]]+0" <<<"$OUT"' "$OUT"
+mkdir -p "$ROOT/mut-2d/scripts" && cp -R "$SKILL"/scripts/. "$ROOT/mut-2d/scripts/"
+sed -i '/^  case "\$sbad" in/d' "$ROOT/mut-2d/scripts/unlinked-worktrees.sh"
+if ! cmp -s "$SKILL/scripts/unlinked-worktrees.sh" "$ROOT/mut-2d/scripts/unlinked-worktrees.sh"; then
+  run "$ROOT/mut-2d/scripts/unlinked-worktrees.sh"
+  if grep -qE '0[;[:space:]]+0 ledger worker row' <<<"$OUT" || grep -qE '\(ledger\)[[:space:]]+0' <<<"$OUT"; then pass "mutant: without the count normalisation a two-document ledger prints two counts again, the case is caught"; else fail "mutant two documents" "$OUT"; fi
+else fail "mutant two documents" "the sed no longer matches unlinked-worktrees.sh"; fi
+# mutant: a copy that does not count the unreadable rows stays silent, so the cases above are caught
+mkdir -p "$ROOT/mut-tb/scripts" && cp "$SKILL"/scripts/lib.sh "$SKILL"/scripts/unlinked-worktrees.sh "$SKILL"/scripts/jdupkeys "$ROOT/mut-tb/scripts/"
+sed -i 's/^  \[ "\$sbad" = 0 \] || printf /  [ 1 = 1 ] || printf /' "$ROOT/mut-tb/scripts/unlinked-worktrees.sh"
+if ! cmp -s "$SKILL/scripts/unlinked-worktrees.sh" "$ROOT/mut-tb/scripts/unlinked-worktrees.sh"; then
+  jq '.workers["w-junk"] = false' "$ROOT/ledger.at-b" > "$CM_HOME/ledger.json"; run "$ROOT/mut-tb/scripts/unlinked-worktrees.sh"
+  if grep -q "cannot be read" <<<"$OUT"; then fail "mutant typed boundary" "the mutated script still said it"; else pass "mutant: with the unreadable-row report off the script is silent, the typed-boundary case is caught"; fi
+else fail "mutant typed boundary" "the sed no longer matches unlinked-worktrees.sh"; fi
+# a ledger that is not ONE object with a worker MAP and no repeated key exempts nothing and says so (workers false and [] were read as "no workers", a key written twice
+# as its last value). Each says CHECK INCOMPLETE and "cannot be read"; the mutant with the gate off is silent about workers false.
+DUPAB="$(jq -c . "$ROOT/ledger.at-b" | sed 's/"standing":true/"standing":false,"standing":true/')"
+check "the repeated-key fixture really has a key written twice" '[ "$(grep -c "\"standing\":false,\"standing\":true" <<<"$DUPAB")" = 1 ]' "$DUPAB"
+for c in 'workers false|{"workers":false}' 'workers []|{"workers":[]}' 'workers text|{"workers":"x"}' 'repeated key|'"$DUPAB"; do
+  printf '%s\n' "${c#*|}" > "$CM_HOME/ledger.json"; run
+  check "ledger gate (${c%%|*}): the report says CHECK INCOMPLETE and the ledger cannot be read" 'grep -q "CHECK INCOMPLETE" <<<"$OUT" && grep -q "cannot be read" <<<"$OUT"' "$OUT"
+done
+mkdir -p "$ROOT/mut-lg/scripts" && cp "$SKILL"/scripts/lib.sh "$SKILL"/scripts/unlinked-worktrees.sh "$SKILL"/scripts/jdupkeys "$ROOT/mut-lg/scripts/"
+sed -i 's/^  if ! gwhy="\$(cm_workers_gate "\$LEDGER")"; then /  if false; then /' "$ROOT/mut-lg/scripts/unlinked-worktrees.sh"
+if ! cmp -s "$SKILL/scripts/unlinked-worktrees.sh" "$ROOT/mut-lg/scripts/unlinked-worktrees.sh"; then
+  printf '%s\n' '{"workers":false}' > "$CM_HOME/ledger.json"; run "$ROOT/mut-lg/scripts/unlinked-worktrees.sh"
+  if grep -q "cannot be read" <<<"$OUT"; then fail "mutant ledger gate" "the mutated script still said it"; else pass "mutant: with the ledger gate off workers false is silent again, the case is caught"; fi
+else fail "mutant ledger gate" "the sed no longer matches unlinked-worktrees.sh"; fi
+cp "$ROOT/ledger.at-b" "$CM_HOME/ledger.json"
 run "$S" --json
 check "--json carries the same rows, the exempt count and complete:true" 'jq -e ".unlinked | map(.name) | sort == [\"dev-101-unlinked\",\"dev-103-prlinked\",\"dev-lead-time-fix\",\"epic-orphan\",\"sweep-6001\"]" <<<"$OUT" >/dev/null && jq -e ".exempt == 9 and .complete == true" <<<"$OUT" >/dev/null' "$OUT"
 
@@ -186,7 +247,7 @@ hostlist local
 rm -f "$STUB_DIR/wl-box2.json"
 
 # ---- mutants on a scratch copy: each exemption or the linked test removed must fail a case ----
-mkdir -p "$ROOT/mut/scripts" && cp "$SKILL"/scripts/lib.sh "$SKILL"/scripts/unlinked-worktrees.sh "$ROOT/mut/scripts/"
+mkdir -p "$ROOT/mut/scripts" && cp "$SKILL"/scripts/lib.sh "$SKILL"/scripts/unlinked-worktrees.sh "$SKILL"/scripts/jdupkeys "$ROOT/mut/scripts/"
 M="$ROOT/mut/scripts/unlinked-worktrees.sh"
 put local "$(row $W/dev-1 1 null)" "$(row $W/foo-sweeper null null)" "$(row $W/old-archived null null '{"isArchived":true}')" "$(row $W/dev-5 null null)" \
   "$(row $W/ledger-lane null null)" "$(row $W/buildboss null null)" "$(row $W/concertmaster null null)" "$(row $W/main-checkout null null '{"isMainWorktree":true}')" \
@@ -208,7 +269,7 @@ mutant "concertmaster own worktree exemption removed" 's/elif any\(names\[\]; \.
 mutant "archived exemption removed" 's/elif \(\.isArchived \/\/ false\) then "archived"//'
 mutant "main checkout exemption removed" 's/if \(\.isMainWorktree \/\/ false\) then "main checkout"/if false then "main checkout"/'
 mutant_ledger() { # the unparsable-ledger report removed must fail the case
-  cp "$SKILL/scripts/unlinked-worktrees.sh" "$M"; perl -0pi -e 's/else printf \x27%s\\t%s\\n\x27 "\(ledger\)".*?>> "\$TMP\/bad\.tsv"; fi/else :; fi/s' "$M"
+  cp "$SKILL/scripts/unlinked-worktrees.sh" "$M"; perl -0pi -e 's/else printf \x27%s\\t%s\\n\x27 "\(ledger\)".*?>> "\$TMP\/bad\.tsv"; fi/else :; fi/s' "$M"; perl -0pi -e 's/if ! gwhy="\$\(cm_workers_gate "\$LEDGER"\)"; then/if false; then/' "$M"; perl -0pi -e 's/\[ -n "\$sbad" \] \|\| sbad=1/sbad="\${sbad:-0}"/' "$M"
   if cmp -s "$SKILL/scripts/unlinked-worktrees.sh" "$M"; then fail "mutant ledger parse report" "the edit changed nothing"; return; fi
   printf '{"workers": [oops\n' > "$CM_HOME/ledger.json"; run "$M"
   if grep -q "CHECK INCOMPLETE: (ledger)" <<<"$OUT"; then fail "mutant ledger parse report" "still reported"; else pass "mutant ledger parse report removed is caught"; fi

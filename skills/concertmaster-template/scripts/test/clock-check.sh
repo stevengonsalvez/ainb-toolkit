@@ -386,5 +386,26 @@ run utc.yaml 2000-01-01T09:30:00Z
 after="$(cd "$CM_HOME" && find . -type f -exec sha256sum {} + | sort | sha256sum; ls -A "$CM_HOME" | tr '\n' ' ')"
 check "it changes nothing under CM_HOME (a ledger present is byte for byte the same, no file added)" '[ -n "$before" ] && [ "$before" = "$after" ]' "$before / $after"
 
+echo "--- a worker that is not text (it hid a window's claim on the worker, so one worker covered two windows)"
+# day 1 (past 12 hours, its worker alive) and day 2 both name w-deploy-a: one worker never covers two windows
+two() { # <day-1 worker as JSON>
+  ledger "$(jq -cn --argjson w "$1" '{workers: {"w-deploy-a": {state: "running"}}, deployWindows: [
+    {id: "2000-01-01T11:00", at: "2000-01-01T11:00:00Z", state: "staging", worker: $w},
+    {id: "2000-01-02T11:00", at: "2000-01-02T11:00:00Z", state: "staging", worker: "w-deploy-a"}]}')"
+  run utc.yaml 2000-01-02T09:30:00Z
+}
+two '"w-deploy-a"'
+check "control: both rows name w-deploy-a (text): named by 2 unfinished rows, not live, WAITING row only" '[ "$(val picker)" = WAITING-row-only ] && printf "%s\n" "$OUT" | grep -q "named by 2 unfinished"' "$OUT"
+for w in '["w-deploy-a"]' '{"id":"w-deploy-a"}' true false; do
+  two "$w"
+  check "worker $w on an unfinished row: unknown, WAITING row only, never allowed" '[ "$(val state)" = unknown ] && [ "$(val picker)" = WAITING-row-only ] && printf "%s\n" "$OUT" | grep -q "not text"' "$OUT"
+done
+two '["w-deploy-a"]'
+ledger "$(jq -cn '{workers: {"w-deploy-a": {state: "running"}}, deployWindows: [
+    {id: "2000-01-01T11:00", at: "2000-01-01T11:00:00Z", state: "done", worker: ["w-deploy-a"]},
+    {id: "2000-01-02T11:00", at: "2000-01-02T11:00:00Z", state: "staging", worker: "w-deploy-a"}]}')"
+run utc.yaml 2000-01-02T09:30:00Z
+check "control: a finished row with a worker that is not text is ignored, the live pinned 11:00 allows" '[ "$(val picker)" = allowed ]' "$OUT"
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]

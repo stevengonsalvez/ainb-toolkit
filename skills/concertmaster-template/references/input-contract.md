@@ -112,6 +112,29 @@ Every decision first requires: a readable ledger, a valid `workers` container, a
 | `capacity_kill` | `standing` not true, and a live state or `done` or `retired` |
 | `teardown` | `standing` not true; state not `asleep`; `parent`, `beadsEpic`, `epicConflict` readable and no conflict recorded; the containers `followUps`, `lanes` and `asks` readable and (at version 2 or more) present; the worker placed in its family; no open unescalated follow-up on it or anything below it; no lane it leads and no unreadable lane state that may be its own; no open ask about it |
 
+## 6a. Whole-ledger hold
+
+A bad member blocks only what it might be (§ 4). Two ledger faults cannot be narrowed that cheaply, so the readers below hold more than the damaged row. This section says what, and who.
+
+What is held. `cm_workers_gate` (`lib.sh`) returns 3 and the reader acts on NO worker row when any of these is true: the ledger is a zero-byte file, is not exactly one JSON document (two documents, truncated, not JSON), is not an object, has a `workers` that is neither absent, null nor an object, or writes any object key twice anywhere under `workers`. The unit of the hold is the WHOLE ledger, not the row: `scripts/jdupkeys` does name the path of the repeat, but the readers below take one yes-or-no answer for every row, because a repeat can change what a row means (jq keeps the last of two equal keys: `"state":"parked","state":"running"` is a running lane) and a reader that has to join rows by host and path cannot tell which other row the damaged one could be. A zero-byte file is a ledger that cannot be read, never "no ledger": only a path that does not exist means there is nothing to hold on (`resume.sh` and `cm_rows_readable_at` test the path with `-e`, not `-s`).
+
+| reader | takes | what a hold does |
+|---|---|---|
+| `capacity-check.sh`, `runtime-check.sh`, `boot-sweep.sh`, `roster.sh`, `classify.sh`, `unlinked-worktrees.sh` | `cm_workers_gate` | the reader names the reason; capacity-check lists no candidate, runtime-check checks and sends nothing (exit 1, an unreadable row), boot-sweep holds every nudge, roster.sh keeps the old roster, classify.sh marks every item standing-unknown, unlinked-worktrees.sh reports the ledger and exempts no standing lane |
+| `resume.sh` | `cm_rows_readable_at` before the run (rc 3 holds, via the gate) and `cm_workers_gate` again at the re-check | the lane is left alone, nothing created, nothing sent; the roster step runs for any ledger that EXISTS, so a zero-byte file no longer reads as "no ledger" |
+| `ask-timeout.sh` | `cm_input_dupkeys` (the same scan) | NARROWER than the whole ledger: an ask row with a repeated key, an ask whose worker row has one, or a repeat of `asks` or `workers` itself is "repeated key: stays with the owner" (never, no verdict). A ledger the scan cannot read judges nothing (exit 1) |
+| `stall.sh` | `cm_input_dupkeys` (the same scan) | WHOLE TICK: a repeat under `workers`, `asks`, `freeze`, `queue` or `lanes` is a reason in `$inputBad`, so no lane, PR or ask is judged that tick, each repeat is a gap, and nothing is nudged. A ledger the scan cannot read is stale input (exit 3) |
+| `cm_ledger_write` (every ledger writer: queue, followups, sleep, ask-timeout `--stamp`, `--claim` and `--record`, lane-health stores) | `cm_input_dupkeys` on the EXISTING ledger | the write is REFUSED (rc 1, reason printed, file untouched): a rewrite through jq would keep only the last of two equal keys and silently turn the repair into the data |
+
+Readers that do NOT take the gate, and why.
+- `digest.sh`: it reports the shape of a tick; a hidden or mis-stated ask is a display fault, nothing is acted on. It prints "unreadable" for a `workers` that is not an object. Not gated for a repeated key.
+- `fleet-state.sh`: reads only the ledger `freeze` and `deployWindows`; a `freeze` that is not exactly `{state: "on"|"off"}` or a ledger that cannot be read is published as `freeze=on`, never off.
+- `followups.sh`: reads `followUps`, `workers` and `queue` with jq (last key wins) and acts on them (it opens issues and adopts worktrees). It is NOT gated for a repeated key; its ledger writes ARE refused by `cm_ledger_write`. A known limit.
+- `lane-health.sh`: acts on worker rows (probe, nudge, sleep). It checks that `workers` is an object but NOT for a repeated key; its ledger writes are refused by `cm_ledger_write`. A known limit.
+- `teardown.sh`, `lane-handles.sh`: they have their own guards and are not part of this section.
+
+The hold is conservative by design: it can stop a healthy lane for a tick because of damage in an unrelated row. That is the right side to err on, since the fault it guards is a ledger that says one thing to its writer and another to jq, and the repair is one edit by hand (the reason names this section, and `scripts/jdupkeys <ledger>` names the path).
+
 ## 7. Numbers
 
 An ask, a follow-up issue, a `pr`, a `maxWorkers` and a `schemaVersion` are whole numbers of at least 1 (0, 00 and negatives are no number) and below 1000000000 (the version below 1000000), decided from the exact decimal token (rule 8).

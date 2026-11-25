@@ -1,0 +1,38 @@
+# stall-read-allow.tsv: a field NAME the compiled stall.sh program reads that is not a field of one of its four input documents (scripts/test/fixtures/stall-fields.tsv lists those). scripts/test/field-reads.sh fails when the program reads a name that is in neither file.
+# name	why (a group)
+Key	jq builtin: a key jq itself reads inside from_entries, with_entries, match or limit, not a field of an input document
+Name	jq builtin: a key jq itself reads inside from_entries, with_entries, match or limit, not a field of an input document
+Value	jq builtin: a key jq itself reads inside from_entries, with_entries, match or limit, not a field of an input document
+key	jq builtin: a key jq itself reads inside from_entries, with_entries, match or limit, not a field of an input document
+value	jq builtin: a key jq itself reads inside from_entries, with_entries, match or limit, not a field of an input document
+k	jq builtin: a key jq itself reads inside from_entries, with_entries, match or limit, not a field of an input document
+length	jq builtin: a key jq itself reads inside from_entries, with_entries, match or limit, not a field of an input document
+offset	jq builtin: a key jq itself reads inside from_entries, with_entries, match or limit, not a field of an input document
+captures	jq builtin: a key jq itself reads inside from_entries, with_entries, match or limit, not a field of an input document
+string	jq builtin: a key jq itself reads inside from_entries, with_entries, match or limit, not a field of an input document
+previous	jq builtin: a key jq itself reads inside from_entries, with_entries, match or limit, not a field of an input document
+d	regex capture: a named capture group or loop variable of a regex inside the program (time zones, PR references), not a field
+g	regex capture: a named capture group or loop variable of a regex inside the program (time zones, PR references), not a field
+h	regex capture: a named capture group or loop variable of a regex inside the program (time zones, PR references), not a field
+m	regex capture: a named capture group or loop variable of a regex inside the program (time zones, PR references), not a field
+n	regex capture: a named capture group or loop variable of a regex inside the program (time zones, PR references), not a field
+oh	regex capture: a named capture group or loop variable of a regex inside the program (time zones, PR references), not a field
+om	regex capture: a named capture group or loop variable of a regex inside the program (time zones, PR references), not a field
+r	regex capture: a named capture group or loop variable of a regex inside the program (time zones, PR references), not a field
+s	regex capture: a named capture group or loop variable of a regex inside the program (time zones, PR references), not a field
+z	regex capture: a named capture group or loop variable of a regex inside the program (time zones, PR references), not a field
+_li	program row: a field of a row the program builds itself (a stalled row, an ask row, an action) and reads back, not a field of an input document
+ageMinutes	program row: a field of a row the program builds itself (a stalled row, an ask row, an action) and reads back, not a field of an input document
+closedBy	program row: a field of a row the program builds itself (a stalled row, an ask row, an action) and reads back, not a field of an input document
+code	program row: a field of a row the program builds itself (a stalled row, an ask row, an action) and reads back, not a field of an input document
+noAction	program row: a field of a row the program builds itself (a stalled row, an ask row, an action) and reads back, not a field of an input document
+rung	program row: a field of a row the program builds itself (a stalled row, an ask row, an action) and reads back, not a field of an input document
+at	action log: a field of a stall-actions.ndjson row written by stall.sh --act (the program own log, read back: consciously out of scope of the four input documents)
+verb	action log: a field of a stall-actions.ndjson row written by stall.sh --act (the program own log, read back: consciously out of scope of the four input documents)
+t	action log: a field of a stall-actions.ndjson row written by stall.sh --act (the program own log, read back: consciously out of scope of the four input documents)
+sha	seen file: a field of a stall-seen.json row written by stall.sh (the PR head first-seen file)
+result	json shape: the answer of the fleet CLI (comment-segs.jq reads .result.worktrees), a helper of the worktree comment text, not a field of the four input documents
+dup	program-built: the trimmed worker ids that two keys of the workers map share (ask_wsnorm)
+ws	program-built: the workers map with its keys trimmed (ask_wsnorm)
+CM_ASK_OWNER_LABEL	program-built: the owner label read from the environment by ask_owner_why (ask-deny.sh), not a field of an input document
+issue	read by the shared ask_owner_why of ask-deny.sh: its type holds are checked by scripts/test/ask-timeout.sh and the fields inventory asktimeout-fields.tsv

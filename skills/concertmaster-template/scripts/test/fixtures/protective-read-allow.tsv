@@ -1,0 +1,67 @@
+# protective-read-allow.tsv: a line that reads a protective field in a program under scan (scripts/test/fixtures/ledger-readers.tsv),
+# without the typed idiom field-reads.sh looks for, and why that is safe. Columns (tab separated):
+#   program   literal text the line contains   reason
+# The scan fails on any other such line, and on a row here that no line matches any more (stale).
+ask-deny.sh	if ((.issue // null) | type) != "number" then "no issue to record a verdict on"	the read is the type test itself: an issue that is not a number is refused as having no issue to record a verdict on
+boot-sweep.sh	(.state // "") == "asleep")) | (.path // .worktree // .worktreePath // empty)	builds the exact-asleep exemption list only: a row is skipped from the nudge when its state is exactly asleep; a row of any other state is not exempted here, and the standing rows to nudge come from STANDING (BS_OK: standing exactly true, a known state that is not asleep)
+capacity-check.sh	((.pr.state // "") | ascii_upcase) == "OPEN"	a PR state, not a worker state
+clock-check.sh	state // "unknown" | tostring	prints the worker state as text for the deploy-worker line, display only
+clock-check.sh	(.state // "") | tostring | IN("done", "skipped", "stopped")	a deployWindows state is matched against the exact finished set: a garbled state is unfinished, the protective direction
+clock-check.sh	select(((.state // "") | IN("done", "skipped", "stopped") | not)	same exact finished set on the worker lookup: a garbled window state is unfinished, the protective direction
+clock-check.sh	(.state // "" | tostring | gsub(	display text of a deploy window row in the clock report; the window state decision uses the exact finished set elsewhere
+clock-check.sh	(.workers // {})[$w] | type == "object" and ((.state // "") | IN("spawning", "running", "blocked-on-owner"))	worker_live: only an exact live state counts as a live deploy worker; a missing, wrong-typed or unknown state reads as not live, which the report says (the safe direction here)
+config-check.sh	(.issue // null) == null or (.issue | type == "number" and . >= 1 and . == floor)	config validation, not a ledger read: the lanes[].issue is checked to be absent or a whole number of 1 or more
+cutover-host.sh	elif (.standing or (.id | test($shape))	reads the row built by WORKERS_JQ above it, where standing is already the boolean cm_standing_any
+cutover-host.sh	(.standing | tostring)	prints the WORKERS_JQ row, where standing is already the boolean cm_standing_any
+cutover-host.sh	select((.value.state // "running") | cm_state_dead | not)	a null, false or garbled state reads as running through the default, and cm_state_dead then says not dead: the row is kept (the protective direction); this read only decides dead or not dead
+digest.sh	((.state // "active") | tostring | ascii_downcase	a queue or project item state, display only; the worker state use is covered by the seam inventory
+digest.sh	(.issue // null) != null	display of an ask issue reference only; the field is in the seam inventory digest-fields.tsv
+digest.sh	"#\(.issue // "?")	display of an ask issue reference only; the field is in the seam inventory digest-fields.tsv
+fleet-state.sh	lf="$(jq -r '.freeze // empty' <<<"${prev:-null}"	reads the parsed cm:state comment line, where freeze is a regex capture of exactly on|off
+fleet-state.sh	v="$(jq -r '.freeze.window // empty' "$led"	the window text, not the freeze switch
+fleet-state.sh	.valid and .at == $at and .freeze == $f	the read back of the comment line, regex captured
+fleet-state.sh	freeze=\(.state.freeze)	prints the parsed comment line
+fleet-state.sh	freeze="$(jq -r '.state.freeze // ""' "$TMP/resolved.json")"	the parsed comment line, regex captured, "" blocks
+fleet-state.sh	if .freeze == null then "absent" elif (.freeze | type) == "object" and (.freeze.state == "on" or .freeze.state == "off") then .freeze.state else "bad" end	the whole expression is the typed read: absent, an object with state exactly on or off, or bad (which publishes freeze=on)
+fleet-state.sh	fix ledger.freeze	the warning text
+followups.sh	(.workers[(.lanes[$o].lead // "")].state // "missing")	report verb, listing only: the lead state is compared with cm_state_dead; a state that is no known word is not dead, so the lane reads running and nothing is listed (nothing is closed or dropped by this read)
+followups.sh	(.lanes[$o].state // "absent")	report verb, listing only: the lane state is compared with the exact set gone, idle, absent, draining; any other value reads as running and the follow-up is not listed
+followups.sh	if ($w.state // "") | alive | not then ($w.state // "missing")	report verb, listing only: alive() is an exact set of live states (no normalising), so a garbled or unknown state is NOT alive here and the follow-up is listed as orphaned with that state shown; the direction is more visible, nothing is closed or dropped
+followups.sh	((.state // "") | cm_state_dead | not)	an empty or garbled state is not dead, so the worker is live (the protective direction: a follow-up stays held)
+input-view.jq	( ($doc.freeze) as $f	the typed view reads freeze once and types it in the lines that follow
+input-view.jq	$m.fields.standing as $s	the typed view reads its own per-field marker (a type and a reason), not the ledger value
+input-view.jq	($m.fields.standing.reason // "absent")	the reason text of the typed marker, display only
+intake.jq	open: ((.state // "" | ascii_downcase) == "open")	the state of a GitHub issue (open or closed), not a ledger worker state
+intake.jq	(($l.state // "") | IN("running", "idle", "draining", "spawning"))	lane_live: a lane is live only in an exact live state; any other state, a near miss included, is not live, so work is never routed to it (the safe direction)
+intake.jq	.state // "") | IN("running", "idle", "spawning")	lane_live: the lead worker is live only in an exact live state; any other state is not live, so work is never routed to it (the safe direction)
+lane-handles.sh	select((.value.state // "running") | cm_state_dead | not)	a null, false or garbled state reads as running through the default, and cm_state_dead then says not dead: the row is kept (the protective direction); this read only decides dead or not dead
+lane-handles.sh	((.state // "running") | cm_state_dead | not)	a null, false or garbled state reads as running through the default, and cm_state_dead then says not dead: the row is kept (the protective direction); this read only decides dead or not dead
+lane-health.sh	select(.standing or (.state | IN("retired"	reads the ROWS_JQ row, where standing is the boolean cm_standing_any and state is "unknown" for a bad one
+lane-health.sh	def claimsunread($r): $mode == "all" and ($r.standing | not)	reads the ROWS_JQ row: standing is already boolean
+lane-health.sh	($r.standing or leadlike($rname)	reads the ROWS_JQ row: standing is already boolean
+lane-health.sh	isLead: $r.standing	reads the ROWS_JQ row: standing is already boolean
+lane-health.sh	elif $r.standing then "standing"	reads the ROWS_JQ row: standing is already boolean
+lane-health.sh	($p.pane.state // "") == "busy"	a pane state, not a worker state
+lane-health.sh	(.state // "" | IN("retired", "done", "teardown"))	reads the normalized row state
+lane-health.sh	select((.value.state // "running") | cm_state_dead | not)	a null, false or garbled state reads as running through the default, and cm_state_dead then says not dead: the row is kept (the protective direction); this read only decides dead or not dead
+lane-health.sh	cm_ledger_write '.workers[$id] |= (. + {state: "asleep", asleepAt: $now, asleepFrom: (if (.state // "running") == "asleep" then (.asleepFrom // "running") else (.state // "running") end)	the sleep write: the row is set to state asleep whatever it was; the previous state is only recorded in asleepFrom, so a garbled previous state cannot lift or add a hold
+ledger-rebuild.sh	select((.value.state // "") | IN("gone", "repurposed") | not)	the rebuild matches discovered worktrees to ledger rows already held: a row stays matched (keeps its key, so no duplicate is made) unless its state is exactly gone or repurposed; a garbled state keeps the row
+ledger-rebuild.sh	(($W[$o.lead].state // "") | IN("gone", "repurposed")) | not)	the existing lane lead is kept unless its worker row is exactly gone or repurposed; a garbled state keeps the lead (the rebuild does not replace what it cannot read as dead)
+ledger-rebuild.sh	(if $e.value.state == "asleep" and (.[$e.key].state // "") != "asleep"	$e is the row the rebuild built from the fleet, not the old ledger value; when it says asleep, the held row is set to asleep and its old state (any value) is kept in asleepFrom: asleep is the held direction, never nudged by boot-sweep
+lib.sh	.project //= $p	stamps the project onto a ledger that has none; a present one of any type is compared as text by cm_ledger_guard
+lib.sh	select((.value.state // "running") | cm_state_dead | not)	a null, false or garbled state reads as running through the default, and cm_state_dead then says not dead: the row is kept (the protective direction); this read only decides dead or not dead
+programme-rollup.sh	((.value.state // "running") | dead2 | not)	a false or garbled state reads as running = live, the protective direction for a rollup member
+programme-rollup.sh	($lead.state // "running") | dead2 | not	same: a garbled lead state reads live
+programme-rollup.sh	($lead.state // "unknown") | tostring | cell(40)	display only
+programme-rollup.sh	((.value.state // "") != "gone")	a lane is dropped only for the exact state gone; anything else stays in the rollup (the protective direction)
+programme-rollup.sh	(($W[$ld].state // "running") | cm_state_dead | not)	a null, false or garbled state reads as running through the default, and cm_state_dead then says not dead: the row is kept (the protective direction); this read only decides dead or not dead
+programme-rollup.sh	((.value.state // "running") | cm_state_dead | not)	a null, false or garbled state reads as running through the default, and cm_state_dead then says not dead: the row is kept (the protective direction); this read only decides dead or not dead
+queue-audit.sh	(.issue // "" | tostring)	display of a queue item issue number in the audit row; nothing is decided from it
+stall.sh	$l.freeze | if . == null then empty	the typed ledger check of the stall classifier (v_type, seam covered)
+stall.sh	else (.ttl | v_type("ledger"; ".freeze.ttl"; S))	typed ttl, seam covered
+stall.sh	freeze: ($L0.freeze | s_obj)	typed through s_obj, seam covered
+stall.sh	($L.freeze // {}) as $fz	after the typed check above: a bad freeze fails the document, never reaches here
+stall.sh	($fz.state // "") == "on"	after the typed check above: state is exactly on or off here
+stall.sh	($i.pr.state // "") == "OPEN"	a PR state, not a worker state
+stall.sh	if type == "string" and test("^[0-9]+$") then "ledger: .freeze.ttl	the message text of the typed ttl check
+stall.sh	then "ledger: .freeze is not an object with state on or off"	the message text of the typed ledger freeze check (state is checked on the same line); seam covered

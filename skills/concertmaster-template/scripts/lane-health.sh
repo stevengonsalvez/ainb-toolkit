@@ -689,7 +689,7 @@ ROWS_JQ="$CM_JQ_STATE_DEFS $CM_JQ_NORMP"'
     | { id: $id, host: (($w.host // "local") | tostring),
         path: (($w.path // $w.worktree // $w.worktreePath // "") | tostring | normp),
         lane: ($w.lane // null), parent: (if ($w.parent | type) == "string" then $w.parent else null end),
-        standing: ($w.standing == true), state: (($w.state // "running") | tostring),
+        standing: ($w.standing | cm_standing_any), state: (if ($w.state | cm_state_unknown) then "unknown" else (($w.state | cm_state_eff) | tostring) end),
         agent: ($w.agent // null), model: ($w.model // null), effort: ($w.effort // null),
         lastComment: ($w.lastComment // null), blockedQuestion: ($w.blockedQuestion // null), task: ($w.current // $w.task // null),
         live: ($w.live // {}), health: ($w.health // {}), resumeAttempts: ($w.resumeAttempts // 0),
@@ -844,7 +844,7 @@ jq -s 'add // {}' "$TMP/marks.ndjson" > "$TMP/marks.json"
 
 # every standing ledger worker, whatever its path looks like: an unknown process on one of these is never slept
 if [ "$HAVE_LEDGER" = 1 ]; then
-  jq '[(.workers // {}) | to_entries[] | select(.value | type == "object") | select(.value.standing == true)] as $s
+  jq "$CM_JQ_STATE_DEFS"'[(.workers // {}) | to_entries[] | select(.value | type == "object") | select(.value.standing | cm_standing_any)] as $s
       | {names: [$s[] | ((.value.path // .value.worktree // "") | tostring | split("/") | last // "" | ascii_downcase), (.key | ascii_downcase), (.key | ascii_downcase | ltrimstr("w-"))] | map(select(length > 0)) | unique,
          sids: [$s[] | .value.live.sessionId // empty | strings] | unique}' "$LEDGER" > "$TMP/standing.json" 2>/dev/null || echo '{"names":[],"sids":[]}' > "$TMP/standing.json"
 else echo '{"names":[],"sids":[]}' > "$TMP/standing.json"; fi
@@ -862,7 +862,7 @@ def base: split("/") | map(select(length > 0)) | last // "";
 def hhmm: if . == null then "?" else (localtime | strflocaltime("%H:%M")) end;
 def healthyw: IN("running", "idle", "waiting on you");
 def markof: {"running": "●", "idle": "○", "waiting on you": "?", "stuck": "⚠", "stopped": "✗", "asleep": "z", "unknown": "·"}[.] // "·";
-def shouldrun: IN("asleep", "retired", "done", "teardown", "queued") | not;
+def shouldrun: IN("asleep", "retired", "done", "teardown", "queued", "parked", "spawning", "unknown") | not;   # the states with no session to resume (lib.sh CM_STATES_NORESUME) plus spawning
 def leadlike($n): ($n | ascii_downcase) as $l | (($laneNames | index($l)) != null) or ($l | test($laneRe)) or ($l == ($self | ascii_downcase));
 $ST[0].names as $standingNames | $ST[0].sids as $standingSids
 | $S[0] as $store | $RW[0] as $rows | $HS[0] as $hosts | $PN[0] as $panes | $CO[0] as $comments | $MK[0] as $marks
@@ -974,6 +974,7 @@ $ST[0].names as $standingNames | $ST[0].sids as $standingSids
                             else "fine, nothing to do" end)} end)
        | if $st == "asleep" then .m = "marked asleep, but a process runs here (pid \($p.pid)); " + (.m // "awake") else . end
      elif ($h.incomplete // false) then {w: "unknown", keep: true, m: "the process scan on \($r.host) was incomplete: not judged, never resumed"}
+     elif $st == "unknown" then {w: "unknown", keep: true, m: "its ledger state is not a known state (a near miss such as Asleep, or a wrong type): not judged, never resumed, fix the ledger row"}
      elif $st == "asleep" then {w: "asleep", m: "put to sleep on purpose\(if ($r.asleepAt | ep) != null then " at " + ($r.asleepAt | ep | hhmm) else "" end); never resumed by the check or a reboot"}
      elif $should then {w: "stopped"}
      else null end) as $v

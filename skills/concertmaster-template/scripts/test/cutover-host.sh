@@ -592,6 +592,27 @@ HOUT="$(bash "$HOLD" start --hours "$(printf '%s%s' 18446744073 709551624)" 2>&1
 check "--hours takes one or two digits: a huge number cannot wrap into range (exit 2, no lock)" '[ "$HRC" = 2 ] && [ ! -e "$CM_HOME/cutover-host.lock" ]' "$HOUT"
 HOUT="$(bash "$HOLD" start --hours 25 2>&1)"; HRC=$?
 check "...and 25 is out of range (exit 2)" '[ "$HRC" = 2 ]' "$HOUT"
+# AT-B: a state that is a near miss ("Asleep", "asleep ") or a wrong type (false, 7) makes the row unusable: shown once as skip with its reason, never moved.
+# A standing that is the text "true" is still a lead (standing is never read as false). Controls: state running and state asleep are usable rows.
+for bad in '"Asleep"' '"asleep "' false 7 '{}'; do
+  newcase; add_lane w-dev-1 dev-1 false claude; add_lane w-dev-2 dev-2 false claude
+  jq --argjson v "$bad" '.workers["w-dev-1"].state = $v' "$CM_HOME/ledger.json" > "$CM_HOME/l.new" && mv "$CM_HOME/l.new" "$CM_HOME/ledger.json"
+  run_cut local
+  check "state $bad: the row is unusable (shown once, skip), its neighbour is still planned" \
+    '[ "$(printf "%s\n" "$OUT" | grep -c "ledger row is not usable")" = 1 ] && plan_row w-dev-2 | grep -q cutover && ! plan_row w-dev-1 | grep -q cutover' "$OUT"
+done
+newcase; add_lane w-dev-1 dev-1 false claude
+jq '.workers["w-dev-1"].state = "running"' "$CM_HOME/ledger.json" > "$CM_HOME/l.new" && mv "$CM_HOME/l.new" "$CM_HOME/ledger.json"
+run_cut local
+check "control: state running is a usable row, planned for cutover" '[ "$(printf "%s\n" "$OUT" | grep -c "ledger row is not usable")" = 0 ] && plan_row w-dev-1 | grep -q cutover' "$OUT"
+newcase; add_lane w-dev-1 dev-1 false claude; add_lane w-dev-2 dev-2 false claude
+jq '.workers["w-dev-1"].standing = "true"' "$CM_HOME/ledger.json" > "$CM_HOME/l.new" && mv "$CM_HOME/l.new" "$CM_HOME/ledger.json"
+run_cut local
+check "a standing that is the text true is a field of the wrong type: the row is unusable (shown once, skip), never read as a lead or a worker, its neighbour is still planned" \
+  '[ "$(printf "%s\n" "$OUT" | grep -c "ledger row is not usable")" = 1 ] && plan_row w-dev-2 | grep -q cutover && ! plan_row w-dev-1 | grep -q cutover' "$OUT"
+newcase; add_lane w-dev-1 dev-1 false claude; add_lane w-dev-2 dev-2 false claude
+run_cut local
+check "control: two plain workers are moved in id order (w-dev-1 first)" 'printf "%s\n" "$OUT" | grep -q "^  1\. w-dev-1\$" && printf "%s\n" "$OUT" | grep -q "^  2\. w-dev-2\$"' "$OUT"
 newcase
 bash "$HOLD" start --hours 1 >/dev/null 2>&1; EPID="$(cat "$CM_HOME/cutover-hold.pid")"; echo "$EPID" >> "$ROOT/hold-pids"
 kill "$EPID"; for _ in 1 2 3 4 5 6 7 8 9 10; do kill -0 "$EPID" 2>/dev/null || break; sleep 0.2; done

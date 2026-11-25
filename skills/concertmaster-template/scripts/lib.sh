@@ -510,7 +510,7 @@ cm_ledger_guard() {
   if [ ! -s "$L" ] && [ "$create" = 0 ]; then return 0; fi
   def="$(cm_project_state_dir)"
   if [ -s "$L" ]; then
-    have="$(jq -r 'if type == "object" then (.project // "" | tostring) else "" end' "$L" 2>/dev/null || true)"
+    have="$(jq -r 'if type == "object" then (if .project == null then "" else (.project | tostring) end) else "" end' "$L" 2>/dev/null || true)"
     if [ -n "$have" ]; then
       if [ "$(cm_lower "$have")" = "$(cm_lower "$id")" ]; then return 0; fi
       cm_warn "REFUSED: ledger $L belongs to project '$have'; this session runs project '$id'. Nothing was read or written. CM_HOME=${CM_HOME:-unset} CM_LEDGER=${CM_LEDGER:-unset} probably leaked in from the other project: unset them (this project's state dir is $def)."
@@ -646,7 +646,7 @@ cm_ledger_write() {
 
 # _cm_ledger_write_locked <init 0|1> <filter> [jq args...]: the body of cm_ledger_write, lock held.
 _cm_ledger_write_locked() {
-  local init="$1" filter="$2" L ring keep tmp err reason mode old_size=0 new_size ts bak seq last
+  local init="$1" filter="$2" L ring keep tmp err reason mode old_size=0 new_size ts bak seq last dkeys
   shift 2
   L="$(cm_ledger_path)"
   ring="$(cm_ledger_bak_dir)"
@@ -662,6 +662,15 @@ _cm_ledger_write_locked() {
       cm_warn "ledger write refused: --init but $L already exists and is not empty: ledger untouched"; return 1
     fi
     old_size="$(wc -c < "$L" | tr -d ' ')"
+    # A key written twice in the EXISTING ledger: jq keeps only the last of two equal keys, so any rewrite through the filter would store that last value ("state":"parked","state":"running" becomes
+    # running) and the gate that held the readers on it (cm_workers_gate) would then pass on a ledger that says something the writer never meant. Refuse and leave the file as it is: the repair is one
+    # edit by hand (scripts/jdupkeys names each path). A scan that cannot run is refused too. references/input-contract.md, "Whole-ledger hold".
+    if ! dkeys="$(cm_input_dupkeys "$L" 2>/dev/null)"; then
+      cm_warn "ledger write refused: the repeated-key scan could not read $L (not one JSON document, or no python3): ledger untouched"; return 1
+    fi
+    if [ -n "$dkeys" ]; then
+      cm_warn "ledger write refused: $L writes an object key twice (first at $(printf '%s\n' "$dkeys" | head -n 3 | tr '\n' ' ')): a rewrite would keep only the last value and store it as the data. Fix the file by hand, scripts/jdupkeys <ledger> names each path: ledger untouched"; return 1
+    fi
   elif [ -n "$(_cm_ledger_bak_files)" ] && [ "${CM_LEDGER_INIT_FORCE:-}" != 1 ]; then
     # A lost ledger with backups is a restore, not a first boot: --init would start a new history
     # and 20 writes later prune every good copy.
@@ -750,17 +759,28 @@ _cm_ledger_write_locked() {
 # state is added HERE and in that table: the dead-record predicate below and the typed input
 # boundary (cm_input_cfg) are built from these lists.
 # shellcheck disable=SC2034  # read by the scripts that source this file
-CM_STATES_LIVE="queued spawning running stuck blocked-on-owner asleep done retired teardown"
+CM_STATES_LIVE="queued spawning running idle stuck blocked-on-owner parked asleep done retired teardown"
 # shellcheck disable=SC2034
 CM_STATES_DEAD="gone repurposed"
 # shellcheck disable=SC2034
 CM_STATES_ALL="$CM_STATES_LIVE $CM_STATES_DEAD"
 # Live rows with no agent session to resume (the same list resume.sh and roster.sh leave out).
 # shellcheck disable=SC2034
-CM_STATES_NORESUME="queued spawning done retired teardown asleep"
+CM_STATES_NORESUME="queued spawning parked done retired teardown asleep"
 # Legacy spellings found in old ledgers, <legacy>=<state>. Read as the mapped state by cm_state_dead.
 # shellcheck disable=SC2034
 CM_STATES_LEGACY="torn-down=gone"
+# The states of the OTHER ledger sections a reader checks for a near miss (stall.sh, digest.sh), one list each, here and nowhere else. They are
+# the documented enums (references/ledger.md); the ask list MUST equal iv_ask_states in input-view.jq (test/input-gate.sh checks it), because a
+# list narrower than the documented one marks a documented state unreadable and stops a whole judgment (the closed and in-progress asks).
+# shellcheck disable=SC2034
+CM_ASK_STATES="open answered in-progress decided closed"
+# shellcheck disable=SC2034
+CM_FOLLOWUP_STATES="open done"
+# shellcheck disable=SC2034
+CM_QUEUE_STATES="queued granted done dropped"
+# shellcheck disable=SC2034
+CM_WINDOW_STATES="pending rails-check staging validating prod done skipped stopped"
 
 # _cm_jq_words <words> <separator>: the words as jq string literals joined by the separator ("gone", "repurposed").
 _cm_jq_words() {
@@ -783,8 +803,32 @@ _cm_jq_legacy_map() {
 #   jq "$CM_JQ_STATE_DEFS"' .workers[] | select((.state // "running") | cm_state_dead | not)'
 #   cm_state_norm   a legacy spelling becomes its state, anything else is unchanged
 #   cm_state_dead   true for gone, repurposed and a legacy spelling of one (torn-down)
+#   cm_state_asleep     true for a lead put to sleep: kept, never resumed, nudged or respawned
+#   cm_state_resumable  true when the row may have an agent session to resume (roster.sh): not dead, not a no-resume state, not unknown
+#   cm_states_known     every state of the enum above and every legacy spelling, as a list (a near miss of one by case or spacing is not one)
+#   cm_ask_states / cm_followup_states / cm_queue_states / cm_window_states  the documented states of asks, followUps, queue.items and deployWindows (lists, from CM_ASK_STATES etc.)
+#   cm_state_eff        the state, or "running" when it is null or absent (the legacy default). false, 0 and "" stay as they are:
+#                       `.state // "running"` would turn false into running, and an asleep lane with a damaged state could be revived
+#   cm_state_unknown    true for a PRESENT state that is not an exact known state string (a near miss "Asleep" or "asleep ", false, 7, an
+#                       object); null or absent is the legacy running, not unknown. An unknown state is never resumable, never nudged,
+#                       never run: a reader that acts on a lane skips it and says so. States are matched EXACTLY, on purpose
+#                       (kinds are trimmed and lowercased, states are not): a near miss must be fixed in the ledger, not guessed
+#   cm_standing_bad     true when standing is present and not a boolean ("true", 1, an object): unreadable, never read as false
+#   cm_standing_any     true for standing true AND for an unreadable standing: where standing PROTECTS (exempts a lane from cleanup,
+#                       counts it as a lead) it reads as standing; where it permits an action (nudge, sleep) use cm_standing_bad to refuse
+#   cm_nonblank         true for a string with a non-space character ("", "  ", false, 7, null are not)
+#   cm_host_may_be($h)  true when a row's host could be $h: not a non-blank string (unreadable), or equal to $h ignoring case and
+#                       edge spaces. A row of unreadable host is read as possibly on this host (it protects), never dropped
+#   cm_fu_esc           a follow-up row is escalated: issue is a number or non-blank text, or issueUrl is non-blank text. Blank text,
+#                       true, an object, a list are not an escalation (jq `//` and `!= ""` read some of them as one)
 # shellcheck disable=SC2034  # read by lane-handles.sh
 CM_JQ_STATE_DEFS="def cm_state_norm: if type == \"string\" then ($(_cm_jq_legacy_map)[.] // .) else . end; def cm_state_dead: cm_state_norm as \$s | (\$s | type) == \"string\" and (\$s | IN($(_cm_jq_words "$CM_STATES_DEAD" ", "))); "
+CM_JQ_STATE_DEFS="$CM_JQ_STATE_DEFS"'def cm_state_asleep: cm_state_norm == "asleep"; '
+CM_JQ_STATE_DEFS="$CM_JQ_STATE_DEFS""def cm_ask_states: [$(_cm_jq_words "$CM_ASK_STATES" ", ")]; def cm_followup_states: [$(_cm_jq_words "$CM_FOLLOWUP_STATES" ", ")]; def cm_queue_states: [$(_cm_jq_words "$CM_QUEUE_STATES" ", ")]; def cm_window_states: [$(_cm_jq_words "$CM_WINDOW_STATES" ", ")]; "
+CM_JQ_STATE_DEFS="$CM_JQ_STATE_DEFS""def cm_states_known: [$(_cm_jq_words "$CM_STATES_ALL $(for _p in $CM_STATES_LEGACY; do printf '%s ' "${_p%%=*}"; done)" ", ")]; "
+CM_JQ_STATE_DEFS="$CM_JQ_STATE_DEFS"'def cm_state_eff: if . == null then "running" else . end; def cm_state_unknown: cm_state_eff | cm_state_norm | . as $u | (($u | type) != "string") or ((cm_states_known | index([$u])) == null); '
+CM_JQ_STATE_DEFS="$CM_JQ_STATE_DEFS""def cm_state_resumable: if cm_state_unknown then false else (cm_state_eff | cm_state_norm | . as \$s | (\$s | type) == \"string\" and ((\$s | IN($(_cm_jq_words "$CM_STATES_DEAD" ", "))) or (\$s | IN($(_cm_jq_words "$CM_STATES_NORESUME" ", ")))) | not) end; "
+CM_JQ_STATE_DEFS="$CM_JQ_STATE_DEFS"'def cm_standing_bad: . != null and type != "boolean"; def cm_standing_any: . == true or cm_standing_bad; def cm_nonblank: type == "string" and test("\\S"); def cm_host_may_be($h): (.host | type) != "string" or ((.host | cm_nonblank) | not) or ((.host | sub("^\\s+"; "") | sub("\\s+$"; "") | ascii_downcase) == ($h | ascii_downcase)); def cm_fu_esc: ((.issue | type) == "number") or ((.issue | cm_nonblank)) or ((.issueUrl | cm_nonblank)); '
 
 # CM_JQ_NAME_DEFS: the closed TYPE TABLE of a worker row and the one predicate for a name, as jq definitions (references/input-contract.md, rule 12). Put it in front
 # of a jq program, after CM_JQ_STATE_DEFS when the program needs both:
@@ -800,10 +844,13 @@ CM_JQ_STATE_DEFS="def cm_state_norm: if type == \"string\" then ($(_cm_jq_legacy
 #   cm_val_ok         true for a value that is not a string, or is a plain one
 #   cm_row_names_ok   true for a worker row none of whose string fields (the table, live and health included) holds one
 #   cm_row_fields_ok  cm_row_names_ok and cm_row_typed_ok: the one gate a program passes before it acts on a row
+#   cm_wild           true for a worker row with a host, path, worktree, worktreePath or worktreeId that is present and not text: it could be the row at ANY host and path
+#   cm_wild_rows      the keys of the non-dead rows that are wild: a program that acts on a process or a path it cannot match to a row holds while there is one
 # shellcheck disable=SC2016  # a jq program
 CM_JQ_NAME_DEFS='def cm_row_types: {host: "string", path: "string", worktree: "string", worktreePath: "string", worktreeId: "string", lane: "string", terminal: "string", parent: "string", state: "string", sessionId: "string", agent: "string", model: "string", effort: "string", beadsEpic: "string", kind: "string", asleepAt: "string", asleepFrom: "string", lastStopCause: "string", lastStopAt: "string", terminalRefreshedAt: "string", terminalChurnAt: "string", standing: "boolean", adopted: "boolean", shouldRun: "boolean", resumeAttempts: "count", nudges: "count", loopIntervalMin: "count", health: "object", stopHistory: "array", lastNudgeAt: "string", updatedAt: "string", displayName: "string", lastComment: "text", blockedQuestion: "text", task: "text", current: "text"}; def cm_live_types: {sessionId: "string", agent: "string", runtime: "string", model: "string", effort: "string", handle: "string", host: "string", sessionSource: "string", pid: "count", bypass: "boolean", lastTranscriptAt: "time", checkedAt: "time"}; def cm_health_types: {word: "string", paneState: "string", stopFromHealthy: "boolean", healthySince: "time", lastResumeAt: "time", paneSince: "time", checkedAt: "time", meaning: "text"}; def cm_type_is($t): if $t == "count" then (type == "number" and . >= 0 and . == floor) elif $t == "time" then (type == "string" or type == "number") elif $t == "text" then type == "string" else type == $t end; def cm_typed_in($t): . as $o | ($t | to_entries | all(. as $e | ($o[$e.key] == null) or ($o[$e.key] | cm_type_is($e.value)))); def cm_row_typed_ok: . as $r | ($r | type) == "object" and cm_typed_in(cm_row_types) and ($r.live == null or (($r.live | type) == "object" and ($r.live | cm_typed_in(cm_live_types)))) and ($r.health == null or (($r.health | type) == "object" and ($r.health | cm_typed_in(cm_health_types)))); def cm_name_ok: type == "string" and (test("\\p{Cc}|\\p{Zl}|\\p{Zp}") | not);'
 CM_JQ_NAME_DEFS="$CM_JQ_NAME_DEFS"' def cm_strip: gsub("\\p{Cc}|\\p{Zl}|\\p{Zp}"; ""); def cm_val_ok: (type != "string") or cm_name_ok;'
 CM_JQ_NAME_DEFS="$CM_JQ_NAME_DEFS"' def cm_row_names_ok: type == "object" and (. as $r | ([ cm_row_types | to_entries[] | select(.value == "string") | $r[.key] ] + [ ($r.live | objects) as $l | cm_live_types | to_entries[] | select(.value == "string") | $l[.key] ] + [ ($r.health | objects) as $hh | cm_health_types | to_entries[] | select(.value == "string") | $hh[.key] ]) | all(cm_val_ok)); def cm_row_fields_ok: cm_row_names_ok and cm_row_typed_ok;'
+CM_JQ_NAME_DEFS="$CM_JQ_NAME_DEFS"' def cm_wild: type == "object" and ([.host, .path, .worktree, .worktreePath, .worktreeId] | any(. != null and type != "string")); def cm_wild_rows: [ (.workers // {}) | if type == "object" then to_entries[] else empty end | select(.value | type == "object") | select((.value.state // "running") | cm_state_dead | not) | select(.value | cm_wild) | .key ];'
 
 # CM_JQ_CLASS_PHRASE: `class_phrase`, true for a drive.delegated_classes fragment that may stand for one class phrase:
 # it compiles, matches no empty text, and has no wildcard (an unescaped dot, \w \W \S \D \N \X \O \H \R), no negated
@@ -819,6 +866,42 @@ CM_JQ_CLASS_PHRASE='def class_phrase: type == "string" and length > 0
        | ($s | test("\\\\[wWSDNXOHR]") | not)
        and ($s | gsub("\\\\."; "e") | (test("\\[\\^") | not)
             and (gsub("\\[[^\\]]*\\]"; "\u0001") | (test("[.+*{]") | not) and (test("\u0001[?()]*\u0001") | not)))); '
+
+# cm_workers_gate [ledger file] [scope]: may a reader that ACTS on a lane trust the ledger's worker rows at all? A document that is not
+# what the reader expects must be held, never read as "no rows". Returns 0 and prints nothing when
+#   - there is no ledger file at all (nothing to hold on), or
+#   - the file is exactly ONE JSON object whose `workers` is absent, null or an object (false, [], "x", 7, true are NOT an object: jq `// {}` reads false as
+#     absent and `to_entries` on a list or text fails or yields rows of the wrong shape), and no object key is written twice anywhere under `workers`
+#     (jq keeps only the LAST of two equal keys, so `"standing":false,...,"standing":true` reads as true: references/input-contract.md says a repeat makes the row unreadable).
+# The optional scope `asks` widens the repeated-key test to `asks` as well, for a reader that acts on an ask row (ask-timeout, stall): the same last-key-wins read turns
+# `"kind":"merge","kind":"design"` into a design ask and `"state":"open","state":"answered"` into an answered one.
+# A file that is zero bytes is NOT "no ledger": it is a ledger that cannot be read, so it is held (rc 3), the same as null or a truncated file. Only a path that does not exist is "no ledger".
+# Returns 3 and prints ONE line saying why otherwise (an unparseable or truncated or empty file, a file with more than one JSON document, a document that is not an object, a workers that is not a map,
+# a repeated key under workers, a scan that could not run). Known limit: a repeated key anywhere under `workers` (or `asks`) holds the reader for EVERY row, not only the damaged one
+# (references/input-contract.md, "Whole-ledger hold").
+cm_workers_gate() {
+  local L="${1:-}" scope="${2:-}" dups out n
+  [ -n "$L" ] || L="$(cm_ledger_path)"
+  [ -e "$L" ] || return 0
+  [ -r "$L" ] || { printf 'the ledger file cannot be read\n'; return 3; }
+  if ! dups="$(cm_input_dupkeys "$L" 2>/dev/null)"; then
+    n="$(jq -s 'length' "$L" 2>/dev/null)" || n=""
+    case "$n" in
+      0) printf 'the ledger is empty (zero bytes or only white space)\n' ;;
+      ''|1) printf 'the ledger is not one readable JSON document (truncated, not JSON, or the repeated-key scan could not run)\n' ;;
+      *) printf 'the ledger holds more than one JSON document\n' ;;
+    esac
+    return 3
+  fi
+  if ! out="$(jq -r -s --arg dups "$dups" --arg scope "$scope" 'if length != 1 then "the ledger is not one JSON document"
+      elif (.[0] | type) != "object" then "the ledger is not a JSON object"
+      elif (.[0].workers != null and (.[0].workers | type) != "object") then "the ledger workers is not an object (a map of worker rows)"
+      elif ($dups | split("\n") | map(select(. != "") | fromjson) | any(.[0] == "workers")) then "a worker row writes the same key twice (a repeated key makes the row unreadable)"
+      elif ($scope == "asks" and ($dups | split("\n") | map(select(. != "") | fromjson) | any(.[0] == "asks"))) then "an ask row writes the same key twice (a repeated key makes the row unreadable)"
+      else "" end' "$L" 2>/dev/null)"; then printf 'the ledger could not be parsed\n'; return 3; fi
+  [ -z "$out" ] && return 0
+  printf '%s\n' "$out"; return 3
+}
 
 # ---- worker terminal handle setter ------------------------------------------------------------
 # cm_worker_set_handle <worker-id> <handle>

@@ -361,6 +361,16 @@ OUT="$("$SCRIPT" --dry-run)"
 check "dry-run: a lane on the dialog would be recovered" "$(res w-cm1)" "would-recover"
 check "dry-run: a remote lane on the dialog would be recovered" "$(res w-rcm)" "would-recover"
 check "dry-run sends nothing and writes no Esc state" "$(sends2)/$([ -e "$CM_HOME/cache/codemode-recover.tsv" ] && echo state || echo none)" "0/none"
+# a row whose state is not a live known word is never typed into by the Code Mode pass (pass 1 reports it): control = a known live state is reached
+jq '.workers["w-cm1"].state = "running"' "$CM_HOME/ledger.json" > "$CM_HOME/l.tmp" && mv "$CM_HOME/l.tmp" "$CM_HOME/ledger.json"
+OUT="$("$SCRIPT" --dry-run)"
+check "code mode: a lane with a known live state (running) would be recovered" "$(res w-cm1)" "would-recover"
+for bad in '"Asleep"' '"asleep"' '"gone"' '"torn-down"' '"frobnicated"' '7' 'false' '{"x":1}' '["running"]'; do
+  jq --argjson b "$bad" '.workers["w-cm1"].state = $b' "$CM_HOME/ledger.json" > "$CM_HOME/l.tmp" && mv "$CM_HOME/l.tmp" "$CM_HOME/ledger.json"
+  OUT="$("$SCRIPT" --dry-run)"
+  check "code mode: state $bad is held, the lane is not recovered or typed into" "$(printf '%s\n' "$OUT" | grep -c 'w-cm1.*Code Mode')/$(res w-cm1 | grep -c would-recover)/$(sends2)" "0/0/0"
+done
+ledger2
 mkdir -p "$CM_HOME" && : > "$CM_HOME/resume.lock"
 OUT="$("$SCRIPT")"
 check "resume.lock: not one key is sent while a resume runs" "$(sends2)" "0"
@@ -760,5 +770,107 @@ if mutant nocap 's/if \[ "\$tries" -ge "\$MAXESC" \]; then RESERVED_TRIES/if fal
   check "mutant: without the Esc cap a stubborn dialog gets a 3rd key (caught)" "$([ "$(esc2 t_cm3)" -le 2 ] && echo missed || echo caught)" "caught"
 fi
 
+# ---- the typed boundary: a standing row whose host or path is not text, or whose standing is not a boolean ---------------------------
+# `host: false` used to read as "local" (the `//` operator reads false as absent) and `path: false` as "no path": the row was checked as a plain lane or
+# silently dropped. The row is now LISTED as unknown with its reason (nothing sent, the ledger untouched), never read as "nothing there".
+bnd_case() { # <label> <extra row fields as JSON members, or ->: prints "<w-bnd result>|<sends>|<ledger unchanged yes/no>|<which reason: cannot-read, not-boolean or other>" ; SC overrides the script under test
+  (
+    r="$ROOT/bnd-$1"; mkdir -p "$r/home/cache" "$r/stub"
+    NOW="$(date +%s)"
+    export CM_HOME="$r/home" STUB_DIR="$r/stub" LIST="$r/terminals.json"
+    mk bndsrc 90; mkdir -p "$(wt bndsrc)"; export BND_T; BND_T="$(tdirp "$(wt bndsrc)")"
+    row="\"standing\":true,\"host\":\"local\",\"path\":\"$(wt bndsrc)\",\"terminal\":\"t_bnd\""
+    case "$2" in
+      host=*) row="\"standing\":true,\"host\":${2#host=},\"path\":\"$(wt bndsrc)\",\"terminal\":\"t_bnd\"" ;;
+      path=*) row="\"standing\":true,\"host\":\"local\",\"path\":${2#path=},\"terminal\":\"t_bnd\"" ;;
+      state=*) row="\"standing\":true,\"host\":\"local\",\"state\":${2#state=},\"path\":\"$(wt bndsrc)\",\"terminal\":\"t_bnd\"" ;;
+      standing=*) row="\"standing\":${2#standing=},\"host\":\"local\",\"path\":\"$(wt bndsrc)\",\"terminal\":\"t_bnd\"" ;;
+    esac
+    printf '{"workers":{"w-bnd":{%s}}}\n' "$row" > "$CM_HOME/ledger.json"
+    cp "$CM_HOME/ledger.json" "$r/ledger.before"
+    printf '{"result":{"terminals":[{"handle":"t_bnd","worktreePath":"%s","agentIdentity":"claude"}]}}\n' "$(wt bndsrc)" > "$LIST"
+    cat > "$r/orca" <<'STUB'
+#!/usr/bin/env bash
+echo "$*" >> "$STUB_DIR/calls.log"
+case "$1 $2" in "terminal list") cat "$LIST" ;; "terminal read") printf '{"ok":true,"result":{"terminal":{"tail":["❯ ","  ? for shortcuts"]}}}\n' ;; "terminal send") touch "$BND_T/s.jsonl"; echo '{"ok":true}' ;; esac
+STUB
+    chmod +x "$r/orca"; export ORCA_CLI_COMMAND="$r/orca" PLUGLY_CLI_COMMAND="$r/orca"
+    : > "$STUB_DIR/calls.log"
+    lo="$("${SC:-$SCRIPT}" 2>&1)"
+    printf '%s|%s|%s|%s\n' "$(printf '%s\n' "$lo" | awk -F'\t' '$1 == "w-bnd" { print $4 }' | head -n 1)" "$(grep -c '^terminal send' "$STUB_DIR/calls.log" || true)" \
+      "$(cmp -s "$r/ledger.before" "$CM_HOME/ledger.json" && echo yes || echo no)" \
+      "$(printf '%s\n' "$lo" | awk -F'\t' '$1 == "w-bnd" { print $5 }' | head -n 1 | sed -E 's/.*cannot be read.*/cannot-read/; s/.*not a boolean.*/not-boolean/; s/^(cannot-read|not-boolean)$/\1/' | grep -E '^(cannot-read|not-boolean)$' || echo other)"
+  )
+}
+check "typed boundary control: a standing row with text host, text path and a boolean standing is judged (stale: sent to)" "$(bnd_case ctl -)" "nudged|1|yes|other"
+for c in 'host=false|host false' 'host=7|host a number' 'host=[]|host an array' 'host={}|host an object' 'path=false|path false' 'path=7|path a number' 'path=[]|path an array' 'path={}|path an object'; do
+  check "typed boundary: standing row with ${c#*|} is held, nothing sent, ledger untouched (not read as local / no path)" "$(bnd_case "u-${c%%|*}" "${c%%|*}")" "$(case "$c" in host=*) echo "unreadable|0|yes|other" ;; *) echo "unknown|0|yes|cannot-read" ;; esac)"
+done
+check "typed boundary: standing row with standing \"true\" (text) is listed as unknown, nothing sent" "$(bnd_case u-stand 'standing="true"')" "unknown|0|yes|not-boolean"
+for c in '"Asleep"' '"asleep "' false 7 '"Parked"' '{}'; do
+  check "state $c on a standing lane: unknown (not a known state), nothing sent, ledger untouched" "$(bnd_case "s-${c//[^A-Za-z0-9]/_}" "state=$c" | cut -d'|' -f1-3)" "unknown|0|yes"
+done
+check "state running (control): a stale standing lane is nudged" "$(bnd_case s-run 'state="running"' | cut -d'|' -f1-3)" "nudged|1|yes"
+bnd_mutant() { # <name> <sed script> <case spec> <what the mutant must change: the whole "|"-joined answer of the control must differ>
+  local m="$ROOT/mut-bnd-$1"; rm -rf "$m"; mkdir -p "$m"; cp -R "$HERE/.."/. "$m"/ 2>/dev/null
+  sed -i.bak "$2" "$m/runtime-check.sh"
+  if cmp -s "$HERE/../runtime-check.sh" "$m/runtime-check.sh"; then echo "FAIL mutant $1: the sed no longer matches runtime-check.sh (update this test)"; fail=1; return 1; fi
+  return 0
+}
+if bnd_mutant norowok 's/if (\$rowok | not) then \[/if false then [/' ; then
+  for c in 'path=false' 'path=7' 'path=[]'; do
+    check "mutant: without the unreadable-row hold a $c row loses its 'cannot be read' report (caught)" "$([ "$(SC="$ROOT/mut-bnd-norowok/runtime-check.sh" bnd_case "m1-$c" "$c")" = "unknown|0|yes|cannot-read" ] && echo missed || echo caught)" "caught"
+  done
+fi
+if bnd_mutant nostand 's/if \[ "\$standbad" = 1 \]; then row/if false; then row/'; then
+  check "mutant: without the not-a-boolean hold a standing \"true\" row is judged and nudged (caught)" "$([ "$(SC="$ROOT/mut-bnd-nostand/runtime-check.sh" bnd_case m2-stand 'standing="true"')" = "unknown|0|yes|not-boolean" ] && echo missed || echo caught)" "caught"
+fi
+# A ledger that is not ONE object with a worker MAP and no repeated key is reported and nothing is sent; a worker row that is not an object is LISTED (unknown), never dropped.
+# lg_case <label> <ledger text, @ROW@ = a stale standing row that WOULD be nudged>: prints "<rc>|<sends>|<ledger unchanged>|<unreadable row printed>|<w-junk result>"; SC overrides the script
+lg_case() {
+  (
+    r="$ROOT/lg-$1"; mkdir -p "$r/home/cache" "$r/stub"
+    NOW="$(date +%s)"
+    export CM_HOME="$r/home" STUB_DIR="$r/stub" LIST="$r/terminals.json"
+    mk lgsrc 90; mkdir -p "$(wt lgsrc)"; export BND_T; BND_T="$(tdirp "$(wt lgsrc)")"
+    row="\"standing\":true,\"host\":\"local\",\"path\":\"$(wt lgsrc)\",\"terminal\":\"t_bnd\""
+    txt="${2//@ROW@/$row}"
+    printf '%s\n' "$txt" > "$CM_HOME/ledger.json"
+    cp "$CM_HOME/ledger.json" "$r/ledger.before"
+    printf '{"result":{"terminals":[{"handle":"t_bnd","worktreePath":"%s","agentIdentity":"claude"}]}}\n' "$(wt lgsrc)" > "$LIST"
+    cat > "$r/orca" <<'STUB'
+#!/usr/bin/env bash
+echo "$*" >> "$STUB_DIR/calls.log"
+case "$1 $2" in "terminal list") cat "$LIST" ;; "terminal read") printf '{"ok":true,"result":{"terminal":{"tail":["❯ ","  ? for shortcuts"]}}}\n' ;; "terminal send") touch "$BND_T/s.jsonl"; echo '{"ok":true}' ;; esac
+STUB
+    chmod +x "$r/orca"; export ORCA_CLI_COMMAND="$r/orca" PLUGLY_CLI_COMMAND="$r/orca"
+    : > "$STUB_DIR/calls.log"
+    lo="$("${SC:-$SCRIPT}" 2>&1)"; rc=$?
+    printf '%s|%s|%s|%s|%s\n' "$rc" "$(grep -c '^terminal send' "$STUB_DIR/calls.log" || true)" "$(cmp -s "$r/ledger.before" "$CM_HOME/ledger.json" && echo yes || echo no)" \
+      "$(printf '%s\n' "$lo" | grep -c 'unreadable')" "$(printf '%s\n' "$lo" | awk -F'\t' '$1 == "w-junk" { print $4 }' | head -n 1)"
+  )
+}
+check "ledger gate control: a good standing stale row is nudged once, rc 0" "$(lg_case ctl '{"workers":{"w-bnd":{@ROW@}}}' | cut -d'|' -f1-3)" "0|1|yes"
+for c in 'workers false|{"workers":false}' 'workers []|{"workers":[]}' 'workers text|{"workers":"x"}' 'workers 7|{"workers":7}' 'workers true|{"workers":true}' \
+         'ledger []|[]' 'ledger null|null' 'ledger text|"x"' 'truncated|{"workers":{"w-bnd":{"standing":true,"path":"/x' 'empty file|' \
+         'repeated key (standing false then true)|{"workers":{"w-bnd":{"standing":false,@ROW@}}}' ; do
+  lg_label="${c%%|*}"; lg_text="${c#*|}"
+  check "ledger gate ($lg_label): rc 1, nothing sent, ledger untouched, an unreadable row is printed" "$(lg_case "g-${lg_label// /_}" "$lg_text" | cut -d'|' -f1-3)|$(lg_case "g2-${lg_label// /_}" "$lg_text" | cut -d'|' -f4 | sed 's/^[1-9][0-9]*$/printed/')" "1|0|yes|printed"
+done
+check "a non-object row (false) next to a good row: listed as unknown (never dropped), the good row is still judged" "$(lg_case junk '{"workers":{"w-bnd":{@ROW@},"w-junk":false}}')" "0|1|yes|0|unknown"
+check "a non-object row (a number) alone: listed as unknown" "$(lg_case junk2 '{"workers":{"w-junk":7}}' | cut -d'|' -f1,2,5)" "0|0|unknown"
+if bnd_mutant gate 's/^if ! WHY="\$(cm_workers_gate "\$LEDGER")"; then$/if false; then/'; then
+  for c in 'workers false|{"workers":false}' 'workers []|{"workers":[]}' 'repeated key|{"workers":{"w-bnd":{"standing":false,@ROW@}}}'; do
+    check "mutant: without the ledger gate '${c%%|*}' is read as no lane or as standing again (caught)" "$([ "$(SC="$ROOT/mut-bnd-gate/runtime-check.sh" lg_case "mg-${c%%|*}" "${c#*|}" | cut -d'|' -f1,2)" = "1|0" ] && echo missed || echo caught)" "caught"
+  done
+fi
+# The repeated-key case pins the exit code AND the send count of both sides. Gate on: rc 1, nothing sent, an unreadable row (the cases above). Gate off (mutant): the damaged ledger passes as a clean tick,
+# rc 0 with nothing reported, so the tick that should say "unreadable" says nothing. Observed on this tree: the gate-off mutant does not nudge the lane, because boot-sweep.sh's own ledger hold (cm_workers_gate) still reports the lane and sends nothing; with BOTH gates off the lane IS nudged. The harm
+# pinned here is therefore the silent rc 0 of runtime-check itself, not a nudge. The tuple is rc|sends.
+check "repeated key, gate on: rc 1 and the lane is NOT nudged" "$(lg_case rk-on '{"workers":{"w-bnd":{"standing":false,@ROW@}}}' | cut -d'|' -f1,2)" "1|0"
+check "repeated key, gate off (mutant): rc 0 (a clean tick), nothing sent: the silent pass the gate prevents" "$(SC="$ROOT/mut-bnd-gate/runtime-check.sh" lg_case rk-off '{"workers":{"w-bnd":{"standing":false,@ROW@}}}' | cut -d'|' -f1,2)" "0|0"
+if bnd_mutant nonobj 's/if (\.value | type) != "object" then \[(\.key | cm_strip), "", "", "", "0", "3"\] | join("\\u001f") else (/if (.value | type) != "object" then empty else (/'; then
+  check "mutant: without the non-object row report the row is dropped again (caught)" "$([ "$(SC="$ROOT/mut-bnd-nonobj/runtime-check.sh" lg_case mn '{"workers":{"w-junk":7}}' | cut -d'|' -f5)" = "unknown" ] && echo missed || echo caught)" "caught"
+fi
 "$SCRIPT" --bogus >/dev/null 2>&1; check "bad usage: exit 2" "$?" "2"
 exit $fail

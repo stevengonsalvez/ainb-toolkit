@@ -1,0 +1,58 @@
+# digest-fields.tsv: the inventory of ledger fields scripts/digest.sh counts, lists or routes by. One line per path: path (dotted; * is any one key or index), the legal JSON types besides null (null is always legal), a class, a note. Class:
+#   A  a wrong type there would read as "not there" and drop an item, a count or a state: digest.sh prints "unreadable (ledger .<path> ...)" and scripts/test/digest-fuzz.sh asserts it for every mutation of that path
+#   L  consciously left out: display only, or read as text where a wrong type is dropped by that one line; no note is asserted (the fuzz still asserts no crash and the exit-0 contract)
+# The gh answers (merged, open PRs, deploy runs and jobs) and the fleet CLI worktree list are read defensively by shape (a wrong type is skipped, never a count): listed in SKILL.md as consciously left out.
+asks.*.state	string	A	ask owner scan (ask-deny.sh) and the Blocked on you list
+asks.*.kind	string	A	ask owner scan (ask-deny.sh) and the Blocked on you list
+asks.*.scope	string	A	ask owner scan (ask-deny.sh) and the Blocked on you list
+asks.*.question	string	A	ask owner scan (ask-deny.sh) and the Blocked on you list
+asks.*.topic	string	A	ask owner scan (ask-deny.sh) and the Blocked on you list
+asks.*.lane	string	A	ask owner scan (ask-deny.sh) and the Blocked on you list
+asks.*.worker	string	A	ask owner scan (ask-deny.sh) and the Blocked on you list
+asks.*.path	string	A	ask owner scan (ask-deny.sh) and the Blocked on you list
+asks.*.noCode	boolean	A	ask owner scan (ask-deny.sh) and the Blocked on you list
+asks.*.pr	number,string	A	ask owner scan (ask-deny.sh) and the Blocked on you list
+asks.*.files	array	A	ask owner scan (ask-deny.sh) and the Blocked on you list
+workers.*.state	string	A	the lane state counts and Needs Owner; a near miss of a known state is unreadable
+workers.*.pr	number,string	A	a worker with a PR
+followUps.*.state	string	A	open follow-ups
+deployWindows.*.state	string	A	the Deployed and STOPPED lists
+deployWindows.*.tag	string	A	the Deployed and STOPPED lists
+deployWindows.*.finishedAt	string	A	the Deployed and STOPPED lists
+deployWindows.*.at	string	A	the Deployed and STOPPED lists
+deployWindows.*.prs	array	A	the PRs a window shipped
+hostEvents.*.kind	string	A	restarts in the window
+hostEvents.*.at	string,number	A	restarts in the window
+hostEvents.*.watched	boolean	A	restarts in the window
+hosts.*.reachable	boolean	A	the offline host list
+queue.items.*.state	string	A	the queued count and Next
+health.summary.running	number	A	a counter printed on the Fleet health line
+health.summary.idle	number	A	a counter printed on the Fleet health line
+health.summary.waiting on you	number	A	a counter printed on the Fleet health line
+health.summary.stuck	number	A	a counter printed on the Fleet health line
+health.summary.stopped	number	A	a counter printed on the Fleet health line
+health.summary.asleep	number	A	a counter printed on the Fleet health line
+health.summary.unknown	number	A	a counter printed on the Fleet health line
+asks	array	A	the whole value: a wrong type prints "unreadable (ledger .asks is not ...)", never a quiet none
+followUps	array	A	the whole value: a wrong type prints "unreadable (ledger .followUps is not ...)", never a quiet none
+workers	object	A	the whole value: a wrong type prints "unreadable (ledger .workers is not ...)", never a quiet none
+deployWindows	array	A	the whole value: a wrong type prints "unreadable (ledger .deployWindows is not ...)", never a quiet none
+health	object	A	the whole value: a wrong type prints "unreadable (ledger .health is not ...)", never a quiet none
+health.attention	array	A	the whole value: a wrong type prints "unreadable (ledger .health.attention is not ...)", never a quiet none
+health.summary	object	A	the whole value: a wrong type prints "unreadable (ledger .health.summary is not ...)", never a quiet none
+hostEvents	array	A	the whole value: a wrong type prints "unreadable (ledger .hostEvents is not ...)", never a quiet none
+hosts	object	A	the whole value: a wrong type prints "unreadable (ledger .hosts is not ...)", never a quiet none
+queue	object	A	the whole value: a wrong type prints "unreadable (ledger .queue is not ...)", never a quiet none
+queue.items	array	A	the whole value: a wrong type prints "unreadable (ledger .queue.items is not ...)", never a quiet none
+health.checkedAt	string	A	the age of the concertmaster check on the Fleet health line
+health.attention.*	object	L	a row member that is not an object is named by the list check, its own fields are display only
+queue.items.*.lane	string	L	display and the routing name only: a wrong type prints (invalid lane)
+queue.items.*.priority	string	L	display: a wrong type prints (invalid priority)
+asks.*.files.*	string	L	a member is read by the deny scan as text: a non-text member is dropped there
+deployWindows.*.prs.*	number,string	L	display only
+hosts.*.*	any	L	nothing else under a host row is read
+digests.lastSentAt	string	L	the since-time of the group text, an unreadable one falls back to 24 hours
+priorities.*.*	any	L	display only
+decisions.*.*	any	L	display only
+violations.*.*	any	L	display only
+supabaseStacks.*	any	L	display and the CHECK NOT RUN line

@@ -13,8 +13,11 @@
 #
 # write   (the concertmaster only) rewrites the line in its own comment, in the same call as any other comment
 #         change, and keeps every other line. Run it in the same step as a freeze flip or a finished deploy, and
-#         once every tick. A field not given comes from the ledger (freeze.state, freeze.window, the newest done
-#         deployWindows[].tag), else keeps its last value in the comment, else `unknown` (freeze must be given or known).
+#         once every tick. Per field the order is: the flag, then the ledger (freeze.state, freeze.window, the newest done
+#         deployWindows[].tag), then the last value in the comment, else `unknown` (freeze must be given or known). A ledger
+#         freeze that is present but not {state: "on"|"off"} (ON, "on ", true, a bare "on", an object with no state, a list) or
+#         a ledger that cannot be read is never read as off: with no --freeze flag the line is published as freeze=on and
+#         the script says so (exit 0); an explicit --freeze is kept.
 #         The line goes last, so a leading cm:merge-ready stays first. --push (a freeze flipping to on): one
 #         `orca terminal send` to every lane whose name matches fleet_state.push_match (default `-sweeper`, so
 #         pr-sweeper is included) and that has a Claude terminal. Freeze-off needs
@@ -151,11 +154,24 @@ cmd_write() {
   # precedence per field: the flag, then the ledger (the concertmaster's source of truth), then the last value in the
   # comment, then unknown. A bare every-tick `write` therefore publishes a ledger change at once.
   lf="$(jq -r '.freeze // empty' <<<"${prev:-null}" 2>/dev/null)"; lw="$(jq -r '.window // empty' <<<"${prev:-null}" 2>/dev/null)"; lp="$(jq -r '.prod // empty' <<<"${prev:-null}" 2>/dev/null)"
-  local led v; led="$(cm_ledger_path)"
-  if [ -s "$led" ] && jq -e 'type == "object"' "$led" >/dev/null 2>&1; then
-    v="$(jq -r '.freeze.state // empty' "$led")"; case "$v" in on|off) lf="$v" ;; esac
+  local led v fz fzbad; led="$(cm_ledger_path)"
+  fzbad=0
+  if [ -s "$led" ] && ! jq -e 'type == "object"' "$led" >/dev/null 2>&1; then
+    fzbad=1   # a ledger that is there but cannot be read as a document: its freeze cannot be ruled out
+  elif [ -s "$led" ]; then
+    # the ledger freeze is exactly {state: "on"|"off", ...} or absent/null. Anything else ("ON", "on ", true, a bare "on", an object
+    # with no state, a list) is a freeze that cannot be read, and is NEVER read as off: jq `//` read all of those as "not given" and the
+    # line kept its old value (or went out as off) during a freeze (stall.sh refuses the same shapes: ledger .freeze is not an object
+    # with state on or off)
+    fz="$(jq -r 'if .freeze == null then "absent" elif (.freeze | type) == "object" and (.freeze.state == "on" or .freeze.state == "off") then .freeze.state else "bad" end' "$led")"
+    case "$fz" in on|off) lf="$fz" ;; bad) fzbad=1 ;; esac
     v="$(jq -r '.freeze.window // empty' "$led" | tr -d ' ')"; [ -z "$v" ] || lw="$v"
     v="$(jq -r '[(.deployWindows // [])[] | select(.state == "done" and (.tag // "") != "")] | last | .tag // empty' "$led")"; [ -z "$v" ] || lp="$v"
+  fi
+  # FAIL CLOSED: with an unreadable ledger freeze and no --freeze flag the line goes out as freeze=on (a refusal would leave an
+  # older freeze=off line in place, fresh for up to an hour); an explicit --freeze on|off is the operator's word and is kept
+  if [ "${fzbad:-0}" = 1 ] && [ -z "$freeze" ]; then
+    freeze=on; cm_warn "fleet-state.sh: the ledger freeze is present but is not {state: on|off} (or the ledger cannot be read): publishing freeze=on, fix ledger.freeze"
   fi
   freeze="${freeze:-$lf}"; window="${window:-${lw:-unknown}}"; prod="${prod:-${lp:-unknown}}"
   case "$freeze" in on|off) ;; *) die "freeze is unknown: pass --freeze on|off" 2 ;; esac

@@ -548,6 +548,17 @@ out="$(cm_input_revalidate "$prior" --view-file "$ROOT/v-nul.json" 2>/dev/null)"
 [ "$rc" != 0 ] && [ "$(printf '%s' "$out" | jq -r '.permit')" = false ] && ok "revalidate: a view file with a NUL byte after the view refuses" || no "revalidate view NUL" "rc=$rc $out"
 out="$(cm_input_revalidate "$prior" --view-file "$GV" 2>/dev/null)"; rc=$?
 [ "$rc" = 0 ] && [ "$(printf '%s' "$out" | jq -r '.permit')" = true ] && ok "revalidate: a clean view file is still permitted (control)" || no "revalidate view control" "rc=$rc $out"
+# the enum a reader checks a state against and the enum of the typed view are ONE list. stall.sh and digest.sh read CM_ASK_STATES (lib.sh); input-view.jq has iv_ask_states.
+# A reader list narrower than the view's marks the documented states closed and in-progress unreadable and holds the whole stall judgment (exit 3 every tick). They must stay equal.
+IVA="$(jq -nc -L "$HERE/.." 'include "input-view"; iv_ask_states')"; LIBA="$(jq -nc "$CM_JQ_STATE_DEFS"' cm_ask_states')"
+[ -n "$IVA" ] && [ "$IVA" = "$LIBA" ] && ok "ask states: lib.sh CM_ASK_STATES equals iv_ask_states in input-view.jq ($IVA)" || no "ask states drift" "view=$IVA lib=$LIBA"
+for st in closed in-progress; do
+  jq -e --arg s "$st" 'index($s) != null' <<<"$LIBA" >/dev/null && ok "ask state $st is a known state of the readers" || no "ask state $st is missing from CM_ASK_STATES"
+done
+# mutant: a narrowed CM_ASK_STATES breaks the equality
+mkdir -p "$ROOT/mut-asks" && cp "$HERE"/../lib.sh "$HERE"/../*.jq "$ROOT/mut-asks/" && sed -i 's/^CM_ASK_STATES="open answered in-progress decided closed"$/CM_ASK_STATES="open answered decided"/' "$ROOT/mut-asks/lib.sh"
+LIBN="$(bash -c '. "$1/lib.sh"; jq -nc "$CM_JQ_STATE_DEFS"" cm_ask_states"' _ "$ROOT/mut-asks")"
+[ "$LIBN" != "$IVA" ] && ok "ask states: a narrowed reader list differs from the view (the equality check would fail)" || no "ask states mutant not caught"
 DT_FILL=
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]

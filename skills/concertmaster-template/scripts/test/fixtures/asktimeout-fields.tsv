@@ -1,0 +1,29 @@
+# asktimeout-fields.tsv: the inventory of every ledger field the classifier of scripts/ask-timeout.sh reads (the list and the claim/record modes' own reads of filesAt, verdictRef and issue are bash-level and listed in the script header).
+# NOT seen by the static check, by design: the claim mode reads asks.*.filesAt (and noCode) in its own small jq program in bash, not in the classifier,
+# so the compiled-program seam never lists it. Its wrong-type behaviour is pinned by the AT-F rows of scripts/test/ask-timeout.sh (a non-text or unparseable
+# filesAt is never fresh: claim refused, exit 2). A new classifier read still needs a line here.
+# One line per field path: doc (led, the ledger), path (dotted; * is any one key or index), the legal JSON types besides null (jq type names; null is always legal), a class, the bases (A = at-a, B = at-b of scripts/test/ask-timeout-base.sh: where a wrong value is protective), a note. Class:
+#   A  a wrong type there decides whether an ask is delegated to the concertmaster at all: it must never read as absent, never be coerced to text, and the ask is never verdict-due (never, or not an open ask)
+#   B  time only: a wrong value is ignored while timeoutAt stands, and an ask with neither never times out: never a verdict
+led	asks	array	A	AB	the list of asks (a wrong type: no ask is listed, so none is verdict-due)
+led	workers	object	A	AB	the workers map (a wrong type: every ask is never)
+led	workers.*	object	A	AB	one worker row (a wrong type: that worker's asks are never, the list does not abort)
+led	workers.*.lane	string	A	AB	the lane an ask without its own lane inherits (ops and epic lanes stay with the owner)
+led	workers.*.pr	number,string	A	B	a worker PR on a noCode ask (any value that is present counts as a PR)
+led	asks.*.id	string	A	AB	duplicate detection, claim and record address an ask by it
+led	asks.*.state	string	A	AB	only "open" is considered
+led	asks.*.verdictRef	string	A	AB	present (not null) means decided
+led	asks.*.verdictStartedAt	string	A	AB	the claim time (an unparseable stated claim is never)
+led	asks.*.askedAt	string	B	AB	the default timeoutAt base
+led	asks.*.timeoutAt	string	A	AB	a stated time that does not parse never times out
+led	asks.*.kind	string	A	AB	own-scope kinds only; a non-text kind is no kind
+led	asks.*.scope	string	A	AB	the kind when there is no kind; a non-text scope is never
+led	asks.*.issue	number	A	AB	the place the verdict is recorded
+led	asks.*.question	string	A	AB	scanned by the deny list
+led	asks.*.topic	string	A	AB	scanned by the deny list
+led	asks.*.lane	string	A	AB	ops, epic and pr-sweeper lanes stay with the owner
+led	asks.*.worker	string	A	AB	the worker row it names
+led	asks.*.path	string	A	AB	scanned by the deny list
+led	asks.*.files	array	A	AB	the changed paths of the PR (a non-list is never)
+led	asks.*.noCode	boolean	A	B	true only when no code changes (files absent)
+led	asks.*.pr	number,string	A	AB	the PR the ask names (any present value counts as a PR)
