@@ -51,8 +51,12 @@ Scope comes from config `worktrees.path_match`: only terminals whose worktree pa
 read. Unset, the script does nothing.
 ```bash
 mkdir -p ~/.concertmaster/bin ~/.local/state
-cp scripts/boot-sweep.sh scripts/lib.sh scripts/cm-worktree-sync.sh scripts/capacity-check.sh ~/.concertmaster/bin/ \
-  && chmod +x ~/.concertmaster/bin/boot-sweep.sh ~/.concertmaster/bin/cm-worktree-sync.sh ~/.concertmaster/bin/capacity-check.sh
+cp scripts/boot-sweep.sh scripts/lib.sh scripts/cm-worktree-sync.sh scripts/capacity-check.sh scripts/jdupkeys ~/.concertmaster/bin/ \
+  && chmod +x ~/.concertmaster/bin/boot-sweep.sh ~/.concertmaster/bin/cm-worktree-sync.sh ~/.concertmaster/bin/capacity-check.sh ~/.concertmaster/bin/jdupkeys
+# jdupkeys: lib.sh cm_workers_gate scans the ledger for a key written twice with it; without it boot-sweep holds every nudge and says so
+# What holds every nudge (lib.sh cm_workers_gate, one reason line in the unit log): a ledger file of zero bytes, a ledger that is not exactly one JSON document (two documents, truncated), not an object,
+# a workers that is not an object, a key written twice under workers, or no jdupkeys. A missing file is "no ledger" and holds nothing. The hold is the whole ledger, see references/input-contract.md 6a.
+# scripts/runtime-check.sh (tick step 2) takes the same gate: it checks and sends nothing, prints one `unreadable` row with the reason and exits 1.
 cp config.yaml ~/.concertmaster/config.yaml          # lib.sh finds it there (CM_HOME/config.yaml)
 # fill the @USER@ and @HOME@ tokens of the unit for this host, and check the PATH line: it must
 # reach the Orca CLI (orca-ide lives in ~/.local/bin, which systemd's default PATH lacks)
