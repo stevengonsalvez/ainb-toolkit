@@ -80,7 +80,7 @@ Ledger paths are read too, not only the CLI's worktree list: a worktree one runt
 | ○ | idle | one process, a quiet pane, an older transcript | fine, nothing to do |
 | ? | waiting on you | a question menu under `health.stuck_minutes`; a `cm:blocked`, `cm:ask` or `cm:waiting-owner` first line, or `blocked-on-owner`; two copies of one session or worktree | a question menu is open: Which option? |
 | ⚠ | stuck | a usage limit (the usage-credits menu included), an API error, or a menu that has waited `health.stuck_minutes` | account limit on screen: Resets at 5pm; the check never answers it |
-| ✗ | stopped | the row should run (state not asleep, retired, done, teardown or queued) and no process holds it | stopped: the server restarted at 10:27 and this one did not come back; I will retry once |
+| ✗ | stopped | the row should run (state not asleep, retired, done, teardown, queued, parked or spawning) and no process holds it | stopped: the server restarted at 10:27 and this one did not come back; I will retry once |
 | z | asleep | state `asleep`, no process | put to sleep on purpose at 09:00; never resumed by the check or a reboot |
 | · | unknown | no ledger row; the host did not answer; the scan was incomplete; retired work came back | not in the ledger; not slept: branch not merged |
 
