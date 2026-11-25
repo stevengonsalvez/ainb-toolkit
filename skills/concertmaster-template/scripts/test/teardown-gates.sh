@@ -876,7 +876,7 @@ for bl in '" "' '"   "'; do
 done
 # C12 (live comment): a blank issue on the ledger row is not an escalation, so the same-text line in the comment is still open work
 ledger "{\"followUps\":[$(fu w-a fresh-one | sed 's/"closedAt":null/"closedAt":null,"issue":" ","issueUrl":"  "/')],\"workers\":{\"w-a\":$(w "$W1" '"standing":false,"lane":"ops-sweeper"')}}"
-STUB_COMMENT=$'cm:running\ncm:followup fresh-one owner=stevie keep or delete' \
+STUB_COMMENT=$'cm:running\ncm:followup fresh-one owner=owner keep or delete' \
   run "C12 live comment: a blank-issue ledger row does not hold the id" 3 'in live comment (fresh-one)' "$W1"
 # CM_GATES_ONLY=followup stops after the AT-E rows (everything before them still runs)
 if [ "${CM_GATES_ONLY:-}" = followup ]; then echo "passed=$PASS failed=$FAIL (up to the follow-up gate)"; [ "$FAIL" = 0 ]; exit; fi
