@@ -68,12 +68,12 @@ run() { "$SCRIPT" "$@" 2>"$ROOT/err"; }
 
 # 1. empty ledger, gh returns merged PRs: Merged lists them, open count comes from gh ------------------
 reset; ledger
-{ pr 5421 "first merged" 8; pr 5422 "second merged" 2 bob; } | jq -s -c . > "$STUB/merged.json"
+{ pr 201 "first merged" 8; pr 202 "second merged" 2 bob; } | jq -s -c . > "$STUB/merged.json"
 printf '[{"number":1},{"number":2},{"number":3}]' > "$STUB/open.json"
 OUT="$(run --full)"; RC=$?
 check "empty ledger: exit 0" "$RC" "0"
 has "empty ledger: Merged lists gh PRs" "$OUT" "Merged (2)"
-has "empty ledger: oldest merge first" "$OUT" "$(printf -- '- #5421 first merged (alice)\n- #5422 second merged (bob)')"
+has "empty ledger: oldest merge first" "$OUT" "$(printf -- '- #201 first merged (alice)\n- #202 second merged (bob)')"
 has "empty ledger: open count from gh" "$OUT" "open PRs: 3"
 lacks "empty ledger: no ledger-derived tracked count" "$OUT" "open PRs tracked"
 has "header names the project and the zone" "$OUT" "Acme concertmaster digest"
@@ -85,11 +85,11 @@ check "12h cut-off sent to gh (within a minute)" "$(jq -nr --arg a "$SEARCH" --a
 
 # 2. lastSentAt: newer than 12h narrows the window, older widens it ------------------------------------
 LS="$(ago 2.9)"; reset; ledger "$LS"
-{ pr 5430 "inside" 1; pr 5429 "before last digest" 5; } | jq -s -c . > "$STUB/merged.json"; echo '[]' > "$STUB/open.json"
+{ pr 230 "inside" 1; pr 229 "before last digest" 5; } | jq -s -c . > "$STUB/merged.json"; echo '[]' > "$STUB/open.json"
 OUT="$(run)"
 has "lastSentAt 2.9h ago: window is 3h" "$OUT" "(last 3h)"
-has "lastSentAt 2.9h ago: PR after it listed" "$OUT" "#5430 inside"
-lacks "lastSentAt 2.9h ago: PR before it dropped" "$OUT" "#5429"
+has "lastSentAt 2.9h ago: PR after it listed" "$OUT" "#230 inside"
+lacks "lastSentAt 2.9h ago: PR before it dropped" "$OUT" "#229"
 has "lastSentAt 2.9h ago: Merged (1)" "$OUT" "Merged (1)"
 SEARCH="$(grep -- '--state merged' "$STUB/gh.args" | sed -e 's/.*--search merged:>=\([^ ]*\) .*/\1/')"
 check "lastSentAt 2.9h ago: cut-off sent to gh is lastSentAt" "$(jq -nr --arg a "$SEARCH" --arg b "$LS" '(($a | fromdateiso8601) - ($b | fromdateiso8601)) | fabs < 1')" "true"
@@ -104,15 +104,15 @@ has "lastSentAt 2.1h ago: Merged (1)" "$OUT" "Merged (1)"
 SEARCH="$(grep -- '--state merged' "$STUB/gh.args" | sed -e 's/.*--search merged:>=\([^ ]*\) .*/\1/')"
 check "lastSentAt 2.1h ago: gh cut-off is lastSentAt" "$(jq -nr --arg a "$SEARCH" --arg b "$LS" '(($a | fromdateiso8601) - ($b | fromdateiso8601)) | fabs < 1')" "true"
 reset; ledger "$(ago 29.9)"
-{ pr 5420 "twenty hours ago" 20; } | jq -s -c . > "$STUB/merged.json"; echo '[]' > "$STUB/open.json"
+{ pr 220 "twenty hours ago" 20; } | jq -s -c . > "$STUB/merged.json"; echo '[]' > "$STUB/open.json"
 OUT="$(run)"
 has "lastSentAt 29.9h ago: window rounds up to 30h" "$OUT" "(last 30h)"
-has "lastSentAt 29.9h ago: PR from 20h ago listed (12h would drop it)" "$OUT" "#5420 twenty hours ago"
+has "lastSentAt 29.9h ago: PR from 20h ago listed (12h would drop it)" "$OUT" "#220 twenty hours ago"
 reset; ledger "$(ago 30)"
-{ pr 5420 "twenty hours ago" 20; } | jq -s -c . > "$STUB/merged.json"; echo '[]' > "$STUB/open.json"
+{ pr 220 "twenty hours ago" 20; } | jq -s -c . > "$STUB/merged.json"; echo '[]' > "$STUB/open.json"
 OUT="$(run --since-hours 6)"
 has "--since-hours beats lastSentAt" "$OUT" "(last 6h)"
-lacks "--since-hours beats lastSentAt: PR outside 6h dropped" "$OUT" "#5420"
+lacks "--since-hours beats lastSentAt: PR outside 6h dropped" "$OUT" "#220"
 reset; ledger "not a time"; echo '[]' > "$STUB/merged.json"; echo '[]' > "$STUB/open.json"
 has "unparseable lastSentAt falls back to 12h" "$(run)" "(last 12h)"
 reset; ledger "$(jq -nr 'now + 7200 | floor | todate')"; echo '[]' > "$STUB/merged.json"; echo '[]' > "$STUB/open.json"
@@ -209,11 +209,11 @@ has "--full: Fleet line" "$OUT" "Fleet: 0 running, open PRs: 0"
 # 8. Next line: an item with no issue shows by id and summary, never "#null" ---------------------------------------
 reset; ledger; echo '[]' > "$STUB/merged.json"; echo '[]' > "$STUB/open.json"
 jq '.queue.items = [
-  {id: "q-1", issue: 4242, lane: "dev", priority: "normal", state: "queued", addedAt: "2026-10-01T00:00:00Z"},
+  {id: "q-1", issue: 342, lane: "dev", priority: "normal", state: "queued", addedAt: "2026-10-01T00:00:00Z"},
   {id: "q-2", issue: null, summary: "tidy the roster export", lane: "ops", priority: "urgent", state: "queued", addedAt: "2026-10-02T00:00:00Z"},
   {id: "q-3", lane: "research", priority: "normal", state: "queued", addedAt: "2026-10-03T00:00:00Z"}]' "$L" > "$ROOT/l.json" && mv "$ROOT/l.json" "$L"
 OUT="$(run)"
-has "queue: item with an issue keeps #<issue>" "$OUT" "#4242 dev normal"
+has "queue: item with an issue keeps #<issue>" "$OUT" "#342 dev normal"
 has "queue: issue-less item shows id and summary" "$OUT" "q-2 tidy the roster export ops urgent"
 has "queue: issue-less item without a summary shows its id" "$OUT" "q-3 research normal"
 has "queue: waiting count" "$OUT" "(3 waiting)"
@@ -222,18 +222,18 @@ jq '.queue.items = [{id: "q-9\nINJECTED line", lane: "dev\u001b[31m", summary: "
 OUT="$(run)"
 check "queue: a control character in id or lane never starts a new line" "$(printf '%s\n' "$OUT" | grep -c '^INJECTED')" "0"
 has "queue: an empty summary falls back to the title" "$OUT" "from the title"
-jq '.queue.items = [{id: "q-1", issue: 4242, lane: "dev", priority: "normal", state: "queued", addedAt: "2026-10-01T00:00:00Z"},
+jq '.queue.items = [{id: "q-1", issue: 342, lane: "dev", priority: "normal", state: "queued", addedAt: "2026-10-01T00:00:00Z"},
   {id: "q-2", issue: null, summary: "tidy the roster export", lane: "ops", priority: "urgent", state: "queued", addedAt: "2026-10-02T00:00:00Z"},
   {id: "q-3", lane: "research", priority: "normal", state: "queued", addedAt: "2026-10-03T00:00:00Z"}]' "$L" > "$ROOT/l.json" && mv "$ROOT/l.json" "$L"
 lacks "queue: no #null in the --full text" "$(run --full)" "#null"
 jq '.queue.items = [{id: "q-9", lane: "dev", state: "queued"}]' "$L" > "$ROOT/l.json" && mv "$ROOT/l.json" "$L"
 has "queue: lone issue-less item" "$(run)" "Next: q-9 dev normal (1 waiting)"
 reset; ledger
-jq '.deployWindows = [{state: "done", tag: "v1.2.3", finishedAt: "'"$(ago 1)"'", prs: [5501, null]}]' "$L" > "$ROOT/l.json" && mv "$ROOT/l.json" "$L"
+jq '.deployWindows = [{state: "done", tag: "v1.2.3", finishedAt: "'"$(ago 1)"'", prs: [301, null]}]' "$L" > "$ROOT/l.json" && mv "$ROOT/l.json" "$L"
 echo '[]' > "$STUB/merged.json"; echo '[]' > "$STUB/open.json"
 OUT="$(run)"
 has "deployed: a null PR in the list is dropped" "$OUT" "v1.2.3 at"
-has "deployed: the real PR stays" "$OUT" "#5501"
+has "deployed: the real PR stays" "$OUT" "#301"
 lacks "deployed: no #null" "$OUT" "#null"
 
 # 9. group digest hides internal tooling PRs behind one line; the owner digest (--full) lists everything ------
@@ -330,7 +330,7 @@ cp "$ROOT/config.base.yaml" "$ROOT/config.yaml"
 export CM_CONFIG="$ROOT/config.deploy.yaml"
 runrec() { # runrec <id> <tag> <conclusion> <created hours ago> <updated hours ago> [status]: one `gh run list` row
   jq -nc --argjson id "$1" --arg tag "$2" --arg c "$3" --arg cr "$(ago "$4")" --arg up "$(ago "$5")" --arg st "${6:-completed}" \
-    '{databaseId: $id, headBranch: $tag, displayTitle: "chore: bump version to \($tag)", event: "push", workflowName: "Release Deploy",
+    '{databaseId: $id, headBranch: $tag, displayTitle: "chore: release \($tag)", event: "push", workflowName: "Release Deploy",
       status: $st, conclusion: (if $st == "completed" then $c else "" end), createdAt: $cr, updatedAt: $up}'; }
 runjobs() { # runjobs <id> <hours ago the prod job finished> <name=conclusion>...: the `gh run view <id>` answer
   local id="$1" h="$2"; shift 2
@@ -340,28 +340,28 @@ ships() { printf '%s\n' "$1" | grep -Ec "^- $2 at [A-Z][a-z]{2} [0-9]{2}:[0-9]{2
 
 # 10.1 a tag-push deploy with NO ledger row: listed from gh, although the run itself says cancelled
 deploy_reset
-{ runrec 41624004440 v1.4.100 cancelled 7 6.4; } | jq -s -c . > "$STUB/runs.json"
-runjobs 41624004440 6.5 "Validate Release Tag=success" "Integration Tests=cancelled" "Ship to Prod=success" "Deploy planner=success"
+{ runrec 4100 v9.4.100 cancelled 7 6.4; } | jq -s -c . > "$STUB/runs.json"
+runjobs 4100 6.5 "Check Tag=success" "Smoke Tests=cancelled" "Ship to Prod=success" "Deploy docs=success"
 OUT="$(run)"
 has "deployed: a tag-push run with no ledger row is listed" "$OUT" "Deployed (1)"
-check "deployed: line shape is <tag> at <time> when the ledger knows no PRs" "$(ships "$OUT" 'v1\.4\.100' '')" "1"
+check "deployed: line shape is <tag> at <time> when the ledger knows no PRs" "$(ships "$OUT" 'v9\.4\.100' '')" "1"
 lacks "deployed: never a zero when a release shipped" "$OUT" "Deployed (0)"
 lacks "deployed: a cancelled run with a succeeded prod job is not flagged" "$OUT" "no prod deploy job succeeded"
 GA="$(tr '\n' '|' < "$STUB/gh.args")"
 has "deployed: gh asked for the configured workflow, push events only, on the main repo" "$GA" "run list -R AcmeOrg/acme-app --workflow Release Deploy --event push --json"
-has "deployed: gh asked for the jobs of the run in the window" "$GA" "run view 41624004440 -R AcmeOrg/acme-app --json jobs"
+has "deployed: gh asked for the jobs of the run in the window" "$GA" "run view 4100 -R AcmeOrg/acme-app --json jobs"
 OWN="$(run --full)"
 has "deployed: --full lists it too" "$OWN" "Deployed (1)"
 
 # 10.2 the ledger also has the tag: one line, with the PRs; a "v" prefix difference does not double it
 deploy_reset
-{ runrec 41624004440 v1.4.100 cancelled 7 6.4; } | jq -s -c . > "$STUB/runs.json"
-runjobs 41624004440 6.5 "Ship to Prod=success"
-jq '.deployWindows = [{id: "w1", state: "done", tag: "v1.4.100", finishedAt: "'"$(ago 6.45)"'", prs: [5601, 5602]}]' "$L" > "$ROOT/l.json" && mv "$ROOT/l.json" "$L"
+{ runrec 4100 v9.4.100 cancelled 7 6.4; } | jq -s -c . > "$STUB/runs.json"
+runjobs 4100 6.5 "Ship to Prod=success"
+jq '.deployWindows = [{id: "w1", state: "done", tag: "v9.4.100", finishedAt: "'"$(ago 6.45)"'", prs: [101, 102]}]' "$L" > "$ROOT/l.json" && mv "$ROOT/l.json" "$L"
 OUT="$(run)"
 has "deployed: ledger and gh agree: one release, counted once" "$OUT" "Deployed (1)"
-check "deployed: the tag is listed once with the ledger's PRs" "$(ships "$OUT" 'v1\.4\.100' ': #5601 #5602')" "1"
-check "deployed: no second line for the same tag" "$(printf '%s\n' "$OUT" | grep -c 'v1\.4\.100')" "1"
+check "deployed: the tag is listed once with the ledger's PRs" "$(ships "$OUT" 'v9\.4\.100' ': #101 #102')" "1"
+check "deployed: no second line for the same tag" "$(printf '%s\n' "$OUT" | grep -c 'v9\.4\.100')" "1"
 jq '.deployWindows[0].tag = "1.4.100"' "$L" > "$ROOT/l.json" && mv "$ROOT/l.json" "$L"
 OUT="$(run)"
 check "deployed: tag match ignores a leading v" "$(printf '%s\n' "$OUT" | grep -c '1\.4\.100')" "1"
@@ -386,7 +386,7 @@ check "deployed: oldest first" "$(printf '%s\n' "$OUT" | grep -o '^- v3\.0\.[0-9
 # 10.4 a run with no succeeded prod job is not "deployed" and is not hidden
 deploy_reset
 { runrec 701 v4.0.1 success 5 4.5; runrec 702 v4.0.2 failure 4 3.5; runrec 703 v4.0.3 cancelled 3 2.5; runrec 704 v4.0.4 success 2 1.5; } | jq -s -c . > "$STUB/runs.json"
-runjobs 701 4.6 "Validate Release Tag=success" "Ship to Prod=skipped"
+runjobs 701 4.6 "Check Tag=success" "Ship to Prod=skipped"
 runjobs 702 3.6 "Ship to Prod=failure"
 runjobs 703 2.6 "Ship to Prod=cancelled"
 echo '{"jobs":[]}' > "$STUB/run-704.json"
@@ -401,7 +401,7 @@ lacks "deployed: no 'none' next to the unproven runs" "$OUT" "$(printf 'Deployed
 # an in-flight run is not a failed one
 deploy_reset
 { runrec 710 v4.1.0 "" 1 0.2 in_progress; } | jq -s -c . > "$STUB/runs.json"
-runjobs 710 0.5 "Validate Release Tag=success"
+runjobs 710 0.5 "Check Tag=success"
 has "deployed: a run still in progress is said to be in progress" "$(run)" "v4.1.0 at "
 has "deployed: in progress wording" "$(run)" "still running, no prod deploy job succeeded yet"
 lacks "deployed: in progress is not 'ran, no prod deploy job succeeded'" "$(run)" "ran, no prod deploy job succeeded"
@@ -452,7 +452,7 @@ deploy_reset; echo '[]' > "$STUB/runs.json"
 has "deployed: gh answers an empty list: a real zero" "$(run)" "$(printf 'Deployed (0)\n- none')"
 # STOPPED rows stay next to gh deploys
 deploy_reset
-{ runrec 41624004440 v1.4.100 cancelled 7 6.4; } | jq -s -c . > "$STUB/runs.json"; runjobs 41624004440 6.5 "Ship to Prod=success"
+{ runrec 4100 v9.4.100 cancelled 7 6.4; } | jq -s -c . > "$STUB/runs.json"; runjobs 4100 6.5 "Ship to Prod=success"
 jq '.deployWindows = [{id: "w2", state: "stopped", blockedReason: "staging red", at: "'"$(ago 2)"'"}]' "$L" > "$ROOT/l.json" && mv "$ROOT/l.json" "$L"
 OUT="$(run)"
 has "deployed: gh deploy and ledger STOPPED row together" "$OUT" "$(printf -- '- STOPPED w2: staging red')"
@@ -491,7 +491,7 @@ check "deployed: gh time inside the window: listed once, with the ledger PRs" "$
 lacks "deployed: ... and no conflict note" "$OUT" "ledger says done"
 # an in-flight run with no deploy job yet is not config drift
 deploy_reset
-{ runrec 961 v8.1.0 "" 1 0.1 in_progress; } | jq -s -c . > "$STUB/runs.json"; runjobs 961 0.5 "Validate Release Tag=success"
+{ runrec 961 v8.1.0 "" 1 0.1 in_progress; } | jq -s -c . > "$STUB/runs.json"; runjobs 961 0.5 "Check Tag=success"
 lacks "deployed: a run still in flight never raises the drift note" "$(run)" "check digest.deploy_job"
 # a full page of runs inside the window may hide older releases
 deploy_reset
@@ -507,9 +507,9 @@ has "deployed: a done row with no finishedAt still lists (falls back to at)" "$(
 
 # 10.7 config: the job name is read from config, never hard-coded; unset workflow leaves the ledger as the only source
 deploy_reset
-{ runrec 41624004440 v1.4.100 cancelled 7 6.4; } | jq -s -c . > "$STUB/runs.json"; runjobs 41624004440 6.5 "Deploy to Vercel Production=success" "Ship to Prod=failure"
+{ runrec 4100 v9.4.100 cancelled 7 6.4; } | jq -s -c . > "$STUB/runs.json"; runjobs 4100 6.5 "Deploy Prod=success" "Ship to Prod=failure"
 lacks "deployed: another host's job name does not count (only digest.deploy_job)" "$(run)" "Deployed (1)"
-{ cat "$ROOT/config.base.yaml"; printf 'digest:\n  deploy_workflow: Other Flow\n  deploy_job: Deploy to Vercel Production\n'; } > "$ROOT/config.other.yaml"
+{ cat "$ROOT/config.base.yaml"; printf 'digest:\n  deploy_workflow: Other Flow\n  deploy_job: Deploy Prod\n'; } > "$ROOT/config.other.yaml"
 has "deployed: a configured job name is honoured" "$(CM_CONFIG="$ROOT/config.other.yaml" run)" "Deployed (1)"
 has "deployed: a configured workflow name is sent to gh" "$(grep -c 'run list -R AcmeOrg/acme-app --workflow Other Flow' "$STUB/gh.args" | sed 's/^/n=/')" "n=1"
 : > "$STUB/gh.args"
@@ -593,7 +593,7 @@ deploy_reset
 # the generators read their big input on stdin: the fixture must not hit the argv limit it is testing
 jq -nc '[range(0; 3300) | {path: "src/generated/module-\(.)/index.tsx", additions: 1, deletions: 0}]' \
   | jq -c --arg at "$(ago 2)" \
-  '[{number: 7001, title: "feat(app): big merged", mergedAt: $at, author: {login: "alice"}, url: "https://github.com/AcmeOrg/acme-app/pull/7001", files: .}]' > "$STUB/merged.json"
+  '[{number: 771, title: "feat(app): big merged", mergedAt: $at, author: {login: "alice"}, url: "https://github.com/AcmeOrg/acme-app/pull/771", files: .}]' > "$STUB/merged.json"
 jq -nc '[range(0; 900) | {number: (8000 + .), title: ("feat(app): open pr " + (. | tostring) + " " + ("x" * 220)),
     files: [{path: "src/a.tsx", additions: 1, deletions: 0}]}]
   | .[0:3] |= map(.title = "feat(concertmaster): open tooling" | .files = [{path: ".agents/skills/concertmaster/SKILL.md", additions: 1, deletions: 0}])' > "$STUB/open.json"
@@ -606,7 +606,7 @@ check "big payload: the run view is over 200 KB" "$([ "$(wc -c < "$STUB/run-970.
 OUT="$(run)"; RC=$?
 check "big payload: exit 0" "$RC" "0"
 check "big payload: no argv error on stderr" "$(grep -c 'Argument list too long' "$ROOT/err" || true)" "0"
-has "big payload: the big merged PR is listed" "$OUT" "- #7001 feat(app): big merged (alice)"
+has "big payload: the big merged PR is listed" "$OUT" "- #771 feat(app): big merged (alice)"
 has "big payload: Merged counts it" "$OUT" "Merged (1)"
 has "big payload: the open tooling PRs are counted from the big open list" "$OUT" "Tooling: 0 concertmaster PRs merged, 3 open"
 has "big payload: the deploy in the big run view is listed" "$OUT" "Deployed (1)"
