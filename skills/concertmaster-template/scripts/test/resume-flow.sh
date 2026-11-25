@@ -274,7 +274,7 @@ cat > "$CM_HOME/ledger.json" <<J
  "prs": {"r#4612": {"number": 4612, "driver": "w-dev"}, "r#4637": {"number": 4637, "driver": "w-dev"}, "r#1": {"number": 1, "driver": "w-other"}},
  "workers": {
   "w-dev":  {"lane": "dev-sweeper", "host": "local", "agent": "claude", "model": "sonnet", "path": "/x/dev-sweeper", "terminal": "term_4535d409",
-             "model": "sonnet", "beadsEpic": "acme-dev", "task": "#4612 calendar export $FAKE_TOK",
+             "beadsEpic": "acme-dev", "task": "#4612 calendar export $FAKE_TOK",
              "lastComment": "cm:idle 8 open beads", "updatedAt": "2026-10-13T08:00:00Z", "secret": "must-not-appear"},
   "w-gone": {"lane": "x", "host": "local", "path": "/x/gone", "state": "gone"},
   "w-done": {"lane": "y", "host": "local", "path": "/x/done", "state": "retired"}}}
