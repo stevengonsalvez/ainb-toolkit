@@ -22,8 +22,7 @@ PASS=0; FAIL=0
 ok() { PASS=$((PASS + 1)); printf 'PASS %s\n' "$1"; }
 no() { FAIL=$((FAIL + 1)); printf 'FAIL %s%s\n' "$1" "${2:+: $2}"; }
 L="$ROOT/l.json"
-STATES="$CM_STATES_ALL"
-NORESUME_IN="$(_cm_jq_words "$CM_STATES_NORESUME $CM_STATES_DEAD" ", ")"
+STATES="$CM_STATES_ALL $(printf '%s\n' $CM_STATES_LEGACY | cut -d= -f1 | tr '\n' ' ')"
 # --- resume: one ledger, one worker per (state, standing, host)
 ws='{}'
 for s in $STATES; do for st in true false; do for h in local host-a; do
@@ -31,14 +30,14 @@ for s in $STATES; do for st in true false; do for h in local host-a; do
 done; done; done
 printf '{"workers":%s}' "$ws" > "$L"
 view="$ROOT/view.json"; cm_input_view "$L" > "$view"
-want="$(jq -r '.workers | to_entries[] | select((.value.state // "running") | IN('"$NORESUME_IN"') | not) | select(.value.standing == true and ((.value.host // "local") == "local")) | .key' "$L" | sort)"
+want="$(jq -r "$CM_JQ_STATE_DEFS"'.workers | to_entries[] | select((.value.state // "running") | cm_state_resumable) | select(.value.standing == true and ((.value.host // "local") == "local")) | .key' "$L" | sort)"
 got=""; n=0
 for k in $(jq -r '.workers | keys[]' "$L"); do
   n=$((n + 1))
   if cm_input_decide resume "$k" --view-file "$view" >/dev/null; then got="$got$k"$'\n'; fi
 done
 got="$(printf '%s' "$got" | sort)"
-if [ "$got" = "$want" ]; then ok "resume: $n well-typed rows (every state, standing, host) decide as roster.sh and runtime-check.sh do"; else no "resume parity" "$(diff <(printf '%s\n' "$want") <(printf '%s\n' "$got") | head -5 | tr '\n' ' ')"; fi
+if [ "$got" = "$want" ]; then ok "resume: $n well-typed rows (every state, standing, host) decide as resume.sh does"; else no "resume parity" "$(diff <(printf '%s\n' "$want") <(printf '%s\n' "$got") | head -5 | tr '\n' ' ')"; fi
 # --- absent state and absent host read as today's defaults while the ledger is legacy
 printf '%s' '{"workers":{"a":{"path":"/w/a","standing":true}}}' > "$L"
 cm_input_decide resume a "$L" >/dev/null && ok "legacy: absent state and host resume like (.state // running) and (.host // local)" || no "legacy defaults"
@@ -59,15 +58,15 @@ for st in true false; do
   [ "$st" = true ] && w=refuse || w=permit
   [ "$got" = "$w" ] && ok "teardown: standing $st -> $got" || no "teardown standing $st" "got $got want $w"
 done
-# --- nudge: every live state is nudged, every other is not (the roster list)
+# --- nudge: every live state is nudged, every other is not (cm_state_resumable is the same list)
 printf '{"workers":{"a":{"host":"local","path":"/w/a","state":"running","standing":false}}}' > "$L"
 bad=0
 for s in $STATES; do
   printf '{"workers":{"a":{"host":"local","path":"/w/a","state":"%s","standing":false}}}' "$s" > "$L"
-  legacy="$(jq -r '.workers.a.state | IN('"$NORESUME_IN"') | not' "$L")"
+  legacy="$(jq -r "$CM_JQ_STATE_DEFS"'.workers.a.state | cm_state_resumable' "$L")"
   if cm_input_decide nudge a "$L" >/dev/null; then new=true; else new=false; fi
   [ "$legacy" = "$new" ] || { bad=1; no "nudge parity for state $s" "legacy $legacy new $new"; }
 done
-[ "$bad" = 0 ] && ok "nudge: every state decides as the roster list does" || true
+[ "$bad" = 0 ] && ok "nudge: every state spelling decides as cm_state_resumable" || true
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]
