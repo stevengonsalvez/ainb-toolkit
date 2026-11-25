@@ -329,6 +329,22 @@ OUT="$("$SCRIPTS/resume.sh" 2>/dev/null)"; CALLS="$(cat "$STUB/calls.log")"
 check "stale roster rewritten: retired worker left out" '! has_line "ghost-retired" && has_line "dev-sweeper +dead"'
 check "retired worker's tree got no create or send"   '! printf "%s\n" "$CALLS" | grep -E "^terminal (create|send)" | grep -q "blind-lane"'
 
+echo "--- roster.sh: a row with a field of the wrong type is left out and named"
+# a host or an agent that is a list is not text: roster.sh must not pass the row on (a reader further on would join the list into text and read it as a plain host or agent)
+for FRAG in '"host":["local"],"agent":"claude"' '"host":"local","agent":["claude"]' '"host":"local","agent":"claude","standing":"true"' '"host":"local","agent":"claude"'; do
+cat > "$CM_HOME/ledger.json" <<J
+{"updatedAt": "2026-10-13T09:00:00Z",
+ "workers": {"w-bad": {"lane": "bad-lane", "path": "/x/bad-lane", "task": "#1 bad", "state": "running", $FRAG},
+             "w-ok": {"lane": "ok-lane", "host": "local", "agent": "claude", "path": "/x/ok-lane", "task": "#2 ok", "state": "running"}}}
+J
+RO="$("$SCRIPTS/roster.sh" --stdout 2>"$ROOT/roster.err")"
+if [ "$FRAG" = '"host":"local","agent":"claude"' ]; then
+  check "roster control (plain host and agent): the row is listed and nothing is named" 'printf "%s\n" "$RO" | grep -q "bad-lane" && printf "%s\n" "$RO" | grep -q "ok-lane" && ! grep -q "wrong type" "$ROOT/roster.err"'
+else
+  check "roster: a row with $FRAG is left out, its neighbour is listed, the row is named" '! printf "%s\n" "$RO" | grep -q "bad-lane" && printf "%s\n" "$RO" | grep -q "ok-lane" && grep -q "left out of the roster.*w-bad" "$ROOT/roster.err"'
+fi
+done
+
 echo "--- one row only (what the tick's standing-dead uses)"
 cat > "$CM_HOME/ledger.json" <<'J'
 {"updatedAt": "2026-10-13T09:00:00Z",
