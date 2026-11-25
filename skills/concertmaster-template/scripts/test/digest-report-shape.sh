@@ -500,5 +500,17 @@ r6_case "R6 exact workers key, padded ask worker id" '$wn.ws as $ws' '($workers 
 r6_case "R6 two keys of one id" '($wn.dup | index($wk)) != null' 'false' a-r6two
 cp "$ROOT/ledger.r6keep" "$L"
 
+# 12. the order of Priorities and the author of a verdict -----------------------------------------------------------
+base_ledger 2
+jq '.priorities = [{id: "p-b", rank: 2, what: "second goal", owner: "lead-a", state: "active"}, {id: "p-c", rank: 3, what: "third goal", owner: "lead-a", state: "active"}, {id: "p-a", rank: 1, what: "first goal", owner: "lead-a", state: "active"}, {id: "p-d", rank: 4, what: "done goal", owner: "lead-a", state: "done"}]' "$L" > "$L.t" && mv "$L.t" "$L"
+OUT="$(run --full)"
+check "priorities: lowest rank first, a done one never listed" "$(printf '%s\n' "$OUT" | grep -E '^- [0-9]\. ' | sed 's/ \[.*//' | tr '\n' '|')" "- 1. first goal|- 2. second goal|- 3. third goal|"
+base_ledger 2
+jq --arg r "$(ago 1)" '.asks = [{id: "a-mine", kind: "code", state: "answered", question: "which way", issue: 5, decidedBy: "verdict-agent", decidedAt: $r, verdictRef: "https://example.invalid/v1"}, {id: "a-theirs", kind: "code", state: "answered", question: "other way", issue: 6, decidedBy: "someone-else", decidedAt: $r, verdictRef: "https://example.invalid/v2"}]' "$L" > "$L.t" && mv "$L.t" "$L"
+OUT="$(run --full)"
+has "verdict section: the verdict agent's own recent decision is counted" "$OUT" "Decided while you were away (verdict-agent) (1)"
+has "verdict section: and listed" "$OUT" "- #5 which way: https://example.invalid/v1"
+lacks "verdict section: a decision by someone else is not the verdict agent's" "$OUT" "other way"
+
 printf 'digest-report-shape: %s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
