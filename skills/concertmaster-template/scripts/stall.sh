@@ -33,7 +33,7 @@
 # asks.sh could not read (in its unreachable list, or missing from its hostsRead, as when its host list failed and only
 # local was read), an asks row with no host, a row with no progress time at all (these count in `unverified`),
 # main-checkout, other-project, a worktrees.never_touch name, done-merged, done-selfreported, the concertmaster itself,
-# a lane the ledger holds asleep, standing-idle (or cm:keep) with nothing queued or granted for it in the ledger queue
+# a lane the ledger holds asleep, a lane whose ledger state is not a known state (counted as unverified, never nudged), standing-idle (or cm:keep) with nothing queued or granted for it in the ledger queue
 # (a granted entry is work in flight), a ledger worker parked or blocked-on-owner, a cm:waiting-owner comment, a lane
 # with an open ask (a comment ask in its worktree; a ledger ask with a non-empty string id that names a worker by that
 # worker live ledger row only, by the last part of its path on its host; a dead row (gone, repurposed: its path is gone
@@ -91,10 +91,23 @@
 # is printed as "[withheld: looks like a credential]" (when that scan fails, all of them are), and a kind outside the
 # known list prints as "unknown kind". No usage message repeats an argument given, and a jq error that looks like a
 # credential is not printed.
-# Inputs are sanitised once at the top of the judge: a row or field of the wrong shape is dropped, so one bad value
-# holds only itself (stall-seen.json is rewritten clean). Exit: 0 clean, 4 NO-ACTION, 3 an input missing, unparsable,
-# of the wrong shape (not a JSON object, or without its top-level list) or older than 2 ticks
-# (2 x the longest schedule.tick_delays_s), 2 usage; --act: 0 recorded, 1 refused, 2 usage.
+# Inputs are validated once, then sanitised, at the top of the judge. One validation stage checks every input document
+# (classify, discover, asks, the ledger) against a type spec down to the members of its lists and maps and the fields
+# read from each; null or absent stays legal. A present value of the wrong type in a field that protects a lane or a PR
+# (a worktree comment, an asks.sh row, a ledger ask with EVERY field read from it: id, state, lane, worker, worktree, path,
+# askedAt, kind, scope, question, topic, noCode, pr, followUp and files with each member; a ledger worker row and its state,
+# host, path, lane, worktreeId and pr; a PR label and its name; the freeze and its ttl; the hosts asks.sh read; a classify class,
+# owner or owner source) is a named gap in gaps[], every lane, PR and delegated ask is unverified, and the run exits 3: the
+# sanitising below would drop such a value, and a dropped value reads as nothing there (jq treats false as absent in `//`, which
+# is how a followUp, pr or kind of false or 7 used to drop a hold). Two values the type alone cannot judge are gaps as well: a
+# freeze ttl of digits only (ts reads it as epoch seconds, an expired freeze; it is an ISO time) and a state that differs from a
+# known one only by case or white space (every state is matched exactly), as is a workers key padded with white space. A gap
+# that would name a credential-shaped text, a map key included, is withheld whole in --json, on stderr and in the text report.
+# A value that only times or prints a row (updatedAt, idleMinutes, a title) is dropped and holds only its own row (stall-seen.json
+# is rewritten clean). PR labels with no name ({"name": null}, {}) are LEGAL: the label is simply not a name and protects nothing. Exit: 0 clean, 4 NO-ACTION, 3 an input missing, unparsable, of the wrong shape (not a JSON object, or
+# without its top-level list), older than 2 ticks (2 x the longest schedule.tick_delays_s), partly unreadable as above or
+# a failed open PR list (the rows it could judge still print, with the NO-ACTION line when there is one), 2 usage;
+# --act: 0 recorded, 1 refused, 2 usage. scripts/test/stall-fuzz.sh mutates every value of every input to check this.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=SCRIPTDIR/lib.sh
@@ -134,10 +147,11 @@ VERBS="nudge relay escalate restart replace close-ask verdict blocked"
 verb_rung() { case "$1" in nudge|relay) echo 1 ;; escalate|restart|replace|close-ask) echo 2 ;; verdict|blocked) echo 3 ;; *) return 1 ;; esac; }
 # looks_secret_text <text>: secret_shaped on the text as written AND with dashes read as spaces (a token split by a dash is
 # caught as written; scripts/secret-shape.sh also holds the phrase shapes: Bearer, a password manager access token, password, login)
-looks_secret_text() { secret_shaped "$1" || secret_shaped "${1//-/ }"; }
+looks_secret_text() { secret_gate "$1" || return 1; secret_shaped "$1" || secret_shaped "${1//-/ }"; }
 # looks_secret_name <token>: a lane, host or path. A kebab name of 40 or more characters is a long run but not a secret, so the
 # long-run rule reads dashes as spaces; a run of 40 or more that mixes upper case and digits is refused as written
 looks_secret_name() {
+  secret_gate "$1" || return 1
   { secret_shaped_prefix "$1" || secret_shaped "${1//-/ }"; } && return 0
   local r
   for r in $(printf '%s' "$1" | grep -oE '[A-Za-z0-9_-]{40,}'); do
@@ -358,6 +372,12 @@ check_doc asks "$ASKS" '(.asks | type == "array")'
 [ -r "$LEDGER" ] && [ -s "$LEDGER" ] || stale "ledger $LEDGER is missing or empty"
 jq -e 'type == "object"' "$LEDGER" >/dev/null 2>&1 || stale "ledger $LEDGER is not a JSON object"
 cm_ledger_guard "$LEDGER" || stale "ledger $LEDGER belongs to another project"
+# A key written twice in one object (jq keeps the LAST: "state":"parked","state":"running" reads as running) cannot be read as what the writer meant, and a worker or an ask is held on exactly such
+# fields. The scan names the path of every repeat; each one under a section this program reads becomes a reason in $inputBad (no lane, PR or ask is judged that tick, a gap, no nudge).
+# A ledger the scan cannot read (more than one JSON document, truncated, no python3) is not judged at all. references/input-contract.md, G and "Whole-ledger hold".
+if ! DL="$(cm_input_dupkeys "$LEDGER" 2>/dev/null)" || ! DUPS="$(printf '%s' "$DL" | jq -sc '.' 2>/dev/null)"; then
+  stale "ledger $LEDGER is not one JSON document the repeated-key scan can read (more than one document, truncated, or no python3)"
+fi
 
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/cm-stall.XXXXXX")" || { cm_warn "stall.sh: cannot create a temp dir"; exit 3; }
 trap 'rm -rf -- "${TMP:?}"' EXIT
@@ -387,7 +407,115 @@ def s_host: if s_ok then . else "(invalid host)" end;
 # s_mark($m): a value of the wrong type becomes the never-matching marker $m, never null (null defaults to a real value
 # in this program: a null repo to the main repo, a null path to any path, a null owner to the lane name)
 def s_mark($m): if s_ok then . else $m end;
-($cls[0] | s_obj) as $C0
+# ---- validation: the ONE place that decides whether an input can be trusted to protect a lane or a PR. V_SPEC lists
+# every field this program reads to hold, exempt or park something (a worktree comment, an ask row, a worker row, a
+# label, the freeze, a class or owner of a lane, the hosts read), with the types it may have; null or absent is legal
+# wherever it is listed. Lists and maps are checked row by row, and a row that is not an object counts. The labels of a PR are
+# legal with no name: [{"name": null}] and [{}] are not gaps (the name is read only when it is text). The inventory of every
+# field is scripts/test/fixtures/stall-fields.tsv, and scripts/test/field-reads.sh fails when this program reads a field that
+# is not in it. Any value
+# present with another type is a reason in $inputBad: the sanitise stage below would drop it, and a dropped protective
+# value reads as "nothing there", which would let a held lane or PR ladder. So then no lane, PR or delegated ask is
+# judged that tick (each is unverified), every reason is a gap, and the run exits 3. Fields that only time or print a
+# row (updatedAt, firstSeen, idleMinutes, title, text, reason) stay out: a bad one makes only that row unverified. A
+# ledger ask askedAt is in: an ask with no readable time is unverified, and an unverified ask frees its lane and PR
+# (so a wrong-typed one would erase the hold of a delegated ask). Out of scope on purpose: the author object of a PR with no
+# login (the human exemption reads it, a gap there is a separate change) and the rows of stall-actions.ndjson (written by --act,
+# read back with its own filters).
+def v_name: if . == "array" then "a list" elif . == "object" then "an object" elif . == "string" then "text"
+            elif . == "number" then "a number" elif . == "boolean" then "true or false" else . end;
+# "nonblank" in a type list: the text must also hold a non-space character. An id, host, path, lane, class or worker that is "" or
+# spaces matches nothing, so the hold it should give would vanish: it is a reason, never "no value"
+def v_type($doc; $where; $types): ($types | map(select(. != "nonblank"))) as $ts
+  | if . == null then empty
+    elif (type as $x | $ts | index($x)) == null then "\($doc): \($where) is not \($ts | map(v_name) | join(" or "))"
+    elif ($types | index("nonblank")) != null and type == "string" and (test("\\S") | not) then "\($doc): \($where) is blank text, a hold on it would match nothing"
+    else empty end;
+def v_fields($doc; $where; $spec): . as $o | $spec | to_entries[] | . as $e | $o[$e.key] | v_type($doc; "\($where).\($e.key)"; $e.value);
+def v_row($doc; $where; $spec): if . == null then "\($doc): \($where) is null, a row must be an object (a null member would drop the hold it gives)"
+                                elif type != "object" then v_type($doc; $where; ["object"])
+                                else v_fields($doc; $where; $spec) end;
+def v_rows($doc; $where; $spec): if type == "array" then to_entries[] | .key as $i | .value | v_row($doc; "\($where)[\($i)]"; $spec)
+                                 else v_type($doc; $where; ["array"]) end;
+def v_map($doc; $where; $spec): if type == "object" then to_entries[] | .key as $k | .value | v_row($doc; "\($where).\($k)"; $spec)
+                                else v_type($doc; $where; ["object"]) end;
+def v_strs($doc; $where): if type == "array" then to_entries[] | .key as $j | .value | v_type($doc; "\($where)[\($j)]"; ["string"])
+                          else v_type($doc; $where; ["array"]) end;
+# v_near: a state that reads like a known one (the same word in another case, or padded with white space) but is not it:
+# every state below is matched EXACTLY, so "Open" or " parked " would read as "not that state" and erase a hold. A text that is
+# not a near miss of a known state (an unknown state) is legal and unchanged
+def v_near($doc; $where; $known): if type == "string" and (. as $x | $known | index($x) | not)
+                                     and ((gsub("^\\s+|\\s+$"; "") | ascii_downcase) as $n | $known | index($n) != null)
+                                  then "\($doc): \($where) is a near miss of a known state (another case or padded with spaces), states are matched exactly"
+                                  else empty end;
+# v_unk: a state that is present and not exactly one of $known (a typo, "", spaces, another case) holds nothing: every protection keyed on
+# a state would read it as "not that state". It is a reason, never a quiet pass. The near-miss wording stays for the common typo
+def v_unk($doc; $where; $known): if type == "string" and (. as $x | $known | index($x) | not)
+                                    and ((gsub("^\\s+|\\s+$"; "") | ascii_downcase) as $n | $known | index($n) == null)
+                                 then "\($doc): \($where) is not a known state, an unknown state protects nothing"
+                                 else empty end;
+def v_nearrows($doc; $where; $known): if type == "array" then to_entries[] | .key as $i | .value | select(type == "object")
+                                       | .state | (v_near($doc; "\($where)[\($i)].state"; $known), v_unk($doc; "\($where)[\($i)].state"; $known)) else empty end;
+def v_nearmap($doc; $where; $known): if type == "object" then to_entries[] | .key as $k | .value | select(type == "object")
+                                      | .state | (v_near($doc; "\($where).\($k).state"; $known), v_unk($doc; "\($where).\($k).state"; $known)) else empty end;
+def S: ["string"];
+# SN: text that must not be blank (an identity: host, path, id, lane, class, worker)
+def SN: ["string", "nonblank"];
+# PRN: a PR reference, a number or text (#n, repo#n, a pull URL); anything else cannot name a PR
+def PRN: ["number", "string"];
+([ ($cls[0] | s_obj) as $c
+   | ($c.items | v_rows("classify"; ".items"; {host: SN, name: SN, path: SN, class: SN, worktreeId: SN, pr: ["object"],
+                                               repo: SN, owner: SN, ownerSource: SN})),
+     ($c.items | if type == "array" then to_entries[] | .key as $i | .value | select(type == "object")
+                 | .pr | select(type == "object") | v_fields("classify"; ".items[\($i)].pr"; {number: ["number"], state: S}) else empty end),
+     ($c.ownership | v_type("classify"; ".ownership"; ["object"])),
+     ($c.ownership | if type == "object" then .leadDead | v_rows("classify"; ".ownership.leadDead"; {open: ["array"]}) else empty end),
+     ($c.ownership | if type == "object" and (.leadDead | type) == "array" then .leadDead | to_entries[] | .key as $i
+                     | .value | select(type == "object") | .open | select(type == "array") | v_strs("classify"; ".ownership.leadDead[\($i)].open") else empty end),
+   ($disc[0] | s_obj) as $d
+   | ($d.mainRepo | v_type("discover"; ".mainRepo"; S)),
+     ($d.hosts | v_rows("discover"; ".hosts"; {name: SN, truncated: ["boolean"]})),
+     ($d.worktrees | v_rows("discover"; ".worktrees"; {host: SN, path: SN, comment: S})),
+     ($d.prs.open | v_rows("discover"; ".prs.open"; {number: ["number"], repo: S, author: ["object", "string"], labels: ["array"]})),
+     ($d.prs.open | if type == "array" then to_entries[] | .key as $i | .value | select(type == "object")
+                    | (.author | select(type == "object") | v_fields("discover"; ".prs.open[\($i)].author"; {login: S})),
+                      (.labels | select(type == "array") | to_entries[] | .key as $j | .value
+                       | (v_type("discover"; ".prs.open[\($i)].labels[\($j)]"; ["object", "string"])),
+                         (select(type == "object") | v_fields("discover"; ".prs.open[\($i)].labels[\($j)]"; {name: S})))
+                    else empty end),
+     ($d.errors | v_rows("discover"; ".errors"; {where: S})),
+   ($asksDoc[0] | s_obj) as $a
+   | ($a.asks | v_rows("asks"; ".asks"; {host: SN, worktree: SN, path: SN, tag: S})),
+     ($a.unreachable | v_rows("asks"; ".unreachable"; {host: SN})),
+     ($a.hostsRead | if . == null then empty else v_strs("asks"; ".hostsRead") end),
+   ($led[0] | s_obj) as $l
+   | ($l.workers | if . == null then empty
+                   else (v_map("ledger"; ".workers"; {state: S, host: SN, path: SN, lane: SN, worktreeId: SN, pr: PRN}),
+                         v_nearmap("ledger"; ".workers"; cm_states_known),
+                         # an ask names its worker trimmed, and the row is found by that exact key: a key padded with white space is never found
+                         (if type == "object" then keys[] | select(. != gsub("^\\s+|\\s+$"; "")) | "ledger: .workers[\(tojson)] is a worker id with surrounding white space, ids are matched exactly" else empty end)) end),
+     ($l.asks | if . == null then empty
+                else (v_rows("ledger"; ".asks"; {id: S, state: S, lane: S, worker: S, worktree: S, path: S, askedAt: ["string", "number"],
+                                                  kind: S, scope: S, question: S, topic: S, noCode: ["boolean"], pr: PRN, followUp: S, files: ["array"]}),
+                      v_nearrows("ledger"; ".asks"; cm_ask_states),
+                      # an OPEN ask with no id (missing, null, blank) cannot be named, found or closed, yet it may hold a lane or a PR: it is a reason (input contract, decision 3), never "an ask that holds nothing"
+                      (if type == "array" then to_entries[] | .key as $i | .value | select(type == "object" and .state == "open" and (.id == null or ((.id | type) == "string" and (.id | test("\\S") | not))))
+                       | "ledger: .asks[\($i)].id is missing or blank on an open ask: it may hold a lane or a PR, so nothing can be ruled out" else empty end),
+                      (if type == "array" then to_entries[] | .key as $i | .value | select(type == "object") | .files | select(type == "array")
+                       | v_strs("ledger"; ".asks[\($i)].files") else empty end)) end),
+     ($l.freeze | if . == null then empty
+                  elif type != "object" or (.state | IN("on", "off") | not) then "ledger: .freeze is not an object with state on or off"
+                  else (.ttl | v_type("ledger"; ".freeze.ttl"; S)),
+                       # ts reads a text of digits only as epoch seconds ("7" would be 1970, an expired freeze): the ttl is an ISO time
+                       (.ttl | if type == "string" and test("^[0-9]+$") then "ledger: .freeze.ttl is digits only, which read as epoch seconds: it must be an ISO 8601 time" else empty end) end),
+     ($l.queue | if . == null then empty elif type != "object" then v_type("ledger"; ".queue"; ["object"])
+                 else .items | if . == null then empty else (v_rows("ledger"; ".queue.items"; {lane: S, state: S}), v_nearrows("ledger"; ".queue.items"; cm_queue_states)) end end),
+     ($l.lanes | if . == null then empty else v_map("ledger"; ".lanes"; {queue: ["array"]}) end),
+     # a key written twice (path from scripts/jdupkeys) anywhere in a section this program reads: jq reads the LAST of the two, which can turn parked into running or an open ask into an answered one
+     ($dupkeys[] | select((.[0] | tostring) | IN("workers", "asks", "freeze", "queue", "lanes"))
+      | "ledger: .\(map(tostring) | join(".")) writes the same key twice, a repeated key makes the value unreadable") ]) as $inputBad
+| ($inputBad | length > 0) as $anyBad
+| ($cls[0] | s_obj) as $C0
 | {generatedAt: $C0.generatedAt,
    items: [ $C0.items | s_objs[]
             | {host: (.host | s_host), name: (.name | s_mark("(invalid name)")), path: (.path | s_mark("(invalid path)")),
@@ -447,7 +575,7 @@ def s_mark($m): if s_ok then . else $m end;
 # and the PR it names (asks[].pr: a number, "#n", "n", "repo#n" or a github.com/<owner>/<repo>/pull/<n> URL), as a
 # lowercased "repo#n" key; a pr that is set but cannot be read is "?" (fail safe: every PR is held while it stands)
 | def askWorker: ((.worker // "") | tostring | gsub("^\\s+|\\s+$"; "")) as $w
-    | if $w == "" then null else ([ $lw[] | select(.key == $w) | .value ] | first) end; .
+    | if $w == "" then null else ([ $lw[] | select((.key | gsub("^\\s+|\\s+$"; "")) == $w) | .value ] | first) end; .
 | def askLane: ((.lane // "") | tostring | lc | gsub("^\\s+|\\s+$"; "")); .
 | def askPrKey: (.pr // null)
     | if . == null then null
@@ -470,94 +598,15 @@ def s_mark($m): if s_ok then . else $m end;
     | ([ (.path // empty | tostring), ($wv | if . == null then empty else (.path // empty | tostring) end) ]) as $paths
     | (($wv | if . == null then null else .host end) // null) as $h
     | any($names[]; isSelf($h; .; "")) or any($paths[]; isSelf($h; ""; .)); .
-# a ledger ask the ladder may act on: null, else why it is owner-only (Blocked, not stalled). release and deploy are
-# delegated (config drive.delegated_classes); an own-scope kind (references/away-timeout.md) only past the
-# ask-timeout.sh gates and deny scan (scripts/ask-deny.sh); secrets, every other kind, a missing kind and an unknown
-# one is owner-only
-# the kinds this script names in a reason (references/ledger.md asks[].kind); any other value prints as "unknown kind"
-# so a credential-shaped kind never reaches the output
-| def knownKinds: ["release", "deploy", "secrets", "code", "design", "test", "scope", "product", "merge", "credentials",
-                   "migration", "auth", "payments", "prod-data", "teardown", "owner", "remove-standing",
-                   "accept-unmerged-beads"]; .
-# a malformed or over-long ledger ask, for EVERY kind, before anything reads its text: question, topic, lane, worker
-# and path must be text and files a list of text, else owner-only; then the fields as JSON may not run over 4000
-# characters (linear: tojson of text only). Nothing that normalises or scans text (ask_norm, gsub, the own-worktree
-# check) runs on such an ask: a gsub over tens of thousands of characters is slow enough to stall the tick
-| def askBad($k):
-    (if ($k | IN(knownKinds[])) then $k else "unknown kind" end) as $ks
-    | if ([.question, .topic] | any(. != null and type != "string")) then "of kind \($ks) with a non-text question or topic"
-      elif ([.lane, .worker, .path] | any(. != null and type != "string")) then "of kind \($ks) with a non-text field"
-      elif (.files // null) != null and ((.files | type) != "array" or any(.files[]; type != "string")) then
-        "of kind \($ks) with an invalid files[]"
-      elif ([.question, .topic, .lane, .worker, .path, .files] | tojson | length) > 4000 then
-        "of kind \($ks) with an over-long ask text"
-      else null end; .
-| def askOwnerWhy($k):
-    (if ($k | IN(knownKinds[])) then $k else "unknown kind" end) as $ks
-    | askBad($k) as $bad
-    | ([.question, .topic] | map(strings) | join(" ") | length) as $qlen
-    | if $bad != null then $bad
-      elif ($k | IN("release", "deploy")) then
-        # narrow scan: a runbook or cutover stays with the owner: a go line (a line `go <command> <staging|production>
-        # ...`), cutover or a runbook step; so does any secret or account-wide key. A false hit only sends the ask to
-        # the owner
-        # $tl: the whole ask text (question, topic, lane, worker, path, files) for the cutover and secret scans, where
-        # extra text can only fail safe; $qt: the question and topic alone, the only text the allowlist
-        # reads, so a lane, worker, path or file name can never name the class for the ask
-        # newlines and tabs fold to spaces before the secret scan and the allowlist (a word split over two lines is
-        # still that word); the cutover scan keeps the lines, since a go line is a line. $qt also loses its outer
-        # whitespace and runs of spaces, so the allowlist reads the words, not their spacing
-        # a release phrase is short: a question and topic over 200 characters go to the owner before any normalising
-        ([.question, .topic] | any(. != null and type != "string")) as $nontext
-        | if $nontext then "of kind \($ks) with a non-text question or topic"
-          elif $qlen > 200 then "of kind \($ks) with an over-long question or topic"
-          else
-        ask_text as $t
-        | ($t | ascii_downcase) as $tl
-        | ($tl | gsub("[\\n\\r\\t\\x0b\\f]+"; " ")) as $tlf
-        | ([.question, .topic] | map(strings) | join(" ") | ask_norm | ascii_downcase | gsub("\\s+"; " ") | gsub("^ | $"; "")) as $qt
-        # a go line starts after any line break: newline, carriage return, vertical tab (\x0b) or form feed
-        | if ($t | explode | any(. > 127)) then "of kind \($ks) with non-ASCII text"
-          elif ($tl | test("(^|[\\n\\r\\x0b\\f])[-*>`\\s]*go\\s+[a-z0-9-]+\\s+(staging|production)([^a-z0-9]|$)|cutover|runbook")) then
-            "of kind \($ks) naming a runbook or cutover (a go line, a cutover, a runbook step)"
-          # the secret scan is the credential segment of the shared deny list (CM_ASK_DENY_CRED in scripts/ask-deny.sh,
-          # passed as $askCred, so the two cannot drift) plus the release-only terms below; a short word (key, keys, pat,
-          # pats, cert, certs, p8, p12, dsn, bearer) counts only as a word, so keyboard, monkey, pathfinder and patch do
-          # not. Over-matching key or pats in lane or worker text is accepted: it only sends the ask to the owner
-          elif ($tlf | test("\\b(" + $askCred + ")\\b"))
-               or ($tlf | test("secret|credential|api.?key|token|password|passphrase|keystore|signing|private|account.?wide|org.?wide|repo.?level|service.?role|service.?account|access.?key|webhook|vault|provisioning|keychain|hmac|\\.env\\b|\\b(pem|jks)\\b|(^|[^a-z0-9])(keys?|pats?|certs?|certificates?|p8|p12|dsn|bearer)([^a-z0-9]|$)")) then
-            "of kind \($ks) naming a secret or an account-wide key"
-          # default deny, by an allowlist of the shape and not a denylist of words: the question and topic must match
-          # CM_ASK_DELEGATED_ASK (scripts/ask-deny.sh, built from config drive.delegated_classes, passed as $askAsk)
-          # end to end: one class phrase with no free words. Any other wording goes to the owner, and with no class
-          # configured every release or deploy ask does. The cutover and secret scans above still run first
-          elif ($qt | test($askAsk) | not) then
-            "of kind \($ks): a delegated ask must be one class phrase: <verb> the <class> <version> <track>; any other wording goes to the owner"
-          else null end end
-      # a secrets ask never ladders: a key shared with production (an OTA or store signing key, a CLI token, a repo-level
-      # GitHub secret) reads the same as a test one, so the owner decides every one
-      elif $k == "secrets" then "of kind secrets (a secrets ask always goes to the owner)"
-      elif ($k | IN("code", "design", "test", "scope", "product")) then
-        ask_text as $t | ask_bad_files($askAllow; $askNever) as $bf | ask_hits($askDeny; $askSquash) as $h
-        # the lane gate of ask-timeout.sh: the ask lane, else the ledger worker lane (an ownership label such as
-        # dev-sweeper), lowercased and trimmed; ask_scope_why refuses no issue, no lane, an ops, epic or pr-sweeper lane
-        # and an epic plan-ready approval, whatever the text says
-        | ((.lane // ((($L.workers // {}) | if type == "object" then . else {} end)[(.worker // "") | tostring | gsub("^\\s+|\\s+$"; "")]
-                      | if type == "object" then .lane else null end) // "") | tostring | ascii_downcase | gsub("^\\s+|\\s+$"; "")) as $sl
-        | ask_scope_why($sl; $askOwner) as $sw
-        | if $sw != null then "of kind \($ks): \($sw)"
-          elif ($t | explode | any(. > 127)) then "of kind \($ks) with non-ASCII text"
-          elif (.files // null) != null and (.files != ask_files) then "of kind \($ks) with an invalid files[]"
-          # as ask-timeout.sh: the changed paths are listed (files[]) unless noCode is true, and a noCode ask has no PR
-          elif (ask_files | length) == 0 and .noCode != true then "of kind \($ks) with no files[] (list the changed paths, or set noCode)"
-          elif (ask_files | length) == 0
-               and ((.pr // ((($L.workers // {}) | if type == "object" then . else {} end)[(.worker // "") | tostring | gsub("^\\s+|\\s+$"; "")]
-                             | if type == "object" then .pr else null end)) != null) then "of kind \($ks) with noCode but the worker has a PR"
-          elif ($bf | length) > 0 then "of kind \($ks) touching \($bf[0])"
-          elif ($h | length) > 0 then "of kind \($ks) naming \($h | join(","))"
-          else null end
-      elif $k == "" then "with no kind"
-      else (if $ks == "unknown kind" then "of an unknown kind" else "of kind \($ks)" end) end; .
+# a ledger ask the ladder may act on: null, else why it is owner-only (Blocked, not stalled). The one definition is
+# ask_owner_why in scripts/ask-deny.sh, shared with digest.sh --full "Blocked on you": release and deploy are delegated
+# (config drive.delegated_classes); an own-scope kind only past the ask-timeout.sh gates and deny scan; secrets, every other
+# kind, a missing kind and an unknown one is owner-only
+# it reads the workers as the ledger has them (every object row), not the cleaned map: a worker row with a host that is
+# not text is dropped from $L.workers, and the "noCode ask whose worker has a PR" check would then find no row and let the
+# ask ladder (the validation stage also exits 3 for such a row, so nothing is judged either way)
+| $L0.workers as $askWorkers
+| def askOwnerWhy($k): ask_owner_why($k; $askWorkers; $askAllow; $askNever; $askDeny; $askSquash; $askCred; $askAsk); .
 | ($L.freeze // {}) as $fz
 | (($fz.state // "") == "on" and ((($fz.ttl // null) | ts) as $t | $t == null or $now < $t)) as $frozen
 # PR head first-seen: a new sha resets it; first sight starts at updatedAt (the push was at or before it)
@@ -620,12 +669,16 @@ def s_mark($m): if s_ok then . else $m end;
        else ex("ask"; $n; .host; "owner"; "\(atag) from a lane: an asks.sh row has no kind, so it is owner-only (Blocked, not stalled); a delegated one ladders as a ledger ask") end ]
    + [ $lasks | to_entries[] | .key as $li | .value | select((.id | type) == "string" and (.id | length) > 0)
      | (.askedAt | ts) as $p
-     | ((.kind // .scope // "") | if type == "string" then ascii_downcase | gsub("^\\s+|\\s+$"; "") else "" end) as $k
-     | askBad($k) as $bad
+     | ask_kind as $k
+     # a malformed or over-long ask goes to the owner before anything reads its text (ask_bad, scripts/ask-deny.sh), so the
+     # own-worktree check never runs on it either
+     | ask_bad($k) as $bad
      | (if $bad != null then $bad else askOwnerWhy($k) end) as $ow
      | if $bad != null then ex("ask"; .id; null; "owner"; "ledger ask \($bad): owner-only, the owner decides (Blocked)")
-       elif askSelf then ex("ask"; .id; null; "held"; "ledger ask from the own worktree of the concertmaster: a held item, the owner decides (Blocked, not stalled)")
+       elif askSelf and $ow != null then ex("ask"; .id; null; "held"; "ledger ask from the own worktree of the concertmaster: a held item, the owner decides (Blocked, not stalled)")
+       elif askSelf then ex("ask"; .id; null; "held"; "delegated ledger ask from the own worktree of the concertmaster: a held item, the concertmaster decides it itself (never laddered to itself, not the owner'"'"'s)")
        elif $ow != null then ex("ask"; .id; null; "owner"; "ledger ask \($ow): owner-only, the owner decides (Blocked)")
+       elif $anyBad then ex("ask"; .id; null; "unverified"; "an input is unreadable (\($inputBad[0])): no delegated ask is judged this tick")
        elif $p == null then ex("ask"; .id; null; "unverified"; "askedAt missing or unreadable")
        elif ((.verdictStartedAt | ts) as $vc | $vc != null and $now < $vc + $claimMin * 60) then ex("ask"; .id; null; "held"; "verdict claimed (verdictStartedAt) less than \($claimMin) minutes ago: the claimed verdict is running, no second verdict, relay or close")
        else judge("ask"; .id; null; $p; {worker: (.worker // null | if . == null then null else tostring end),
@@ -671,10 +724,12 @@ def s_mark($m): if s_ok then . else $m end;
      | if .class == "host-offline" then ex("lane"; $n; .host; "unverified"; "host offline: \(.reason // "unreachable")")
        elif ($trunc | index($i.host)) != null then ex("lane"; $n; .host; "unverified"; "host \(.host) worktree list cut off")
        elif unread($i.host) then ex("lane"; $n; .host; "unverified"; "asks of host \(.host) not read: an open ask cannot be ruled out")
+       elif $anyBad then ex("lane"; $n; .host; "unverified"; "an input is unreadable (\($inputBad[0])): what holds this lane cannot be ruled out")
        elif (.class | IN("main-checkout", "other-project", "done-merged", "done-selfreported")) then ex("lane"; $n; .host; "class"; "class \(.class)")
        elif ($nt | index($nl)) != null then ex("lane"; $n; .host; "class"; "worktrees.never_touch")
        elif (.ownerSource // "") == "self" then ex("lane"; $n; .host; "self"; "the concertmaster itself")
        elif ($states | index("asleep")) != null then ex("lane"; $n; .host; "asleep"; "ledger worker asleep: stopped on purpose")
+       elif .class == "standing-unknown-state" then ex("lane"; $n; .host; "unverified"; "standing-unknown-state: the ledger state is not a known state, never nudged, fix the ledger row")
        elif ($states | index("parked")) != null then ex("lane"; $n; .host; "parked"; "ledger worker parked")
        elif ($states | index("blocked-on-owner")) != null then ex("lane"; $n; .host; "owner"; "ledger worker blocked-on-owner (Blocked)")
        elif $waitOwner then ex("lane"; $n; .host; "owner"; "cm:waiting-owner (Blocked)")
@@ -711,6 +766,7 @@ def s_mark($m): if s_ok then . else $m end;
      | ([ $waitLanes[] | ((.name // "") | lc) as $x | (.host // null) as $h
           | select(any($prItems[]; .name == $x and .host == $h)) ] | first) as $wl
      | if $prFail then ex("pr"; $n; null; "unverified"; "open PR list failed in discover")
+       elif $anyBad then ex("pr"; $n; null; "unverified"; "an input is unreadable (\($inputBad[0])): what holds this PR cannot be ruled out")
        elif ($labels | index("do-not-merge")) != null then ex("pr"; $n; null; "label"; "label do-not-merge")
        elif $frozen then ex("pr"; $n; null; "freeze"; "held by the merge freeze (window \($fz.window // "?"))")
        elif (((.author // "") | lc) as $au | $collab | index($au)) != null then ex("pr"; $n; null; "human"; "collaborator PR (\(.author)): waiting on a human")
@@ -730,11 +786,16 @@ def s_mark($m): if s_ok then . else $m end;
 | ([ $all[] | select(.code? != null) | del(._li) ]
    + [ $closed[] | ex(.kind; .name; .host; "recorded"; "recorded \(.closedBy.verb) at \(.closedBy.at): out of the ladder until it makes progress") ]) as $exempt
 | ([ (if $prFail then "discover: open PR list failed, PRs not judged" else empty end),
-     (if ($askPrs | index("?")) != null then "ledger: an open ask has an unreadable asks[].pr, every PR held" else empty end) ]) as $gaps
+     (if ($askPrs | index("?")) != null then "ledger: an open ask has an unreadable asks[].pr, every PR held" else empty end),
+     ($inputBad[:8][] | . + ", unreadable: no lane or PR judged this tick"),
+     (if ($inputBad | length) > 8 then "and \(($inputBad | length) - 8) more unreadable input values" else empty end) ]) as $gaps
 | { schema: "concertmaster.stall/v1", now: $nowIso, since: ($since | todate), rungs: $rungs, resumeLockHeld: $held,
     checked: ($judged | length), rows: $rows, exempt: $exempt,
     unverified: ([ $exempt[] | select(.code == "unverified") ] | length),
     gaps: $gaps,
+    # an input the judge could not read in part (the open PR list, or any value the validation stage names): every lane
+    # or PR it could hold is unverified, and the run exits 3, not 0
+    unreadable: ($prFail or $anyBad),
     noAction: ([ $rows[] | select(.noAction) ] | length > 0),
     seen: {prs: $newSeen} }'
 
@@ -745,18 +806,22 @@ case "$STATE_DEFS" in *cm_state_norm*) ;; *) STATE_DEFS='def cm_state_norm: .; '
 # held while the claimed verdict runs: no second verdict, relay or close. Same default and variable as ask-timeout.sh
 CLAIM_MIN="${CM_VERDICT_CLAIM_MIN:-30}"
 case "$CLAIM_MIN" in ''|*[!0-9]*) cm_warn "stall.sh: CM_VERDICT_CLAIM_MIN must be whole minutes; using 30"; CLAIM_MIN=30 ;; esac
-ASK_OWNER="${CM_OWNER_NAME:-}"
-if [ -z "$ASK_OWNER" ] || [ "$ASK_OWNER" = owner ]; then ASK_OWNER="the owner"; fi
-if ! jq -n -L "$HERE" --slurpfile cls "$CLS" --slurpfile disc "$DISC" --slurpfile asksDoc "$ASKS" --slurpfile led "$LEDGER" \
-     --slurpfile acts "$TMP/acts.ndjson" --slurpfile seen "$TMP/seen.json" \
+# test seam (scripts/test/field-reads.sh): CM_TEST=1 with CM_TEST_JQ_FLAGS=--debug-dump-disasm makes jq print its compiled
+# program in front of the report, and the script prints that and stops, so a test can list every field the program reads
+JQ_FLAGS=""; if [ "${CM_TEST:-}" = 1 ]; then JQ_FLAGS="${CM_TEST_JQ_FLAGS:-}"; fi
+# shellcheck disable=SC2086  # JQ_FLAGS is empty or one flag word
+if ! jq -n $JQ_FLAGS -L "$HERE" --slurpfile cls "$CLS" --slurpfile disc "$DISC" --slurpfile asksDoc "$ASKS" --slurpfile led "$LEDGER" \
+     --slurpfile acts "$TMP/acts.ndjson" --slurpfile seen "$TMP/seen.json" --argjson dupkeys "$DUPS" \
      --argjson claimMin "$CLAIM_MIN" --argjson now "$NOW" --arg nowIso "$NOW_ISO" --argjson since "$SINCE_S" --argjson rungs "$RUNGS" --argjson held "$HELD" \
      --argjson never "$NEVER" --argjson collab "$COLLAB" --arg selfName "${CM_SELF_WORKTREE:-}" \
-     --arg askDeny "$CM_ASK_DENY" --arg askCred "$CM_ASK_DENY_CRED" --arg askAsk "$CM_ASK_DELEGATED_ASK" --arg askSquash "$CM_ASK_SQUASH" --arg askAllow "$CM_ASK_ALLOW" --arg askNever "$CM_ASK_NEVER_PATHS" --arg askOwner "$ASK_OWNER" \
+     --arg askDeny "$CM_ASK_DENY" --arg askCred "$CM_ASK_DENY_CRED" --arg askAsk "$CM_ASK_DELEGATED_ASK" --arg askSquash "$CM_ASK_SQUASH" --arg askAllow "$CM_ASK_ALLOW" --arg askNever "$CM_ASK_NEVER_PATHS" \
      -f <(printf 'include "comment-segs";\n%s\n%s\n%s\n' "$STATE_DEFS" "$CM_ASK_DENY_DEFS" "$PROG") > "$TMP/out.json" 2>"$TMP/jq.err"; then
   JQERR="$(head -c 200 "$TMP/jq.err" | tr '\n' ' ')"
   if looks_secret_text "$JQERR"; then JQERR="the jq error is withheld: it looks like a credential"; fi
   stale "inputs could not be judged ($JQERR)"
 fi
+
+if [ -n "$JQ_FLAGS" ]; then cat "$TMP/out.json"; exit 0; fi
 
 # untrusted text copied into the output (a ledger ask id, question and worker, a PR title and its lanes, a lane or
 # worktree name, path or owner, a host, an exempt reason), in rows[] and exempt[]: each field (name, text, title,
@@ -768,12 +833,14 @@ fi
 WH='[withheld: looks like a credential]'
 scan_withheld() {
   if [ "${CM_TEST:-}" = 1 ] && [ -n "${CM_TEST_FAIL_WITHHOLD:-}" ]; then return 1; fi
-  jq -r '("rows", "exempt") as $a | (.[$a] // []) | to_entries[] | .key as $i | .value as $e
+  jq -r '(("rows", "exempt") as $a | (.[$a] // []) | to_entries[] | .key as $i | .value as $e
     | (("name", "text", "title", "worker", "reason", "path", "owner", "host", "class") as $f | (($e._full // {})[$f] // $e[$f]) | select(. != null) | tostring
         | [$a, ($i | tostring), $f, "-"] + [.]),
       (($e.lanes // []) | if type == "array" then . else [.] end | to_entries[] | .key as $j | .value | select(. != null) | tostring
         | [$a, ($i | tostring), "lanes", ($j | tostring)] + [.])
-    | (.[4] |= gsub("[\t\n\r]"; " ")) | join("\t")' "$TMP/out.json" \
+    | (.[4] |= gsub("[\t\n\r]"; " ")) | join("\t")),
+    # a gap names the path of the value it could not read, and a map key (a worker or lane id) is part of that path
+    ((.gaps // []) | to_entries[] | ["gaps", (.key | tostring), "-", "-", (.value | tostring | gsub("[\t\n\r]"; " "))] | join("\t"))' "$TMP/out.json" \
   | while IFS="$(printf '\t')" read -r a i f j v; do
       [ -n "$v" ] || continue
       # an identifier (a lane, host, path, owner, class, worker or lane element) may be a long kebab name: the name
@@ -788,13 +855,13 @@ scan_withheld() {
 }
 if WITHHELD="$(scan_withheld 2>/dev/null)" && [ -n "$WITHHELD" ]; then
   # shellcheck disable=SC2016  # jq program
-  PASS_PROG='reduce $w[] as $x (.; if $x.j == null then .[$x.a][$x.i][$x.f] = $wh else .[$x.a][$x.i].lanes[$x.j] = $wh end)'
+  PASS_PROG='reduce $w[] as $x (.; if $x.a == "gaps" then .gaps[$x.i] = $wh elif $x.j == null then .[$x.a][$x.i][$x.f] = $wh else .[$x.a][$x.i].lanes[$x.j] = $wh end)'
 else
   cm_warn "stall.sh: the credential scan failed: every name, text, title, worker, reason, path, owner, host, class and lane is withheld"
   WITHHELD="[]"
   # shellcheck disable=SC2016  # jq program
   PASS_PROG='(.rows, .exempt) |= map(with_entries(if (.key | IN("name", "text", "title", "worker", "reason", "path", "owner", "host", "class")) and .value != null then .value = $wh
-       elif .key == "lanes" and (.value | type) == "array" then .value |= map($wh) else . end))'
+       elif .key == "lanes" and (.value | type) == "array" then .value |= map($wh) else . end)) | .gaps |= map($wh)'
 fi
 if ! jq --argjson w "$WITHHELD" --arg wh "$WH" "$PASS_PROG"' | .rows |= map(del(._full))' \
      "$TMP/out.json" > "$TMP/out.red.json" 2>/dev/null; then
@@ -811,6 +878,11 @@ fi
 
 RC=0
 if jq -e '.noAction' "$TMP/out.json" >/dev/null 2>&1; then RC=4; fi
+# a partly unreadable input wins over NO-ACTION: the rows it could judge still print, and the NO-ACTION line with them
+if jq -e '.unreadable' "$TMP/out.json" >/dev/null 2>&1; then
+  RC=3
+  cm_warn "stall.sh: $(jq -r '.gaps | join("; ")' "$TMP/out.json"): not every lane and PR was judged (exit 3)"
+fi
 if [ "$JSON" -eq 1 ]; then
   jq 'del(.seen)' "$TMP/out.json"
   exit "$RC"
@@ -823,7 +895,7 @@ fi
 jq -r '"stall: \(.rows | length) stalled (\([.rows[] | select(.due)] | length) due, \([.rows[] | select(.actedThisTick)] | length) acted this tick), \(.exempt | length) exempt, \(.unverified) unverified, \(.checked) checked"
   + (if .resumeLockHeld then ", resume.lock held (rung 2 waits)" else "" end)
   + (if (.gaps | length) > 0 then " (gaps: \(.gaps | join("; ")))" else "" end)' "$TMP/out.json"
-if [ "$RC" -eq 4 ]; then
+if jq -e '.noAction' "$TMP/out.json" >/dev/null 2>&1; then
   jq -r '"NO-ACTION \([.rows[] | select(.noAction)] | length) due row(s) with no action since \(.since): " + ([.rows[] | select(.noAction) | "\(.kind) \(.name) (rung \(.rung), \(.action))"] | join(", "))' "$TMP/out.json"
 fi
 exit "$RC"

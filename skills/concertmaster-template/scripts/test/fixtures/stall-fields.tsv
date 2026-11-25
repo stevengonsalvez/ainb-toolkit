@@ -1,0 +1,109 @@
+# stall-fields.tsv: the inventory of every field scripts/stall.sh reads from its four input documents (cls classify.json, disc discover.json, asks asks.sh --json, led the ledger).
+# One line per field path: doc, path (dotted; * is any one key or index), the legal JSON types besides null (null is always legal), a class, a note. Class:
+#   A  a wrong type there decides whether a lane, PR or ask is held, exempt, parked, relayed or routed: the validation stage (V_SPEC in stall.sh) names it in gaps[], everything is unverified, exit 3
+#   B  display or time only: a wrong type drops only that value (the row keeps its other progress source, or is unverified): never a hold erased
+#   G  the document gate (check_doc): a wrong type is a STALE-INPUT line, exit 3
+# scripts/test/field-reads.sh checks every field name the stall.sh program reads against this file; scripts/test/stall-fuzz.sh mutates every path of
+# the base fixture (scripts/test/stall-base.sh) that matches a line here. A field the program reads must be listed or the check fails.
+cls	schema	string	G	document gate (check_doc)
+cls	generatedAt	string,number	G	document gate: a readable time, at most 2 ticks old
+cls	items	array	G	document gate: the list of lanes
+cls	items.*	object	A	a lane row
+cls	items.*.host	string	A	host a lane runs on: matches a worker, a truncated or unread host
+cls	items.*.name	string	A	lane name: matches never_touch, an ask lane, an action
+cls	items.*.path	string	A	worktree path: matches a worker, a comment, an action
+cls	items.*.class	string	A	main-checkout, other-project, done-*, standing-*, host-offline: never stalled
+cls	items.*.worktreeId	string	A	matches a ledger worker row
+cls	items.*.repo	string	A	repo of the lane PR
+cls	items.*.owner	string	A	a standing-idle lane is idle unless its owner has something queued
+cls	items.*.ownerSource	string	A	self, comment:<lead>: exempt
+cls	items.*.pr	object	A	the open PR of the lane
+cls	items.*.pr.number	number	A	the PR number
+cls	items.*.pr.state	string	A	OPEN adds the PR head to the lane progress
+cls	items.*.reason	string	B	printed in the host-offline reason only
+cls	items.*.idleMinutes	number	B	time only: no idle time leaves the row on its other progress source (PR head), or unverified
+cls	ownership	object	A	lead ownership
+cls	ownership.leadDead	array	A	leads that are dead: their open children are no longer driven by them
+cls	ownership.leadDead.*	object	A	one dead lead
+cls	ownership.leadDead.*.open	array	A	the children still open
+cls	ownership.leadDead.*.open.*	string	A	a child lane name
+disc	schema	string	G	document gate
+disc	generatedAt	string,number	G	document gate
+disc	mainRepo	string	A	the repo a PR without a repo belongs to
+disc	hosts	array	G	document gate
+disc	hosts.*	object	A	a host
+disc	hosts.*.name	string	A	host name
+disc	hosts.*.truncated	boolean	A	a cut-off worktree list: its lanes are unverified
+disc	worktrees	array	A	worktrees with their comments
+disc	worktrees.*	object	A	one worktree
+disc	worktrees.*.host	string	A	matches a lane
+disc	worktrees.*.path	string	A	matches a lane
+disc	worktrees.*.comment	string	A	cm:waiting-owner parks a lane
+disc	prs	object	G	document gate
+disc	prs.open	array	G	document gate
+disc	prs.open.*	object	A	one open PR
+disc	prs.open.*.number	number	A	the PR number
+disc	prs.open.*.repo	string	A	the repo names the PR key
+disc	prs.open.*.author	object,string	A	a collaborator PR waits on a human
+disc	prs.open.*.author.login	string	A	the author login
+disc	prs.open.*.labels	array	A	do-not-merge
+disc	prs.open.*.labels.*	object,string	A	one label
+disc	prs.open.*.labels.*.name	string	A	the label name
+disc	prs.open.*.title	string	B	printed only
+disc	prs.open.*.headRefOid	string	B	time only: first sighting of the PR head; none leaves updatedAt
+disc	prs.open.*.updatedAt	string,number	B	time only: no time at all makes the PR unverified
+disc	errors	array	A	discover errors
+disc	errors.*	object	A	one error
+disc	errors.*.where	string	A	a failed open PR list leaves every PR unverified
+asks	generatedAt	string,number	G	document gate
+asks	asks	array	G	document gate
+asks	asks.*	object	A	one comment ask
+asks	asks.*.host	string	A	the ask holds the lane of that worktree on that host
+asks	asks.*.worktree	string	A	the ask holds the lane of that worktree on that host
+asks	asks.*.path	string	A	the ask holds the lane of that worktree on that host
+asks	asks.*.tag	string	A	cm:waiting-owner is its own reason
+asks	asks.*.text	string	B	printed only
+asks	asks.*.firstSeen	string	B	part of the row name only
+asks	unreachable	array	A	hosts asks.sh could not read
+asks	unreachable.*	object	A	one host
+asks	unreachable.*.host	string	A	its lanes are unverified
+asks	hostsRead	array	A	hosts asks.sh read in full; a host missing is unread
+asks	hostsRead.*	string	A	a host name
+led	workers	object	A	ledger workers
+led	workers.*	object	A	one worker row
+led	workers.*.state	string	A	parked and blocked-on-owner park a lane; path, host and worktreeId pin it
+led	workers.*.host	string	A	parked and blocked-on-owner park a lane; path, host and worktreeId pin it
+led	workers.*.path	string	A	parked and blocked-on-owner park a lane; path, host and worktreeId pin it
+led	workers.*.lane	string	A	never read (an ownership label)
+led	workers.*.worktreeId	string	A	parked and blocked-on-owner park a lane; path, host and worktreeId pin it
+led	workers.*.pr	number,string	A	a noCode ask whose worker has a PR is the owner's
+led	asks	array	A	ledger asks
+led	asks.*	object	A	one ledger ask
+led	asks.*.id	string	A	an ask holds its lane and PR; read by the ask owner scan
+led	asks.*.state	string	A	an ask holds its lane and PR; read by the ask owner scan
+led	asks.*.lane	string	A	an ask holds its lane and PR; read by the ask owner scan
+led	asks.*.worker	string	A	an ask holds its lane and PR; names the worker row that pins the lane
+led	asks.*.worktree	string	A	an ask holds its lane and PR; read by the ask owner scan
+led	asks.*.path	string	A	an ask holds its lane and PR; read by the ask owner scan
+led	asks.*.kind	string	A	an ask holds its lane and PR; owner-only unless release, deploy or an own-scope kind
+led	asks.*.scope	string	A	an ask holds its lane and PR; the kind when there is no kind
+led	asks.*.question	string	A	an ask holds its lane and PR; read by the ask owner scan
+led	asks.*.topic	string	A	an ask holds its lane and PR; read by the ask owner scan
+led	asks.*.followUp	string	A	an ask holds its lane and PR; a follow-up ask holds no lane
+led	asks.*.askedAt	string,number	A	an ask with no readable time is unverified and frees its lane and PR
+led	asks.*.noCode	boolean	A	a noCode ask has no files and no PR
+led	asks.*.pr	number,string	A	the PR the ask holds
+led	asks.*.files	array	A	the changed paths of an own-scope ask
+led	asks.*.files.*	string	A	a path
+led	freeze	object	A	the merge freeze (state on or off)
+led	freeze.state	string	A	on holds every PR
+led	freeze.ttl	string	A	text, never epoch seconds: the hard limit of the freeze
+led	freeze.window	string	B	printed only
+led	queue	object	A	the queue
+led	queue.items	array	A	queued and granted entries
+led	queue.items.*	object	A	one entry
+led	queue.items.*.lane	string	A	a lane with something queued is not idle
+led	queue.items.*.state	string	A	queued or granted
+led	lanes	object	A	per-lane records
+led	lanes.*	object	A	one lane record
+led	lanes.*.queue	array	A	a lane with a queue is not idle
