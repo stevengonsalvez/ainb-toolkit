@@ -1,0 +1,49 @@
+# ledger-readers.tsv: every program under scripts/ that reads the ledger, asks, health, lanes, followUps, freeze or deployWindows,
+# found by grep (scripts/test/field-reads.sh discovers them; a program not listed here fails the check, and a line that no
+# longer matches the grep fails as stale). Columns (tab separated):
+#   program   kind   protective fields   note
+# kind: seam   the compiled jq program is dumped (CM_TEST seam) and every field NAME it reads is checked against its own inventory
+#              (stall-fields.tsv, digest-fields.tsv, asktimeout-fields.tsv, and their read-allow lists)
+#       scan   no seam: the source is scanned line by line for the protective fields below, and every read of standing, freeze, a
+#              state with a default, issue or project, and worker must use the typed idiom or sit on protective-read-allow.tsv with a reason
+#       none   reads the ledger only for display, timing, ids or a path: it holds no protective read (the note says why)
+# protective fields = the fields whose wrong type must never erase a protection: standing (a lead is never cleaned up), state (an
+# unknown state is never resumed), freeze (a garbled freeze is never read as off), issue and issueUrl (an escalation exists), project
+# (the ledger belongs to this project), worker (a deploy window has an owner).
+# States are matched exactly (cm_state_norm only maps a legacy spelling to its current word): deliberate, see SKILL.md.
+ask-deny.sh	scan	worker	reads worker for the deny record; the ask itself is classified by ask-timeout.sh
+ask-timeout.sh	seam	state,issue,worker	classifier fields: scripts/test/fixtures/asktimeout-fields.tsv
+automations-audit.sh	none		reads the ledger path only to list automations
+backup-offhost.sh	none		copies the ledger file, never reads a field
+boot-sweep.sh	scan	standing,state	a lane is nudged only when standing is exactly true (BS_OK), its state is known and not asleep (cm_state_unknown, cm_state_asleep); a row that fails that is reported, never nudged
+capacity-check.sh	scan	standing,state	standing lanes exempt from a pressure kill: cm_standing_any
+classify.jq	scan	standing,state	the classifier: standing from the ledger only (`.standing == true` or a lanes lead, a non-boolean reads as standing-unknown), state through cm_state_dead / cm_state_unknown (a present state that is no known state is class standing-unknown-state, never respawned)
+classify.sh	none		passes the ledger to classify.jq (--slurpfile ledger) and reads no ledger field itself: every ledger read is in classify.jq, scanned on its own row
+clock-check.sh	scan	state,worker	deployWindows worker counted by worker_rows (a worker that is not text or a number makes the report unknown), state of a window compared with the exact finished set
+config-check.sh	scan	project	reads the config project, not a ledger worker field
+cutover-host.sh	scan	standing,state	standing via cm_standing_any, state via cm_state_unknown (an unknown row is skipped with a reason)
+digest.sh	seam	state,issue,worker	every field: scripts/test/fixtures/digest-fields.tsv
+discover.sh	scan	state	display of the worktree comment state
+fleet-state.sh	scan	state,freeze	ledger freeze read as exactly {state: on|off} or absent, anything else publishes freeze=on (fzbad)
+followups.sh	scan	state,issue,issueUrl,worker	issue and issueUrl read through fu_esc (cm_fu_esc, typed)
+input-migrate-manifest.sh	scan		dry-run migration manifest of the typed boundary: reads every field through the typed view (input-view.jq), never as a protection
+input-view.jq	scan		the typed view itself: every field is read once, here, with its type and reason
+intake.jq	scan	state	lane_live: a lane or its lead worker is live only in an exact running, idle, spawning (draining for a lane) state; any other state, a near miss included, is not live, so work is never routed to it (the safe direction)
+intake.sh	none		passes the ledger to intake.jq (--slurpfile ledger) and reads no ledger field itself: the lane and worker state reads are in intake.jq, scanned on its own row
+lane-handles.sh	scan	state	state of a worker that decides whether a handle is written: cm_state_dead
+lane-health.sh	scan	standing,state	standing via cm_standing_any, state via cm_state_unknown (an unknown row is reported unknown, never resumed)
+lane-record.sh	scan	issue	the lane issue is read from the config and typed in the same pipe (a whole number of 1 or more); the ledger read is lanes.<lane>.recordedState, a text compared with the posted line
+ledger-guard.sh	none		the guard itself: cm_ledger_guard in lib.sh compares project as text
+ledger-rebuild.sh	scan	state,standing	state read as exact gone or repurposed for matching, standing compared with the boolean true; the rebuilt rows come from the fleet and the lane issues, and the ledger is written only through cm_ledger_write
+lessons-recon.sh	none		reads lessons, not protective fields
+lib.sh	scan	state,project	CM_JQ_STATE_DEFS and cm_ledger_guard: the shared helpers
+live-agent.sh	none		process scan, reads no ledger field
+programme-rollup.sh	scan	state	liveness of a rollup member through cm_state_dead; display
+queue-audit.sh	scan	state,issue	queue rows, display
+queue.sh	scan	state,issue	queue rows, an issue number is a key, never a protection
+resume.sh	scan	state	state through cm_state_resumable / cm_state_unknown / cm_state_asleep (an unknown state is never resumed); the standing lane notes use the exact standing: true row at the path
+roster.sh	scan	state	cm_state_resumable, an unknown state is left out of the roster and named in a comment
+runtime-check.sh	scan	standing,state	standing via cm_standing_any / cm_standing_bad, state via cm_state_unknown (an unknown row is reported, never nudged)
+stall.sh	seam	state,freeze,worker	every field: scripts/test/fixtures/stall-fields.tsv
+teardown.sh	scan	standing,state,project,worker	standing via standingUnknown (a non-boolean standing is named and refuses), issue and issueUrl through cm_fu_esc (typed, blank text is no escalation), project via the ledger guard
+unlinked-worktrees.sh	scan	standing	standing via cm_standing_any
