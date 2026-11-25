@@ -1,0 +1,36 @@
+# digest-read-allow.tsv: a field NAME the compiled digest.sh program reads that is not a key of the maximal base (scripts/test/digest-base.sh). scripts/test/field-reads.sh fails when the program reads a name that is in neither.
+# name	why (a group)
+Key	jq builtin: a key jq itself reads inside from_entries, with_entries or match, not a field of an input document
+Name	jq builtin: a key jq itself reads inside from_entries, with_entries or match, not a field of an input document
+Value	jq builtin: a key jq itself reads inside from_entries, with_entries or match, not a field of an input document
+captures	jq builtin: a key jq itself reads inside from_entries, with_entries or match, not a field of an input document
+key	jq builtin: a key jq itself reads inside from_entries, with_entries or match, not a field of an input document
+k	jq builtin: a key jq itself reads inside from_entries, with_entries or match, not a field of an input document
+length	jq builtin: a key jq itself reads inside from_entries, with_entries or match, not a field of an input document
+n	jq builtin: a key jq itself reads inside from_entries, with_entries or match, not a field of an input document
+offset	jq builtin: a key jq itself reads inside from_entries, with_entries or match, not a field of an input document
+previous	jq builtin: a key jq itself reads inside from_entries, with_entries or match, not a field of an input document
+string	jq builtin: a key jq itself reads inside from_entries, with_entries or match, not a field of an input document
+value	jq builtin: a key jq itself reads inside from_entries, with_entries or match, not a field of an input document
+a	program row: a field of a row the program builds itself (the lanes file digest.sh writes, a deploy row, a wait row) and reads back, not a field of the ledger or of a gh answer
+blk	program row: a field of a row the program builds itself (the lanes file digest.sh writes, a deploy row, a wait row) and reads back, not a field of the ledger or of a gh answer
+c	program row: a field of a row the program builds itself (the lanes file digest.sh writes, a deploy row, a wait row) and reads back, not a field of the ledger or of a gh answer
+conflict	program row: a field of a row the program builds itself (the lanes file digest.sh writes, a deploy row, a wait row) and reads back, not a field of the ledger or of a gh answer
+error	program row: a field of a row the program builds itself (the lanes file digest.sh writes, a deploy row, a wait row) and reads back, not a field of the ledger or of a gh answer
+first	program row: a field of a row the program builds itself (the lanes file digest.sh writes, a deploy row, a wait row) and reads back, not a field of the ledger or of a gh answer
+hasJob	program row: a field of a row the program builds itself (the lanes file digest.sh writes, a deploy row, a wait row) and reads back, not a field of the ledger or of a gh answer
+live	program row: a field of a row the program builds itself (the lanes file digest.sh writes, a deploy row, a wait row) and reads back, not a field of the ledger or of a gh answer
+o	program row: a field of a row the program builds itself (the lanes file digest.sh writes, a deploy row, a wait row) and reads back, not a field of the ledger or of a gh answer
+repo	program row: a field of a row the program builds itself (the lanes file digest.sh writes, a deploy row, a wait row) and reads back, not a field of the ledger or of a gh answer
+s	program row: a field of a row the program builds itself (the lanes file digest.sh writes, a deploy row, a wait row) and reads back, not a field of the ledger or of a gh answer
+self	program row: a field of a row the program builds itself (the lanes file digest.sh writes, a deploy row, a wait row) and reads back, not a field of the ledger or of a gh answer
+started	program row: a field of a row the program builds itself (the lanes file digest.sh writes, a deploy row, a wait row) and reads back, not a field of the ledger or of a gh answer
+t	program row: a field of a row the program builds itself (the lanes file digest.sh writes, a deploy row, a wait row) and reads back, not a field of the ledger or of a gh answer
+unreach	program row: a field of a row the program builds itself (the lanes file digest.sh writes, a deploy row, a wait row) and reads back, not a field of the ledger or of a gh answer
+w	program row: a field of a row the program builds itself (the lanes file digest.sh writes, a deploy row, a wait row) and reads back, not a field of the ledger or of a gh answer
+waits	program row: a field of a row the program builds itself (the lanes file digest.sh writes, a deploy row, a wait row) and reads back, not a field of the ledger or of a gh answer
+wts	program row: a field of a row the program builds itself (the lanes file digest.sh writes, a deploy row, a wait row) and reads back, not a field of the ledger or of a gh answer
+mtime	file doc: a field of the wrapper digest.sh puts around a file it reads whole (the census text and its mtime)
+workersRaw	program-built: the .workers map as the ledger has it, kept beside the cleaned map so ask_owner_why sees a worker row that is not an object
+dup	program-built: the trimmed worker ids that two keys of the workers map share (ask_wsnorm)
+ws	program-built: the workers map with its keys trimmed (ask_wsnorm)
