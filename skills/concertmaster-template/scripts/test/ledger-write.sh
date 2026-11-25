@@ -229,5 +229,32 @@ jq -n '{workers: {a: {state: "running", task: "padding padding padding"}}}' > "$
 CM_LEDGER="$alt/other.json" cm_ledger_write '.n = 1' 2>/dev/null
 [ "$(jq -r .n "$alt/other.json")" = 1 ] && [ -d "$alt/ledger.bak" ] && pass "CM_LEDGER writes that file and keeps its ring beside it" || fail "CM_LEDGER" "$(ls -A "$alt")"
 
+# --- a ledger with a repeated key is never rewritten ---------------------------------
+# jq keeps only the LAST of two equal keys. A write through the filter on `"state":"parked","state":"running"` stored "running", the gate (cm_workers_gate, rc 3 before) then said rc 0, and the readers it held
+# acted on a lane the writer never meant. The write is refused, the file is byte-identical, the reason is printed, and the gate still holds.
+printf '%s\n' '{"schema":"concertmaster.ledger/v1","n":0,"workers":{"w-a":{"path":"/w/a","host":"local","state":"parked","state":"running","task":"padding padding padding padding padding padding"},"w-b":{"state":"running","task":"padding padding padding padding"}}}' > "$L"
+rm -rf -- "${BAK:?}" 2>/dev/null
+cm_workers_gate "$L" >/dev/null; gate_before=$?
+refuses "a repeated key in the existing ledger: an unrelated write is refused, ledger untouched" "writes an object key twice" '.n += 1'
+cm_workers_gate "$L" >/dev/null; gate_after=$?
+[ "$gate_before" = 3 ] && [ "$gate_after" = 3 ] && pass "the gate still holds (rc 3) after the refused write" || fail "gate" "before=$gate_before after=$gate_after"
+refuses "a decisions append is refused the same way" "writes an object key twice" '.decisions += [{id: "d1"}]'
+printf '%s\n' '{"schema":"concertmaster.ledger/v1","n":0,"workers":{"w-a":{"state":"running","task":"padding padding padding padding padding padding"}},"asks":[{"id":"a1","kind":"merge","kind":"design"}]}' > "$L"
+refuses "a repeated key in an ask row (not under workers) is refused too" "writes an object key twice" '.n += 1'
+fresh 3
+cm_ledger_write '.n += 1' 2>/dev/null; rc=$?
+[ "$rc" = 0 ] && [ "$(jq -r .n "$L")" = 1 ] && pass "control: a ledger with no repeated key is still written" || fail "control" "rc=$rc"
+# mutant (cp -R so scripts/jdupkeys comes along): the refusal removed, the unrelated write lands and the stored state is the LAST value, which is the harm
+mkdir -p "$ROOT/mut-b4" && cp -R "$HERE"/../. "$ROOT/mut-b4"/
+perl -0pi -e 's/    if \[ -n "\$dkeys" \]; then\n      cm_warn "ledger write refused: \$L writes an object key twice/    if false; then\n      cm_warn "ledger write refused: \$L writes an object key twice/' "$ROOT/mut-b4/lib.sh"
+if ! cmp -s "$HERE/../lib.sh" "$ROOT/mut-b4/lib.sh"; then
+  printf '%s\n' '{"schema":"concertmaster.ledger/v1","n":0,"workers":{"w-a":{"path":"/w/a","host":"local","state":"parked","state":"running","task":"padding padding padding padding padding padding"},"w-b":{"state":"running","task":"padding padding padding padding"}}}' > "$L"
+  rc="$(bash -c ". '$ROOT/mut-b4/lib.sh'; cm_ledger_write '.n += 1' 2>/dev/null; echo \$?")"
+  bash -c ". '$ROOT/mut-b4/lib.sh'; cm_workers_gate '$L' >/dev/null; echo \$?" > "$ROOT/mut-b4.gate"
+  [ "$rc" = 0 ] && [ "$(cat "$ROOT/mut-b4.gate")" = 0 ] && [ "$(jq -r '.workers["w-a"].state' "$L")" = running ] \
+    && pass "mutant: without the refusal the write lands (rc 0), the stored state is the last value 'running' and the gate passes (rc 0): the harm the cases above pin" \
+    || fail "mutant" "rc=$rc gate=$(cat "$ROOT/mut-b4.gate") state=$(jq -r '.workers["w-a"].state' "$L")"
+else fail "mutant" "the perl edit did not match lib.sh"; fi
+
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]

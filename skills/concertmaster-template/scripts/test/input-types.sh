@@ -36,7 +36,12 @@ bad=""
 for s in $CM_STATES_NORESUME $CM_STATES_DEAD; do case " $CM_STATES_ALL " in *" $s "*) ;; *) bad="$bad $s" ;; esac; done
 [ -z "$bad" ] && ok "the no-resume list names only known states" || no "no-resume list" "$bad"
 want="$(printf '%s\n' $CM_STATES_NORESUME $CM_STATES_DEAD | sort | tr '\n' ' ')"
+# the shared predicate cm_state_resumable is false for exactly the no-resume and dead states (and for an unknown state), true for every other known state
+got="$(for s in $CM_STATES_ALL torn-down; do [ "$(jqb '$s | cm_state_resumable' --arg s "$s")" = true ] || printf '%s\n' "$s"; done | sort | tr '\n' ' ')"
+want2="$(printf '%s\n' $CM_STATES_NORESUME $CM_STATES_DEAD torn-down | sort | tr '\n' ' ')"
+[ "$got" = "$want2" ] && ok "cm_state_resumable is false for exactly CM_STATES_NORESUME, CM_STATES_DEAD and the legacy torn-down" || no "cm_state_resumable list" "got [$got] want [$want2]"
 for f in resume.sh roster.sh; do
+  if grep -q 'cm_state_resumable' "$HERE/../$f"; then ok "$f reads the shared cm_state_resumable predicate"; continue; fi
   got="$(grep -o 'IN("queued"[^)]*)' "$HERE/../$f" | head -1 | grep -o '"[a-z-]*"' | tr -d '"' | sort | tr '\n' ' ')"
   [ "$got" = "$want" ] && ok "$f leaves out exactly CM_STATES_NORESUME and CM_STATES_DEAD" || no "$f state list" "got [$got] want [$want]"
 done
