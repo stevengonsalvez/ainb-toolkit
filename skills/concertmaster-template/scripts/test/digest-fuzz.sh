@@ -563,10 +563,11 @@ LC="$ROOT/linecheck.sh"
   sed -n '/^DIGEST_WH=/p; /^line_looks_secret() {/,/^}/p; /^DIGEST_WH_WORDS=/,/^DIGEST_WH_SLOW=/p; /^line_secret_fast() {/,/^}/p' "$SCRIPT"; } > "$LC"
 check "line check: both functions were read out of digest.sh" "$(grep -c '^line_looks_secret() {$\|^line_secret_fast() {$' "$LC")" "2"
 H40="$(rep a 20)$(rep 9 20)"
+U8=1234; U8="${U8}5678"; U4=1234   # the uuid-shaped run is built from parts, never written whole
 CORPUS=("plain words only" "short-kebab-lane" "lane-with-a-very-long-kebab-case-name-for-the-check-and-more" "$(rep x 39)" "$(rep x 40)" "$(rep x 220)"
         "$H40" "$H40 and $H40" "$(rep a 41)" "$(rep A 20)$(rep 9 20)" "$(rep A 20)-$(rep 9 20)" "x$H40" "$(rep a 20)-$(rep 9 20)"
         "$(rep f 39)-$(rep A 3)" "${SECRETS[@]}" "a $(rep F 64) b" "https://user:pa55""word@host.example/x" "-----BEGIN $H40 PRIVATE KEY-----"
-        "sign-in failed for Swordf1sh9" "login as admin" "LOGIN admin Hunter99x" "pass""wd: Tr0ub4dor&3" "0.12345678-1234-1234-1234-123456789012.abcdefgh:QUJDREVGR0g="
+        "sign-in failed for Swordf1sh9" "login as admin" "LOGIN admin Hunter99x" "pass""wd: Tr0ub4dor&3" "0.${U8}-${U4}-${U4}-${U4}-${U8}9012.abcdefgh:QUJDREVGR0g="
         "commit $H40 merged" "mixedCaseRun$(rep Q 20)$(rep 3 10)" "$(rep _ 45)" "$(rep - 45)" "a$(rep - 45)b" "xox""b-123 slack" "eyJ$(rep a 12)")
 same=0; differ=""
 for c in "${CORPUS[@]}"; do
