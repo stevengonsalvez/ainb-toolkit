@@ -177,10 +177,27 @@ fi
 # lead put to sleep stays asleep through a reboot) are ever nudged: a dev or epic worker has no standing /loop to re-arm. The concertmaster session is nudged too
 # (below), by path or by its own ledger row. No readable ledger and no concertmaster terminal = send nothing.
 LEDGER="$CM_HOME/ledger.json"
-CM_LEDGER_PATH="$(jq -r --arg self "$CM_SELF_WORKTREE" '.workers[$self] // empty | select(.standing == true and ((.host // "local") == "local")) | (.path // .worktree // .worktreePath // empty)' "$LEDGER" 2>/dev/null | sed -E 's#/\.(/|$)#/#g; s#//+#/#g; s#(.)/+$#\1#' )"
+# The ledger must be ONE object whose workers is a map with no key written twice (lib.sh cm_workers_gate). A workers that is false or a list, a truncated file or a repeated key
+# (jq keeps the last: standing false ... standing true) was read as "no row" or as a standing lane and a lane was nudged on it: now nothing is nudged and it is said.
+LEDGER_HOLD=""
+if [ -e "$LEDGER" ]; then LEDGER_HOLD="$(cm_workers_gate "$LEDGER")" || LEDGER_HOLD="${LEDGER_HOLD:-the ledger cannot be read}"; fi
+# The typed boundary decides what a row is: cm_row_fields_ok (a field of the wrong type, a control character in a name) comes from lib.sh. A row that fails it, or that has a state this
+# skill does not know, is never a standing lane to nudge, and it is REPORTED, never read as "no row". A host or path that is not text could be the row of ANY lane: cm_bs_wild.
+BS_DEFS="$CM_JQ_STATE_DEFS $CM_JQ_NAME_DEFS"' def cm_bs_wild: (.host != null and (.host | type) != "string") or ((.path // .worktree // .worktreePath) != null and ((.path // .worktree // .worktreePath) | type) != "string");'
+BS_OK='type == "object" and cm_row_fields_ok and (.standing == true) and ((.state | cm_state_unknown) | not) and ((.state | cm_state_asleep) | not) and ((.host // "local") == "local")'
+CM_LEDGER_PATH="$(jq -r --arg self "$CM_SELF_WORKTREE" "$BS_DEFS"' .workers[$self] // empty | select('"$BS_OK"') | (.path // .worktree // .worktreePath // empty) | select(cm_name_ok)' "$LEDGER" 2>/dev/null | sed -E 's#/\.(/|$)#/#g; s#//+#/#g; s#(.)/+$#\1#' )"
+# The concertmaster row is nudged only when it reads standing true with a known state that is not asleep and every field of the right type. A row that is not an object, has a
+# field of the wrong type (standing "true", host false, path false), an unknown state or is asleep is never nudged, whatever identified the worktree (its ledger row or its path):
+# it is reported and the shout "CONCERTMASTER NOT RE-ARMED" stands.
+CM_ROW_BAD="$(jq -r --arg self "$CM_SELF_WORKTREE" "$BS_DEFS"' .workers | if type == "object" then .[$self] else null end | select(. != null)
+    | select((type != "object") or (cm_row_fields_ok | not) or (.state | cm_state_unknown) or (.state | cm_state_asleep)) | "bad"' "$LEDGER" 2>/dev/null | head -n 1)"
 ASLEEP="$(jq -r '.workers // {} | to_entries[] | .value | select(((.host // "local") == "local") and ((.state // "") == "asleep")) | (.path // .worktree // .worktreePath // empty)' "$LEDGER" 2>/dev/null | sed -E 's#/\.(/|$)#/#g; s#//+#/#g; s#(.)/+$#\1#' )"
-STANDING="$(jq -r '.workers // {} | to_entries[] | .value | select(.standing == true and ((.host // "local") == "local") and ((.state // "") != "asleep")) | (.path // .worktree // .worktreePath // empty)' "$LEDGER" 2>/dev/null | sed -E 's#/\.(/|$)#/#g; s#//+#/#g; s#(.)/+$#\1#' )"
-if [ -z "$STANDING" ] && ! awk -F'|' '{print $2}' <<<"$terms" | grep -qE "$CM_PATH_RE"; then
+STANDING="$(jq -r "$BS_DEFS"' .workers // {} | to_entries[] | .value | select('"$BS_OK"') | (.path // .worktree // .worktreePath // empty) | select(cm_name_ok)' "$LEDGER" 2>/dev/null | sed -E 's#/\.(/|$)#/#g; s#//+#/#g; s#(.)/+$#\1#' )"   # cm_name_ok: a standing path with a control character (a newline would forge a second standing path) is not a standing path, so its lane is never nudged
+# a ledger row that is not readable (a field of the wrong type, a standing that is not a boolean, an unknown state) at a path that IS text: never nudged, and said so
+STANDING_BAD="$(jq -r "$BS_DEFS"' .workers // {} | to_entries[] | .value | select(type == "object") | select(((cm_row_fields_ok | not) or (.standing == true and (.state | cm_state_unknown))) and ((.state | cm_state_asleep) | not) and (((.host // "local") == "local") or ((.host | type) == "string" and (.host | cm_strip) == "local"))) | (.path // .worktree // .worktreePath // empty) | select(type == "string" and cm_name_ok)' "$LEDGER" 2>/dev/null | sed -E 's#/\.(/|$)#/#g; s#//+#/#g; s#(.)/+$#\1#' )"
+# a row whose host or path is not text, or that is not an object, and that is, or may be, a standing row: it could be the row of ANY lane, so a lane the ledger does not list as standing is reported against it
+STANDING_WILD="$(jq -r "$BS_DEFS"' [.workers // {} | to_entries[] | .value | select((type != "object") or (cm_bs_wild and (.standing | cm_standing_any) and ((.state | cm_state_asleep) | not)))] | length' "$LEDGER" 2>/dev/null)"; STANDING_WILD="${STANDING_WILD:-0}"
+if [ -z "$LEDGER_HOLD" ] && [ -z "$STANDING" ] && ! awk -F'|' '{print $2}' <<<"$terms" | grep -qE "$CM_PATH_RE"; then
   early_note "No standing local lanes found in $LEDGER (missing or unreadable ledger): nothing was nudged."
   echo "boot-sweep: no standing local lanes in the ledger, nothing to do"; exit 0
 fi
@@ -198,7 +215,11 @@ while IFS='|' read -r handle wt; do
   is_cm=0; text="$NUDGE"
   if [ -n "$CM_LEDGER_PATH" ] && [ "$normwt" = "$CM_LEDGER_PATH" ] || grep -qE "$CM_PATH_RE" <<<"$normwt"; then is_cm=1; text="$NUDGE_CM"; fi
   [ "$is_cm" = 1 ] && CM_HANDLES="$CM_HANDLES $handle"
+  if [ -n "$LEDGER_HOLD" ]; then add "$name" "$handle" report "the ledger cannot be read ($LEDGER_HOLD): not nudged, fix the ledger"; kept=$((kept+1)); continue; fi
+  if [ "$is_cm" = 1 ] && [ -n "$CM_ROW_BAD" ]; then add "$name" "$handle" report "the concertmaster ledger row is asleep, has an unknown state or a standing that is not a boolean: not nudged, fix the ledger row"; kept=$((kept+1)); continue; fi
   if [ "$is_cm" = 0 ] && [ -z "$STANDING" ]; then add "$name" "$handle" no-ledger "ledger missing or unreadable: lane not considered, restore $LEDGER"; continue; fi
+  if [ "$is_cm" = 0 ] && [ -n "$STANDING_BAD" ] && grep -qxF -- "$normwt" <<<"$STANDING_BAD"; then add "$name" "$handle" report "ledger standing is not a boolean, or its state is not a known state: lane not nudged, fix the ledger row"; continue; fi
+  if [ "$is_cm" = 0 ] && [ "$STANDING_WILD" != 0 ] && ! grep -qxF -- "$normwt" <<<"$STANDING"; then add "$name" "$handle" report "a ledger row has a host or path that is not text, so it could be this lane: not nudged, fix the ledger row"; continue; fi
   if [ "$is_cm" = 0 ] && ! grep -qxF -- "$normwt" <<<"$STANDING"; then add "$name" "$handle" not-standing "not a standing lane in the ledger: never nudged"; continue; fi
   m="$(transcript_mtime "$normwt")"
   if [ "$m" = unknown ]; then add "$name" "$handle" unknown "no Claude transcript visible for this worktree: not nudged"; kept=$((kept+1)); continue; fi

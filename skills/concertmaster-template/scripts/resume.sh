@@ -166,7 +166,8 @@ owns_lock() { [ "$DRY" = 1 ] || { [ "$(lock_pid "$LOCK")" = "$$" ] && ! cutover_
 # ---- 1. roster: always rewritten from the ledger when it is readable ---------
 # Cheap and atomic. A stale roster could still list a worker the tick retired a
 # moment ago, and resuming it would revive a lane that was closed on purpose.
-if [ -s "$LEDGER" ]; then
+# -e, not -s: a ledger of zero bytes is a ledger that cannot be read (held, never "no ledger"); only a missing file means there is nothing to read.
+if [ -e "$LEDGER" ]; then
   if ! "$HERE/roster.sh"; then
     if [ -s "$ROSTER" ]; then cm_warn "resume: ledger unreadable; using the roster as is"
     else cm_warn "resume: no roster and no readable ledger; nothing to resume"; exit 1; fi
@@ -215,6 +216,21 @@ if [ -n "$F_LANE" ] || [ -n "$F_PATH" ] || [ -n "$F_HOST" ] || [ -n "$F_WID" ]; 
       "$TMP/rows.json" > "$TMP/rows.f" 2>/dev/null; then cm_warn "resume: filter failed"; exit 1; fi
   mv "$TMP/rows.f" "$TMP/rows.json"
   if [ "$(jq 'length' "$TMP/rows.json")" = 0 ]; then
+    # The roster leaves a lead with an unknown state out on purpose (roster.sh): say so instead of "respawn by hand", which is the one
+    # thing never to do to it. The ledger is read for the same filter; an unreadable ledger keeps the old line (nothing is created here).
+    if [ -s "$LEDGER" ]; then
+      fstate="$(jq -r --arg l "$F_LANE" --arg p "${F_PATH%/}" --arg h "$F_HOST" --arg w "$F_WID" "$NORMP$CM_JQ_STATE_DEFS"'
+          [ (.workers | if type == "object" then . else {} end) | to_entries[] | select(.value | type == "object")
+            | select(($h == "") or ((.value.host // "local") == $h))
+            | select(($l != "" and (.key == $l or .value.lane == $l)) or ($p != "" and ((.value.path // "") | type) == "string" and ((.value.path // "") | normp) == ($p | normp))
+                     or ($w != "" and .value.worktreeId == $w)) ] as $r
+          | if ([$r[] | select(.value.state | cm_state_unknown)] | length) > 0 then "unknown"
+            elif ([$r[] | select(.value.state | cm_state_asleep)] | length) > 0 then "asleep" else "" end' "$LEDGER" 2>/dev/null)" || fstate=""
+      case "$fstate" in
+        unknown) echo "no roster row matches the filter: the ledger state of this worktree is not a known state (a near miss or a wrong type), so the roster left it out. Nothing resumed; never respawn it. Fix the ledger row"; exit 5 ;;
+        asleep) echo "no roster row matches the filter: the ledger row is put to sleep on purpose (state asleep). Nothing resumed; it is never respawned"; exit 5 ;;
+      esac
+    fi
     echo "no roster row matches the filter: nothing resumed, respawn by hand if the lane is dead"; exit 5
   fi
 fi
@@ -430,6 +446,31 @@ resume_dead() {
   if [ -n "$why" ]; then RES_STATUS=unknown; RES_ACTION="$why"; return; fi
 
   owns_lock || { RES_STATUS=unknown; RES_ACTION="lost the resume lock, left alone"; return; }
+  # A lead put to sleep (lane-health.sh sleep) after the roster snapshot is never revived: read the ledger row again now.
+  # An unreadable ledger that exists fails closed; no ledger at all means the roster is used as is (see above).
+  if [ -e "$LEDGER" ]; then
+    # The ledger must still be ONE object with a worker map and no repeated key (lib.sh cm_workers_gate): a file that now reads `null`, or whose workers is false or a list, or in which a key
+    # is written twice (jq keeps the last: state "asleep" ... state "running") would count "0 0 0" below and the resume would go on. It holds, and says so.
+    if ! gwhy="$(cm_workers_gate "$LEDGER")"; then RES_STATUS=unknown; RES_ACTION="the ledger cannot be read at the re-check ($gwhy): left alone, nothing created, nothing sent"; return; fi
+    # Three counts over the live rows that can be this worktree (the rows at this host and path, AND every row whose host or path is not text or blank, which could be any): rows asleep, rows
+    # with an unknown state, and rows that CANNOT be read (such a wild row, a field of the wrong type or a control character in a name: cm_row_fields_ok, or a row that is not an object). An
+    # unreadable row could be this worktree, so it is never "no row": the resume is refused.
+    nasleep="$(jq -r --arg h "$host" --arg p "$path" "$NORMP$CM_JQ_STATE_DEFS $CM_JQ_NAME_DEFS"'(.workers) as $ws
+        | if $ws != null and ($ws | type) != "object" then "0 0 1" else
+          def wild: ((.host != null and (.host | type) != "string") or (.host | type) == "string" and (.host | cm_nonblank | not))
+                    or (((.path // .worktree // .worktreePath) | type) != "null" and (((.path // .worktree // .worktreePath) | type) != "string" or ((.path // .worktree // .worktreePath) | cm_nonblank | not)));
+          [ ($ws // {}) | to_entries[] | select(.value | type == "object") | select(.value.state | cm_state_dead | not)
+            | select((.value | wild) or (((.value.host // "local") == $h) and ((.value.path // .value.worktree // .value.worktreePath // "") | normp) == $p)) ] as $r
+          | [ ($ws // {}) | to_entries[] | select((.value | type) != "object") ] as $nonobj
+          | "\([$r[] | select((.value | wild | not) and (.value.state | cm_state_asleep))] | length) \([$r[] | select((.value | wild | not) and (.value.state | cm_state_unknown))] | length) \(([$r[] | select((.value | wild) or ((.value | cm_row_fields_ok) | not) or ((.key | cm_name_ok) | not))] + $nonobj) | length)" end' "$LEDGER" 2>/dev/null)" || nasleep=""
+    case "$nasleep" in
+      "0 0 0") ;;
+      '') RES_STATUS=unknown; RES_ACTION="ledger unreadable at the re-check, left alone"; return ;;
+      "0 0 "*) RES_STATUS=unknown; RES_ACTION="the ledger holds a worker row that cannot be read at the re-check (not an object, or a host or path that is not text): left alone, fix the ledger row"; return ;;
+      "0 "*) RES_STATUS=unknown; RES_ACTION="the ledger state of this worktree is not a known state (a near miss or a wrong type): left alone, fix the ledger row"; return ;;
+      *) RES_STATUS=asleep; RES_ACTION="put to sleep since the census (ledger state asleep), left alone"; return ;;
+    esac
+  fi
   wkey="$host $(wt_key "$wt2")"
   if grep -qxF "$wkey" "$TMP/created.tsv"; then RES_STATUS=unknown; RES_ACTION="a terminal was already created for this worktree in this run, left alone"; return; fi
   attempt="$CM_HOME/resume.attempts/$(printf '%s_%s' "$host" "$path" | tr -c 'A-Za-z0-9._-' '_')"
@@ -486,8 +527,8 @@ resume_dead() {
   jname=""
   if [ "$host" = local ] && [ -s "$LEDGER" ]; then
     # a retired or torn-down record at a reused path is not the lane: only a live standing worker counts
-    jlane="$(jq -r --arg p "$path" "$NORMP"'[ (.workers // {}) | to_entries[] | select(.value | type == "object")
-        | select((.value.state // "running") | IN("queued", "spawning", "gone", "repurposed", "retired", "teardown", "done", "asleep") | not)
+    jlane="$(jq -r --arg p "$path" "$NORMP$CM_JQ_STATE_DEFS"'[ (.workers // {}) | to_entries[] | select(.value | type == "object")
+        | select(.value.state | cm_state_resumable)
         | select(.value.standing == true and ((.value.host // "local") == "local") and ((.value.path // "" | normp) == $p))
         | (.value.lane // empty) ] | unique | if length == 1 then .[0] else empty end' "$LEDGER" 2>/dev/null || true)"
     if [ -n "$jlane" ]; then jname="$("$LANE_JOURNAL" name "$jlane" 2>/dev/null || true)"; fi

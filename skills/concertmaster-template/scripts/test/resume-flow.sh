@@ -7,7 +7,7 @@
 # Touches nothing outside a mktemp dir. No real orca, no network.
 #
 #   scripts/test/resume-flow.sh         # exit 0 when every case passes
-# shellcheck disable=SC2016  # check bodies are single-quoted on purpose: they are eval-ed later
+# shellcheck disable=SC2016,SC2034  # check bodies are single-quoted on purpose: they are eval-ed later, so a variable read only there looks unused
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # Hermetic config: never the project config.yaml next to scripts/.
@@ -39,6 +39,12 @@ case "$1 $2" in
     [ -f "$STUB_DIR/ps-$env.json" ] || { echo "host offline" >&2; exit 1; }
     c=$(( $(cat "$STUB_DIR/pscount-$env" 2>/dev/null || echo 0) + 1 )); echo "$c" > "$STUB_DIR/pscount-$env"
     if [ "$c" -gt 1 ] && [ -f "$STUB_DIR/steal-lock" ]; then echo 99999 > "$CM_HOME/resume.lock/pid"; fi
+    # flip-asleep: the lane is put to sleep (or its state damaged) between the census and the create; the file holds the JSON state value
+    if [ "$c" -gt 1 ] && [ -f "$STUB_DIR/flip-asleep" ]; then jq --argjson v "$(cat "$STUB_DIR/flip-asleep")" '.workers |= map_values(.state = $v)' "$CM_HOME/ledger.json" > "$CM_HOME/ledger.flip" && mv "$CM_HOME/ledger.flip" "$CM_HOME/ledger.json"; fi
+    # flip-raw: the ledger file is replaced by these bytes between the census and the create (null, a workers that is false or a list, a key written twice)
+    if [ "$c" -gt 1 ] && [ -f "$STUB_DIR/flip-raw" ]; then cp "$STUB_DIR/flip-raw" "$CM_HOME/ledger.json"; fi
+    # flip-jq: any jq program over the ledger between the census and the create (a row damaged after the roster was built)
+    if [ "$c" -gt 1 ] && [ -f "$STUB_DIR/flip-jq" ]; then jq -f "$STUB_DIR/flip-jq" "$CM_HOME/ledger.json" > "$CM_HOME/ledger.flip" && mv "$CM_HOME/ledger.flip" "$CM_HOME/ledger.json"; fi
     if [ "$c" -gt 1 ] && [ -f "$STUB_DIR/ps-$env.late.json" ]; then cat "$STUB_DIR/ps-$env.late.json"; else cat "$STUB_DIR/ps-$env.json"; fi ;;
   "terminal list")
     # the per-host terminal census resume.sh reads; no terms-<env>.json means the list cannot be read
@@ -284,6 +290,20 @@ check "no temp file left behind"                   '[ -z "$(ls -A "$CM_HOME" | g
 cp "$R" "$ROOT/roster.before"
 echo not-json > "$CM_HOME/ledger.json"
 check "unreadable ledger: roster untouched, exit 1" '! "$SCRIPTS/roster.sh" 2>/dev/null && cmp -s "$R" "$ROOT/roster.before"'
+# A ledger whose workers is false, a list or text, or that writes a key twice under workers, is not a worker map: the roster would be EMPTY (every lane gone) or built from the last of
+# two equal keys. The existing roster is left untouched, exit 1, the reason said. Mutant: the gate off writes an empty roster for workers false.
+for c in 'workers false|{"workers":false}' 'workers []|{"workers":[]}' 'workers text|{"workers":"x"}' 'ledger null|null' 'repeated key|{"workers":{"w-dev":{"lane":"dev-sweeper","host":"local","path":"/x/dev-sweeper","state":"asleep","state":"running"}}}'; do
+  printf '%s\n' "${c#*|}" > "$CM_HOME/ledger.json"
+  check "roster: ledger gate (${c%%|*}): roster untouched, exit 1, the reason said" '! "$SCRIPTS/roster.sh" 2>"$ROOT/roster.err" && cmp -s "$R" "$ROOT/roster.before" && grep -Eq "cannot be read|unreadable" "$ROOT/roster.err"'
+done
+MUTRO="$ROOT/mut-roster"; mkdir -p "$MUTRO" && cp -R "$SCRIPTS"/. "$MUTRO"/ 2>/dev/null
+sed -i 's/^if ! GATE_WHY="\$(cm_workers_gate "\$LEDGER")"; then$/if false; then/' "$MUTRO/roster.sh"
+if ! cmp -s "$SCRIPTS/roster.sh" "$MUTRO/roster.sh"; then
+  printf '%s\n' '{"workers":false}' > "$CM_HOME/ledger.json"
+  check "roster: mutant with the gate off: workers false writes a roster again (caught)" '"$MUTRO/roster.sh" >/dev/null 2>&1; ! cmp -s "$R" "$ROOT/roster.before"'
+  cp "$ROOT/roster.before" "$R"
+else check "roster: mutant: the sed matches roster.sh" "no" "yes"; fi
+echo not-json > "$CM_HOME/ledger.json"   # the state the sections below were written against
 
 echo "--- resume with a missing roster"
 cat > "$CM_HOME/ledger.json" <<'J'
@@ -384,6 +404,28 @@ J
 "$SCRIPTS/lane-journal.sh" append lane-a 'PRIVATE note of the retired lane'
 jrun /x/idle-lane
 check "a gone standing record at a reused path: the new tenant gets no journal" '[ "$(sends)" = 1 ] && ! printf "%s\n" "$CALLS" | grep -q "PRIVATE note"'
+# AT-B: the same record with its state damaged ("Gone", "gone ", false: not a known state): two rows answer at this path and one of them is
+# unknown, so nothing is sent to the new tenant at all (fail closed, and so no journal either); a standing that is the text "true" still counts
+# as standing for a running lane (control)
+for bad in '"Gone"' '"gone "' false 7; do
+  jq --argjson v "$bad" '.workers["w-old"].state = $v' "$CM_HOME/ledger.json" > "$CM_HOME/ledger.t" && mv "$CM_HOME/ledger.t" "$CM_HOME/ledger.json"
+  jrun /x/idle-lane
+  check "AT-B old record state $bad at a reused path: left alone (unknown state, or an unreadable row), nothing sent, no journal" 'has_line "lane-b +(unknown|held) +(the ledger state of this worktree is not a known state|the ledger cannot say which worker owns this worktree)" && [ "$(sends)" = 0 ] && ! printf "%s\n" "$CALLS" | grep -q "PRIVATE lane note"'
+done
+cat > "$CM_HOME/ledger.json" <<'J'
+{"updatedAt": "2026-10-13T09:00:00Z",
+ "workers": {"w-dev": {"lane": "lane-a", "standing": "true", "host": "local", "agent": "claude", "path": "/x/dev-sweeper", "task": "#4612 calendar export", "lastComment": "cm:running"}}}
+J
+jrun /x/dev-sweeper
+# a standing of the wrong type (the text "true") is a row field of the wrong type: roster.sh leaves the row out of the resume list and names it, so nothing is created or sent
+# (the typed boundary holds it; it is never read as "not standing" and never resumed on a guess)
+check "AT-B a standing that is the text true is held with the row named, never resumed as a non-standing lane" '[ "$(creates)" = 0 ] && [ "$(sends)" = 0 ] && ! printf "%s\n" "$CALLS" | grep -q "Your lane journal"'
+"$SCRIPTS/lane-journal.sh" append lane-a 'PRIVATE note of the retired lane'
+cat > "$CM_HOME/ledger.json" <<'J'
+{"updatedAt": "2026-10-13T09:00:00Z",
+ "workers": {"w-old": {"lane": "lane-a", "standing": true, "state": "gone", "host": "local", "agent": "claude", "path": "/x/idle-lane", "task": "old", "lastComment": "cm:done"},
+             "w-new": {"lane": "lane-b", "host": "local", "agent": "claude", "path": "/x/idle-lane", "task": "#14 new tenant", "lastComment": "cm:running"}}}
+J
 rm -rf -- "${CM_HOME:?}/lanes"
 # a standing row with no lane name must not fall back to its worker id (a worker id is not a lane name)
 cat > "$CM_HOME/ledger.json" <<'J'
@@ -402,6 +444,118 @@ J
 jrun /y/remote-dead
 check "a standing agent on another host is nudged but gets no journal (its journal lives on that host)" '[ "$(sends)" = 1 ] && ! printf "%s\n" "$CALLS" | grep -q "Your lane journal"'
 rm -rf -- "${CM_HOME:?}/lanes"
+
+# a lead put to sleep after the census is not revived: the re-check reads the ledger row again
+cat > "$CM_HOME/ledger.json" <<'J'
+{"updatedAt": "2026-10-13T09:00:00Z",
+ "workers": {"w-dev": {"lane": "dev-sweeper", "host": "local", "agent": "claude", "model": "sonnet", "path": "/x/dev-sweeper", "task": "#4612 calendar export", "lastComment": "cm:running", "state": "running"}}}
+J
+: > "$STUB/calls.log"; rm -f -- "${STUB:?}"/handle-* "${STUB:?}/n" "${STUB:?}"/pscount-*; rm -rf -- "${CM_HOME:?}/resume.attempts"; echo '"asleep"' > "$STUB/flip-asleep"
+OUT="$("$SCRIPTS/resume.sh" --lane dev-sweeper 2>/dev/null)"; CALLS="$(cat "$STUB/calls.log")"
+rm -f "$STUB/flip-asleep"; rm -rf -- "${CM_HOME:?}/resume.lock"
+check "asleep since the census: skipped, no terminal created" 'has_line "dev-sweeper +asleep +put to sleep since the census" && [ "$(creates)" = 0 ] && [ "$(sends)" = 0 ]'
+# The row is damaged after the census ("Asleep", "asleep ", false, 7: a near miss or a wrong type of asleep): the re-check reads it as
+# not-known, so nothing is created and nothing is sent (a lead put to sleep on purpose is never revived by a typo). Control: "running" proceeds.
+for bad in '"Asleep"' '"asleep "' false 7 '"Parked"' running; do
+  cat > "$CM_HOME/ledger.json" <<'J'
+{"updatedAt": "2026-10-13T09:00:00Z",
+ "workers": {"w-dev": {"lane": "dev-sweeper", "host": "local", "agent": "claude", "model": "sonnet", "path": "/x/dev-sweeper", "task": "#4612 calendar export", "lastComment": "cm:running", "state": "running"}}}
+J
+  : > "$STUB/calls.log"; rm -f -- "${STUB:?}"/handle-* "${STUB:?}/n" "${STUB:?}"/pscount-*; rm -rf -- "${CM_HOME:?}/resume.attempts"
+  case "$bad" in running) printf '"running"' > "$STUB/flip-asleep" ;; *) printf '%s' "$bad" > "$STUB/flip-asleep" ;; esac
+  OUT="$("$SCRIPTS/resume.sh" --lane dev-sweeper 2>/dev/null)"; CALLS="$(cat "$STUB/calls.log")"
+  rm -f "$STUB/flip-asleep"; rm -rf -- "${CM_HOME:?}/resume.lock"
+  if [ "$bad" = running ]; then
+    check "control: state running at the re-check proceeds (a terminal is created)" '[ "$(creates)" = 1 ]'
+  else
+    check "state $bad at the re-check: unknown, no terminal created, nothing sent" 'has_line "dev-sweeper +unknown +the ledger state of this worktree is not a known state" && [ "$(creates)" = 0 ] && [ "$(sends)" = 0 ]'
+  fi
+done
+# Hidden rows: the row is damaged after the census in a way that hides it from the path match (the whole row false, its path false, its host
+# a number or blank, a second row that is not an object, workers not an object): "no row" is never read as "not asleep", so nothing is created.
+# Control: an intact ledger at the re-check proceeds.
+for flip in '.workers["w-dev"] = false' '.workers["w-dev"].path = false' '.workers["w-dev"].host = 7' '.workers["w-dev"].host = ""' '.workers["w-ghost"] = null' '.workers = false' '.workers["w-dev"].path = "  "' 'del(.workers["w-ghost"])'; do
+  cat > "$CM_HOME/ledger.json" <<'J'
+{"updatedAt": "2026-10-13T09:00:00Z",
+ "workers": {"w-dev": {"lane": "dev-sweeper", "host": "local", "agent": "claude", "model": "sonnet", "path": "/x/dev-sweeper", "task": "#4612 calendar export", "lastComment": "cm:running", "state": "running"}}}
+J
+  : > "$STUB/calls.log"; rm -f -- "${STUB:?}"/handle-* "${STUB:?}/n" "${STUB:?}"/pscount-*; rm -rf -- "${CM_HOME:?}/resume.attempts"
+  printf '%s' "$flip" > "$STUB/flip-jq"
+  OUT="$("$SCRIPTS/resume.sh" --lane dev-sweeper 2>/dev/null)"; CALLS="$(cat "$STUB/calls.log")"
+  rm -f "$STUB/flip-jq"; rm -rf -- "${CM_HOME:?}/resume.lock"
+  case "$flip" in
+    'del('*) check "hidden row control: an intact ledger at the re-check proceeds ($flip)" '[ "$(creates)" = 1 ]' ;;
+    *) check "hidden row re-check ($flip): unknown, no terminal created, nothing sent" '[ "$(creates)" = 0 ] && [ "$(sends)" = 0 ] && has_line "dev-sweeper +unknown +the ledger (holds a worker row that cannot be read|state of this worktree is not a known state|unreadable|cannot be read at the re-check)"' ;;
+  esac
+done
+# The ledger file is damaged after the census so that it is not ONE object with a worker map and no repeated key: `null`, workers false or a list, and a row that writes
+# state twice ("asleep" first, "running" last: jq keeps the last). The re-check used to count "0 0 0" and the resume went on. Now it holds: no terminal created, nothing sent. The same damage
+# BEFORE the run is held by roster.sh (cm_workers_gate), then by the re-check. Mutant: both gates off and every one of them resumes again.
+RAWBASE='{"updatedAt": "2026-10-13T09:00:00Z", "workers": {"w-dev": {"lane": "dev-sweeper", "host": "local", "agent": "claude", "model": "sonnet", "path": "/x/dev-sweeper", "task": "#4612 calendar export", "lastComment": "cm:running", "state": "asleep", "state": "running"}}}'
+rawcase() { # <label> <raw ledger text for the re-check, or - for none> <ledger text before the run, or ->  [script dir]
+  if [ "$3" = - ]; then printf '%s\n' '{"updatedAt": "2026-10-13T09:00:00Z", "workers": {"w-dev": {"lane": "dev-sweeper", "host": "local", "agent": "claude", "model": "sonnet", "path": "/x/dev-sweeper", "task": "#4612 calendar export", "lastComment": "cm:running", "state": "running"}}}' > "$CM_HOME/ledger.json"
+  else printf '%s\n' "$3" > "$CM_HOME/ledger.json"; fi
+  : > "$STUB/calls.log"; rm -f -- "${STUB:?}"/handle-* "${STUB:?}/n" "${STUB:?}"/pscount-*; rm -rf -- "${CM_HOME:?}/resume.attempts"
+  if [ "$2" != - ]; then printf '%s\n' "$2" > "$STUB/flip-raw"; fi
+  OUT="$("${4:-$SCRIPTS}/resume.sh" --lane dev-sweeper 2>/dev/null)"; CALLS="$(cat "$STUB/calls.log")"
+  rm -f "$STUB/flip-raw"; rm -rf -- "${CM_HOME:?}/resume.lock"
+}
+for c in 'ledger null at the re-check|null|-' 'workers false at the re-check|{"workers":false}|-' 'workers [] at the re-check|{"workers":[]}|-' \
+         'a repeated state key at the re-check|'"$RAWBASE"'|-' 'ledger null before the run|-|null' 'a repeated state key before the run|-|'"$RAWBASE"; do
+  IFS='|' read -r rl rraw rpre <<<"$c"
+  rawcase "$rl" "$rraw" "$rpre"
+  check "$rl: held or unknown, no terminal created, nothing sent" '[ "$(creates)" = 0 ] && [ "$(sends)" = 0 ] && has_line "dev-sweeper +(unknown|held) "' 
+done
+rawcase ctl - -
+check "control: an intact ledger is resumed (a terminal is created)" '[ "$(creates)" = 1 ]'
+MUTR="$ROOT/mut-resume"; mkdir -p "$MUTR" && cp -R "$SCRIPTS"/. "$MUTR"/ 2>/dev/null
+sed -i 's/^    if ! gwhy="\$(cm_workers_gate "\$LEDGER")"; then /    if false; then /' "$MUTR/resume.sh"
+if ! cmp -s "$SCRIPTS/resume.sh" "$MUTR/resume.sh"; then
+  for c in 'ledger null at the re-check|null|-' 'a repeated state key at the re-check|'"$RAWBASE"'|-' 'ledger null before the run|-|null' 'a repeated state key before the run|-|'"$RAWBASE"; do
+    IFS='|' read -r rl rraw rpre <<<"$c"
+    rawcase "m $rl" "$rraw" "$rpre" "$MUTR"
+    check "mutant with both ledger gates off: $rl resumes again (caught)" '[ "$(creates)" = 1 ]'
+  done
+else check "mutant: the sed matches resume.sh" "no" "yes"; fi
+# A ledger of ZERO bytes is a ledger that cannot be read, never "no ledger". `[ -s ]` read it as missing, so the lane resumed from the roster (creates=1, sends=1). Held now: no terminal created, nothing sent. Both moments: the file is empty before the run, and it is emptied
+# between the census and the create. An intact run goes first so the roster exists (the harm needs one).
+zbrun() { # <pre|re> [script dir]
+  local dir="${2:-$SCRIPTS}"
+  rawcase "zb prime" - - "$dir"
+  : > "$STUB/calls.log"; rm -f -- "${STUB:?}"/handle-* "${STUB:?}/n" "${STUB:?}"/pscount-*; rm -rf -- "${CM_HOME:?}/resume.attempts"
+  if [ "$1" = pre ]; then : > "$CM_HOME/ledger.json"; else : > "$STUB/flip-raw"; fi
+  OUT="$("$dir/resume.sh" --lane dev-sweeper 2>/dev/null)"; CALLS="$(cat "$STUB/calls.log")"
+  rm -f "$STUB/flip-raw"; rm -rf -- "${CM_HOME:?}/resume.lock"
+}
+for zm in pre re; do
+  zbrun "$zm"
+  check "a zero-byte ledger ($zm): held or unknown, no terminal created, nothing sent" '[ "$(creates)" = 0 ] && [ "$(sends)" = 0 ] && has_line "dev-sweeper +(unknown|held) "'
+done
+rawcase ctl - -
+MUTZ="$ROOT/mut-zero"; mkdir -p "$MUTZ" && cp -R "$SCRIPTS"/. "$MUTZ"/ 2>/dev/null
+sed -i 's/^if \[ -e "\$LEDGER" \]; then$/if [ -s "$LEDGER" ]; then/; s/^  if \[ -e "\$LEDGER" \]; then$/  if [ -s "$LEDGER" ]; then/' "$MUTZ/resume.sh"
+if ! cmp -s "$SCRIPTS/resume.sh" "$MUTZ/resume.sh"; then
+  for zm in pre re; do
+    zbrun "$zm" "$MUTZ"
+    check "mutant with -s back at the re-check: a zero-byte ledger ($zm) resumes again, a terminal is created" '[ "$(creates)" = 1 ]'
+  done
+  rawcase ctl - - "$MUTZ"
+else check "mutant: the sed edit matches resume.sh" "no" "yes"; fi
+# A lead whose state is a near miss ("Asleep") is left out of the roster on purpose; run the way the tick runs it (--host --path) the
+# empty filter names the unknown state and never says "respawn by hand"
+cat > "$CM_HOME/ledger.json" <<'J'
+{"updatedAt": "2026-10-13T09:00:00Z",
+ "workers": {"w-dev": {"lane": "dev-sweeper", "host": "local", "agent": "claude", "model": "sonnet", "path": "/x/dev-sweeper", "task": "#4612 calendar export", "lastComment": "cm:running", "state": "Asleep", "standing": true}}}
+J
+: > "$STUB/calls.log"; rm -rf -- "${CM_HOME:?}/resume.attempts"
+O3OUT="$("$SCRIPTS/resume.sh" --host local --path /x/dev-sweeper 2>&1)"; O3RC=$?; CALLS="$(cat "$STUB/calls.log")"
+check "O3 an unknown-state lead, the tick filter: exit 5, names the unknown state, no respawn advice, nothing created" '[ "$O3RC" = 5 ] && printf "%s" "$O3OUT" | grep -q "not a known state" && ! printf "%s" "$O3OUT" | grep -q "respawn by hand" && [ "$(creates)" = 0 ]'
+sed -i 's/"state": "Asleep"/"state": "asleep"/' "$CM_HOME/ledger.json"
+O3OUT="$("$SCRIPTS/resume.sh" --host local --path /x/dev-sweeper 2>&1)"; O3RC=$?
+check "O3 a lead put to sleep, the tick filter: exit 5, says asleep, no respawn advice" '[ "$O3RC" = 5 ] && printf "%s" "$O3OUT" | grep -q "put to sleep" && ! printf "%s" "$O3OUT" | grep -q "respawn by hand"'
+sed -i 's/"state": "asleep"/"state": "running"/' "$CM_HOME/ledger.json"
+O3OUT="$("$SCRIPTS/resume.sh" --host local --path /nowhere/else 2>&1)"; O3RC=$?
+check "O3 control: a filter that matches no ledger row keeps the old line" '[ "$O3RC" = 5 ] && printf "%s" "$O3OUT" | grep -q "respawn by hand"'
 
 
 echo "--- lock ownership is checked again right before a create"

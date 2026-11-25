@@ -241,6 +241,15 @@ run "ask for another host refuses"                         3 'not an unused, app
 ask "\"kind\":\"remove-standing\",\"decision\":\"approved\",\"host\":\"local\",\"path\":\"$W2\",\"usedAt\":\"2026-10-10T09:00:00Z\""
 run "used ask refuses (single use)"                        3 'not an unused, approved' "$W2" --force-standing ask-1
 run "--force-standing needs an id"                         2 'Exit: 0 plan ok' "$W2" --force-standing
+# AT-U: a usedAt that is present is a used ask, whatever its type (false would read as absent through jq's `//`)
+for u in false true 0 7 '""' '{}' '[]'; do
+  ask "\"kind\":\"remove-standing\",\"decision\":\"approved\",\"host\":\"local\",\"path\":\"$W2\",\"usedAt\":$u"
+  run "AT-U usedAt $u refuses (a used ask, single use)"   3 'not an unused, approved' "$W2" --force-standing ask-1
+done
+ask "\"kind\":\"remove-standing\",\"decision\":\"approved\",\"host\":\"local\",\"path\":\"$W2\",\"usedAt\":null"
+run "AT-U control: usedAt null is unused"                  0 'Owner approved in ask ask-1' "$W2" --force-standing ask-1
+# CM_GATES_ONLY=force stops here (the --force-standing rows only)
+if [ "${CM_GATES_ONLY:-}" = force ]; then echo "passed=$PASS failed=$FAIL (force-standing part only)"; [ "$FAIL" = 0 ]; exit; fi
 
 echo "== beads gate: epic"
 ep() { one "$1" "\"standing\":false,\"beadsEpic\":\"$2\""; }
@@ -258,6 +267,11 @@ one "$W3" '"standing":false,"epicConflict":["t-ep1","t-par"]'
 run "a recorded epic conflict refuses teardown"            3 'declare different epic= ids for w-a' "$W3"
 one "$W3" '"standing":false,"epicConflict":[]'
 run "an empty epicConflict does not block"                 0 'dry-run: nothing changed' "$W3"
+# B4: an epicConflict that is not a list (false would read as none through `//`) is unreadable: the teardown is refused, never allowed
+for ec in false 7 '{}' '"x"'; do
+  one "$W3" "\"standing\":false,\"epicConflict\":$ec"
+  run "B4 epicConflict $ec is unreadable: refuses"          3 'ledger workers unreadable' "$W3"
+done
 ledger "{\"workers\":{\"w-a\":$(w "$W3" '"standing":false,"beadsEpic":"t-ep1"'),\"w-b\":$(w "$W3" '"standing":false,"beadsEpic":"t-par"')}}"
 run "two workers: epics unioned"                           3 'under epic t-par:' "$W3"
 ledger "{\"asks\":[{\"id\":\"ask-1\",\"state\":\"answered\",\"kind\":\"remove-standing\",\"decision\":\"approved\",\"host\":\"local\",\"path\":\"$W3\"}],\"workers\":{\"w-a\":$(w "$W3" '"standing":true,"beadsEpic":"t-ep1"')}}"
@@ -802,6 +816,70 @@ ledger "{\"followUps\":[$(fu w-a item-ids "done")],\"workers\":{\"w-a\":$(w "$W1
 run "done follow-up allows"                                0 'none open' "$W1"
 ledger "{\"followUps\":[$(fu w-a fa-codes | sed 's/"closedAt":null/"closedAt":null,"issue":42,"issueUrl":"https:\/\/github.com\/AcmeOrg\/acme-app\/issues\/42"/')],\"workers\":{\"w-a\":$(w "$W1" '"standing":false')}}"
 run "follow-up already escalated to a GitHub issue allows"  0 'none open' "$W1"
+# AT-E: an escalation is a number, text or a link; a value of any other type (true, an object, a list, "") is not one
+for e in 'true' '{}' '[]' '""' '["x"]'; do
+  ledger "{\"followUps\":[$(fu w-a fa-codes | sed "s/\"closedAt\":null/\"closedAt\":null,\"issue\":$e/")],\"workers\":{\"w-a\":$(w "$W1" '"standing":false')}}"
+  run "AT-E issue $e is not an escalation: refuses"       3 'open follow-up(s) (w-a:fa-codes)' "$W1"
+done
+ledger "{\"followUps\":[$(fu w-a fa-codes | sed 's/"closedAt":null/"closedAt":null,"issue":true,"issueUrl":"https:\/\/github.com\/AcmeOrg\/acme-app\/issues\/42"/')],\"workers\":{\"w-a\":$(w "$W1" '"standing":false')}}"
+run "AT-E control: issue true beside a real issueUrl allows"  0 'none open' "$W1"
+# B4 (C8-C12): a ledger value of the wrong type or a blank text is unreadable, never "nothing there"
+echo "== B4: unreadable host, lanes, followUps, worker, parent, blank issue (teardown never loses a protection)"
+# C8: a standing worker whose host is unreadable still counts for this path; a standing:false sibling must not permit teardown
+for hv in 'false' '7' '""' '"  "' '[]'; do
+  ledger "{\"workers\":{\"w-a\":$(w "$W1" '"standing":false'),\"w-b\":{\"host\":$hv,\"path\":\"$W1\",\"standing\":true}}}"
+  # a host that is not text (false, a number, a list) makes the row unreadable under the typed boundary: the walk of live rows refuses before it counts standing;
+  # a blank text host is still a row that could be this path, and is counted as standing
+  case "$hv" in
+    false|7|'[]') run "C8 host $hv with standing:true still refuses (row unreadable, ledger unknown)" 3 'ledger unreadable: standing and beads state unknown' "$W1" ;;
+    *) run "C8 host $hv with standing:true still refuses"         3 'ledger standing:true (w-b)' "$W1" ;;
+  esac
+done
+ledger "{\"workers\":{\"w-a\":$(w "$W1" '"standing":false'),\"w-b\":{\"host\":\" Local \",\"path\":\"$W1\",\"standing\":true}}}"
+run "C8 host with edge spaces and a capital still refuses"   3 'ledger standing:true (w-b)' "$W1"
+ledger "{\"workers\":{\"w-a\":$(w "$W1" '"standing":false'),\"w-b\":{\"host\":\"other-host\",\"path\":\"$W1\",\"standing\":true}}}"
+run "C8 control: a row on another host is ignored"           0 'single-task worker' "$W1"
+# C9: a lane whose lead is unreadable cannot be matched to a worker: the standing answer is unknown
+for lv in '{"L":{"lead":false}}' '{"L":null}' '{"L":{"lead":7}}' '{"L":{"lead":""}}' '{"L":"w-a"}' 'false' '[]'; do
+  ledger "{\"workers\":{\"w-a\":$(w "$W1" '"standing":false')},\"lanes\":$lv}"
+  run "C9 lanes $lv refuses as unknown"                    3 'lane lead unreadable' "$W1"
+done
+ledger "{\"workers\":{\"w-a\":$(w "$W1" '"standing":false')},\"lanes\":{\"L\":{\"lead\":null},\"M\":{}}}"
+run "C9 control: lanes with no lead named allow"             0 'single-task worker' "$W1"
+ledger "{\"workers\":{\"w-a\":$(w "$W1" '"standing":false')},\"lanes\":{\"L\":{\"lead\":\"w-a\"}}}"
+run "C9 control: a lane lead naming this worker refuses"     3 'ledger lane lead w-a' "$W1"
+# C10: followUps false is not "none"
+for fv in 'false' '0' '""' '"x"'; do
+  ledger "{\"followUps\":$fv,\"workers\":{\"w-a\":$(w "$W1" '"standing":false')}}"
+  run "C10 followUps $fv refuses"                          3 'followUps is not an array' "$W1"
+done
+ledger "{\"followUps\":null,\"workers\":{\"w-a\":$(w "$W1" '"standing":false')}}"
+run "C10 control: followUps null is none"                    0 'none open' "$W1"
+# C11: an open follow-up whose worker or whose worker's parent is unreadable cannot be placed in the family
+for wv in 'false' '""' '7' 'null'; do
+  ledger "{\"followUps\":[$(fu w-a fa-codes | sed "s/\"worker\":\"w-a\"/\"worker\":$wv/")],\"workers\":{\"w-a\":$(w "$W1" '"standing":false')}}"
+  run "C11 open follow-up worker $wv refuses"              3 'unattributable' "$W1"
+done
+for pv in 'false' '""' '7'; do
+  ledger "{\"followUps\":[$(fu w-child kit-check)],\"workers\":{\"w-a\":$(w "$W1" '"standing":false'),\"w-child\":$(w /elsewhere "\"standing\":false,\"parent\":$pv")}}"
+  run "C11 parent $pv on a worker holding an open item refuses"  3 'unattributable' "$W1"
+done
+ledger "{\"followUps\":[$(fu w-child kit-check "done")],\"workers\":{\"w-a\":$(w "$W1" '"standing":false'),\"w-child\":$(w /elsewhere '"standing":false,"parent":false')}}"
+# (typed boundary: a worker row with a parent of the wrong type cannot be placed in any family, so it holds teardown whatever its items are: the row is the problem, not the item)
+run "C11 a DONE item on a bad-parent worker still refuses (the row is unreadable)" 3 'not the type the ledger contract says' "$W1"
+ledger "{\"followUps\":[$(fu w-other other-item)],\"workers\":{\"w-a\":$(w "$W1" '"standing":false'),\"w-other\":$(w /elsewhere '"standing":false,"parent":false')}}"
+run "C11 an open item of an unrelated bad-parent worker refuses (cannot place it)" 3 'unattributable' "$W1"
+# C12: blank text is not an escalation
+for bl in '" "' '"   "'; do
+  ledger "{\"followUps\":[$(fu w-a fa-codes | sed "s/\"closedAt\":null/\"closedAt\":null,\"issue\":$bl,\"issueUrl\":$bl/")],\"workers\":{\"w-a\":$(w "$W1" '"standing":false')}}"
+  run "C12 issue and issueUrl $bl are not an escalation"   3 'open follow-up(s) (w-a:fa-codes)' "$W1"
+done
+# C12 (live comment): a blank issue on the ledger row is not an escalation, so the same-text line in the comment is still open work
+ledger "{\"followUps\":[$(fu w-a fresh-one | sed 's/"closedAt":null/"closedAt":null,"issue":" ","issueUrl":"  "/')],\"workers\":{\"w-a\":$(w "$W1" '"standing":false,"lane":"ops-sweeper"')}}"
+STUB_COMMENT=$'cm:running\ncm:followup fresh-one owner=stevie keep or delete' \
+  run "C12 live comment: a blank-issue ledger row does not hold the id" 3 'in live comment (fresh-one)' "$W1"
+# CM_GATES_ONLY=followup stops after the AT-E rows (everything before them still runs)
+if [ "${CM_GATES_ONLY:-}" = followup ]; then echo "passed=$PASS failed=$FAIL (up to the follow-up gate)"; [ "$FAIL" = 0 ]; exit; fi
 ledger "{\"followUps\":{\"id\":\"x\"},\"workers\":{\"w-a\":$(w "$W1" '"standing":false')}}"
 run "followUps not an array refuses"                       3 'followUps is not an array' "$W1"
 ledger "{\"followUps\":[$(fu w-a item-ids)],\"workers\":{\"w-a\":$(w "$W1" '"standing":false')}}"

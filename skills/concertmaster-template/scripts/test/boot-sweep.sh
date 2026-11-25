@@ -159,6 +159,109 @@ check "confirmed concertmaster is not nudged twice (active now)" "$(res concertm
 check "unconfirmed lane is retried once" "$(res unconf)" "unconfirmed"
 OUT="$("$SCRIPT" --no-wait)"
 check "after two attempts the lane is left to the concertmaster" "$(res unconf)" "gave-up"
+cp "$CM_HOME/ledger.json" "$ROOT/ledger.keep"
+# a standing that is not the boolean (text "true", 1, {}) is never read as false ("not-standing", the lane dropped from the sweep
+# and its protection with it): it is reported and nothing is sent. A state that is a near miss ("Asleep") on a standing lead is the same.
+# Controls: standing false is not-standing, standing true is nudged.
+for bad in '"true"' 1 '{}' '[]' '"yes"'; do
+  mkp "$(wt stale)" -3600; rm -f "${CM_HOME:?}/cache/boot-sweep-"*.tsv; : > "$STUB_DIR/calls.log"
+  jq --argjson v "$bad" '.workers["w-stale"].standing = $v' "$ROOT/ledger.keep" > "$CM_HOME/ledger.json"
+  OUT="$("$SCRIPT" --no-wait 2>"$ROOT/err")"
+  check "standing $bad: reported, nothing sent" "$(res stale)$(sent_to t_stale)" "report0"
+  check "standing $bad: the row says why" "$(printf '%s\n' "$OUT" | awk -F'\t' '$1=="stale"' | grep -c 'not a boolean')" "1"
+done
+for bad in '"Asleep"' '"asleep "' false 7 '"Parked"' '"running"'; do
+  mkp "$(wt stale)" -3600; rm -f "${CM_HOME:?}/cache/boot-sweep-"*.tsv; : > "$STUB_DIR/calls.log"
+  jq --argjson v "$bad" '.workers["w-stale"].state = $v' "$ROOT/ledger.keep" > "$CM_HOME/ledger.json"
+  OUT="$("$SCRIPT" --no-wait 2>"$ROOT/err")"
+  case "$bad" in '"running"') want="nudged1" ;; *) want="report0" ;; esac
+  check "state $bad on a standing lead: $([ "$want" = report0 ] && echo reported, nothing sent || echo control, a known state, nudged as before)" "$(res stale)$(sent_to t_stale)" "$want"
+done
+mkp "$(wt stale)" -3600; rm -f "${CM_HOME:?}/cache/boot-sweep-"*.tsv; : > "$STUB_DIR/calls.log"
+jq '.workers["w-stale"].standing = false' "$ROOT/ledger.keep" > "$CM_HOME/ledger.json"
+OUT="$("$SCRIPT" --no-wait 2>"$ROOT/err")"
+check "control: standing false is not-standing, nothing sent" "$(res stale)$(sent_to t_stale)" "not-standing0"
+cp "$ROOT/ledger.keep" "$CM_HOME/ledger.json"
+mkp "$(wt stale)" -3600; rm -f "${CM_HOME:?}/cache/boot-sweep-"*.tsv; : > "$STUB_DIR/calls.log"
+OUT="$("$SCRIPT" --no-wait 2>"$ROOT/err")"
+check "control: standing true with no state is nudged" "$(res stale)$(sent_to t_stale)" "nudged1"
+# Typed boundary: a standing row with an identity field of the wrong type is REPORTED, never read as "not a standing lane" (the lane dropped with its protection) and never as local.
+# host false read as local; path false dropped the row from the standing list; a lane, terminal or agent of the wrong type is a field the boundary types. Nothing is sent, and the row says why.
+for patch in '.workers["w-stale"].host = false' '.workers["w-stale"].host = ["local"]' '.workers["w-stale"].host = {}' '.workers["w-stale"].host = 0' '.workers["w-stale"].host = "local\n"' \
+             '.workers["w-stale"].lane = false' '.workers["w-stale"].terminal = ["t_stale"]' '.workers["w-stale"].agent = false' '.workers["w-stale"].parent = false'; do
+  mkp "$(wt stale)" -3600; rm -f "${CM_HOME:?}/cache/boot-sweep-"*.tsv; : > "$STUB_DIR/calls.log"
+  jq "$patch" "$ROOT/ledger.keep" > "$CM_HOME/ledger.json"
+  OUT="$("$SCRIPT" --no-wait 2>"$ROOT/err")"
+  check "typed boundary ($patch) on a standing lead: reported, nothing sent" "$(res stale)$(sent_to t_stale)" "report0"
+done
+for patch in '.workers["w-stale"].path = false' '.workers["w-stale"].path = ["x"]' '.workers["w-stale"].worktreeId = false'; do
+  mkp "$(wt stale)" -3600; mkp "$(wt nonstanding)" -3600; rm -f "${CM_HOME:?}/cache/boot-sweep-"*.tsv; : > "$STUB_DIR/calls.log"
+  jq "$patch" "$ROOT/ledger.keep" > "$CM_HOME/ledger.json"
+  OUT="$("$SCRIPT" --no-wait 2>"$ROOT/err")"
+  check "typed boundary ($patch): the row could be any lane, so a lane the ledger does not list as standing is reported, never not-standing" "$(res nonstanding)$(sent_to t_nonstanding)" "report0"
+  check "typed boundary ($patch): the row names the unreadable host or path" "$(printf '%s\n' "$OUT" | awk -F'\t' '$1=="nonstanding"' | grep -c 'not text')" "1"
+done
+mkp "$(wt stale)" -3600; rm -f "${CM_HOME:?}/cache/boot-sweep-"*.tsv; : > "$STUB_DIR/calls.log"
+jq '.workers["w-stale"].host = "local"' "$ROOT/ledger.keep" > "$CM_HOME/ledger.json"
+OUT="$("$SCRIPT" --no-wait 2>"$ROOT/err")"
+check "typed boundary control: an explicit host local on a standing lead is nudged" "$(res stale)$(sent_to t_stale)" "nudged1"
+mkp "$(wt stale)" -3600; mkp "$(wt nonstanding)" -3600; rm -f "${CM_HOME:?}/cache/boot-sweep-"*.tsv; : > "$STUB_DIR/calls.log"
+OUT="$("$SCRIPT" --no-wait 2>"$ROOT/err")"
+check "typed boundary control: with no wrong-typed row a non-standing worker is still not-standing" "$(res nonstanding)" "not-standing"
+# mutant: a copy that reads a wrong-typed standing row the old way (the wild-row and bad-row reports off) must fail the cases above
+MUT="$ROOT/mut-bs"; rm -rf -- "${MUT:?}"; mkdir -p "$MUT"; cp -R "$(dirname "$SCRIPT")/." "$MUT/"
+sed -i 's/\[ "\$STANDING_WILD" != 0 \]/[ 0 != 0 ]/; s/\[ -n "\$STANDING_BAD" \] \&\& grep/[ -n "" ] \&\& grep/' "$MUT/boot-sweep.sh"
+if ! cmp -s "$SCRIPT" "$MUT/boot-sweep.sh"; then
+  jq '.workers["w-stale"].host = false' "$ROOT/ledger.keep" > "$CM_HOME/ledger.json"; mkp "$(wt stale)" -3600; rm -f "${CM_HOME:?}/cache/boot-sweep-"*.tsv
+  MOUT="$("$MUT/boot-sweep.sh" --no-wait 2>/dev/null)"; mres="$(printf '%s\n' "$MOUT" | awk -F'\t' '$1=="stale"{print $3}')"
+  check "mutant: with the bad-row report off, a standing row with host false is not-standing, the typed-boundary case is caught" "$([ "$mres" = report ] && echo missed || echo caught)" "caught"
+  jq '.workers["w-stale"].path = false' "$ROOT/ledger.keep" > "$CM_HOME/ledger.json"; mkp "$(wt stale)" -3600; mkp "$(wt nonstanding)" -3600; rm -f "${CM_HOME:?}/cache/boot-sweep-"*.tsv
+  MOUT="$("$MUT/boot-sweep.sh" --no-wait 2>/dev/null)"; mres="$(printf '%s\n' "$MOUT" | awk -F'\t' '$1=="nonstanding"{print $3}')"
+  check "mutant: with the wild-row report off, a path-false standing row leaves another lane not-standing, the case is caught" "$([ "$mres" = report ] && echo missed || echo caught)" "caught"
+else check "mutant: the sed no longer matches boot-sweep.sh (update this test)" "no" "yes"; fi
+# a ledger that is not ONE object with a worker MAP and no repeated key holds every nudge and says so (it was read as "no row", or, with a key written twice, as
+# standing true). workers false and [], a ledger of [] and null, a truncated file, and `standing:false ... standing:true` on the lead's row: reported, nothing sent. Mutant: the hold off nudges the repeated-key lead again.
+touch "$ROOT/lg.marker"
+bs_ledger() { # <label> <ledger text>
+  mkp "$(wt stale)" -3600; rm -f "${CM_HOME:?}/cache/boot-sweep-"*.tsv; : > "$STUB_DIR/calls.log"
+  printf '%s\n' "$2" > "$CM_HOME/ledger.json"
+  OUT="$("${BS:-$SCRIPT}" --no-wait 2>"$ROOT/err")"
+}
+DUPKEEP="$(jq -c . "$ROOT/ledger.keep" | sed 's/"standing":true/"standing":false,"standing":true/')"
+check "the repeated-key fixture really has a key written twice" "$(grep -c '"standing":false,"standing":true' <<<"$DUPKEEP")" "1"
+for c in 'workers false|{"workers":false}' 'workers []|{"workers":[]}' 'workers text|{"workers":"x"}' 'ledger []|[]' 'ledger null|null' 'truncated|{"workers":{"w-stale":{"standing":true,"path":"/x' "repeated key|$DUPKEEP"; do
+  bs_ledger "${c%%|*}" "${c#*|}"
+  check "ledger gate (${c%%|*}): the standing lead is reported, nothing sent" "$(res stale)$(sent_to t_stale)" "report0"
+  check "ledger gate (${c%%|*}): the row says the ledger cannot be read" "$(printf '%s\n' "$OUT" | awk -F'\t' '$1=="stale"' | grep -c 'cannot be read')" "1"
+done
+bs_ledger control "$(cat "$ROOT/ledger.keep")"
+check "ledger gate control: the intact ledger nudges the standing lead" "$(res stale)$(sent_to t_stale)" "nudged1"
+MUTG="$ROOT/mut-bs-gate"; rm -rf -- "${MUTG:?}"; mkdir -p "$MUTG"; cp -R "$(dirname "$SCRIPT")/." "$MUTG/"
+sed -i 's/^LEDGER_HOLD=""$/LEDGER_HOLD=""; cm_workers_gate() { return 0; }/' "$MUTG/boot-sweep.sh"
+if ! cmp -s "$SCRIPT" "$MUTG/boot-sweep.sh"; then
+  BS="$MUTG/boot-sweep.sh" bs_ledger m-dup "$DUPKEEP"
+  check "mutant: with the ledger gate off the repeated-key standing lead is nudged again (caught)" "$([ "$(res stale)$(sent_to t_stale)" = "report0" ] && echo missed || echo caught)" "caught"
+else check "mutant: the sed matches boot-sweep.sh" "no" "yes"; fi
+# the inbox notes this block wrote must not count in the later note checks
+find "$CM_HOME/inbox" -name 'boot-sweep-*.md' -newer "$ROOT/lg.marker" -delete 2>/dev/null
+cp "$ROOT/ledger.keep" "$CM_HOME/ledger.json"
+# the concertmaster ledger row with an unknown state, a standing that is not the boolean, asleep or not an object is never nudged,
+# whether the worktree was found by that row (cmrow) or by its path (concertmaster): reported, nothing sent. Controls: running and standing true.
+touch "$ROOT/c6.marker"; sleep 1
+for patch in '.workers.concertmaster.state = "Asleep"' '.workers.concertmaster.state = "asleep "' '.workers.concertmaster.state = false' '.workers.concertmaster.state = 7' \
+             '.workers.concertmaster.state = "asleep"' '.workers.concertmaster.standing = "true"' '.workers.concertmaster.standing = 1' '.workers.concertmaster.standing = {}' \
+             '.workers.concertmaster = false' '.workers.concertmaster.state = "running"'; do
+  mkp "$CMWT" -3600; mkp "$(wt cmrow)" -3600; rm -f "${CM_HOME:?}/cache/boot-sweep-"*.tsv; : > "$STUB_DIR/calls.log"
+  jq "$patch" "$ROOT/ledger.keep" > "$CM_HOME/ledger.json"
+  OUT="$("$SCRIPT" --no-wait 2>"$ROOT/err")"
+  case "$patch" in
+    *'"running"') check "control ($patch): the concertmaster is nudged both ways" "$(sent_to t_cm)$(sent_to t_cmrow)" "11" ;;
+    *) check "($patch): the concertmaster is not nudged by path or by row" "$(sent_to t_cm)$(sent_to t_cmrow)$(res concertmaster)" "00report" ;;
+  esac
+done
+cp "$ROOT/ledger.keep" "$CM_HOME/ledger.json"
+# each C6 run wrote its own inbox note (the pid is in the name); drop them so the inbox rows below count only the runs they are about
+find "$CM_HOME/inbox" -name 'boot-sweep-*.md' -newer "$ROOT/c6.marker" -delete 2>/dev/null
 # a concertmaster that cannot be re-armed (menu showing) is flagged for a human, not left to the dead tick
 mkp "$CMWT" -3600; rm -f "${CM_HOME:?}/cache/boot-sweep-"*.tsv; : > "$STUB_DIR/calls.log"; export STUB_CM_MENU=1
 OUT="$("$SCRIPT" --no-wait 2>"$ROOT/err")"; unset STUB_CM_MENU
