@@ -408,7 +408,7 @@ fresh '.'
 jq '.result.worktrees = "garbled"' "$BASE/wt.json" > "$ROOT/t/wt.json"
 OUT="$(run_in "$ROOT/t" --full >/dev/null; cat "$ROOT/t/out")"
 has "a worktree list that is not a list: the host is listed as not read" "$OUT" "- host not read: local ("
-has "and Blocked on you counts it, never none" "$OUT" "Blocked on you (2, 1 host not read, see Fleet health)"
+has "and Blocked on you counts it, never none" "$OUT" "Blocked on you (3, 1 host not read, see Fleet health)"
 jq '.result.worktrees[1] = "garbled"' "$BASE/wt.json" > "$ROOT/t/wt.json"
 OUT="$(run_in "$ROOT/t" --full >/dev/null; cat "$ROOT/t/out")"
 has "a worktree row that is not an object: the other rows are still read" "$OUT" "- lane-blk on local | cm:blocked: which table holds the backfill?"
