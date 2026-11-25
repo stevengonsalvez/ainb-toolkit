@@ -574,7 +574,7 @@ REPORT="$(TZ="$CM_TZ" jq -r $JQ_FLAGS --argjson sinceH "$SINCE_H" --argjson sinc
        | "STOPPED \(.id): \(.blockedReason // "no reason recorded")" ]) as $stopped
   | "\($project) concertmaster digest, \(now | uk) \($tzl) (last \($sinceH)h)",
     "",
-    # Priorities come first (Stevie, 14 Nov 2026): the ledger .priorities rows not done or dropped, lowest rank first,
+    # Priorities come first: the ledger .priorities rows not done or dropped, lowest rank first,
     # at most 10 lines, text cleaned like every other agent-written line.
     ( if ($prRaw | type) != "array" then "Priorities: unreadable (ledger .priorities is not a list)"
       else "Priorities (\($prios | length))",

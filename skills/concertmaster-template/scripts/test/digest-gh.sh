@@ -242,18 +242,18 @@ prf() { # prf <number> <title> <hours ago> <file>...: a merged or open PR with c
   local n="$1" t="$2" h="$3"; shift 3
   pr "$n" "$t" "$h" | jq -c --args '. + {files: ($ARGS.positional | map({path: ., additions: 1, deletions: 0}))}' "$@"; }
 { prf 8001 "feat(concertmaster): digest line" 3 .agents/skills/concertmaster/scripts/digest.sh
-  prf 8002 "fix(perform): roster sort" 2 src/pages/Roster.tsx
+  prf 8002 "fix(app): roster sort" 2 src/pages/Roster.tsx
   prf 8003 "chore: tidy skill docs" 2 .agents/skills/concertmaster/SKILL.md .agents/skills/concertmaster/references/lanes.md
   prf 8004 "fix: mixed change" 1 .agents/skills/concertmaster/SKILL.md src/index.tsx
   prf 8005 "Fix(Concertmaster)!: loud scope case, no file list" 1
   prf 8008 "fix(concertmaster): drop column" 1 supabase/migrations/20261028_drop.sql src/index.tsx
   prf 8009 "feat(concertmaster): path-less file row" 1 .agents/skills/concertmaster/SKILL.md
-  prf 8006 "feat(concertmaster,perform): scope list with a product scope" 1 src/a.ts
+  prf 8006 "feat(concertmaster,app): scope list with a product scope" 1 src/a.ts
   prf 8007 "docs: no files known" 1; } | jq -s -c 'map(if .number == 8009 then .files += [{additions: 1}] else . end)' > "$STUB/merged.json"
 { prf 8101 "docs(concertmaster): open tooling" 1 .agents/skills/concertmaster/SKILL.md
-  prf 8102 "feat(perform): open product" 1 src/b.ts; } | jq -s -c . > "$STUB/open.json"
+  prf 8102 "feat(app): open product" 1 src/b.ts; } | jq -s -c . > "$STUB/open.json"
 OUT="$(run)"
-has "group: product PR listed" "$OUT" "- #8002 fix(perform): roster sort"
+has "group: product PR listed" "$OUT" "- #8002 fix(app): roster sort"
 has "group: PR with product and tooling files listed" "$OUT" "- #8004 fix: mixed change"
 has "group: scope list with a product scope listed" "$OUT" "- #8006 "
 has "group: PR with no file list and no scope listed" "$OUT" "- #8007 docs: no files known"
@@ -273,8 +273,8 @@ has "owner: Merged counts everything" "$OWN" "Merged (9)"
 lacks "owner: no Tooling summary line" "$OWN" "Tooling:"
 has "owner: open count counts every open PR" "$OWN" "open PRs: 2"
 # nothing internal merged and nothing internal open: no Tooling line at all; an open one alone brings it back
-echo "[$(prf 8002 "fix(perform): roster sort" 2 src/pages/Roster.tsx)]" > "$STUB/merged.json"
-echo "[$(prf 8102 "feat(perform): open product" 1 src/b.ts)]" > "$STUB/open.json"
+echo "[$(prf 8002 "fix(app): roster sort" 2 src/pages/Roster.tsx)]" > "$STUB/merged.json"
+echo "[$(prf 8102 "feat(app): open product" 1 src/b.ts)]" > "$STUB/open.json"
 lacks "group: no tooling PRs merged or open, no Tooling line" "$(run)" "Tooling:"
 echo "[$(prf 8101 "docs(concertmaster): open tooling" 1 .agents/skills/concertmaster/SKILL.md)]" > "$STUB/open.json"
 has "group: no tooling PR merged but one open: the line still prints" "$(run)" "Tooling: 0 concertmaster PRs merged, 1 open"
@@ -292,7 +292,7 @@ OUT="$(run)"
 has "100 product files with a concertmaster scope: listed" "$OUT" "- #8201 "
 lacks "100 files all under the skill dir with the scope: hidden" "$OUT" "#8202"
 # the open list is always fetched for the group text: an open tooling PR must show even when none merged
-reset; ledger; echo "[$(prf 8002 "fix(perform): roster sort" 2 src/pages/Roster.tsx)]" > "$STUB/merged.json"
+reset; ledger; echo "[$(prf 8002 "fix(app): roster sort" 2 src/pages/Roster.tsx)]" > "$STUB/merged.json"
 run >/dev/null
 check "group: no tooling PR merged, gh is still asked for open PRs (an open tooling PR must show)" "$(grep -c -- '--state open' "$STUB/gh.args")" "1"
 echo "[$(prf 8001 "feat(concertmaster): digest line" 2 .agents/skills/concertmaster/SKILL.md)]" > "$STUB/merged.json"; echo '[]' > "$STUB/open.json"; : > "$STUB/gh.args"
@@ -526,8 +526,8 @@ export CM_CONFIG="$ROOT/config.yaml"
 # Real cause of the "0 open" miss: see the PR body (no open concertmaster PR existed to re-run against, so each suspect has a fixture here).
 tl() { printf '%s\n' "$1" | grep '^Tooling:' || true; }
 SK=.agents/skills/concertmaster/SKILL.md
-mergedtool() { { prf 8501 "feat(concertmaster): merged one" 2 "$SK"; prf 8502 "fix(perform): roster" 2 src/r.ts; } | jq -s -c . > "$STUB/merged.json"; }
-nomergedtool() { { prf 8502 "fix(perform): roster" 2 src/r.ts; } | jq -s -c . > "$STUB/merged.json"; }
+mergedtool() { { prf 8501 "feat(concertmaster): merged one" 2 "$SK"; prf 8502 "fix(app): roster" 2 src/r.ts; } | jq -s -c . > "$STUB/merged.json"; }
+nomergedtool() { { prf 8502 "fix(app): roster" 2 src/r.ts; } | jq -s -c . > "$STUB/merged.json"; }
 opens() { jq -s -c . > "$STUB/open.json"; }
 
 reset; ledger; mergedtool
@@ -584,7 +584,7 @@ rm -f -- "$STUB/merged.rc"
 # the owner text lists everything and carries no Tooling line
 lacks "tooling open: --full has no Tooling line" "$(run --full)" "Tooling:"
 
-# 12. a payload past 128 KB must not travel as one argv string (issue #5994) -------------------------------
+# 12. a payload past 128 KB must not travel as one argv string -------------------------------
 # Linux refuses a single argv string over MAX_ARG_STRLEN (128 KB): jq then exits 126 "Argument list too long".
 # MERGED_JSON, OPEN_JSON, GH_DEPLOYS and each run's `gh run view` answer are ~200 KB here; the digest must still
 # come out right. Each mutant puts one of them back on --argjson and must fail (exit 126, or Deployed lost).
@@ -593,8 +593,8 @@ deploy_reset
 # the generators read their big input on stdin: the fixture must not hit the argv limit it is testing
 jq -nc '[range(0; 3300) | {path: "src/generated/module-\(.)/index.tsx", additions: 1, deletions: 0}]' \
   | jq -c --arg at "$(ago 2)" \
-  '[{number: 7001, title: "feat(perform): big merged", mergedAt: $at, author: {login: "alice"}, url: "https://github.com/AcmeOrg/acme-app/pull/7001", files: .}]' > "$STUB/merged.json"
-jq -nc '[range(0; 900) | {number: (8000 + .), title: ("feat(perform): open pr " + (. | tostring) + " " + ("x" * 220)),
+  '[{number: 7001, title: "feat(app): big merged", mergedAt: $at, author: {login: "alice"}, url: "https://github.com/AcmeOrg/acme-app/pull/7001", files: .}]' > "$STUB/merged.json"
+jq -nc '[range(0; 900) | {number: (8000 + .), title: ("feat(app): open pr " + (. | tostring) + " " + ("x" * 220)),
     files: [{path: "src/a.tsx", additions: 1, deletions: 0}]}]
   | .[0:3] |= map(.title = "feat(concertmaster): open tooling" | .files = [{path: ".agents/skills/concertmaster/SKILL.md", additions: 1, deletions: 0}])' > "$STUB/open.json"
 { runrec 970 v9.0.1 success 3 1.5; } | jq -s -c . > "$STUB/runs.json"
@@ -606,7 +606,7 @@ check "big payload: the run view is over 200 KB" "$([ "$(wc -c < "$STUB/run-970.
 OUT="$(run)"; RC=$?
 check "big payload: exit 0" "$RC" "0"
 check "big payload: no argv error on stderr" "$(grep -c 'Argument list too long' "$ROOT/err" || true)" "0"
-has "big payload: the big merged PR is listed" "$OUT" "- #7001 feat(perform): big merged (alice)"
+has "big payload: the big merged PR is listed" "$OUT" "- #7001 feat(app): big merged (alice)"
 has "big payload: Merged counts it" "$OUT" "Merged (1)"
 has "big payload: the open tooling PRs are counted from the big open list" "$OUT" "Tooling: 0 concertmaster PRs merged, 3 open"
 has "big payload: the deploy in the big run view is listed" "$OUT" "Deployed (1)"
