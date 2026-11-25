@@ -326,6 +326,7 @@ cm_warn() { printf 'concertmaster: %s\n' "$*" >&2; }
 cm_cfg() { printf '%s' "${2:-}"; }
 cm_cfg_json() { printf '%s' "${2:-null}"; }
 cm_lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
+cm_input_dupkeys() { return 0; }
 CM_HOME="${CM_HOME:-/nonexistent}"; CM_ORG=AcmeOrg; CM_REPO=acme-app; CM_OWNER_NAME=owner
 EOF2
 cp "$ROOT/l3.json" "$ROOT/l4.json"
